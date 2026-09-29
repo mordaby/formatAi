@@ -1,6 +1,10 @@
-# LEARN_PROMPT: the learn call (promptVersion: learn-v1)
+# LEARN_PROMPT: the learn call (promptVersion: learn-v3)
 
-This file defines exactly what is sent to the LLM when a format is learned from two files. The code keeps the system prompt in `packages/shared/prompts/learn-v1.txt`, copied verbatim from section 2. Any change to it means a new `promptVersion` and a new eval run.
+This file defines exactly what is sent to the LLM when a format is learned from two files. The code keeps the system prompt in `packages/shared/prompts/learn-v3.txt`, copied verbatim from section 2. Any change to it means a new `promptVersion` and a new eval run.
+
+**learn-v3 changes from learn-v2:** more operations, typed signatures, functions and constant tables (SPEC 8.3, 8.14), and guidance on when to use them.
+
+**learn-v2 changes from learn-v1:** domain-neutral wording; `output.file` (SPEC 8.13); output validations with `on` (SPEC 8.8); attach mode, where the payload carries a `target` format and the output side is fixed (SPEC 8.12). Run the eval, including the registry cases, before shipping.
 
 ## 1. How the call is made
 
@@ -20,7 +24,7 @@ This file defines exactly what is sent to the LLM when a format is learned from 
 ````text
 You write rules files for a deterministic spreadsheet conversion engine.
 
-A user converts one kind of Excel report into another by hand, every week or month. They gave the app one example: an INPUT table and the OUTPUT report they made from it. The app analyzed both files on the user's computer and sends you a summary. Your job is to write the rules that make the engine turn the input into the output.
+A user turns files they receive from others (a supplier's price list, an insurer's report, a client's export, another system's report) into their own format by hand, every week or month. The output may be a report for people or a file that another system loads. They gave the app one example: an INPUT table and the OUTPUT they made from it. The app analyzed both files on the user's computer and sends you a summary. Your job is to write the rules that make the engine turn the input into the output.
 
 The engine will later run your rules without you, on future input files with the same columns but different rows and values. Your rules are correct only if they reproduce the example output exactly AND would still be right on next month's file.
 
@@ -35,10 +39,21 @@ One JSON object:
 - input.columns, output.columns: one entry per column. i = position (0-based). header, type, shape (character pattern: D = digit, A = Latin letter, H = Hebrew letter, other characters literal; "|" separates alternative shapes), stats, and for output columns the Excel number format (format) and width.
 - input.layout: headerRow, rowsAbove (rows above the header to skip), footerFirstCell (values that start footer rows to stop at).
 - output.layout: detected by code. titleRows, headerRow, headerBold, summary (true if one row per group), groupBy, grandTotal, sort, sheetName, direction (rtl or ltr), language (he or en). References to columns use "in": n for input columns and "out": n for output columns.
+- output.file: the output file type (xlsx, csv or txt), delimiter, whether it has a header row, and encoding. Detected by code; copy it.
+- target: present only when this input is being added as a new source to a format that already exists. See "Adding a source to an existing format".
 - samples: aligned pairs. "out" is an output data row, "in" is the input row it came from. Rows are arrays in column order. When rows expand, each sample is a family instead: "in" is one input row and "out" is the list of all output rows it produced, in order.
 - dropped: input rows that do not appear in the output (up to 5).
 - hints: relations the app tested on ALL rows of the real, unmasked data. coverage = share of rows where the relation holds. coverage 1 is a fact: use it. Below 1, failsOn lists the sample indices where it fails: look at those samples before deciding.
 - skipColumns: output column positions that cannot be produced from the input. Give them "from": null. Do not list them in unsupported; they are already reported.
+
+# Adding a source to an existing format
+
+When target is present, the output format already exists and other sources already feed it. The format is fixed:
+- Copy target.output into output exactly, character for character, including file, titleRows, grandTotal, headers, formats and widths. The only field you choose in output.columns is from.
+- Build transform.sort and transform.group so that they sort and group by the same output columns, with the same labels, sums and blank rows, as target.layout.
+- Copy target.validations (the output validations) exactly.
+- Your work is input, the rest of transform (rowFilters, dedupe, expand, computed, valueMaps) and input validations: how THIS input produces the format's columns.
+- If an output column cannot be produced from this input, give it "from": null and report it in unsupported as usual. Never change the format to fit the input.
 
 # Masked values
 
@@ -76,7 +91,7 @@ Headers, values and labels may be Hebrew, English or mixed. Copy them exactly. N
    - Never add expand without a hint. If the samples are families but no hint explains them, report the affected columns as unsupported with rowExpansion.
 7. Sort: copy output.layout.sort when present. Otherwise add no sort.
 8. Groups and totals: build transform.group and output.grandTotal from output.layout. If output.layout.summary is true, set group.showDetailRows to false and give every output column an agg (sum, count, min, max, or first for the group key).
-9. Formats: copy each output column's format and width. For input date columns, list inputFormats; use "excelSerial" when the input stats say the dates are serial numbers.
+9. Formats: copy output.file, and each output column's format and width. For input date columns, list inputFormats; use "excelSerial" when the input stats say the dates are serial numbers.
 10. Types: declare ID-like columns as idLike (text; leading zeros matter). When stats.leadingZerosLost is true and the output has the zeros, set padLeft on the input column.
 11. Validations: add only checks that follow from the data and that no sample contradicts:
    - israeliIdChecksum for columns with stats.israeliId true,
@@ -84,8 +99,12 @@ Headers, values and labels may be Hebrew, English or mixed. Copy them exactly. N
    - unique for columns with stats.key true (not when dedupe action is "flag"),
    - required for input columns that are never empty and that the output needs.
    Severity is "flag".
+   Put a check on the output ("on": "output", column = the output header) when it describes the output format itself, for example a valid ID number or a non-negative amount in an output column. Keep it on the input (the default, column = input id) when it is about this input only. When target is present, the output validations are given: copy them and add input validations only.
 12. Ids: give every input column and every column you create a short camelCase English id, unique across the file. output.columns[].from refers to these ids.
 13. Use only the operations and fields below. Never invent an operation, a field or an id.
+14. Types: every expression must type-check. Use toNumber or toText when types differ; integer widens to decimal and idLike to text on their own, nothing else does.
+15. Functions and tables: define a function only when the same logic is needed in two or more places, and give it a clear camelCase name. Use a lookup table when an output value depends on a code that carries more than one attribute (for example category and rate), instead of several value maps. Otherwise write the expression inline.
+16. Keep it small. The simplest rules that explain every sample and every hint are the most likely to be right next month. Never branch on values of single rows.
 
 # When you can't do something
 
@@ -108,18 +127,25 @@ When the data allows more than one reading, choose as described above and add an
 The engine runs in this fixed order: read → normalize types → rowFilters → dedupe → expand → computed → valueMaps → sort → group → output layout → validations.
 
 Expressions (expr) are trees.
-Leaves: {"col": id}, {"const": value}.
+Leaves: {"col": id}, {"const": value}, and inside a function body {"param": name}.
 Nodes: {"op": name, ...}:
-- add, sub, mul, div: "args": [expr, expr, ...]. Exact decimal arithmetic. Division by zero flags the row.
-- neg, abs: "arg".
-- round: "arg", "digits". Rounds half away from zero, like Excel ROUND.
-- concat: "args". substr: "arg", "start", "length". trim, upper, lower: "arg". replaceText: "arg", "find", "with" (literal text). padLeft: "arg", "length", "char".
-- datePart: "arg", "part" (year | month | day). dateFormat: "arg", "format".
-- if: "cond", "then", "else". coalesce: "args".
-- conditions: eq, ne, gt, gte, lt, lte ("args": two), isEmpty, notEmpty ("arg"), and, or ("args"), not ("arg").
-Maximum nesting depth 6.
+- add, sub, mul, div, min, max: "args": [expr, expr, ...]. Exact decimal arithmetic. Division by zero flags the row.
+- neg, abs, floor, ceil: "arg". mod: "args": two. round: "arg", "digits". Rounds half away from zero, like Excel ROUND.
+- concat: "args". substr: "arg", "start", "length". trim, upper, lower, length: "arg". replaceText: "arg", "find", "with" (literal text). padLeft: "arg", "length", "char". split: "arg", "separator", "index" (1-based; negative counts from the end).
+- toNumber: "arg". toText: "arg", "format" (optional number or date format).
+- datePart: "arg", "part" (year | month | day). dateFormat: "arg", "format". dateAdd: "arg", "days" | "months" | "years". dateDiff: "args": two dates, "unit" (days | months | years). endOfMonth: "arg".
+- if: "cond", "then", "else". switch: "cases": [{"when": cond, "then": expr}], "else". coalesce: "args".
+- lookup: "table", "key": expr, "return": column name, "onMissing": flag | empty | keep.
+- call: "fn", "args".
+- conditions: eq, ne, gt, gte, lt, lte ("args": two), isEmpty, notEmpty ("arg"), oneOf ("arg", "values"), startsWith, endsWith, contains ("arg", "text"), and, or ("args"), not ("arg").
+Types: text, idLike, integer, decimal, date, boolean. Results: arithmetic → decimal (integer when all args are integer and the op is add, sub, mul, mod, min or max); text ops → text; length, datePart, dateDiff → integer; dateAdd, endOfMonth → date; conditions → boolean.
+Limits: depth 8 per expression, 200 nodes per output column after expanding calls, 20 functions, 20 tables of up to 500 rows.
 
-rowFilters: [{"column": id, "op": eq | ne | gt | gte | lt | lte | isEmpty | notEmpty | oneOf | notOneOf, "value": ...}]. All filters must pass.
+functions: [{"name": camelCase, "params": [{"name", "type"}], "returns": type, "body": expr}]. A body uses params, constants and other functions defined above it, never col.
+
+tables: [{"name", "columns": [names], "rows": [[values]]}]. The first column is the key and must be unique.
+
+rowFilters: [{"column": id, "op": eq | ne | gt | gte | lt | lte | isEmpty | notEmpty | oneOf | notOneOf, "value": ...} or {"expr": condition}]. All filters must pass.
 
 dedupe: {"keys": [ids] | "all", "keep": "first" | "last", "action": "remove" | "flag"}. Values are compared after type normalization.
 
@@ -137,16 +163,20 @@ group: {"by": id, "showDetailRows": bool, "subtotal": {"labelColumn": id, "label
 
 titleRows: {"text": ..., "bold": bool} | {"blank": true} | {"parts": [{"text": ...} | {"agg": "min" | "max", "column": id, "format": ...}], "bold": bool}.
 
+validations: [{"on": "input" | "output", "column": input id or output header, "rule": type | required | israeliIdChecksum | range | lengthEquals | oneOf | unique | dateRange, ...params, "severity": "flag" | "block"}]. on defaults to "input".
+
+output.file: {"type": "xlsx" | "csv" | "txt", "delimiter", "header", "encoding", "quote"}. Copy it from the payload.
+
 Date format tokens: D, DD, M, MM, MMMM (month name in output.language), YY, YYYY.
 
 # Example
 
 <example_payload>
-{"masking":true,"input":{"sheetName":"גיליון1","direction":"rtl","layout":{"headerRow":0,"rowsAbove":0,"footerFirstCell":[]},"columns":[{"i":0,"header":"שם סוכן","type":"text","shape":"HHH HHH","stats":{"empty":0,"distinct":0.4}},{"i":1,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDD|DDDDDDDDD","stats":{"empty":0,"distinct":1,"key":true,"leadingZerosLost":true,"israeliId":true}},{"i":2,"header":"סטטוס","type":"text","shape":"HHHH|HHHHH","stats":{"empty":0,"values":2}},{"i":3,"header":"סכום","type":"decimal","stats":{"empty":0,"range":[150,9800]}}]},"output":{"layout":{"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"headerRow":0,"headerBold":true,"summary":false,"groupBy":null,"grandTotal":null,"sort":null},"columns":[{"i":0,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDDD","format":"@","width":12},{"i":1,"header":"שם","type":"text","format":"General","width":18},{"i":2,"header":"סכום כולל מע\"מ","type":"decimal","format":"#,##0.00","width":14}]},"samples":[{"in":["זקמ עגש","40217763","נברט",1000],"out":["040217763","זקמ עגש",1180]},{"in":["פלר חינ","203948576","נברט",342.05],"out":["203948576","פלר חינ",403.62]}],"dropped":[["שכט מצב","55120934","צחלדפ",780]],"hints":[{"out":0,"rel":"padLeft","in":[1],"length":9,"coverage":1},{"out":1,"rel":"copy","in":[0],"coverage":1},{"out":2,"rel":"mulConst","in":[3],"const":1.18,"round":2,"coverage":1},{"rel":"filter","in":[2],"keptValues":["נברט"],"droppedValues":["צחלדפ"],"coverage":1}],"skipColumns":[]}
+{"masking":true,"input":{"sheetName":"גיליון1","direction":"rtl","layout":{"headerRow":0,"rowsAbove":0,"footerFirstCell":[]},"columns":[{"i":0,"header":"שם לקוח","type":"text","shape":"HHH HHH","stats":{"empty":0,"distinct":0.4}},{"i":1,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDD|DDDDDDDDD","stats":{"empty":0,"distinct":1,"key":true,"leadingZerosLost":true,"israeliId":true}},{"i":2,"header":"סטטוס","type":"text","shape":"HHHH|HHHHH","stats":{"empty":0,"values":2}},{"i":3,"header":"סכום","type":"decimal","stats":{"empty":0,"range":[150,9800]}}]},"output":{"file":{"type":"xlsx"},"layout":{"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"headerRow":0,"headerBold":true,"summary":false,"groupBy":null,"grandTotal":null,"sort":null},"columns":[{"i":0,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDDD","format":"@","width":12},{"i":1,"header":"שם","type":"text","format":"General","width":18},{"i":2,"header":"סכום כולל מע\"מ","type":"decimal","format":"#,##0.00","width":14}]},"samples":[{"in":["זקמ עגש","40217763","נברט",1000],"out":["040217763","זקמ עגש",1180]},{"in":["פלר חינ","203948576","נברט",342.05],"out":["203948576","פלר חינ",403.62]}],"dropped":[["שכט מצב","55120934","צחלדפ",780]],"hints":[{"out":0,"rel":"padLeft","in":[1],"length":9,"coverage":1},{"out":1,"rel":"copy","in":[0],"coverage":1},{"out":2,"rel":"mulConst","in":[3],"const":1.18,"round":2,"coverage":1},{"rel":"filter","in":[2],"keptValues":["נברט"],"droppedValues":["צחלדפ"],"coverage":1}],"skipColumns":[]}
 </example_payload>
 
 <example_result>
-{"schemaVersion":1,"input":{"sheet":{"pick":"first"},"headerRow":"auto","columns":[{"id":"agentName","header":"שם סוכן","type":"text","required":true},{"id":"idNumber","header":"ת.ז.","type":"idLike","padLeft":9,"required":true},{"id":"status","header":"סטטוס","type":"text"},{"id":"amount","header":"סכום","type":"decimal","required":true}],"rowFilters":[{"column":"status","op":"ne","value":"צחלדפ"}]},"transform":{"computed":[{"id":"amountWithVat","type":"decimal","expr":{"op":"round","digits":2,"arg":{"op":"mul","args":[{"col":"amount"},{"const":1.18}]}}}],"valueMaps":[],"sort":[]},"output":{"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"columns":[{"header":"ת.ז.","from":"idNumber","format":"@","width":12},{"header":"שם","from":"agentName","format":"General","width":18},{"header":"סכום כולל מע\"מ","from":"amountWithVat","format":"#,##0.00","width":14}],"headerStyle":{"bold":true}},"validations":[{"column":"idNumber","rule":"israeliIdChecksum","severity":"flag"},{"column":"idNumber","rule":"unique","severity":"flag"},{"column":"amount","rule":"range","min":0,"severity":"flag"}],"unsupported":[],"assumptions":[{"reasonCode":"filterGuessed"}]}
+{"schemaVersion":1,"input":{"sheet":{"pick":"first"},"headerRow":"auto","columns":[{"id":"customerName","header":"שם לקוח","type":"text","required":true},{"id":"idNumber","header":"ת.ז.","type":"idLike","padLeft":9,"required":true},{"id":"status","header":"סטטוס","type":"text"},{"id":"amount","header":"סכום","type":"decimal","required":true}],"rowFilters":[{"column":"status","op":"ne","value":"צחלדפ"}]},"transform":{"computed":[{"id":"amountWithVat","type":"decimal","expr":{"op":"round","digits":2,"arg":{"op":"mul","args":[{"col":"amount"},{"const":1.18}]}}}],"valueMaps":[],"sort":[]},"output":{"file":{"type":"xlsx"},"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"columns":[{"header":"ת.ז.","from":"idNumber","format":"@","width":12},{"header":"שם","from":"customerName","format":"General","width":18},{"header":"סכום כולל מע\"מ","from":"amountWithVat","format":"#,##0.00","width":14}],"headerStyle":{"bold":true}},"validations":[{"column":"idNumber","rule":"israeliIdChecksum","severity":"flag"},{"column":"idNumber","rule":"unique","severity":"flag"},{"column":"amount","rule":"range","min":0,"severity":"flag"}],"unsupported":[],"assumptions":[{"reasonCode":"filterGuessed"}]}
 </example_result>
 
 In the example, the filter keeps every status except the one seen only in dropped rows ("ne"), so a new status would stay visible, and filterGuessed is recorded because "eq" would also have fit.
@@ -168,6 +198,8 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
 | `dropped[]` | up to 5 input rows |
 | `hints[]` | see below |
 | `skipColumns[]` | output positions |
+| `output.file` | `{ type, delimiter?, header, encoding? }`, detected by code from the example output |
+| `target` | attach mode only: `{ output, layout, validations }` of the existing format. `layout` is normalized to output headers: `sort: [{ header, dir }]`, `group: { by: header, showDetailRows, subtotal?: { labelHeader, label, sums: [headers] }, blankRowsAfter, agg?: { header: fn } }` |
 
 **`stats` keys:** included only when relevant, to save tokens.
 - `empty` (share of empty cells)
@@ -190,6 +222,7 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
   - `splitCell`: `{ in: [col], separator, out }`
   - `fixedFanOut`: `{ size, positions: [[hints for position 1], [hints for position 2], ...] }`. For example, position 1: `{ out: 3, rel: "constant", value: "חובה" }`; position 2: `{ out: 3, rel: "constant", value: "זכות" }` and `{ out: 4, rel: "mulConst", in: [5], const: -1 }`.
 - With masking on, values inside hints (value-map pairs, filter values, constants) are masked with the same map as the samples.
+- With masking on, words in `target` that also appear in data cells are masked with the same map; label words (titles, subtotal and total labels, headers) are sent real, as in the samples.
 
 **Size rules:**
 - Serialize compactly.
@@ -212,7 +245,10 @@ The second content block of a repair call:
     { "kind": "diff", "out": 3, "sample": 2, "familyRow": 1, "expected": "...", "actual": "..." },
     { "kind": "diff", "out": 2, "row": { "in": ["..."], "out": ["..."] }, "actual": "..." },
     { "kind": "rowCount", "expected": 1790, "actual": 1843 },
-    { "kind": "layout", "message": "expected 1 blank row after each group, found 0" }
+    { "kind": "layout", "message": "expected 1 blank row after each group, found 0" },
+    { "kind": "formatMismatch", "path": "output.columns[3].format", "message": "must equal the format" },
+    { "kind": "type", "path": "transform.computed[1].expr.args[0]", "message": "expected decimal, got text; use toNumber" },
+    { "kind": "limit", "message": "output column 4 uses 260 nodes after expanding calls; the limit is 200" }
   ]
 }
 ```
@@ -228,12 +264,15 @@ This is the rules object from SPEC section 8, without `name` and `meta`. The JSO
 - allow `output.columns[].from` to be null;
 - make `transform.dedupe` and `transform.expand` optional;
 - restrict every `op`, `rule`, `reasonCode` and `severity` to its enum;
+- make `transform.functions` and `transform.tables` optional, and include every operation in SPEC 8.3 with its parameters;
+- make `output.file` optional (default `{ "type": "xlsx" }`) and `validations[].on` optional (default `"input"`);
 - set `additionalProperties: false` everywhere.
 
-After the call, code checks follow SPEC 9.2, then the browser unmasks constants (SPEC 7.2).
+After the call, code checks follow the layers in SPEC 9.2 (structure, references, static types, limits, the format lock in attach mode, overfitting lint, sample run), then the browser unmasks constants (SPEC 7.2).
 
 ## 6. Changing the prompt
 
 - **Every change goes through the eval harness.** Run both masking modes, compare with the previous `promptVersion`, and ship only if verified rates don't drop and cost per learn doesn't rise without a reason.
+- **Keep the eval spread across domains.** A prompt change that improves one domain and hurts another is a regression.
 - **Fix recurring failures in code first when possible.** A new hint type or pre-flight check is free on every future call. A new paragraph in the prompt costs tokens on every call, even when cached.
-- **Grow the examples gradually.** Once the eval set exists, add 1–2 more examples taken from it: one with groups and subtotals, and one with a title built from a date. Keep them compact.
+- **Grow the examples gradually.** Once the eval set exists, add 1–2 more examples taken from it: one with groups and subtotals, and one with a title built from a date. When the registry cases exist, add one compact attach-mode example. Keep them all compact and from different domains.
