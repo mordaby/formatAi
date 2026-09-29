@@ -7,3 +7,4 @@ export type { ConvertOptions, ConvertResult } from './convert';
 export * from './check';
 export * from './registry';
 export * from './learn';
+export * from './formula';

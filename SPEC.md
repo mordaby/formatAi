@@ -429,6 +429,8 @@ The engine receives no clock. All arithmetic uses decimal.js. `round` rounds hal
 ### 8.3 Expressions, functions and filters
 Expressions are an AST that the engine interprets. There is no regex and no code in strings, ever. The language is meant to be rich enough for real reports and still fully checkable by code before anything runs (9.2): a closed set of typed operations, reusable functions and constant tables (8.14), and hard limits.
 
+**Formulas (learn-v5).** The LLM (and, later, the editor's text view) writes every expression as FORMULA TEXT, e.g. `round(amount * 0.17, 2)`, `if(status = "VIP", price * 0.9, price)`, `lookup("rates", code, "rate")` - never the AST directly. A strict parser (`packages/engine/src/formula`) turns that text into the exact same whitelisted AST below; nothing is ever executed as code, and an unknown function or identifier is a parse error. Stored rules, the engine, the type checker and every saved/golden rules file are unchanged: still JSON trees. This also sidesteps structured-output providers that can't express a recursive schema (see below) without spelling every op out at a fixed depth, and keeps the wire schema small enough to pass on a command line.
+
 **Leaves:** `col`, `const`, and `param` (only inside a function body).
 
 **Operations.** Each has a fixed signature (see Types):
@@ -445,7 +447,7 @@ Expressions are an AST that the engine interprets. There is no regex and no code
 
 **Limits** (config): depth 8 per expression; 200 nodes per output column after expanding function calls; 20 functions; 20 tables of up to 500 rows each.
 
-If the provider's structured output doesn't support recursive schemas, spell expressions out to a fixed depth in the schema and check the rest in code.
+If the provider's structured output doesn't support recursive schemas: since learn-v5, this no longer applies to expressions at all - they're formula text (a plain string) on the wire, not a nested schema of any depth. It would still apply to any other genuinely recursive field the rules language might grow later.
 
 **Row filters:** `{ column, op, value? }` for simple cases, or `{ expr }` where expr is any condition. op is one of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `isEmpty`, `notEmpty`, `oneOf` or `notOneOf` (value is an array). Several filters are ANDed.
 

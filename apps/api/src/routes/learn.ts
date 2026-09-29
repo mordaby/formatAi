@@ -56,6 +56,7 @@ async function writeLedger(db: AppDb | null, learnId: string, calls: readonly Ll
       latencyMs: c.latencyMs,
       outcome: c.outcome,
       cacheHit: c.tokensCached > 0,
+      problemCounts: c.problemCounts,
     })),
   );
 }

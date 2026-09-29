@@ -1,52 +1,50 @@
 // The LLM-facing "wire" shape of LearnResult (LEARN_PROMPT §5) and its JSON Schema.
 //
-// Two problems this file solves, both confirmed against the current provider docs
-// (Anthropic via the `claude-api` skill; OpenAI via
-// `apps/api/src/llm/schema/toOpenAiStrictSchema.ts`'s own doc comment) before writing
-// any of this:
+// One problem this file solves (confirmed against the current provider docs - Anthropic
+// via the `claude-api` skill; OpenAI via
+// `apps/api/src/llm/schema/toOpenAiStrictSchema.ts`'s own doc comment - before writing
+// any of this):
 //
-// 1. Open dictionaries. OpenAI strict mode and Anthropic structured outputs both
-//    require `additionalProperties: false` on every object and reject
-//    `additionalProperties` set to anything else - so no genuine open dictionary
-//    (arbitrary keys with a fixed value schema) is allowed anywhere in the schema.
-//    LEARN_PROMPT names three:
-//      - transform.valueMaps[].map                 (Record<input value, output value>)
-//      - transform.expand (columnsToRows).labels    (Record<column id, label text>)
-//      - transform.expand (fixedFanOut).rows[].set  (Record<column id, Expr>)
-//    This file's own "no open-dictionary objects" test found a fourth, structurally
-//    identical problem the prose doesn't name:
-//      - output.summaryRows[].cells / group.summaryRows[].cells (Record<output header, SummaryAgg>)
-//    Each becomes, on the wire, an array of `{ key, value }` pairs instead.
+// Open dictionaries. OpenAI strict mode and Anthropic structured outputs both require
+// `additionalProperties: false` on every object and reject `additionalProperties` set to
+// anything else - so no genuine open dictionary (arbitrary keys with a fixed value
+// schema) is allowed anywhere in the schema. LEARN_PROMPT names three:
+//   - transform.valueMaps[].map                 (Record<input value, output value>)
+//   - transform.expand (columnsToRows).labels    (Record<column id, label text>)
+//   - transform.expand (fixedFanOut).rows[].set  (Record<column id, formula text>)
+// This file's own "no open-dictionary objects" test found a fourth, structurally
+// identical problem the prose doesn't name:
+//   - output.summaryRows[].cells / group.summaryRows[].cells (Record<output header, SummaryAgg>)
+// Each becomes, on the wire, an array of `{ key, value }` pairs instead.
 //
-// 2. Recursive schemas. The real `Expr` AST is recursive (SPEC 8.3), and
-//    `schema.ts`'s `ExprSchema` encodes that with a genuinely self-referencing
-//    `z.lazy`. Checked via the `claude-api` skill against the current Anthropic
-//    structured-outputs docs: `$ref`/`$def` are supported, but a genuinely recursive
-//    (self-referencing) schema is NOT, for every model in the registry
-//    (`claude-haiku-4-5`, `claude-sonnet-5`). OpenAI does support true recursion here
-//    (see `toOpenAiStrictSchema.ts`'s doc comment), so a schema that avoids recursion
-//    entirely works for both providers. SPEC 8.3: "If the provider's structured output
-//    doesn't support recursive schemas, spell expressions out to a fixed depth in the
-//    schema" - this file builds Expr as a strictly DECREASING chain of
-//    `limits.rules.maxExprDepth` (8) JSON Schema `$defs` (level N's node-shaped
-//    children `$ref` level N-1; level 0 is a leaf only), which is `$ref`/`$def`
-//    (supported) without ever referencing itself or a later level - not "recursive"
-//    in the sense the docs mean, and structurally caps every expression the LLM can
-//    return at the same depth `checkRules` already enforces at runtime.
+// learn-v5 (SPEC 8.3/LEARN_PROMPT §2): the LLM writes every expression as FORMULA TEXT
+// (e.g. "round(amount * 0.17, 2)") instead of a JSON tree - `packages/engine/src/
+// formula`'s `parseFormula`/`printFormula` convert between that text and the real,
+// recursive `Expr` AST every other part of the system still uses unchanged (stored
+// rules, the engine, the type checker, every golden/eval fixture). This sidesteps the
+// earlier "Expr is recursive, structured outputs can't express that" problem entirely -
+// there's no longer an Expr sub-schema on the wire at all, just a plain `z.string()` at
+// each of the four positions SPEC 8.3 defines (`transform.computed[].expr`,
+// `input.rowFilters[].expr`, `transform.expand` (fixedFanOut)'s `rows[].set` values,
+// `transform.functions[].body`) - which is also what shrank the wire schema from ~92,700
+// to a few thousand characters (the old fixed-depth Expr chain, repeated at each of
+// `limits.rules.maxExprDepth` levels, was almost the entire size). `apps/api/src/learn`
+// runs `packages/engine`'s `formulaRulesFromWire`/`formulaRulesToWire` immediately after
+// (before)/before (after) this file's own `fromWire`/`toWire` pair conversion, turning
+// formula text into/out of real `Expr` trees; this file itself never parses or prints a
+// formula - it only knows these four positions are strings now, not Expr sub-schemas.
 //
-// Both problems are schema-SHAPE-only: at runtime, `toWire`/`fromWire` convert between
-// the wire shape (pairs, a depth-bounded-but-otherwise-identical Expr tree) and the
-// real `LearnResult`/`Rules` shape (records, the real recursive `Expr`) that
+// Both problems (open dictionaries here, Expr-as-text in `packages/engine/src/formula`)
+// are schema-SHAPE-only: at runtime, `toWire`/`fromWire` convert between the wire shape
+// (pairs) and the real `LearnResult`/`Rules` shape (records) that
 // `checkRules`/`typeCheck`/the engine already work with. Nothing downstream of
 // `fromWire` needs to know the wire format ever existed.
 import { z } from 'zod';
-import { limits } from '../config/limits';
 import type { SummaryAgg } from '../payload';
 import {
   AssumptionSchema,
   buildComputedSchema,
   buildExpandSchema,
-  buildExprSchema,
   buildGroupSchema,
   buildRowFilterSchema,
   buildRulesFunctionSchema,
@@ -54,7 +52,6 @@ import {
   buildSummaryRowSchema,
   buildValueMapSchema,
   DedupeSchema,
-  ExprLeafSchema,
   HeaderRowSchema,
   InputColumnSchema,
   InputSheetSelectorSchema,
@@ -114,38 +111,16 @@ function pairsToRecord(value: unknown): unknown {
   return record;
 }
 
-// ---------- The depth-bounded Expr chain (see file doc comment, point 2) ----------
-
-/**
- * A private zod registry (no global-state pollution via `z.globalRegistry`): each
- * depth level gets a unique id here, which is what makes `z.toJSONSchema` hoist it
- * into `$defs` and reference it by `$ref` everywhere it's used, instead of inlining it
- * (confirmed empirically - without a registered id, `z.toJSONSchema` inlines a reused
- * schema object at every use site rather than deduplicating it, which would make a
- * naive depth-N chain of these ~40-branch unions exponential in size).
- */
-const exprDepthRegistry = z.registry<{ id: string }>();
-
-/**
- * Builds the depth-bounded Expr schema: `limits.rules.maxExprDepth` (8) `$defs` levels,
- * level 0 = `ExprLeafSchema` alone (a leaf has depth 1 - SPEC 8.3/`checkRules`'s
- * `exprDepth` - so nothing may nest under it), level N = `buildExprSchema` applied to
- * level N-1 (one more level of nesting allowed). The returned schema (the last level
- * built) allows expression trees up to depth `maxDepth`, matching `checkRules`'s own
- * runtime depth check - so an expression the wire schema accepts can never fail that
- * check for being too deep.
- */
-function buildDepthBoundedExprSchema(maxDepth: number): z.ZodType<Expr> {
-  let level = ExprLeafSchema as z.ZodType<Expr>;
-  exprDepthRegistry.add(level, { id: 'exprDepth0' });
-  for (let depth = 1; depth < maxDepth; depth++) {
-    level = buildExprSchema(level);
-    exprDepthRegistry.add(level, { id: `exprDepth${depth}` });
-  }
-  return level;
-}
-
-const WireExprSchema = buildDepthBoundedExprSchema(limits.rules.maxExprDepth);
+// ---------- Expr positions are formula TEXT on the wire (learn-v5) ----------
+// SPEC 8.3's four Expr positions (`transform.computed[].expr`, `input.rowFilters[].expr`,
+// `transform.expand` (fixedFanOut)'s `rows[].set` values, `transform.functions[].body`)
+// are plain strings here - formula text, parsed/printed by `packages/engine/src/formula`
+// one layer up (`apps/api/src/learn`), never by this file. Cast to `z.ZodType<Expr>` only
+// to satisfy `schema.ts`'s `buildXSchema(exprSchema: z.ZodType<Expr>)` factories, which
+// this file reuses purely for their STRUCTURAL shape (they're never `.parse()`d - the
+// real gate is `LearnResultSchema.safeParse`, run only after `fromWire` AND
+// `formulaRulesFromWire` have already turned these strings back into real `Expr` trees).
+const WireExprSchema = z.string() as unknown as z.ZodType<Expr>;
 
 // ---------- Wire schema pieces (see file doc comment, point 1) ----------
 
@@ -197,13 +172,13 @@ const WireLearnResultSchema = z.strictObject({
 
 /**
  * The JSON Schema sent to the LLM as the structured-output constraint for a learn or
- * repair call (SPEC 9.1, LEARN_PROMPT §5): no open dictionaries, and `Expr` spelled out
- * to `limits.rules.maxExprDepth` instead of a genuinely recursive `$ref` (see the file
- * doc comment). Use this - never `./jsonSchema.ts`'s `learnResultJsonSchema()` - as the
- * `schema` passed to `apps/api/src/llm`'s `complete()`.
+ * repair call (SPEC 9.1, LEARN_PROMPT §5): no open dictionaries, and every Expr position
+ * a plain string (learn-v5 formula text) rather than a recursive/fixed-depth tree (see
+ * the file doc comment). Use this - never `./jsonSchema.ts`'s `learnResultJsonSchema()` -
+ * as the `schema` passed to `apps/api/src/llm`'s `complete()`.
  */
 export function learnResultWireJsonSchema(): Record<string, unknown> {
-  return z.toJSONSchema(WireLearnResultSchema, { metadata: exprDepthRegistry }) as Record<string, unknown>;
+  return z.toJSONSchema(WireLearnResultSchema) as Record<string, unknown>;
 }
 
 // ---------- Wire-shaped TypeScript types (derived from the real interfaces) ----------

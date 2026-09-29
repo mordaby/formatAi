@@ -1,5 +1,6 @@
 // Shared fixtures for the learn orchestration tests: a minimal but real payload/rules
 // pair (ID copied, Total = Amount x 2), small enough to reason about by hand.
+import { formulaRulesToWire } from '@formatai/engine';
 import { toWire, type LearnPayload, type LearnResult } from '@formatai/shared';
 
 export function basicPayload(overrides: Partial<LearnPayload> = {}): LearnPayload {
@@ -90,7 +91,16 @@ export function wrongRoundingRules(): LearnResult {
   };
 }
 
-/** Invalid at the schema layer: an unknown op. */
+/**
+ * Invalid at the schema layer: an unknown op, sent as a raw (non-string) Expr node
+ * directly on the wire, bypassing learn-v5's formula-text step - the real structured-
+ * output schema would never let a model emit this (every expr position is a plain
+ * `string`, SPEC 8.3), but `runChecks`'s layer-0 (`formulaRulesFromWire`) only ever
+ * touches STRING expr positions, so a non-string value here passes straight through to
+ * `LearnResultSchema.safeParse`, which is what actually rejects the unknown op - the
+ * same defense-in-depth `fromWire`'s own tests rely on for a provider that doesn't
+ * fully enforce its schema.
+ */
 export function schemaBrokenRulesJson(): unknown {
   const rules = correctRules();
   return toWire({
@@ -102,10 +112,14 @@ export function schemaBrokenRulesJson(): unknown {
   });
 }
 
+/** learn-v5: the LLM writes every expr as formula text - `formulaRulesToWire` prints
+ * `correctRules()`'s real Expr trees back to that text before the usual pairs
+ * conversion, so this is exactly the wire shape a real structured-output call returns. */
 export function correctRulesWireJson(): unknown {
-  return toWire(correctRules());
+  // See learn.ts's repairContentBlock for why this structural cast is safe.
+  return toWire(formulaRulesToWire(correctRules()) as unknown as LearnResult);
 }
 
 export function wrongRoundingWireJson(): unknown {
-  return toWire(wrongRoundingRules());
+  return toWire(formulaRulesToWire(wrongRoundingRules()) as unknown as LearnResult);
 }

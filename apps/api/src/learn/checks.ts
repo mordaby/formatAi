@@ -9,11 +9,12 @@
 // collected. Layer 6 (the overfitting lint) is never a gate: it always runs and always
 // appends its findings to the returned rules' `assumptions`, regardless of what else
 // failed, since it costs nothing and the caller may still show this attempt to a human.
-import { checkFormatLock, checkLimits, typeCheck } from '@formatai/engine';
+import { checkFormatLock, checkLimits, formulaRulesFromWire, printFormula, typeCheck } from '@formatai/engine';
 import {
   checkRules,
   fromWire,
   LearnResultSchema,
+  type Expr,
   type Format,
   type LearnResult,
   type ProfileType,
@@ -24,6 +25,53 @@ import {
 } from '@formatai/shared';
 import { overfitLint } from './overfitLint.js';
 import { runOnSamples } from './sampleRun.js';
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function looksLikeExpr(v: unknown): v is Expr {
+  return isRecord(v) && ('col' in v || 'const' in v || 'param' in v || 'op' in v);
+}
+
+/** Dotted/bracketed path ("transform.computed[1].expr.args[0]") -> the value there, or
+ * `undefined` if any segment doesn't resolve. Used only to look up a sub-expression for
+ * `quoteExprInMessage` below - never throws on a malformed/out-of-range path. */
+function getAtPath(root: unknown, path: string): unknown {
+  const tokens = path.match(/[^.[\]]+/g) ?? [];
+  let cur: unknown = root;
+  for (const t of tokens) {
+    if (cur == null) return undefined;
+    if (Array.isArray(cur)) {
+      const idx = Number(t);
+      cur = Number.isInteger(idx) ? cur[idx] : undefined;
+    } else if (typeof cur === 'object') {
+      cur = (cur as Record<string, unknown>)[t];
+    } else {
+      return undefined;
+    }
+  }
+  return cur;
+}
+
+/**
+ * SPEC 9.3: a repair message is only actionable if the model can see what it wrote.
+ * `typeCheck`/`checkLimits` report a dotted path into the rules tree, not the
+ * expression itself - this resolves that path against the already-parsed `rules` (real
+ * Expr trees, learn-v5) and appends the offending sub-expression as formula TEXT (the
+ * same notation the model itself writes), so a `type`/`limit` repair problem reads like
+ * `"expected decimal, got text; use toNumber (in: round(amount, 2))"` instead of only
+ * naming a path the model has no way to resolve on its own.
+ */
+function quoteExprInMessage(rules: LearnResult, path: string, message: string): string {
+  const node = getAtPath(rules, path);
+  if (!looksLikeExpr(node)) return message;
+  try {
+    return `${message} (in: ${printFormula(node)})`;
+  } catch {
+    return message;
+  }
+}
 
 export interface ChecksOptions {
   tier: Tier;
@@ -96,9 +144,22 @@ function toProfileType(t: ProfileType): string {
 
 /** Runs every SPEC 9.2 layer, in order, on one raw (wire-shaped) LLM response. */
 export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksOptions): ChecksResult {
+  // ----- Layer 0: formula text -> Expr trees (learn-v5) -----
+  // `fromWire` (shared) turns the `{key,value}[]` pairs back into records; the four Expr
+  // positions inside are still formula TEXT at that point (the wire schema never had an
+  // Expr sub-schema, SPEC 8.3/`wire.ts`) - `formulaRulesFromWire` (engine) parses them.
+  // A formula that fails to parse is left as a string and reported as its own `formula`
+  // problem (with an offset INTO that formula, for tracking how often models write
+  // invalid formulas); this attempt stops here, same as layer 1 below, since there's no
+  // point running reference/type/limit checks against a tree that still has raw text
+  // sitting where an Expr belongs.
+  const { rules: formulaDecoded, problems: formulaProblems } = formulaRulesFromWire(fromWire(rawJson));
+  if (formulaProblems.length > 0) {
+    return { problems: formulaProblems, rules: null };
+  }
+
   // ----- Layer 1: structure -----
-  const decoded = fromWire(rawJson);
-  const parsed = LearnResultSchema.safeParse(decoded);
+  const parsed = LearnResultSchema.safeParse(formulaDecoded);
   if (!parsed.success) {
     const problems: RepairProblem[] = parsed.error.issues.map((issue) => ({
       kind: 'schema',
@@ -121,13 +182,19 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
   for (const c of payload.output.columns) outputTypes[c.header] = toProfileType(c.type);
   problems.push(
     ...typeCheck(rules, { inputProfile, outputTypes }).map(
-      (p): RepairProblem => ({ kind: 'type', path: p.path, message: p.message }),
+      (p): RepairProblem => ({ kind: 'type', path: p.path, message: quoteExprInMessage(rules, p.path, p.message) }),
     ),
   );
 
   // ----- Layer 4: limits and safety -----
   problems.push(
-    ...checkLimits(rules, opts.tier).map((p): RepairProblem => ({ kind: 'limit', path: p.path, message: p.message })),
+    ...checkLimits(rules, opts.tier).map(
+      (p): RepairProblem => ({
+        kind: 'limit',
+        path: p.path,
+        message: p.path ? quoteExprInMessage(rules, p.path, p.message) : p.message,
+      }),
+    ),
   );
 
   // ----- Layer 5: format lock (attach mode only) -----

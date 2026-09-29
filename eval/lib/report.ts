@@ -2,7 +2,7 @@
 // feature/reason code/domain and a per-case table. `results.csv` carries one row per
 // individual run (case x model x masking x run) for anyone who wants to slice the raw
 // data themselves; the markdown carries the aggregates a human actually reads.
-import type { RunRecord } from './runner.js';
+import { formulaErrorMessagesByRecord, type RunRecord } from './runner.js';
 
 function pct(n: number, d: number): string {
   return d === 0 ? 'n/a' : `${((100 * n) / d).toFixed(0)}%`;
@@ -37,6 +37,11 @@ interface GroupSummary {
   avgTokensCached: number;
   costPerLearnUsd: number;
   avgLatencyMs: number;
+  /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`): how often models
+   * write invalid formula text. */
+  formulaErrorsPerCall: number;
+  shareLearnsWithFormulaError: string;
+  formulaFixedByRepairShare: string;
 }
 
 function groupKey(model: string, masking: boolean): string {
@@ -55,6 +60,11 @@ function summarizeGroup(model: string, masking: boolean, records: readonly RunRe
   const holdOutEligible = records.filter((r) => r.holdOut !== 'n/a');
   const holdOutPass = holdOutEligible.filter((r) => r.holdOut === 'pass').length;
 
+  const totalLlmCalls = llmRuns.reduce((sum, r) => sum + r.llmCalls, 0);
+  const totalFormulaErrors = llmRuns.reduce((sum, r) => sum + r.formulaErrorCount, 0);
+  const withFormulaError = llmRuns.filter((r) => r.firstCallFormulaErrors > 0);
+  const fixedByRepair = withFormulaError.filter((r) => r.formulaFixedByRepair);
+
   return {
     model,
     masking,
@@ -71,6 +81,9 @@ function summarizeGroup(model: string, masking: boolean, records: readonly RunRe
     avgTokensCached: avg(llmRuns.map((r) => r.tokensCached)),
     costPerLearnUsd: avg(llmRuns.map((r) => r.costUsd)),
     avgLatencyMs: avg(llmRuns.map((r) => r.latencyMs)),
+    formulaErrorsPerCall: totalLlmCalls === 0 ? 0 : totalFormulaErrors / totalLlmCalls,
+    shareLearnsWithFormulaError: pct(withFormulaError.length, llmRuns.length),
+    formulaFixedByRepairShare: pct(fixedByRepair.length, withFormulaError.length),
   };
 }
 
@@ -103,6 +116,20 @@ function tally(records: readonly RunRecord[], keyOf: (r: RunRecord) => readonly 
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
+/** Tallies every formula-parse-error MESSAGE seen across all records (via the dev-only
+ * `formulaErrorMessagesByRecord`, SPEC 15: message text never goes through the
+ * production ledger), most common first - for the "top formula error messages" section.
+ * A message is syntax-only (e.g. "expected \")\" at 17"), never user data. */
+function tallyFormulaErrorMessages(records: readonly RunRecord[]): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const r of records) {
+    const messages = formulaErrorMessagesByRecord.get(r);
+    if (!messages) continue;
+    for (const m of messages) counts.set(m, (counts.get(m) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
 /** The reason code embedded in a classification label ("blocked:x" -> "x",
  * "unsupported:a+b" -> ["a","b"]), or the label itself for "failed"/"notVerified". */
 function reasonCodesOf(r: RunRecord): string[] {
@@ -131,7 +158,7 @@ export function buildMarkdownReport(records: RunRecord[], generatedAt: string): 
   const groups = groupSummaries(records);
   lines.push(
     markdownTable(
-      ['Model', 'Masking', 'n', 'Blocked', 'Fast path', 'Schema-valid', 'Verified (1st call)', 'Verified (after repair)', 'Expectation met', 'Hold-out pass', 'Avg tok in', 'Avg tok out', 'Avg tok cached', 'Cost/learn (USD)', 'Avg latency (ms)'],
+      ['Model', 'Masking', 'n', 'Blocked', 'Fast path', 'Schema-valid', 'Verified (1st call)', 'Verified (after repair)', 'Expectation met', 'Hold-out pass', 'Avg tok in', 'Avg tok out', 'Avg tok cached', 'Cost/learn (USD)', 'Avg latency (ms)', 'Formula err/call', 'Learns w/ formula err', 'Fixed by repair'],
       groups.map((g) => [
         g.model,
         g.masking ? 'on' : 'off',
@@ -148,8 +175,20 @@ export function buildMarkdownReport(records: RunRecord[], generatedAt: string): 
         g.avgTokensCached.toFixed(0),
         g.costPerLearnUsd.toFixed(4),
         g.avgLatencyMs.toFixed(0),
+        g.formulaErrorsPerCall.toFixed(2),
+        g.shareLearnsWithFormulaError,
+        g.formulaFixedByRepairShare,
       ]),
     ),
+  );
+  lines.push('');
+
+  lines.push('## Formula errors', '', 'How often models write invalid formula text (learn-v5), and how often a repair call fixes it. Messages are syntax-only (an offset and a parser message) - never user data.', '');
+  const topFormulaMessages = tallyFormulaErrorMessages(records);
+  lines.push(
+    topFormulaMessages.length > 0
+      ? markdownTable(['Message', 'Count'], topFormulaMessages.slice(0, 10).map(([msg, n]) => [msg, n]))
+      : '(no formula errors in this run)',
   );
   lines.push('');
 
@@ -211,6 +250,9 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'costUsd',
   'latencyMs',
   'llmCalls',
+  'formulaErrorCount',
+  'firstCallFormulaErrors',
+  'formulaFixedByRepair',
   'error',
 ];
 
@@ -227,7 +269,7 @@ export function printSummary(records: RunRecord[], log: (line: string) => void =
     log(
       `  ${g.model} masking=${g.masking ? 'on' : 'off'}: blocked ${g.shareBlocked}, fast path ${g.shareFastPath}, ` +
         `expectation met ${g.expectationMet}, hold-out ${g.holdOutPassRate}, verified 1st/after-repair ${g.verifiedFirstCall}/${g.verifiedAfterRepair}, ` +
-        `cost/learn $${g.costPerLearnUsd.toFixed(4)}`,
+        `cost/learn $${g.costPerLearnUsd.toFixed(4)}, formula errs/call ${g.formulaErrorsPerCall.toFixed(2)} (${g.shareLearnsWithFormulaError} of learns, ${g.formulaFixedByRepairShare} fixed by repair)`,
     );
   }
   const failed = records.filter((r) => !r.expectationMet);

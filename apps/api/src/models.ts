@@ -4,6 +4,7 @@
  * (real constants only, after unmasking) and event props (counts/ids/codes).
  */
 import type { ObjectId } from 'mongodb';
+import type { RepairProblem } from '@formatai/shared';
 
 export type AuthProvider = 'google' | 'microsoft';
 
@@ -129,6 +130,10 @@ export interface LlmCallDoc {
   latencyMs: number;
   outcome: string;
   cacheHit: boolean;
+  /** SPEC 9.2: counts only, never formula text or any other payload/response content -
+   * so the product can track things like "how often models write invalid formulas"
+   * straight from the ledger. */
+  problemCounts: Record<RepairProblem['kind'], number>;
 }
 
 /**

@@ -85,6 +85,39 @@ describe('claude-cli provider - argument building', () => {
     expect(existsSync(args[args.indexOf('--system-prompt-file') + 1]!)).toBe(false);
   });
 
+  it('strips $schema before passing it to --json-schema (the CLI treats it as an unresolvable ref, not a version tag)', async () => {
+    const spawn = vi.fn().mockImplementation(() => fakeChild(successResult({ answer: 'hi' })));
+    const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development', cliPath: 'claude' });
+    const schemaWithMeta = { $schema: 'https://json-schema.org/draft/2020-12/schema', ...baseRequest().schema };
+
+    await provider.complete(baseRequest({ schema: schemaWithMeta }));
+
+    const args = spawn.mock.calls[0]![1] as string[];
+    const schemaArg = args[args.indexOf('--json-schema') + 1]!;
+    expect(schemaArg).not.toContain('$schema');
+    expect(JSON.parse(schemaArg)).toEqual(baseRequest().schema);
+  });
+
+  it('puts a large schema in the system-prompt file instead of --json-schema (Windows command-line limit)', async () => {
+    // Build a schema whose JSON is deliberately over the 20,000-char guard.
+    const bigEnum = Array.from({ length: 3000 }, (_, i) => `value${i}`);
+    const bigSchema = { type: 'object', properties: { answer: { type: 'string', enum: bigEnum } }, required: ['answer'] };
+    let systemFileContent: string | undefined;
+    const spawn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
+      systemFileContent = readFileSync(args[args.indexOf('--system-prompt-file') + 1]!, 'utf8');
+      return fakeChild(successResult({ answer: 'hi' }));
+    });
+    const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development', cliPath: 'claude' });
+
+    await provider.complete(baseRequest({ schema: bigSchema }));
+
+    const args = spawn.mock.calls[0]![1] as string[];
+    expect(args).not.toContain('--json-schema');
+    expect(systemFileContent).toContain('you are a rules writer');
+    expect(systemFileContent).toContain('Return ONLY a single JSON object');
+    expect(systemFileContent).toContain(JSON.stringify(bigSchema));
+  });
+
   it('resolves the bundled claude.exe next to the npm claude.cmd shim on Windows', () => {
     const npmDir = join('C:', 'npm');
     const exe = join(npmDir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');

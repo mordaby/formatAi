@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RunRecord } from '../lib/runner.js';
+import { formulaErrorMessagesByRecord, type RunRecord } from '../lib/runner.js';
 import { buildCsvReport, buildMarkdownReport, printSummary } from '../lib/report.js';
 
 function record(overrides: Partial<RunRecord> = {}): RunRecord {
@@ -25,6 +25,9 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     costUsd: 0,
     latencyMs: 0,
     llmCalls: 0,
+    formulaErrorCount: 0,
+    firstCallFormulaErrors: 0,
+    formulaFixedByRepair: false,
     ...overrides,
   };
 }
@@ -104,6 +107,43 @@ describe('buildMarkdownReport', () => {
   });
 });
 
+describe('buildMarkdownReport: formula errors (SPEC 9.2 formula-kind RepairProblem)', () => {
+  it('reports the formula-error columns per model x masking group', () => {
+    const records = [
+      record({ model: 'haiku', masking: false, path: 'llm', llmCalls: 2, formulaErrorCount: 1, firstCallFormulaErrors: 1, formulaFixedByRepair: true }),
+      record({ model: 'haiku', masking: false, path: 'llm', llmCalls: 1, formulaErrorCount: 0, firstCallFormulaErrors: 0, formulaFixedByRepair: false }),
+    ];
+    const md = buildMarkdownReport(records, '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('Formula err/call');
+    expect(md).toContain('Learns w/ formula err');
+    expect(md).toContain('Fixed by repair');
+    // 1 formula error over 3 total llm calls = 0.33/call; 1 of 2 learns had one; 1 of 1 fixed.
+    expect(md).toMatch(/\|\s*0\.33\s*\|\s*50%\s*\|\s*100%\s*\|/);
+  });
+
+  it('lists the top formula error messages, most common first, with no formula text otherwise present', () => {
+    const a = record({ path: 'llm' });
+    const b = record({ path: 'llm' });
+    const c = record({ path: 'llm' });
+    formulaErrorMessagesByRecord.set(a, ['expected ")" at 17']);
+    formulaErrorMessagesByRecord.set(b, ['expected ")" at 17']);
+    formulaErrorMessagesByRecord.set(c, ['round() needs 2 argument(s)']);
+
+    const md = buildMarkdownReport([a, b, c], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('## Formula errors');
+    const idxCommon = md.indexOf('expected ")" at 17');
+    const idxRare = md.indexOf('round() needs 2 argument(s)');
+    expect(idxCommon).toBeGreaterThan(-1);
+    expect(idxRare).toBeGreaterThan(idxCommon); // more common message listed first
+    expect(md).toContain('| expected ")" at 17 | 2 |');
+  });
+
+  it('shows a placeholder when there are no formula errors', () => {
+    const md = buildMarkdownReport([record()], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('(no formula errors in this run)');
+  });
+});
+
 describe('buildCsvReport', () => {
   it('writes one header row plus one row per record', () => {
     const csv = buildCsvReport([record(), record({ case: 'other' })]);
@@ -117,6 +157,19 @@ describe('buildCsvReport', () => {
   it('quotes fields containing commas', () => {
     const csv = buildCsvReport([record({ error: 'failed: a, b' })]);
     expect(csv).toContain('"failed: a, b"');
+  });
+
+  it('includes the formula-error columns', () => {
+    const csv = buildCsvReport([record({ formulaErrorCount: 2, firstCallFormulaErrors: 1, formulaFixedByRepair: true })]);
+    const [header, row] = csv.trim().split('\n');
+    expect(header).toContain('formulaErrorCount');
+    expect(header).toContain('firstCallFormulaErrors');
+    expect(header).toContain('formulaFixedByRepair');
+    const headerCols = header!.split(',');
+    const rowCols = row!.split(',');
+    expect(rowCols[headerCols.indexOf('formulaErrorCount')]).toBe('2');
+    expect(rowCols[headerCols.indexOf('firstCallFormulaErrors')]).toBe('1');
+    expect(rowCols[headerCols.indexOf('formulaFixedByRepair')]).toBe('true');
   });
 });
 

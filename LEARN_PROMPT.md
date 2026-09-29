@@ -1,6 +1,8 @@
-# LEARN_PROMPT: the learn call (promptVersion: learn-v4)
+# LEARN_PROMPT: the learn call (promptVersion: learn-v5)
 
-This file defines exactly what is sent to the LLM when a format is learned from two files. The code keeps the system prompt in `packages/shared/prompts/learn-v4.txt`, copied verbatim from section 2. Any change to it means a new `promptVersion` and a new eval run.
+This file defines exactly what is sent to the LLM when a format is learned from two files. The code keeps the system prompt in `packages/shared/prompts/learn-v5.txt`, copied verbatim from section 2. Any change to it means a new `promptVersion` and a new eval run.
+
+**learn-v5 changes from learn-v4:** expressions are written as formula text. The LLM no longer writes `expr` as a JSON tree; it writes a formula string (e.g. `round(amount * 0.17, 2)`, `if(status = "VIP", price * 0.9, price)`, `lookup("rates", code, "rate")`). A strict parser (`packages/engine/src/formula`) turns that text into the exact same whitelisted AST the engine has always run and checked - nothing is ever executed as code, and an unknown function/identifier is always an error. This applies to `transform.computed[].expr`, `input.rowFilters[].expr`, `transform.expand` (fixedFanOut)'s `rows[].set` values, and `transform.functions[].body`. Stored rules files, the engine, the type checker and every golden/eval fixture are unchanged (still JSON trees) - only the LLM/editor's TEXT form changed. This is also what shrank the wire JSON Schema from ~92,700 to a few thousand characters (Anthropic structured outputs can't express a recursive schema, so the old format spelled `Expr` out at each of 8 nesting levels; a formula is just a `string` on the wire) and let it be passed to the dev CLI directly on Windows (which caps a command line at ~32k chars).
 
 **learn-v4 changes from learn-v3:** generic summary rows (SPEC 8.6, 8.12, 21). `output.grandTotal` / `transform.group.subtotal` (sum-only, id-based) are replaced by `output.summaryRows` / `transform.group.summaryRows`: one or more rows, each naming its cells by OUTPUT HEADER with an aggregate (`sum`, `count`, `min`, `max`, `average`, `first`, `last`). The LLM only ever writes `summaryRows`.
 
@@ -128,33 +130,41 @@ When the data allows more than one reading, choose as described above and add an
 
 The engine runs in this fixed order: read → normalize types → rowFilters → dedupe → expand → computed → valueMaps → sort → group → output layout → validations.
 
-Expressions (expr) are trees.
-Leaves: {"col": id}, {"const": value}, and inside a function body {"param": name}.
-Nodes: {"op": name, ...}:
-- add, sub, mul, div, min, max: "args": [expr, expr, ...]. Exact decimal arithmetic. Division by zero flags the row.
-- neg, abs, floor, ceil: "arg". mod: "args": two. round: "arg", "digits". Rounds half away from zero, like Excel ROUND.
-- concat: "args". substr: "arg", "start", "length". trim, upper, lower, length: "arg". replaceText: "arg", "find", "with" (literal text). padLeft: "arg", "length", "char". split: "arg", "separator", "index" (1-based; negative counts from the end).
-- toNumber: "arg". toText: "arg", "format" (optional number or date format).
-- datePart: "arg", "part" (year | month | day). dateFormat: "arg", "format". dateAdd: "arg", "days" | "months" | "years". dateDiff: "args": two dates, "unit" (days | months | years). endOfMonth: "arg".
-- if: "cond", "then", "else". switch: "cases": [{"when": cond, "then": expr}], "else". coalesce: "args".
-- lookup: "table", "key": expr, "return": column name, "onMissing": flag | empty | keep.
-- call: "fn", "args".
-- conditions: eq, ne, gt, gte, lt, lte ("args": two), isEmpty, notEmpty ("arg"), oneOf ("arg", "values"), startsWith, endsWith, contains ("arg", "text"), and, or ("args"), not ("arg").
-Types: text, idLike, integer, decimal, date, boolean. Results: arithmetic → decimal (integer when all args are integer and the op is add, sub, mul, mod, min or max); text ops → text; length, datePart, dateDiff → integer; dateAdd, endOfMonth → date; conditions → boolean.
-Limits: depth 8 per expression, 200 nodes per output column after expanding calls, 20 functions, 20 tables of up to 500 rows.
+Write every expression (expr) as FORMULA TEXT, not a JSON tree, e.g. "round(amount * 0.17, 2)". A strict parser turns your text into the engine's own typed operation tree - nothing you write is ever executed as code, and an unknown function or identifier is always an error.
 
-functions: [{"name": camelCase, "params": [{"name", "type"}], "returns": type, "body": expr}]. A body uses params, constants and other functions defined above it, never col.
+Numbers: decimal, e.g. 12, 3.14, -2 (a leading "-" negates a number or any expression, e.g. -amount). Strings: double-quoted, e.g. "VIP", with \" and \\ as the only escapes - any Unicode, Hebrew included, is fine inside them. true, false, null are literals. An identifier is a column id, e.g. amount, status - or, inside a function's own body only, one of that function's params.
+
+The only infix operators are + - * / (usual precedence: * / before + -, left to right) and the six comparisons = <> < > <= >= (lower precedence than + -, and not chainable: write one comparison at a time). Parentheses group as usual. Every other operation is a function call name(arg1, arg2, ...), in this exact, fixed argument order - never invent an operation, an argument, or reorder one:
+- round(x, digits): rounds half away from zero, like Excel ROUND. floor(x). ceil(x). abs(x). neg(x) (same as -x).
+- mod(a, b). min(a, b, ...) and max(a, b, ...): 1 or more.
+- concat(a, b, ...): 1 or more, joined as text. substr(x, start, length) (1-based; a negative start counts from the end). trim(x). upper(x). lower(x). length(x).
+- replaceText(x, "find", "with") (literal text, never a pattern). padLeft(x, length, "c") ("c" is exactly one character). split(x, "separator", index) (1-based; a negative index counts from the end).
+- toNumber(x): a value that doesn't parse flags the row. toText(x) or toText(x, "format") (a number or date format).
+- datePart(x, "year" | "month" | "day"). dateFormat(x, "format"). dateAdd(x, amount, "days" | "months" | "years") (amount may be negative). dateDiff(a, b, "days" | "months" | "years"). endOfMonth(x).
+- if(cond, then, else). switch(cond1, value1, cond2, value2, ..., elseValue): 1 or more cases, then a final else value. coalesce(a, b, ...): 1 or more, the first non-empty.
+- lookup("table", key, "returnColumn") or lookup("table", key, "returnColumn", "onMissing") against a constant table in tables (below); onMissing is "flag" | "empty" | "keep", default "flag" when you omit it.
+- a call to any name that is NOT one of these built-ins, e.g. netOf(gross, rate), calls a function you defined in functions (below).
+- isEmpty(x). notEmpty(x). oneOf(x, "a", "b", ...): 1 or more literal values. startsWith(x, "t"), endsWith(x, "t"), contains(x, "t") (literal text). and(a, b, ...) and or(a, b, ...): 1 or more. not(x).
+
+"table"/"returnColumn" names, digits, formats, units, single characters and onMissing are always a fixed literal, never an expression - write the exact value directly, e.g. round(x, 2) not round(x, digits).
+
+Types: text, idLike, integer, decimal, date, boolean. Results: arithmetic → decimal (integer when every argument is integer and the operation is +, -, *, mod, min or max); text operations → text; length, datePart, dateDiff → integer; dateAdd, endOfMonth → date; conditions → boolean.
+Limits: 8 levels of nesting per expression, 200 nodes per output column after expanding calls, 20 functions, 20 tables of up to 500 rows, 4000 characters per formula.
+
+More examples: round(amount * 0.17, 2)   if(status = "VIP", price * 0.9, price)   lookup("rates", code, "rate")   concat(firstName, " ", lastName)   and(amount > 0, status <> "cancelled")
+
+functions: [{"name": camelCase, "params": [{"name", "type"}], "returns": type, "body": formula text}]. A body's formula may use its own params, constants and other functions defined above it - never a column.
 
 tables: [{"name", "columns": [names], "rows": [[values]]}]. The first column is the key and must be unique.
 
-rowFilters: [{"column": id, "op": eq | ne | gt | gte | lt | lte | isEmpty | notEmpty | oneOf | notOneOf, "value": ...} or {"expr": condition}]. All filters must pass.
+rowFilters: [{"column": id, "op": eq | ne | gt | gte | lt | lte | isEmpty | notEmpty | oneOf | notOneOf, "value": ...} or {"expr": formula text}]. All filters must pass.
 
 dedupe: {"keys": [ids] | "all", "keep": "first" | "last", "action": "remove" | "flag"}. Values are compared after type normalization.
 
 expand, one of:
 - {"mode": "columnsToRows", "columns": [ids], "labelId": id, "labels": {id: text}, "valueId": id, "valueType": type, "skipEmpty": bool}. One new row per listed column. labelId holds the label (from labels, else the column's header). valueId holds the cell. The listed columns are gone after expand.
 - {"mode": "splitCell", "column": id, "separator": text, "trim": bool, "partId": id, "indexId": id, "countId": id, "skipEmpty": bool}. One new row per part. indexId (1-based part number) and countId (number of parts) are optional.
-- {"mode": "fixedFanOut", "rows": [{"set": {id: expr}}, ...]}. Each input row becomes one row per entry, in order. set creates or overwrites columns for that row.
+- {"mode": "fixedFanOut", "rows": [{"set": {id: formula text}}, ...]}. Each input row becomes one row per entry, in order. set creates or overwrites columns for that row.
 Every other column is copied to each new row.
 
 valueMaps: [{"column": id, "map": {from: to}, "onMissing": "flag" | "keep"}].
@@ -180,7 +190,7 @@ Date format tokens: D, DD, M, MM, MMMM (month name in output.language), YY, YYYY
 </example_payload>
 
 <example_result>
-{"schemaVersion":1,"input":{"sheet":{"pick":"first"},"headerRow":"auto","columns":[{"id":"customerName","header":"שם לקוח","type":"text","required":true},{"id":"idNumber","header":"ת.ז.","type":"idLike","padLeft":9,"required":true},{"id":"status","header":"סטטוס","type":"text"},{"id":"amount","header":"סכום","type":"decimal","required":true}],"rowFilters":[{"column":"status","op":"ne","value":"צחלדפ"}]},"transform":{"computed":[{"id":"amountWithVat","type":"decimal","expr":{"op":"round","digits":2,"arg":{"op":"mul","args":[{"col":"amount"},{"const":1.18}]}}}],"valueMaps":[],"sort":[]},"output":{"file":{"type":"xlsx"},"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"columns":[{"header":"ת.ז.","from":"idNumber","format":"@","width":12},{"header":"שם","from":"customerName","format":"General","width":18},{"header":"סכום כולל מע\"מ","from":"amountWithVat","format":"#,##0.00","width":14}],"headerStyle":{"bold":true}},"validations":[{"column":"idNumber","rule":"israeliIdChecksum","severity":"flag"},{"column":"idNumber","rule":"unique","severity":"flag"},{"column":"amount","rule":"range","min":0,"severity":"flag"}],"unsupported":[],"assumptions":[{"reasonCode":"filterGuessed"}]}
+{"schemaVersion":1,"input":{"sheet":{"pick":"first"},"headerRow":"auto","columns":[{"id":"customerName","header":"שם לקוח","type":"text","required":true},{"id":"idNumber","header":"ת.ז.","type":"idLike","padLeft":9,"required":true},{"id":"status","header":"סטטוס","type":"text"},{"id":"amount","header":"סכום","type":"decimal","required":true}],"rowFilters":[{"column":"status","op":"ne","value":"צחלדפ"}]},"transform":{"computed":[{"id":"amountWithVat","type":"decimal","expr":"round(amount * 1.18, 2)"}],"valueMaps":[],"sort":[]},"output":{"file":{"type":"xlsx"},"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"columns":[{"header":"ת.ז.","from":"idNumber","format":"@","width":12},{"header":"שם","from":"customerName","format":"General","width":18},{"header":"סכום כולל מע\"מ","from":"amountWithVat","format":"#,##0.00","width":14}],"headerStyle":{"bold":true}},"validations":[{"column":"idNumber","rule":"israeliIdChecksum","severity":"flag"},{"column":"idNumber","rule":"unique","severity":"flag"},{"column":"amount","rule":"range","min":0,"severity":"flag"}],"unsupported":[],"assumptions":[{"reasonCode":"filterGuessed"}]}
 </example_result>
 
 In the example, the filter keeps every status except the one seen only in dropped rows ("ne"), so a new status would stay visible, and filterGuessed is recorded because "eq" would also have fit.
@@ -243,9 +253,10 @@ The second content block of a repair call:
 ```json
 {
   "mode": "repair",
-  "previousRules": { "...": "the LearnResult returned last time" },
+  "previousRules": { "...": "the LearnResult returned last time, with every expr printed back as formula text" },
   "problems": [
-    { "kind": "schema", "path": "transform.computed[0].expr", "message": "unknown op" },
+    { "kind": "formula", "path": "transform.computed[0].expr", "offset": 17, "message": "expected \")\" at 17" },
+    { "kind": "schema", "path": "transform.computed[0].type", "message": "invalid enum value" },
     { "kind": "reference", "message": "column id 'amt' does not exist" },
     { "kind": "diff", "out": 2, "sample": 1, "expected": "403.62", "actual": "403.61" },
     { "kind": "diff", "out": 3, "sample": 2, "familyRow": 1, "expected": "...", "actual": "..." },
@@ -253,14 +264,16 @@ The second content block of a repair call:
     { "kind": "rowCount", "expected": 1790, "actual": 1843 },
     { "kind": "layout", "message": "expected 1 blank row after each group, found 0" },
     { "kind": "formatMismatch", "path": "output.columns[3].format", "message": "must equal the format" },
-    { "kind": "type", "path": "transform.computed[1].expr.args[0]", "message": "expected decimal, got text; use toNumber" },
+    { "kind": "type", "path": "transform.computed[1].expr", "message": "expected decimal, got text; use toNumber (in: toNumber(amount))" },
     { "kind": "limit", "message": "output column 4 uses 260 nodes after expanding calls; the limit is 200" }
   ]
 }
 ```
 
+- `formula` is a formula-text parse error: `offset` is the character offset INTO that one formula string (not the payload). Fix only the formula named by `path`.
 - `sample` refers to a sample in the payload. `familyRow` points to a row inside a family sample (0-based).
 - `row` carries a failing row from the browser's full verification (masked when masking is on). At most 10 `diff` problems are sent.
+- A `type`/`limit` problem's message may quote the offending formula text in parentheses ("in: ...") - read it, it's the exact sub-expression that's wrong.
 - Add this rule to the user content: "Fix only what the problems require. Keep everything else identical." The system prompt doesn't change, so the cache still hits.
 
 ## 5. Output: `LearnResult`
@@ -269,10 +282,13 @@ This is the rules object from SPEC section 8, without `name` and `meta`. The JSO
 - require `schemaVersion` (const 1), `input`, `transform`, `output`, `validations`, `unsupported` and `assumptions`;
 - allow `output.columns[].from` to be null;
 - make `transform.dedupe` and `transform.expand` optional;
-- restrict every `op`, `rule`, `reasonCode` and `severity` to its enum;
-- make `transform.functions` and `transform.tables` optional, and include every operation in SPEC 8.3 with its parameters;
+- restrict every `rule`, `reasonCode` and `severity` to its enum;
+- make every expr position (`transform.computed[].expr`, `input.rowFilters[].expr`, `transform.expand` fixedFanOut's `rows[].set` values, `transform.functions[].body`) a plain `string` (learn-v5 formula text, section 2's "Operations") - never a nested object, and never spelled out to a fixed depth;
+- make `transform.functions` and `transform.tables` optional;
 - make `output.file` optional (default `{ "type": "xlsx" }`) and `validations[].on` optional (default `"input"`);
 - set `additionalProperties: false` everywhere.
+
+Stored rules (what the engine actually runs, what golden/eval fixtures contain, what the editor's tree view shows) keep every expression as the real JSON tree, unchanged since v1 - only the wire format the LLM reads and writes is formula text. `apps/api/src/learn` parses formula text into that tree (`packages/engine/src/formula`'s `formulaRulesFromWire`) right after the `{key,value}`-pairs conversion (`fromWire`), and prints it back to formula text (`formulaRulesToWire`) right before that same conversion (`toWire`) when building a repair call's `previousRules`.
 
 After the call, code checks follow the layers in SPEC 9.2 (structure, references, static types, limits, the format lock in attach mode, overfitting lint, sample run), then the browser unmasks constants (SPEC 7.2).
 

@@ -89,6 +89,19 @@ describe('POST /api/learn', () => {
     });
     expect(docs[0]!.learnId).toEqual(expect.any(String));
     expect(docs[0]!.ts).toBeInstanceOf(Date);
+    // SPEC 9.2: the ledger tracks how often models write invalid formulas - counts
+    // only, never message text or any other payload/response content.
+    expect(docs[0]!.problemCounts).toEqual({
+      formula: 0,
+      schema: 0,
+      reference: 0,
+      type: 0,
+      limit: 0,
+      formatMismatch: 0,
+      diff: 0,
+      rowCount: 0,
+      layout: 0,
+    });
   });
 });
 

@@ -204,6 +204,11 @@ export interface LearnPayload {
 // ---------- Repair (LEARN_PROMPT §4) ----------
 
 export type RepairProblem =
+  /** learn-v5: a formula-text parse failure (SPEC 8.3/`packages/engine/src/formula`) -
+   * kept separate from `schema` so the product can track "how often models write
+   * invalid formulas" (offset is the character offset within that one formula string,
+   * not the payload). */
+  | { kind: 'formula'; path: string; offset: number; message: string }
   | { kind: 'schema'; path: string; message: string }
   | { kind: 'reference'; message: string }
   | {

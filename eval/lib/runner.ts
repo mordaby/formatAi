@@ -42,11 +42,37 @@ export interface RunRecord {
   costUsd: number;
   latencyMs: number;
   llmCalls: number;
+  /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
+   * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
+   * run's LLM calls produced, across the learn call and every repair/escalation call. */
+  formulaErrorCount: number;
+  /** The learn (first) call's own formula-error count - "did the model write an
+   * invalid formula on its first try", independent of whether repair later fixed it. */
+  firstCallFormulaErrors: number;
+  /** True when the first call had >=1 formula error and a LATER call (repair or
+   * escalation) had zero - i.e. the model corrected its own invalid formula. */
+  formulaFixedByRepair: boolean;
   error?: string;
 }
 
+/** Dev-only, message-carrying detail behind `formulaErrorCount` (SPEC 15: never part of
+ * the production ledger, which is counts-only) - kept OUTSIDE `RunRecord`/`results.csv`
+ * (a CSV cell is the wrong place for a list of strings) and consumed only by
+ * `report.ts`'s "top formula error messages". Keyed by array index, parallel to the
+ * `RunRecord[]` a single `runMatrix` call returns. */
+export const formulaErrorMessagesByRecord = new WeakMap<RunRecord, readonly string[]>();
+
 function buildEnv(provider: LlmProviderName): Env {
   return { ...loadEnv(), LLM_PROVIDER: provider };
+}
+
+function formulaStats(calls: readonly LlmCallRecord[]): Pick<RunRecord, 'formulaErrorCount' | 'firstCallFormulaErrors' | 'formulaFixedByRepair'> {
+  if (calls.length === 0) return { formulaErrorCount: 0, firstCallFormulaErrors: 0, formulaFixedByRepair: false };
+  const formulaErrorCount = calls.reduce((sum, c) => sum + c.problemCounts.formula, 0);
+  const firstCallFormulaErrors = calls[0]!.problemCounts.formula;
+  const lastCallFormulaErrors = calls[calls.length - 1]!.problemCounts.formula;
+  const formulaFixedByRepair = firstCallFormulaErrors > 0 && calls.length > 1 && lastCallFormulaErrors === 0;
+  return { formulaErrorCount, firstCallFormulaErrors, formulaFixedByRepair };
 }
 
 function sumCalls(calls: readonly LlmCallRecord[]): Pick<RunRecord, 'tokensIn' | 'tokensOut' | 'tokensCached' | 'costUsd' | 'latencyMs' | 'llmCalls'> {
@@ -89,15 +115,32 @@ export interface RunOneOptions {
   target?: Format;
 }
 
+export interface RunLearnResult {
+  result: LearnFromExamplesResult<LlmCallRecord>;
+  /**
+   * Every `formula`-kind `RepairProblem` MESSAGE seen across every LLM call this run
+   * made (learn, repair rounds, escalation) - via `LearnOptions.onAttempt`, the one
+   * dev-only path that carries message text (the ledger's own `LlmCallRecord.
+   * problemCounts` is counts-only, SPEC 15). These are syntax-only formula-parse
+   * messages (e.g. "expected \")\" at 17") with no user data, so the report can list the
+   * most common ones (`report.ts`'s "top formula error messages").
+   */
+  formulaErrorMessages: string[];
+}
+
 /** Runs `learnFromExamples` for one case, under one model/masking/run combination. */
-export async function runLearn(opts: RunOneOptions): Promise<LearnFromExamplesResult<LlmCallRecord>> {
+export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
+  const formulaErrorMessages: string[] = [];
   const learnOpts: LearnOptions = {
     tier: EVAL_TIER,
     env: opts.env,
     models: { firstTry: opts.model, escalation: resolveModel(opts.env, 'escalation') },
+    onAttempt: (problems) => {
+      for (const p of problems) if (p.kind === 'formula') formulaErrorMessages.push(p.message);
+    },
     ...(opts.noEscalation ? { noEscalation: true } : {}),
   };
-  return learnFromExamples<LlmCallRecord>({
+  const result = await learnFromExamples<LlmCallRecord>({
     input: { bytes: opts.caseDef.input.bytes, name: opts.caseDef.input.fileName },
     output: { bytes: opts.caseDef.output.bytes, name: opts.caseDef.output.fileName },
     masking: opts.masking,
@@ -107,11 +150,20 @@ export async function runLearn(opts: RunOneOptions): Promise<LearnFromExamplesRe
     callLearn: (payload) => learn(payload, learnOpts),
     callRepair: (payload, previousRules, problems) => repairFromBrowser(payload, previousRules, problems, learnOpts),
   });
+  return { result, formulaErrorMessages };
 }
 
-async function toRunRecord(caseDef: CaseDef, model: string, masking: boolean, run: number, result: LearnFromExamplesResult<LlmCallRecord>): Promise<RunRecord> {
+async function toRunRecord(
+  caseDef: CaseDef,
+  model: string,
+  masking: boolean,
+  run: number,
+  result: LearnFromExamplesResult<LlmCallRecord>,
+  formulaErrorMessages: readonly string[],
+): Promise<RunRecord> {
   const classification = classify(result);
   const totals = result.path === 'llm' ? sumCalls(result.calls) : emptyTotals();
+  const formula = result.path === 'llm' ? formulaStats(result.calls) : formulaStats([]);
 
   let holdOut: RunRecord['holdOut'] = 'n/a';
   if (caseDef.next && result.rules) {
@@ -119,7 +171,7 @@ async function toRunRecord(caseDef: CaseDef, model: string, masking: boolean, ru
     holdOut = h.ok ? 'pass' : 'fail';
   }
 
-  return {
+  const record: RunRecord = {
     case: caseDef.name,
     domain: caseDef.meta.domain,
     difficulty: caseDef.meta.difficulty,
@@ -136,7 +188,10 @@ async function toRunRecord(caseDef: CaseDef, model: string, masking: boolean, ru
     verifiedFirstCall: result.stages.verifiedFirstCall,
     verifiedAfterRepair: result.stages.verifiedAfterRepair,
     ...totals,
+    ...formula,
   };
+  if (formulaErrorMessages.length > 0) formulaErrorMessagesByRecord.set(record, formulaErrorMessages);
+  return record;
 }
 
 function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: number, error: string): RunRecord {
@@ -157,6 +212,7 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     verifiedFirstCall: false,
     verifiedAfterRepair: false,
     ...emptyTotals(),
+    ...formulaStats([]),
     error,
   };
 }
@@ -196,9 +252,9 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
 
         for (const caseDef of baseCases) {
           opts.onProgress?.(`${label}: ${caseDef.name}`);
-          const result = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation });
+          const { result, formulaErrorMessages } = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation });
           baseResults.set(caseDef.name, result);
-          records.push(await toRunRecord(caseDef, model, masking, run, result));
+          records.push(await toRunRecord(caseDef, model, masking, run, result, formulaErrorMessages));
         }
 
         for (const caseDef of attachedCases) {
@@ -214,8 +270,8 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
             continue;
           }
           const target: Format = formatOf(baseRules);
-          const result = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target });
-          records.push(await toRunRecord(caseDef, model, masking, run, result));
+          const { result, formulaErrorMessages } = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target });
+          records.push(await toRunRecord(caseDef, model, masking, run, result, formulaErrorMessages));
         }
       }
     }

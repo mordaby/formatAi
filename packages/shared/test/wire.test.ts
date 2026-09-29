@@ -230,40 +230,33 @@ describe('learnResultWireJsonSchema', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('spells out Expr to a bounded depth ($defs chain of exactly limits.rules.maxExprDepth levels)', () => {
-    const defs = schema.$defs as Record<string, unknown>;
-    expect(defs).toBeTruthy();
-    const exprDefs = Object.keys(defs).filter((k) => k.startsWith('exprDepth'));
-    expect(exprDefs).toHaveLength(8); // limits.rules.maxExprDepth
-    expect(defs.exprDepth7).toBeTruthy();
-    expect(defs.exprDepth8).toBeUndefined();
+  /** learn-v5: every one of SPEC 8.3's four Expr positions is a plain string (formula
+   * text, `packages/engine/src/formula`) on the wire now, never a recursive/fixed-depth
+   * tree - this is what shrank the schema from ~92,700 to a few thousand characters
+   * (the old fixed-depth Expr chain, repeated `limits.rules.maxExprDepth` times, was
+   * almost the entire size). */
+  it('is well under 20,000 characters and carries no $defs chain (no recursion) and no open dicts', () => {
+    const json = JSON.stringify(schema);
+    expect(json.length).toBeLessThan(20_000);
+    expect(schema.$defs).toBeUndefined();
+    expect(json).not.toContain('$ref');
   });
 
-  it('the Expr $defs chain only ever $refs a strictly lower level (never itself or a higher one)', () => {
-    const defs = schema.$defs as Record<string, unknown>;
-    function collectRefs(node: unknown, out: string[]): void {
-      if (node === null || typeof node !== 'object') return;
-      if (Array.isArray(node)) {
-        for (const child of node) collectRefs(child, out);
-        return;
-      }
-      const obj = node as Record<string, unknown>;
-      if (typeof obj.$ref === 'string') out.push(obj.$ref);
-      for (const value of Object.values(obj)) collectRefs(value, out);
-    }
-    for (let level = 1; level <= 7; level++) {
-      const refs: string[] = [];
-      collectRefs(defs[`exprDepth${level}`], refs);
-      for (const ref of refs) {
-        const match = /^#\/\$defs\/exprDepth(\d+)$/.exec(ref);
-        expect(match, `unexpected $ref "${ref}" inside exprDepth${level}`).toBeTruthy();
-        const refLevel = Number(match![1]);
-        expect(refLevel, `exprDepth${level} must only $ref a lower level, found ${ref}`).toBeLessThan(level);
-      }
-    }
-    // level 0 (the leaf) must not reference anything - it's the base case.
-    const level0Refs: string[] = [];
-    collectRefs(defs.exprDepth0, level0Refs);
-    expect(level0Refs).toEqual([]);
+  it('every Expr position (computed.expr, rowFilters.expr, functions.body) is a plain string', () => {
+    const s = schema as {
+      properties: {
+        input: { properties: { rowFilters: { items: { anyOf: { properties?: Record<string, unknown> }[] } } } };
+        transform: {
+          properties: {
+            computed: { items: { properties: { expr: { type: string } } } };
+            functions: { items: { properties: { body: { type: string } } } };
+          };
+        };
+      };
+    };
+    expect(s.properties.transform.properties.computed.items.properties.expr.type).toBe('string');
+    expect(s.properties.transform.properties.functions.items.properties.body.type).toBe('string');
+    const exprFilterBranch = s.properties.input.properties.rowFilters.items.anyOf.find((b) => b.properties && 'expr' in b.properties);
+    expect((exprFilterBranch?.properties?.expr as { type: string } | undefined)?.type).toBe('string');
   });
 });

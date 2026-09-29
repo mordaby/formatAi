@@ -2,8 +2,9 @@
 // learn. Every call is a single stateless request (no chat history) - see
 // `apps/api/src/llm`'s `complete()`, the one function every call goes through
 // (SPEC 9.6).
+import { formulaRulesToWire } from '@formatai/engine';
 import {
-  LEARN_SYSTEM_PROMPT_V4,
+  LEARN_SYSTEM_PROMPT_V5,
   learnResultWireJsonSchema,
   limits,
   promptVersion,
@@ -51,6 +52,22 @@ export interface LlmCallRecord {
   /** 'verified' (zero problems), 'needsRepair' (some problems, rules still returned),
    * or 'error:<LlmErrorKind>' (the call itself failed - SPEC 15: never the payload). */
   outcome: string;
+  /** How many of each `RepairProblem` kind this one call's attempt produced - COUNTS
+   * ONLY, never formula text or any other payload/response content (SPEC 15), so the
+   * product can track things like "how often models write invalid formulas" from the
+   * ledger alone. See `eval/lib`'s report for the human-readable version (which also
+   * has the actual messages, via `LearnOptions.onAttempt` - a dev-only path this ledger
+   * record deliberately doesn't carry). */
+  problemCounts: Record<RepairProblem['kind'], number>;
+}
+
+/** Every `RepairProblem` kind, for `problemCounts` (SPEC 15: counts only, never text). */
+const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'diff', 'rowCount', 'layout'] as const;
+
+function countProblems(problems: readonly RepairProblem[]): Record<RepairProblem['kind'], number> {
+  const counts = Object.fromEntries(REPAIR_PROBLEM_KINDS.map((k) => [k, 0])) as Record<RepairProblem['kind'], number>;
+  for (const p of problems) counts[p.kind] += 1;
+  return counts;
 }
 
 export interface LearnOptions {
@@ -77,6 +94,15 @@ export interface LearnOptions {
   /** SPEC 10 `--no-escalation`: skip the escalation attempt entirely (the first-try
    * model and its server repair round(s) still run) for a cheaper/faster eval pass. */
   noEscalation?: boolean;
+  /**
+   * Dev-only observability hook, called once per LLM call made during this learn, with
+   * that call's FULL `RepairProblem` list (with messages - unlike `LlmCallRecord.
+   * problemCounts`, which is counts-only because it's the production ledger, SPEC 15).
+   * Never persisted by this module; `eval/lib/runner.ts` uses it to report "top formula
+   * error messages" (syntax messages only, no user data) without adding message text to
+   * the ledger.
+   */
+  onAttempt?: (problems: readonly RepairProblem[]) => void;
 }
 
 export interface LearnOutcome {
@@ -126,7 +152,7 @@ async function callAndCheck(
   const schema = learnResultWireJsonSchema();
 
   try {
-    const result = await completeFn({ system: LEARN_SYSTEM_PROMPT_V4, content, schema, model, purpose }, env);
+    const result = await completeFn({ system: LEARN_SYSTEM_PROMPT_V5, content, schema, model, purpose }, env);
     const { problems, rules } = runChecks(result.json, payload, { tier });
     const record: LlmCallRecord = {
       purpose,
@@ -139,11 +165,17 @@ async function callAndCheck(
       costUsd: result.costUsd,
       latencyMs: result.latencyMs,
       outcome: outcomeOf(problems),
+      problemCounts: countProblems(problems),
     };
     return { record, attempt: { raw: result.json, problems, rules } };
   } catch (err) {
     const kind = err instanceof LlmError ? err.kind : 'providerError';
     const message = err instanceof Error ? err.message : 'unknown LLM error';
+    const attempt: Attempt = {
+      raw: null,
+      rules: null,
+      problems: [{ kind: 'schema', path: '', message: `LLM call failed: ${message}` }],
+    };
     const record: LlmCallRecord = {
       purpose,
       model,
@@ -155,11 +187,7 @@ async function callAndCheck(
       costUsd: 0,
       latencyMs: 0,
       outcome: `error:${kind}`,
-    };
-    const attempt: Attempt = {
-      raw: null,
-      rules: null,
-      problems: [{ kind: 'schema', path: '', message: `LLM call failed: ${message}` }],
+      problemCounts: countProblems(attempt.problems),
     };
     return { record, attempt };
   }
@@ -172,10 +200,18 @@ async function callAndCheck(
 function repairContentBlock(previous: Attempt, problems: RepairProblem[]): ContentBlock {
   const repairBlock: RepairBlock<unknown> = {
     mode: 'repair',
-    // `previous.rules` is null only when layer 1 (structure) itself failed - there is
-    // then no valid object to run `toWire` on, so the model's own raw output (already
-    // wire-shaped, since that's what the schema constrained it to) is sent back as-is.
-    previousRules: previous.rules ? toWire(previous.rules) : previous.raw,
+    // `previous.rules` is null only when layer 0/1 (formula text / structure) itself
+    // failed - there is then no valid Expr-tree object to print formulas from, so the
+    // model's own raw output (already wire-shaped, since that's what the schema
+    // constrained it to) is sent back as-is. Otherwise: print every Expr position back
+    // to formula text (learn-v5) before the usual pairs conversion, so `previousRules`
+    // is in exactly the notation the model itself writes.
+    // `toWire`'s type is nominally `LearnResult`-only, but its runtime behavior (moving
+    // valueMaps/expand/summaryRows between records and {key,value} pairs) never touches
+    // Expr internals - so it works identically on the formula-wire shape too. Structural
+    // cast, not a runtime one: `formulaRulesToWire`'s own return type already documents
+    // exactly what changed (every Expr position is now a `string`).
+    previousRules: previous.rules ? toWire(formulaRulesToWire(previous.rules) as unknown as LearnResult) : previous.raw,
     problems,
   };
   return { text: `${JSON.stringify(repairBlock)}\n${REPAIR_INSTRUCTION}` };
@@ -215,6 +251,7 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
   const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier);
   calls.push(first.record);
   attempts.push(first.attempt);
+  opts.onAttempt?.(first.attempt.problems);
 
   let current = first.attempt;
   for (let round = 0; round < limits.llm.serverRepairRounds && current.problems.length > 0; round++) {
@@ -230,6 +267,7 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
     );
     calls.push(repair.record);
     attempts.push(repair.attempt);
+    opts.onAttempt?.(repair.attempt.problems);
     current = repair.attempt;
   }
 
@@ -238,6 +276,7 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
     const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier);
     calls.push(escalated.record);
     attempts.push(escalated.attempt);
+    opts.onAttempt?.(escalated.attempt.problems);
   }
 
   const best = bestOf(attempts);
@@ -278,6 +317,7 @@ export async function repairFromBrowser(
     payload,
     opts.tier,
   );
+  opts.onAttempt?.(attempt.problems);
 
   return {
     rules: attempt.rules,

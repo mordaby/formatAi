@@ -9,6 +9,12 @@ import { delimiter, dirname, join } from 'node:path';
 import { LlmError } from '../errors.js';
 import type { CompleteRequest, CompleteResult, LlmProvider, LlmUsage } from '../types.js';
 
+/** SPEC 9.1 "claude-cli": the command line itself (not just the system prompt) is
+ * capped at ~32k chars on Windows; `--json-schema <json>` is one argument on that same
+ * line, so a schema over this size is appended to the system-prompt temp file instead
+ * (see `complete()` below) rather than ever risking the command-line limit. */
+const SCHEMA_CLI_ARG_LIMIT = 20_000;
+
 export type SpawnFn = (
   command: string,
   args: string[],
@@ -139,15 +145,32 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
       // The child also runs in that temp dir so no project CLAUDE.md is picked up.
       const workDir = mkdtempSync(join(tmpdir(), 'formatai-cli-'));
       const systemFile = join(workDir, 'system.txt');
-      writeFileSync(systemFile, req.system, 'utf8');
+      // The CLI's own `--json-schema` validator treats a top-level `$schema` key as a
+      // ref it must resolve (against its own internal registry, which doesn't have
+      // this one) rather than a version identifier, and rejects the whole schema with
+      // `--json-schema is not a valid JSON Schema: no schema with key or ref "..."`.
+      // `z.toJSONSchema()` (`learnResultWireJsonSchema()`) always adds one, so it's
+      // stripped here - the schema's actual shape is unaffected.
+      const { $schema: _schemaMeta, ...schemaForCli } = req.schema as Record<string, unknown>;
+      const schemaJson = JSON.stringify(schemaForCli);
+      // learn-v5's wire schema fits well under this (a few thousand chars, down from
+      // ~92,700 pre-formula-text) - but keep the guard: `--json-schema` is one more
+      // command-line argument, still subject to the same ~32k Windows cap as the system
+      // prompt, so a schema that grows past this threshold goes into the system-prompt
+      // temp file instead (with an instruction to return only matching JSON), never onto
+      // the command line.
+      const schemaTooLargeForCli = schemaJson.length > SCHEMA_CLI_ARG_LIMIT;
+      const systemContent = schemaTooLargeForCli
+        ? `${req.system}\n\n# Output schema\nReturn ONLY a single JSON object matching this JSON Schema. No prose, no code fences, no explanation - just the JSON.\n\n${schemaJson}`
+        : req.system;
+      writeFileSync(systemFile, systemContent, 'utf8');
       const userContent = req.content.map((block) => block.text).join('\n\n');
 
       const args = [
         '-p',
         '--system-prompt-file',
         systemFile,
-        '--json-schema',
-        JSON.stringify(req.schema),
+        ...(schemaTooLargeForCli ? [] : ['--json-schema', schemaJson]),
         '--output-format',
         'json',
         '--model',
