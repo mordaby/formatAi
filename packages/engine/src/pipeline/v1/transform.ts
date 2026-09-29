@@ -14,7 +14,7 @@ import { normText, toText } from './values';
  */
 export function applyComputed(ctx: RunCtx, rows: Row[], computed: Computed[]): void {
   if (computed.length === 0) return;
-  const env = { slotOf: ctx.plan.slotOf, language: ctx.language };
+  const env = { slotOf: ctx.plan.slotOf, language: ctx.language, functions: ctx.functions, tables: ctx.tables };
   const compiled: { id: string; slot: number; fn: Fn; type: Computed['type'] }[] = computed.map((c) => ({
     id: c.id,
     slot: slotOrThrow(ctx.plan, c.id),

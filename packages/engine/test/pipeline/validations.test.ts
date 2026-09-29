@@ -9,17 +9,17 @@ const serial = (y: number, m: number, d: number) => ymdToSerial({ y, m, d });
 
 const columns = [
   col('id', 'idLike', { padLeft: 9 }),
-  col('premium', 'decimal'),
+  col('amount', 'decimal'),
   col('status', 'text'),
-  col('policy', 'idLike'),
+  col('order', 'idLike'),
   col('d', 'date'),
 ];
-const headers = ['id', 'premium', 'status', 'policy', 'd'];
+const headers = ['id', 'amount', 'status', 'order', 'd'];
 const t = table(headers, [
   [VALID_ID, 100, 'פעיל', '12345678', dateCell(serial(2024, 5, 1))], // 2: clean
-  ['123456789', -5, 'פעיל', '123', dateCell(serial(2024, 5, 2))], // 3: bad checksum, negative, short policy
+  ['123456789', -5, 'פעיל', '123', dateCell(serial(2024, 5, 2))], // 3: bad checksum, negative, short order
   [null, 50, 'אחר', '87654321', dateCell(serial(2023, 1, 1))], // 4: missing id, bad status, date out of range
-  [VALID_ID, 20, 'פעיל', '12345678', null], // 5: duplicate id and policy
+  [VALID_ID, 20, 'פעיל', '12345678', null], // 5: duplicate id and order
 ]);
 
 function run(validations: Validation[], extra: Parameters<typeof rules>[0] = { columns }) {
@@ -31,16 +31,16 @@ describe('validations: severity flag', () => {
     const res = run([
       { column: 'id', rule: 'required', severity: 'flag' },
       { column: 'id', rule: 'israeliIdChecksum', severity: 'flag' },
-      { column: 'premium', rule: 'range', min: 0, max: 1000, severity: 'flag' },
-      { column: 'policy', rule: 'lengthEquals', length: 8, severity: 'flag' },
+      { column: 'amount', rule: 'range', min: 0, max: 1000, severity: 'flag' },
+      { column: 'order', rule: 'lengthEquals', length: 8, severity: 'flag' },
       { column: 'status', rule: 'oneOf', values: ['פעיל', 'מבוטל'], severity: 'flag' },
       { column: 'id', rule: 'unique', severity: 'flag' },
       { column: 'd', rule: 'dateRange', from: '2024-01-01', to: '2024-12-31', severity: 'flag' },
     ]);
     expect(res.flags.map((f) => [f.rowNumber, f.column, f.rule, f.value, f.messageKey, f.params, f.suggestion])).toEqual([
       [3, 'id', 'israeliIdChecksum', '123456789', 'flag.validation.israeliIdChecksum', undefined, undefined],
-      [3, 'premium', 'range', -5, 'flag.validation.range', { min: 0, max: 1000 }, undefined],
-      [3, 'policy', 'lengthEquals', '123', 'flag.validation.lengthEquals', { length: 8 }, '00000123'],
+      [3, 'amount', 'range', -5, 'flag.validation.range', { min: 0, max: 1000 }, undefined],
+      [3, 'order', 'lengthEquals', '123', 'flag.validation.lengthEquals', { length: 8 }, '00000123'],
       [4, 'id', 'required', null, 'flag.validation.required', undefined, undefined],
       [4, 'status', 'oneOf', 'אחר', 'flag.validation.oneOf', undefined, undefined],
       [4, 'd', 'dateRange', '01/01/2023', 'flag.validation.dateRange', { from: '2024-01-01', to: '2024-12-31' }, undefined],
@@ -62,19 +62,19 @@ describe('validations: severity block', () => {
   it('blocked rows are left out, listed, and excluded from subtotals and the grand total', () => {
     const res = run(
       [
-        { column: 'premium', rule: 'range', min: 0, severity: 'block' },
+        { column: 'amount', rule: 'range', min: 0, severity: 'block' },
         { column: 'id', rule: 'required', severity: 'block' },
         { column: 'id', rule: 'israeliIdChecksum', severity: 'flag' },
       ],
       {
         columns,
-        transform: { group: { by: 'status', showDetailRows: true, subtotal: { labelColumn: 'id', label: 'sub', sum: ['premium'] } } },
-        output: { grandTotal: { labelColumn: 'id', label: 'total', sum: ['premium'] } },
-        out: ['id', 'premium'],
+        transform: { group: { by: 'status', showDetailRows: true, subtotal: { labelColumn: 'id', label: 'sub', sum: ['amount'] } } },
+        output: { grandTotal: { labelColumn: 'id', label: 'total', sum: ['amount'] } },
+        out: ['id', 'amount'],
       },
     );
     expect(res.summary.blockedRows).toEqual([
-      { rowNumber: 3, rule: 'range', column: 'premium' },
+      { rowNumber: 3, rule: 'range', column: 'amount' },
       { rowNumber: 4, rule: 'required', column: 'id' },
     ]);
     expect(body(res.sheet)).toEqual([
@@ -93,7 +93,7 @@ describe('validations: severity block', () => {
       { column: 'status', rule: 'oneOf', values: ['פעיל'], severity: 'flag' },
       { column: 'id', rule: 'unique', severity: 'flag' }, // flags row 5 ...
       { column: 'd', rule: 'required', severity: 'block' }, // ... which is then blocked
-      { column: 'policy', rule: 'unique', severity: 'block' },
+      { column: 'order', rule: 'unique', severity: 'block' },
     ]);
     expect(res.summary.blockedRows).toEqual([{ rowNumber: 5, rule: 'required', column: 'd' }]);
     expect(res.flags.map((f) => [f.rowNumber, f.rule])).toEqual([[4, 'oneOf']]);
@@ -102,13 +102,77 @@ describe('validations: severity block', () => {
   it('unique ignores repeats within one expand family', () => {
     const res = runOk(
       rules({
-        columns: [col('policy', 'idLike'), col('items', 'text')],
+        columns: [col('order', 'idLike'), col('items', 'text')],
         expand: { mode: 'splitCell', column: 'items', separator: ',', trim: true, partId: 'item', skipEmpty: true },
-        validations: [{ column: 'policy', rule: 'unique', severity: 'flag' }],
-        out: ['policy', 'item'],
+        validations: [{ column: 'order', rule: 'unique', severity: 'flag' }],
+        out: ['order', 'item'],
       }),
-      table(['policy', 'items'], [['A', 'x,y'], ['B', 'z'], ['A', 'w']]),
+      table(['order', 'items'], [['A', 'x,y'], ['B', 'z'], ['A', 'w']]),
     );
     expect(res.flags.map((f) => [f.rowNumber, f.params])).toEqual([[4, { firstRow: 2 }]]);
+  });
+});
+
+describe('validations: on "output"', () => {
+  // Output columns named differently from the input/computed ids they come
+  // from, so a passing test genuinely proves `column` is resolved as an
+  // output header (SPEC 8.8), not accidentally as an input id.
+  const outCols = [
+    { header: 'ID', from: 'id' },
+    { header: 'Amount', from: 'amount' },
+  ];
+
+  it('severity flag: addresses the output header, but the flag still carries the input rowNumber', () => {
+    const res = run([{ on: 'output', column: 'Amount', rule: 'range', min: 0, severity: 'flag' }], { columns, out: outCols });
+    expect(res.flags).toEqual([
+      { rowNumber: 3, column: 'Amount', rule: 'range', value: -5, messageKey: 'flag.validation.range', params: { min: 0 } },
+    ]);
+    // The flagged cell is the output column addressed by the check (index 1: Amount).
+    expect(dataRows(res.sheet).map((r) => r.cells.map((c) => c.flagged === true))).toEqual([
+      [false, false],
+      [false, true],
+      [false, false],
+      [false, false],
+    ]);
+  });
+
+  it('an input validation (by id) and an output validation (by header) on the same underlying value coexist', () => {
+    const res = run(
+      [
+        { column: 'amount', rule: 'range', min: 0, max: 1000, severity: 'flag' },
+        { on: 'output', column: 'Amount', rule: 'range', min: 0, severity: 'flag' },
+      ],
+      { columns, out: outCols },
+    );
+    // Same row, same cell, two different flags: one keyed by the input id, one by the output header.
+    expect(res.flags).toEqual([
+      { rowNumber: 3, column: 'amount', rule: 'range', value: -5, messageKey: 'flag.validation.range', params: { min: 0, max: 1000 } },
+      { rowNumber: 3, column: 'Amount', rule: 'range', value: -5, messageKey: 'flag.validation.range', params: { min: 0 } },
+    ]);
+  });
+
+  it('severity block: the row is excluded from the output *and* from every subtotal and the grand total', () => {
+    const res = run(
+      [{ on: 'output', column: 'Amount', rule: 'range', min: 0, severity: 'block' }],
+      {
+        columns,
+        transform: { group: { by: 'status', showDetailRows: true, subtotal: { labelColumn: 'id', label: 'sub', sum: ['amount'] } } },
+        output: { grandTotal: { labelColumn: 'id', label: 'total', sum: ['amount'] } },
+        out: outCols,
+      },
+    );
+    // The blocked-row summary entry also names the output header, not the input id.
+    expect(res.summary.blockedRows).toEqual([{ rowNumber: 3, rule: 'range', column: 'Amount' }]);
+    expect(res.flags).toEqual([]);
+    expect(res.summary.rowsOut).toBe(3);
+    expect(body(res.sheet)).toEqual([
+      ['data', VALID_ID, 100],
+      ['data', VALID_ID, 20],
+      ['subtotal', 'sub', 120],
+      ['data', null, 50],
+      ['subtotal', 'sub', 50],
+      // 170 = 100 + 20 + 50: row 3's -5 never reaches this total.
+      ['grandTotal', 'total', 170],
+    ]);
   });
 });

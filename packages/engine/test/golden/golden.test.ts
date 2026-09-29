@@ -188,10 +188,17 @@ function assertCsvOutput(bytes: Uint8Array, expected: ExpectedCsv, label: string
 // tests
 // ---------------------------------------------------------------------------
 
+// None of these cases' rules.json declare `output.file` (M0 predates SPEC 8.13),
+// so convertFile would default to xlsx for all of them; force csv here the same
+// way `{ outputType: 'csv' }` used to, via convertFile's `file` override.
+function convertOpts(expected: Expected): { file?: { type: 'csv' } } {
+  return expected.outputType === 'csv' ? { file: { type: 'csv' } } : {};
+}
+
 describe.each(CASES)('golden case: %s', (name) => {
   it('matches the hand-derived expected output', async () => {
     const { rules, expected, inputFile, bytes } = loadCase(name);
-    const result = await convertFile(rules, bytes, inputFile, { outputType: expected.outputType });
+    const result = await convertFile(rules, bytes, inputFile, convertOpts(expected));
     if (!result.ok) throw new Error(`convertFile failed: ${JSON.stringify(result.error)}`);
 
     expect(result.flags, `${name}: flags`).toEqual(expected.flags);
@@ -216,8 +223,8 @@ describe.each(CASES)('golden case: %s', (name) => {
 
   it('is deterministic: converting the same input twice is byte-identical', async () => {
     const { rules, expected, inputFile, bytes } = loadCase(name);
-    const a = await convertFile(structuredClone(rules), bytes, inputFile, { outputType: expected.outputType });
-    const b = await convertFile(structuredClone(rules), bytes, inputFile, { outputType: expected.outputType });
+    const a = await convertFile(structuredClone(rules), bytes, inputFile, convertOpts(expected));
+    const b = await convertFile(structuredClone(rules), bytes, inputFile, convertOpts(expected));
     if (!a.ok || !b.ok) throw new Error('convertFile failed');
     expect(a.bytes.length, `${name}: determinism (length)`).toBe(b.bytes.length);
     expect(Buffer.from(b.bytes), `${name}: determinism (bytes)`).toEqual(Buffer.from(a.bytes));

@@ -8,11 +8,11 @@ describe('row filters', () => {
   const columns = [
     col('status', 'text'),
     col('amount', 'decimal'),
-    col('agent', 'idLike', { padLeft: 5 }),
+    col('customer', 'idLike', { padLeft: 5 }),
     col('d', 'date', { inputFormats: ['DD/MM/YYYY'] }),
   ];
   const t = table(
-    ['status', 'amount', 'agent', 'd'],
+    ['status', 'amount', 'customer', 'd'],
     [
       ['פעיל', '1,000', 12, '01/01/2024'], // 2
       ['מבוטל', 50, '00012', '15/02/2024'], // 3
@@ -44,8 +44,8 @@ describe('row filters', () => {
   });
 
   it('idLike constants are padded like the column', () => {
-    expect(kept([{ column: 'agent', op: 'eq', value: 12 }]).rows).toEqual([2, 3, 6]);
-    expect(kept([{ column: 'agent', op: 'oneOf', value: ['7', 300] }]).rows).toEqual([4, 5]);
+    expect(kept([{ column: 'customer', op: 'eq', value: 12 }]).rows).toEqual([2, 3, 6]);
+    expect(kept([{ column: 'customer', op: 'oneOf', value: ['7', 300] }]).rows).toEqual([4, 5]);
   });
 
   it('oneOf / notOneOf', () => {
@@ -74,13 +74,38 @@ describe('row filters', () => {
     );
     expect(res.flags).toEqual([]);
   });
+
+  it('{ expr } filters: any condition, over the whole row, ANDed with the other filters', () => {
+    // amount > 100 and status = active (row 4's leading/trailing spaces still
+    // normalize to a match, but its amount is too small).
+    expect(
+      kept([{ expr: { op: 'and', args: [{ op: 'gt', args: [{ col: 'amount' }, { const: 100 }] }, { op: 'eq', args: [{ col: 'status' }, { const: 'פעיל' }] }] } }]),
+    ).toEqual({ rows: [2], filtered: 4 });
+
+    // an { expr } filter composes with a simple filter (ANDed): status is
+    // active or pending, and amount >= 100.
+    expect(
+      kept([
+        {
+          expr: {
+            op: 'or',
+            args: [
+              { op: 'eq', args: [{ col: 'status' }, { const: 'פעיל' }] },
+              { op: 'eq', args: [{ col: 'status' }, { const: 'ממתין' }] },
+            ],
+          },
+        },
+        { column: 'amount', op: 'gte', value: 100 },
+      ]),
+    ).toEqual({ rows: [2, 6], filtered: 3 });
+  });
 });
 
 describe('dedupe', () => {
-  // Rows 2..7. Rows 2, 4, 7 share policy 1 (7 with a different amount); rows 3 and 6 are identical.
-  const columns = [col('policy', 'idLike', { padLeft: 4 }), col('name', 'text'), col('amount', 'decimal')];
+  // Rows 2..7. Rows 2, 4, 7 share item 1 (7 with a different amount); rows 3 and 6 are identical.
+  const columns = [col('item', 'idLike', { padLeft: 4 }), col('name', 'text'), col('amount', 'decimal')];
   const t = table(
-    ['policy', 'name', 'amount'],
+    ['item', 'name', 'amount'],
     [
       [1, 'דנה', 100], // 2
       ['0002', "ג'ון", 50], // 3
@@ -93,7 +118,7 @@ describe('dedupe', () => {
   const run = (dedupe: Dedupe) => runOk(rules({ columns, transform: { dedupe } }), t);
 
   it('remove + keep first, on key columns', () => {
-    const res = run({ keys: ['policy'], keep: 'first', action: 'remove' });
+    const res = run({ keys: ['item'], keep: 'first', action: 'remove' });
     expect(dataRows(res.sheet).map((r) => r.sourceRow)).toEqual([2, 3, 5]);
     expect(res.summary.duplicatesRemoved).toEqual([
       { rowNumber: 4, duplicateOf: 2 },
@@ -104,7 +129,7 @@ describe('dedupe', () => {
   });
 
   it('remove + keep last, on key columns', () => {
-    const res = run({ keys: ['policy'], keep: 'last', action: 'remove' });
+    const res = run({ keys: ['item'], keep: 'last', action: 'remove' });
     expect(dataRows(res.sheet).map((r) => r.sourceRow)).toEqual([5, 6, 7]);
     expect(res.summary.duplicatesRemoved).toEqual([
       { rowNumber: 2, duplicateOf: 7 },
@@ -129,14 +154,14 @@ describe('dedupe', () => {
   });
 
   it('flag + keep first keeps every row and flags each extra copy', () => {
-    const res = run({ keys: ['policy'], keep: 'first', action: 'flag' });
+    const res = run({ keys: ['item'], keep: 'first', action: 'flag' });
     expect(dataRows(res.sheet).map((r) => r.sourceRow)).toEqual([2, 3, 4, 5, 6, 7]);
     expect(res.summary.duplicatesFlagged).toBe(3);
     expect(res.summary.duplicatesRemoved).toEqual([]);
     expect(res.flags).toEqual([
-      { rowNumber: 4, column: 'policy', rule: 'dedupe', value: '0001', messageKey: 'flag.duplicateOf', params: { duplicateOf: 2 } },
-      { rowNumber: 6, column: 'policy', rule: 'dedupe', value: '0002', messageKey: 'flag.duplicateOf', params: { duplicateOf: 3 } },
-      { rowNumber: 7, column: 'policy', rule: 'dedupe', value: '0001', messageKey: 'flag.duplicateOf', params: { duplicateOf: 2 } },
+      { rowNumber: 4, column: 'item', rule: 'dedupe', value: '0001', messageKey: 'flag.duplicateOf', params: { duplicateOf: 2 } },
+      { rowNumber: 6, column: 'item', rule: 'dedupe', value: '0002', messageKey: 'flag.duplicateOf', params: { duplicateOf: 3 } },
+      { rowNumber: 7, column: 'item', rule: 'dedupe', value: '0001', messageKey: 'flag.duplicateOf', params: { duplicateOf: 2 } },
     ]);
     const flaggedCells = dataRows(res.sheet).map((r) => r.cells.map((c) => c.flagged === true));
     expect(flaggedCells[2]).toEqual([true, false, false]);
@@ -144,7 +169,7 @@ describe('dedupe', () => {
   });
 
   it('flag + keep last flags the earlier copies', () => {
-    const res = run({ keys: ['policy'], keep: 'last', action: 'flag' });
+    const res = run({ keys: ['item'], keep: 'last', action: 'flag' });
     expect(res.flags.map((f) => [f.rowNumber, f.params?.duplicateOf])).toEqual([
       [2, 7],
       [3, 6],
@@ -155,8 +180,8 @@ describe('dedupe', () => {
   it('flag on "all" highlights the whole row', () => {
     const res = run({ keys: 'all', keep: 'first', action: 'flag' });
     expect(res.flags.map((f) => [f.rowNumber, f.column, f.params?.duplicateOf])).toEqual([
-      [4, 'policy', 2],
-      [6, 'policy', 3],
+      [4, 'item', 2],
+      [6, 'item', 3],
     ]);
     expect(dataRows(res.sheet)[2]!.cells.every((c) => c.flagged === true)).toBe(true);
   });

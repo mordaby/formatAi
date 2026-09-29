@@ -1,4 +1,4 @@
-import type { LearnResult, Rules } from '@formatai/shared';
+import { limits, type LearnResult, type Rules } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { runRules, SUPPORTED_SCHEMA_VERSIONS } from '../../src/pipeline';
 import { ymdToSerial } from '../../src/values/dates';
@@ -60,6 +60,9 @@ describe('runRules: the SPEC 8.1 example end to end', () => {
       { fileName: 'עמלות-09.xlsx', rowNumber: 4, column: 'policy', rule: 'dedupe', value: '001234567', messageKey: 'flag.duplicateOf', params: { duplicateOf: 2 } },
       { fileName: 'עמלות-09.xlsx', rowNumber: 4, column: 'product', rule: 'valueMap', value: 'רכב', messageKey: 'flag.valueMapMissing' },
       { fileName: 'עמלות-09.xlsx', rowNumber: 6, column: 'premium', rule: 'range', value: -10, messageKey: 'flag.validation.range', params: { min: 0 } },
+      // SPEC 8.1's third validation is an output one (`on: "output"`, column "עמלה"
+      // = the commission output header): row 6's commission is also negative.
+      { fileName: 'עמלות-09.xlsx', rowNumber: 6, column: 'עמלה', rule: 'range', value: -1.7, messageKey: 'flag.validation.range', params: { min: 0 } },
     ]);
     expect(res.summary).toEqual({
       rowsIn: 5,
@@ -122,8 +125,11 @@ describe('runRules: rules validation and versions', () => {
     expect(
       invalid({ ...ok, transform: { ...ok.transform, computed: [{ id: 'c', type: 'text', expr: { col: 'nope' } }] } }),
     ).toMatchObject({ reason: 'reference', path: 'transform.computed[0].expr' });
+    // SPEC 8.3 (v3): depth 8 per expression (config, limits.rules.maxExprDepth);
+    // wrap one more time than the limit allows so this stays correct however
+    // that config is tuned.
     let deep: unknown = { col: 'a' };
-    for (let i = 0; i < 6; i++) deep = { op: 'trim', arg: deep };
+    for (let i = 0; i <= limits.rules.maxExprDepth; i++) deep = { op: 'trim', arg: deep };
     expect(invalid({ ...ok, transform: { ...ok.transform, computed: [{ id: 'c', type: 'text', expr: deep }] } })).toMatchObject({
       reason: 'depth',
     });

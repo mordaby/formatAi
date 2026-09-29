@@ -6,13 +6,14 @@ import type { LearnResult } from '@formatai/shared';
 import type { Flag, InputTable, RawCell, RunResult, RunSummary } from '../../types';
 import { applyDedupe } from './dedupe';
 import { applyExpand } from './expand';
-import { compileFilter, type RowPredicate } from './filters';
-import { buildSheet } from './layout';
+import { compileFunctions, compileTables, type CompileEnv } from './expr';
+import { compileExprFilter, compileFilter } from './filters';
+import { buildSheet, planColumns } from './layout';
 import { colNorm, mapHeaders, newIssue, normalizeCell, type ColNorm, type NormIssue } from './normalize';
 import { flagOrigin, slotOrThrow, type Row, type RunCtx, type SlotPlan } from './rows';
 import { applySort } from './sort';
 import { applyComputed, applyValueMaps } from './transform';
-import { applyValidations } from './validate';
+import { applyOutputValidations, applyValidations } from './validate';
 import type { Val } from './values';
 
 export interface RunOptionsV1 {
@@ -84,7 +85,11 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
   const language = rules.output.language;
   const date1904 = table.date1904 === true;
   const plan = planSlots(rules);
-  const ctx: RunCtx = { fileName: opts.fileName, language, date1904, plan };
+  // transform.functions/tables (SPEC 8.14): compiled once, shared by every
+  // expression in the rules file (row filters, computed columns, fixedFanOut).
+  const tables = compileTables(rules.transform.tables);
+  const functions = compileFunctions(rules.transform.functions, { language }, tables);
+  const ctx: RunCtx = { fileName: opts.fileName, language, date1904, plan, functions, tables };
   const inCols = rules.input.columns;
 
   // 1. Read: map headers to ids.
@@ -154,15 +159,22 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
   }
   summary.rowsIn = rows.length;
 
-  // 3. Row filters (ANDed).
+  // 3. Row filters (ANDed). SPEC 8.3: `{ column, op, value? }` for simple cases,
+  // or `{ expr }` (any condition) for the rest.
   const filters = rules.input.rowFilters ?? [];
   if (filters.length > 0) {
-    const preds: { slot: number; test: RowPredicate }[] = filters.map((f) => {
+    const exprEnv: CompileEnv = { slotOf: plan.slotOf, language, functions, tables };
+    const preds: ((row: Row) => boolean)[] = filters.map((f) => {
+      if ('expr' in f) {
+        const test = compileExprFilter(f.expr, exprEnv);
+        return (row) => test(row.v);
+      }
       const slot = slotOrThrow(plan, f.column);
-      return { slot, test: compileFilter(f, norms[slot]!) };
+      const test = compileFilter(f, norms[slot]!);
+      return (row) => test(row.v[slot] ?? null);
     });
     const before = rows.length;
-    rows = rows.filter((r) => preds.every((p) => p.test(r.v[p.slot] ?? null)));
+    rows = rows.filter((row) => preds.every((p) => p(row)));
     summary.rowsFiltered = before - rows.length;
   }
 
@@ -182,21 +194,37 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
   // 7. Value maps.
   applyValueMaps(ctx, rows, rules.transform.valueMaps);
 
-  // 11 (run early, see validate.ts). Validations: flag, or block before any total is built.
+  // 11a (run early, see validate.ts). Input validations: flag, or block before any total is built.
   rows = applyValidations(ctx, rows, rules.validations, summary);
+  // Keep this order (pre-sort, in whatever order dedupe/expand/computed left
+  // the rows) so flags are reported in input-row order regardless of the
+  // output sort -- captured now, read after output validations below, since
+  // sort only reorders the array and doesn't touch the Row objects themselves.
+  const preSortRows = rows;
 
-  // Flags, for the rows that reach the output, in input-row order.
+  // 8. Sort (stable).
+  rows = applySort(ctx, rows, rules.transform.sort);
+
+  // 11b. Output validations (SPEC 8.8): `column` names an output header, so
+  // they run once the output columns are planned -- and *before* group/
+  // subtotal/grand-total, so a blocked row is excluded from every total
+  // (buildSheet only ever aggregates the `rows` it's handed; see validate.ts).
+  const outCols = planColumns(ctx, rules, rows);
+  rows = applyOutputValidations(ctx, rows, outCols, rules.validations, summary);
+
+  // Flags, for the rows that reach the output, in input-row order: a row
+  // dropped by an output-severity block (kept out of `rows` above) drops its
+  // flags too, just like an input-severity block already does.
+  const survived = new Set(rows);
   const flags: Flag[] = [];
-  for (const r of rows) {
+  for (const r of preSortRows) {
+    if (!survived.has(r)) continue;
     if (!r.o.emitted) {
       r.o.emitted = true;
       if (r.o.flags !== null) for (const f of r.o.flags) flags.push(f);
     }
     if (r.flags !== null) for (const f of r.flags) flags.push(f);
   }
-
-  // 8. Sort (stable).
-  rows = applySort(ctx, rows, rules.transform.sort);
 
   // 9-10. Group and output layout.
   const { sheet, dataRows } = buildSheet(ctx, rules, rows);

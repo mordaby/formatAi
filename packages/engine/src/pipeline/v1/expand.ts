@@ -119,7 +119,7 @@ function splitCell(ctx: RunCtx, rows: Row[], ex: Extract<Expand, { mode: 'splitC
  * built), then create or overwrite those columns on the new row.
  */
 function fixedFanOut(ctx: RunCtx, rows: Row[], ex: Extract<Expand, { mode: 'fixedFanOut' }>): Row[] {
-  const env = { slotOf: ctx.plan.slotOf, language: ctx.language };
+  const env = { slotOf: ctx.plan.slotOf, language: ctx.language, functions: ctx.functions, tables: ctx.tables };
   const entries: { id: string; slot: number; fn: Fn }[][] = ex.rows.map((r) =>
     Object.entries(r.set).map(([id, expr]) => ({
       id,

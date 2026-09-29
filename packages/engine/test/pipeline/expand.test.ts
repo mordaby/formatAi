@@ -5,13 +5,13 @@ import { col, dataRows, rules, runOk, table, values } from './helpers';
 
 describe('expand: columnsToRows', () => {
   const columns = [
-    col('agent', 'idLike'),
+    col('supplier', 'idLike'),
     col('jan', 'decimal', { header: 'ינואר' }),
     col('feb', 'decimal', { header: 'פברואר' }),
     col('mar', 'decimal', { header: 'מרץ' }),
   ];
   const t = table(
-    ['agent', 'ינואר ', 'פברואר', 'מרץ'],
+    ['supplier', 'ינואר ', 'פברואר', 'מרץ'],
     [
       ['A', 100, '200', null], // 2
       ['B', null, null, null], // 3: all months empty
@@ -29,7 +29,7 @@ describe('expand: columnsToRows', () => {
   });
 
   it('one row per non-empty listed column; labels default to the rules headers', () => {
-    const res = runOk(rules({ columns, expand: ex(), out: ['agent', 'month', 'amount'] }), t);
+    const res = runOk(rules({ columns, expand: ex(), out: ['supplier', 'month', 'amount'] }), t);
     expect(values(res.sheet)).toEqual([
       ['A', 'ינואר', 100],
       ['A', 'פברואר', 200],
@@ -47,8 +47,8 @@ describe('expand: columnsToRows', () => {
 
   it('skipEmpty false keeps empty cells; explicit labels override', () => {
     const res = runOk(
-      rules({ columns, expand: ex({ skipEmpty: false, labels: { jan: '01', mar: '03' } }), out: ['agent', 'month', 'amount'] }),
-      table(['agent', 'ינואר', 'פברואר', 'מרץ'], [['B', null, 1, null]]),
+      rules({ columns, expand: ex({ skipEmpty: false, labels: { jan: '01', mar: '03' } }), out: ['supplier', 'month', 'amount'] }),
+      table(['supplier', 'ינואר', 'פברואר', 'מרץ'], [['B', null, 1, null]]),
     );
     expect(values(res.sheet)).toEqual([
       ['B', '01', null],
@@ -58,7 +58,7 @@ describe('expand: columnsToRows', () => {
   });
 
   it('the listed columns are gone after expand', () => {
-    const r = rules({ columns, expand: ex(), out: ['agent', 'jan'] });
+    const r = rules({ columns, expand: ex(), out: ['supplier', 'jan'] });
     const res = runRules(r, t);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe('invalidRules');
@@ -79,9 +79,9 @@ describe('expand: columnsToRows', () => {
 });
 
 describe('expand: splitCell', () => {
-  const columns = [col('policy', 'idLike'), col('products', 'text'), col('amount', 'decimal')];
+  const columns = [col('order', 'idLike'), col('products', 'text'), col('amount', 'decimal')];
   const t = table(
-    ['policy', 'products', 'amount'],
+    ['order', 'products', 'amount'],
     [
       ['P1', 'חיים; בריאות', 300], // 2: 2 parts
       ['P2', 'רכב', 90], // 3: 1 part
@@ -113,7 +113,7 @@ describe('expand: splitCell', () => {
           },
         ],
       },
-      out: ['policy', 'product', 'idx', 'n', 'share', 'products'],
+      out: ['order', 'product', 'idx', 'n', 'share', 'products'],
     });
     const res = runOk(r, t);
     expect(values(res.sheet)).toEqual([
@@ -129,7 +129,7 @@ describe('expand: splitCell', () => {
   });
 
   it('skipEmpty false keeps empty parts and gives an empty cell one row', () => {
-    const res = runOk(rules({ columns, expand: split(false), out: ['policy', 'product', 'idx', 'n'] }), t);
+    const res = runOk(rules({ columns, expand: split(false), out: ['order', 'product', 'idx', 'n'] }), t);
     expect(values(res.sheet).filter((r) => r[0] === 'P3' || r[0] === 'P4')).toEqual([
       ['P3', 'א', 1, 5],
       ['P3', 'ב', 2, 5],
@@ -141,7 +141,7 @@ describe('expand: splitCell', () => {
   });
 
   it('without trim, parts keep their spaces', () => {
-    const res = runOk(rules({ columns, expand: split(true, false), out: ['product'] }), table(['policy', 'products', 'amount'], [['P', 'a; b', 1]]));
+    const res = runOk(rules({ columns, expand: split(true, false), out: ['product'] }), table(['order', 'products', 'amount'], [['P', 'a; b', 1]]));
     expect(values(res.sheet)).toEqual([['a'], [' b']]);
   });
 });

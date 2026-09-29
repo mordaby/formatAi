@@ -70,6 +70,8 @@ export const FLAG_MESSAGE_KEYS = [
   'flag.expr.notDate',
   // rule "valueMap"
   'flag.valueMapMissing',
+  // rule "expr" (lookup, SPEC 8.3/8.14). params: none; value is the lookup key
+  'flag.lookupMissing',
   // declared validations (SPEC 8.8)
   'flag.validation.required',
   'flag.validation.israeliIdChecksum',

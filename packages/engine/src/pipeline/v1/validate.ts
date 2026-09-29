@@ -3,12 +3,15 @@
 //
 // DECISION: where validations run. SPEC 8.2 lists validations last, but a
 // "block" must keep a row out of the output *and* out of every subtotal, grand
-// total, summary row and title aggregate. So all declared validations run on
-// the final row values (after computed columns and value maps) and *before*
-// sort/group/layout. Flags are emitted only for rows that reach the output:
-// flags already raised on a row that a validation then blocks are dropped, and
-// the row is listed in summary.blockedRows instead (one entry per blocked
-// row, naming the first blocking validation).
+// total, summary row and title aggregate. So input validations (`on: "input"`,
+// the default) run on the final row values (after computed columns and value
+// maps) and *before* sort/group/layout; output validations (`on: "output"`)
+// run after the output columns are planned (so `column` can name an output
+// header) but *before* group/subtotal/grand-total, for the same reason. Flags
+// are emitted only for rows that reach the output: flags already raised on a
+// row that a validation then blocks are dropped, and the row is listed in
+// summary.blockedRows instead (one entry per blocked row, naming the first
+// blocking validation).
 
 import Decimal from 'decimal.js';
 import type { Validation } from '@formatai/shared';
@@ -16,7 +19,7 @@ import type { RunSummary } from '../../types';
 import { isValidIsraeliId } from '../../values/israeliId';
 import { parseNumber } from '../../values/numbers';
 import { normalizeText, padLeft } from '../../values/text';
-import { flagRow, slotOrThrow, type Origin, type Row, type RunCtx } from './rows';
+import { flagRow, slotOrThrow, InternalRulesError, type Origin, type Row, type RunCtx } from './rows';
 import { DateVal, canonicalKey, normKey, parseConstDate, toText, type Val } from './values';
 
 interface Failure {
@@ -93,20 +96,25 @@ function makeCheck(val: Exclude<Validation, { rule: 'unique' }>): Check {
 // value, with params {firstRow}; the first occurrence stays. Repeats within one
 // expand family (rows of the same input row) don't count as duplicates.
 /**
- * Runs the declared validations in order over the rows (in pipeline order).
- * A row blocked by one validation isn't checked by later ones.
+ * Runs `validations` (already filtered to one `on` side by the caller) in
+ * order over the rows (in pipeline order). A row blocked by one validation
+ * isn't checked by later ones. `slotOf` resolves each validation's `column` to
+ * a row slot: an input/computed id for `on: "input"`, an output header (via
+ * the output column plan) for `on: "output"` (SPEC 8.8) -- everything else
+ * about how a check runs is identical between the two.
  */
-export function applyValidations(
+function runChecks(
   ctx: RunCtx,
   rows: Row[],
   validations: Validation[],
+  slotOf: (val: Validation) => number,
   summary: RunSummary,
 ): Row[] {
   if (validations.length === 0) return rows;
   const blocked: (Validation | null)[] = new Array<Validation | null>(rows.length).fill(null);
 
   for (const val of validations) {
-    const slot = slotOrThrow(ctx.plan, val.column);
+    const slot = slotOf(val);
     const messageKey = `flag.validation.${val.rule}`;
     let check: (v: Val, origin: Origin) => Failure | null;
     if (val.rule === 'unique') {
@@ -156,4 +164,42 @@ export function applyValidations(
     else summary.blockedRows.push({ rowNumber: row.o.rowNumber, rule: b.rule, column: b.column });
   }
   return out;
+}
+
+/** Input validations (`on: "input"`, the default): `column` is an input/computed id. */
+export function applyValidations(
+  ctx: RunCtx,
+  rows: Row[],
+  validations: Validation[],
+  summary: RunSummary,
+): Row[] {
+  const input = validations.filter((v) => (v.on ?? 'input') === 'input');
+  return runChecks(ctx, rows, input, (v) => slotOrThrow(ctx.plan, v.column), summary);
+}
+
+/**
+ * Output validations (`on: "output"`, SPEC 8.8): `column` names an output
+ * header instead of an input/computed id, resolved against the already-planned
+ * output columns (`cols`, from layout.ts's `planColumns`). Run this after
+ * `applySort` and before `buildSheet` so a blocked row (and its flags) is
+ * excluded before any subtotal/grand-total/summary-row aggregate is computed --
+ * `buildSheet` only ever sees whatever `rows` it's handed, so filtering here
+ * (rather than after the sheet is built) is what keeps totals correct
+ * (`// DECISION`: evaluate-before-totals, not recompute-after).
+ */
+export function applyOutputValidations(
+  ctx: RunCtx,
+  rows: Row[],
+  cols: { rule: { header: string }; slot: number }[],
+  validations: Validation[],
+  summary: RunSummary,
+): Row[] {
+  const output = validations.filter((v) => v.on === 'output');
+  if (output.length === 0) return rows;
+  const slotOf = (header: string): number => {
+    const found = cols.find((c) => c.rule.header === header);
+    if (found === undefined) throw new InternalRulesError(`unknown output column "${header}"`);
+    return found.slot;
+  };
+  return runChecks(ctx, rows, output, (v) => slotOf(v.column), summary);
 }

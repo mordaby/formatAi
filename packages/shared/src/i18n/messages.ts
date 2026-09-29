@@ -116,6 +116,10 @@ export const flagMessages: Record<FlagMessageKey, Localized> = {
     en: "This value isn't in the translation list. We kept it as it is.",
     he: 'הערך הזה לא מופיע ברשימת התרגום. השארנו אותו כפי שהוא.',
   },
+  'flag.lookupMissing': {
+    en: "This value isn't in the lookup table. We left the result empty.",
+    he: 'הערך הזה לא נמצא בטבלת החיפוש. השארנו את התוצאה ריקה.',
+  },
   'flag.validation.required': {
     en: 'This cell is empty, but it should always have a value.',
     he: 'התא ריק, אבל תמיד אמור להיות בו ערך.',
