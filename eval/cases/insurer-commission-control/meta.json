@@ -1,0 +1,14 @@
+{
+  "difficulty": "hard",
+  "domain": "insuranceCommissions",
+  "features": [
+    "groups",
+    "summaryRows",
+    "blankRowsAfterGroup",
+    "titleFromData",
+    "valueMap",
+    "filterNotEqual",
+    "israeliIdChecksum"
+  ],
+  "expect": "verified"
+}

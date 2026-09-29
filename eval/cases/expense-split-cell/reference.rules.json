@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "claimNo",
+        "header": "מספר בקשה",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "employee",
+        "header": "עובד",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "categories",
+        "header": "קטגוריות",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "amount",
+        "header": "סכום",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "expand": {
+      "mode": "splitCell",
+      "column": "categories",
+      "separator": "; ",
+      "trim": true,
+      "partId": "category",
+      "indexId": "partIndex",
+      "countId": "partCount",
+      "skipEmpty": true
+    },
+    "computed": [
+      {
+        "id": "share",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "digits": 2,
+          "arg": {
+            "op": "div",
+            "args": [
+              {
+                "col": "amount"
+              },
+              {
+                "col": "partCount"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "הוצאות לפי קטגוריה",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "מספר בקשה",
+        "from": "claimNo"
+      },
+      {
+        "header": "עובד",
+        "from": "employee"
+      },
+      {
+        "header": "קטגוריה",
+        "from": "category"
+      },
+      {
+        "header": "סכום לקטגוריה",
+        "from": "share",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "בקשות הוצאה → פיצול קטגוריות",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

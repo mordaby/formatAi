@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "sku",
+        "header": "SKU",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "unitCost",
+        "header": "Unit Cost",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "itemDesc",
+        "header": "Item Description",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "group",
+        "header": "Group",
+        "type": "text"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "sku",
+        "dir": "asc"
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "ERP Catalog Load",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Item Code",
+        "from": "sku",
+        "width": 12
+      },
+      {
+        "header": "Description",
+        "from": "itemDesc"
+      },
+      {
+        "header": "Unit Price",
+        "from": "unitCost",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Category",
+        "from": "group"
+      }
+    ]
+  },
+  "validations": [
+    {
+      "on": "output",
+      "column": "Item Code",
+      "rule": "required",
+      "severity": "flag"
+    }
+  ],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Supplier B price list",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified",
+    "formatId": "registry-erp-catalog",
+    "sourceName": "Supplier B"
+  }
+}

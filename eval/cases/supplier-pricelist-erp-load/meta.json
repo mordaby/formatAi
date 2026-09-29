@@ -1,0 +1,15 @@
+{
+  "difficulty": "easy",
+  "domain": "supplierPriceList",
+  "features": [
+    "rename",
+    "padLeft",
+    "leadingZerosLost",
+    "dropColumns",
+    "fastPath",
+    "txtOutput",
+    "noHeader",
+    "windows1255"
+  ],
+  "expect": "verified"
+}

@@ -1,0 +1,9 @@
+{
+  "difficulty": "medium",
+  "domain": "budget",
+  "features": [
+    "columnsToRows",
+    "skipEmpty"
+  ],
+  "expect": "verified"
+}

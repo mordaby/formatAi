@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "itemCode",
+        "header": "מקט",
+        "type": "idLike",
+        "padLeft": 6,
+        "required": true
+      },
+      {
+        "id": "description",
+        "header": "תיאור",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "cost",
+        "header": "עלות",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "file": {
+      "type": "txt",
+      "delimiter": "\t",
+      "header": false,
+      "encoding": "windows1255"
+    },
+    "sheetName": "ERP_LOAD",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "columns": [
+      {
+        "header": "מקט",
+        "from": "itemCode"
+      },
+      {
+        "header": "תיאור פריט",
+        "from": "description"
+      },
+      {
+        "header": "עלות ליחידה",
+        "from": "cost",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "מחירון ספק → טעינת קטלוג ERP",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "difficulty": "medium",
+  "domain": "supplierPriceList",
+  "features": [
+    "registryAttach",
+    "numbersStoredAsText",
+    "currencySymbol",
+    "differentColumnOrder"
+  ],
+  "expect": "verified",
+  "attachTo": "registry-supplier-a"
+}

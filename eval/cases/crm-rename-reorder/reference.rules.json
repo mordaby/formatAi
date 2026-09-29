@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "customerId",
+        "header": "Customer ID",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "firstName",
+        "header": "First Name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "lastName",
+        "header": "Last Name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "email",
+        "header": "Email",
+        "type": "text"
+      },
+      {
+        "id": "phone",
+        "header": "Phone",
+        "type": "text"
+      },
+      {
+        "id": "city",
+        "header": "City",
+        "type": "text"
+      },
+      {
+        "id": "status",
+        "header": "Status",
+        "type": "text"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "file": {
+      "type": "csv",
+      "header": true,
+      "encoding": "utf8"
+    },
+    "sheetName": "CRM Import",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Contact ID",
+        "from": "customerId"
+      },
+      {
+        "header": "Last Name",
+        "from": "lastName"
+      },
+      {
+        "header": "First Name",
+        "from": "firstName"
+      },
+      {
+        "header": "Email Address",
+        "from": "email"
+      },
+      {
+        "header": "Phone",
+        "from": "phone"
+      },
+      {
+        "header": "Account Status",
+        "from": "status"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "CRM import CSV",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

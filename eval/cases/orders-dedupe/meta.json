@@ -1,0 +1,10 @@
+{
+  "difficulty": "medium",
+  "domain": "salesOrders",
+  "features": [
+    "dedupeByKey",
+    "csvOutput",
+    "utf8bom"
+  ],
+  "expect": "verified"
+}

@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "orderNo",
+        "header": "Order No",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "customer",
+        "header": "Customer",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "item",
+        "header": "Item",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "qty",
+        "header": "Qty",
+        "type": "integer",
+        "required": true
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "dedupe": {
+      "keys": [
+        "orderNo"
+      ],
+      "keep": "first",
+      "action": "remove"
+    },
+    "computed": [],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "file": {
+      "type": "csv"
+    },
+    "sheetName": "Orders (deduped)",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Order #",
+        "from": "orderNo"
+      },
+      {
+        "header": "Customer",
+        "from": "customer"
+      },
+      {
+        "header": "Item",
+        "from": "item"
+      },
+      {
+        "header": "Quantity",
+        "from": "qty"
+      },
+      {
+        "header": "Line Total",
+        "from": "amount",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Orders export → deduped orders",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

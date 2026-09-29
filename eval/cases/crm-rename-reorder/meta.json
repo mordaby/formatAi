@@ -1,0 +1,13 @@
+{
+  "difficulty": "easy",
+  "domain": "customerList",
+  "features": [
+    "rename",
+    "reorder",
+    "dropColumns",
+    "fastPath",
+    "csvOutput",
+    "utf8"
+  ],
+  "expect": "verified"
+}

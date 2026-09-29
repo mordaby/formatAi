@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "code",
+        "header": "קוד פריט",
+        "type": "idLike",
+        "padLeft": 6,
+        "required": true
+      },
+      {
+        "id": "explanation",
+        "header": "הסבר",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "unitCost2",
+        "header": "עלות ליחידה",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "kind",
+        "header": "סוג",
+        "type": "text"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "code",
+        "dir": "asc"
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "ERP Catalog Load",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Item Code",
+        "from": "code",
+        "width": 12
+      },
+      {
+        "header": "Description",
+        "from": "explanation"
+      },
+      {
+        "header": "Unit Price",
+        "from": "unitCost2",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Category",
+        "from": "kind"
+      }
+    ]
+  },
+  "validations": [
+    {
+      "on": "output",
+      "column": "Item Code",
+      "rule": "required",
+      "severity": "flag"
+    }
+  ],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Supplier C price list",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified",
+    "formatId": "registry-erp-catalog",
+    "sourceName": "Supplier C"
+  }
+}

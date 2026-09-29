@@ -1,0 +1,12 @@
+{
+  "difficulty": "medium",
+  "domain": "freightInvoices",
+  "features": [
+    "valueMap",
+    "filterNotEqual",
+    "numbersStoredAsText",
+    "currencySymbol",
+    "newStatusGeneralization"
+  ],
+  "expect": "verified"
+}
