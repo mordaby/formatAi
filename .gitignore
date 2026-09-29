@@ -1,0 +1,40 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+.vite/
+
+# env & secrets (commit .env.example only)
+.env
+.env.*
+!.env.example
+
+# test / coverage
+coverage/
+.vitest/
+
+# eval run outputs (cases are committed, reports are not)
+eval/reports/
+eval/.cache/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# local Claude settings
+.claude/settings.local.json
+
+# Excel lock files
+~$*
