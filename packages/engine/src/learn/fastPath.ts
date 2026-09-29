@@ -438,7 +438,10 @@ function buildValidations(analysis: PairAnalysis, ctx: Ctx, outputColumns: reado
           : { column: col.id, rule: 'range', min: 0, severity: 'flag' },
       );
     }
-    if (profile.key) {
+    // DECISION: `unique` only for identifier-like columns (idLike / text). A date or amount
+    // column that happens to be all-distinct in one example is a coincidence, not a rule —
+    // flagging next month's repeated dates or amounts would just be noise.
+    if (profile.key && (profile.type === 'idLike' || profile.type === 'text')) {
       validations.push(
         outHeader !== undefined
           ? { on: 'output', column: outHeader, rule: 'unique', severity: 'flag' }

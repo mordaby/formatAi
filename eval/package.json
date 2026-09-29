@@ -7,7 +7,9 @@
     "eval": "tsx run.ts",
     "build-cases": "tsx cases/build.ts",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "learn": "tsx try/learn.ts",
+    "convert": "tsx try/convert.ts"
   },
   "dependencies": {
     "@formatai/api": "workspace:*",

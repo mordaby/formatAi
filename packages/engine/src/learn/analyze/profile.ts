@@ -296,7 +296,9 @@ export function toPayloadColumn(p: ColumnProfile): PayloadColumn {
   else stats.distinct = round3(p.distinctRatio);
   if (p.len) stats.len = p.len;
   if (p.range) stats.range = p.range;
-  if (p.key) stats.key = true;
+  // DECISION: only identifier-like columns carry `key` to the LLM: an all-distinct date or amount
+  // column in one example is a coincidence, and `key` drives a `unique` check (LEARN_PROMPT step 11).
+  if (p.key && (p.type === 'idLike' || p.type === 'text')) stats.key = true;
   if (p.leadingZerosLost) stats.leadingZerosLost = true;
   if (p.israeliId) stats.israeliId = true;
   if (p.serialDates) stats.serialDates = true;

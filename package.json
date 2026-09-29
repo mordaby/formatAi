@@ -7,7 +7,9 @@
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "build": "pnpm -r --if-present build",
-    "eval": "pnpm --filter @formatai/eval run eval"
+    "eval": "pnpm --filter @formatai/eval run eval",
+    "learn": "pnpm --filter @formatai/eval run learn",
+    "convert": "pnpm --filter @formatai/eval run convert"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
