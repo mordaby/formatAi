@@ -5,6 +5,14 @@ export interface DetectTableOptions {
   /** 0-based row index. Overrides automatic header detection. */
   headerRow?: number;
   mode?: 'input' | 'output';
+  /**
+   * SPEC 8.13 / M1: treat the sheet as a headerless table (output.file
+   * `header: false`, or a fixed-column load file). headerRow is reported as
+   * -1, dataStart is the first non-empty row, and none of the header-based
+   * rejections (noHeaderRow, mergedHeader, splitHeader) apply. M1's pair
+   * analysis aligns headerless output columns by position instead of by name.
+   */
+  noHeader?: boolean;
 }
 
 type Cell = RawCell | null;
@@ -282,6 +290,15 @@ export function detectTable(sheet: RawSheet, opts?: DetectTableOptions): TableDe
   if (!sheetHasContent) {
     const code: TableIssueCode = sheet.hasDrawings ? 'onlyDrawings' : 'emptySheet';
     return reject(code, -1, -1, -1, [], [], detectDirection(sheet, -1), [{ code, severity: 'reject' }]);
+  }
+
+  if (opts?.noHeader) {
+    const dataStart = rows.findIndex((row) => !isRowEmpty(row));
+    const dataEnd = lastNonEmptyRow(rows);
+    const direction = detectDirection(sheet, dataStart);
+    const issues: TableIssue[] = [];
+    if (hiddenNotice) issues.push(hiddenIssue());
+    return { ok: true, headerRow: -1, dataStart, dataEnd, titleRows: [], footerRows: [], direction, issues };
   }
 
   let headerRow: number;

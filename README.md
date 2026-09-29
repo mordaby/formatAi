@@ -1,6 +1,6 @@
 # formatAi
 
-Learns an Excel report format from one example pair (input → the output made by hand), then converts new files into that format with a deterministic engine. Files never leave the browser; an LLM only writes a small rules file, once.
+Learns a company's file formats from examples and converts incoming files (supplier price lists, partner reports, client exports, other systems' reports) into them — including exact system load files (csv / delimited text). A format has many sources; each source is taught once from an example pair, then a deterministic engine converts every future file. Files never leave the browser; an LLM only writes a small rules file, once. Domain-neutral by design.
 
 - Product/build spec: [SPEC.md](SPEC.md)
 - The learn-call prompt: [LEARN_PROMPT.md](LEARN_PROMPT.md)
@@ -42,5 +42,5 @@ Run the API: `pnpm --filter @formatai/api dev` → http://localhost:8787/api/hea
 
 ## Status
 
-- **M0 — engine without AI:** rules schema, table detection, the 11-step pipeline (decimal math, dedupe, three expand modes, groups, titles, validations), xlsx/csv read & write incl. RTL, golden tests.
+- **M0 — engine without AI (spec v3):** rules schema v1 incl. typed operations, functions and lookup tables; type checker and limits; format lock (formatOf / checkFormatLock); table detection; the 11-step pipeline (decimal math, dedupe, three expand modes, groups, titles, input/output validations); read xlsx/xls/csv/txt; write xlsx (RTL) and csv/txt (delimiter, header on/off, quoting, UTF-8/Windows-1255); golden tests across domains.
 - Next: **M1 — learning** (pair analysis, pre-flight, fast path, masking, payload, LLM client, eval harness).

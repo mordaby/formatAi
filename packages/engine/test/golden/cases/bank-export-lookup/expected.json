@@ -1,0 +1,48 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "Reconciliation",
+  "direction": "ltr",
+  "columns": [
+    { "header": "Txn ID" },
+    { "header": "Category" },
+    { "header": "Description" },
+    { "header": "Amount", "format": "#,##0.00", "numeric": true },
+    { "header": "Signed Amount", "format": "#,##0.00", "numeric": true }
+  ],
+  "merges": ["A1:E1"],
+  "rows": [
+    {
+      "kind": "title",
+      "bold": true,
+      "cells": ["Bank Reconciliation", "Bank Reconciliation", "Bank Reconciliation", "Bank Reconciliation", "Bank Reconciliation"]
+    },
+    { "kind": "header", "bold": true, "cells": ["Txn ID", "Category", "Description", "Amount", "Signed Amount"] },
+    { "kind": "data", "sourceRow": 2, "cells": ["T1001", "Deposit", "Salary deposit", 5000, 5000] },
+    { "kind": "data", "sourceRow": 3, "cells": ["T1002", "Withdrawal", "ATM withdrawal", 1200.5, -1200.5] },
+    { "kind": "data", "sourceRow": 4, "cells": ["T1003", "Bank Fee", "Monthly fee", 15, -15] },
+    { "kind": "data", "sourceRow": 5, "cells": ["T1004", "Interest", "Interest credit", 3.25, 3.25] },
+    { "kind": "data", "sourceRow": 6, "cells": ["T1005", "Deposit", "Client payment", 2500, 2500] },
+    { "kind": "data", "sourceRow": 7, "cells": ["T1006", "Chargeback", "Disputed charge", 89.99, -89.99] },
+    { "kind": "data", "sourceRow": 8, "cells": ["T1007", "Withdrawal", "Cash withdrawal", 300, -300] },
+    {
+      "kind": "data",
+      "sourceRow": 9,
+      "cells": ["T1008", null, "Wire transfer", 750, 0],
+      "flaggedCols": [1]
+    },
+    { "kind": "data", "sourceRow": 10, "cells": ["T1009", "Bank Fee", "Card fee", 5.5, -5.5] },
+    { "kind": "data", "sourceRow": 11, "cells": ["T1010", "Deposit", "Bonus deposit", 10000, 10000] }
+  ],
+  "flags": [
+    { "fileName": "input.xlsx", "rowNumber": 9, "column": "category", "rule": "expr", "value": "XFER", "messageKey": "flag.lookupMissing" },
+    { "fileName": "input.xlsx", "rowNumber": 9, "column": "sign", "rule": "expr", "value": "XFER", "messageKey": "flag.lookupMissing" }
+  ],
+  "summary": {
+    "rowsIn": 10,
+    "rowsOut": 10,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

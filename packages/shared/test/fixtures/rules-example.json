@@ -134,6 +134,9 @@
     }
   },
   "output": {
+    "file": {
+      "type": "xlsx"
+    },
     "sheetName": "דוח עמלות",
     "direction": "rtl",
     "language": "he",
@@ -209,6 +212,13 @@
       "rule": "range",
       "min": 0,
       "severity": "flag"
+    },
+    {
+      "on": "output",
+      "column": "עמלה",
+      "rule": "range",
+      "min": 0,
+      "severity": "flag"
     }
   ],
   "unsupported": [],
@@ -222,7 +232,7 @@
     "source": "examplePair",
     "status": "verified",
     "model": "claude-haiku-4-5-20251001",
-    "promptVersion": "learn-v1",
+    "promptVersion": "learn-v3",
     "masking": true,
     "learnPath": "llm",
     "createdAt": "2026-01-15T10:00:00.000Z"

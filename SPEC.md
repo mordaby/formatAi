@@ -6,19 +6,31 @@
 > - After each milestone, stop and report what was built, what was skipped, and any decision you had to make.
 > - Items marked **DECISION** are listed in section 20. They are not settled: use the default given there and leave a `// DECISION:` comment in the code.
 > - The exact LLM prompt lives in `LEARN_PROMPT.md`. Keep that file and this spec in sync.
+> - This is **v3**. Section 21 lists what changed since v1 and the amendments to the M0 code that was already built.
 
 ## 1. What we're building
 
-A web tool that learns an Excel report format from one example and then converts new files into that format. Conversion is deterministic and uses no AI at run time.
+A web tool that learns a company's file formats from examples, keeps them in a registry, and converts incoming files into them. Conversion is deterministic and uses no AI at run time.
 
+Companies receive files from other parties (suppliers' price lists, insurers' commission reports, clients' exports, other systems' reports), each in the sender's layout. Someone rebuilds them by hand into the company's own format, or into the exact file their system (Priority, Hashavshevet, SAP B1, a CRM) loads, and checks them. The receiving side usually can't make the sender change its layout. That manual work, and the errors in it, is what this tool replaces.
+
+Three words, used the same way everywhere (code, UI, docs):
+- **Format:** the shape of a file the company produces: columns, types, layout, file type and checks. Formats belong to the company (8.12).
+- **Source:** one kind of incoming file, e.g. one supplier's price list.
+- **Conversion:** the rules that turn one source into one format. A format usually has several conversions.
+
+How it works:
 1. The user provides an example input file and the output file they make from it by hand.
 2. Code on the user's computer analyzes both files.
 3. An LLM receives a small, masked summary once and writes a **rules file** (JSON). Simple cases are solved by code alone, with no LLM at all.
-4. From then on, a deterministic engine applies those rules to any number of new files.
+4. Saving creates the format and its first conversion. Each further source is taught the same way and attached to the existing format, which stays fixed.
+5. From then on, a deterministic engine applies the rules to any number of new files, picking the right conversion for each file by its columns.
 
-**Audience:** non-technical office staff who spend much of their day converting, reformatting and checking Excel reports. The first focus is commission control in Israeli insurance agencies and pension-operations firms.
+**The core is one pipeline:** two files → deduce the differences → a rules file in the format language (8) → the conversion engine. Everything else (the registry, the editor, tiers, accounts) exists to serve it. Nothing in it depends on a domain, a system or a file's meaning; it only learns how one table becomes another.
 
-**Business model:** the public tool is self-serve (anonymous → registered → paid) and doubles as a demand test. A separate business page explains the value to companies.
+**Audience:** non-technical office staff (operations, back office, procurement, finance) who spend much of their day converting, reformatting and checking files received from others. The product is domain-neutral. Early design partners will likely come from insurance agencies (commission control), pension operations and importers loading supplier files into their ERP, but no part of the engine, the prompt or the UI may assume one of them (non-negotiable 9).
+
+**Business model:** B2B is the business. The public app (free → registered → paid, section 11) is a proof of concept and a demand funnel: people use the real product on real files, and usage data shows which formats and features matter. Paid accounts in the MVP are companies we onboard by hand; an admin assigns their tier (no payment code yet). A separate business page explains the value to companies.
 
 ## 2. Non-negotiables
 
@@ -36,12 +48,15 @@ A web tool that learns an Excel report format from one example and then converts
 6. **Spend is controlled on the server.** LLM usage is limited server-side. Free limits such as rows, preview size and batch size are enforced in the client, and it's acceptable if they can be bypassed.
 7. **Hebrew and English, right-to-left and left-to-right, from day one.** This applies to the UI, the previews and the Excel files the tool reads and writes.
 8. **All limits, prices, model choices and prompt versions live in config**, never in code.
+9. **Domain-neutral.** Nothing in the engine, the prompt, UI copy or default examples is specific to one industry. Domain knowledge enters only through formats, value maps and validations that users create.
 
 ## 3. Scope
 
 **In the MVP:**
-- Single-sheet Excel/CSV tables.
+- Single-sheet Excel, CSV and delimited-text tables.
 - Learning from an example pair (two files).
+- The registry: formats with several sources; adding a source to an existing format (with an example output); converting a file with automatic matching to its conversion.
+- Output as xlsx, csv or delimited text, with or without a header row, so system load files are covered.
 - Pair analysis, pre-flight checks and a local fast path.
 - Removing or flagging duplicate rows.
 - One input row becoming several output rows: columns to rows, splitting a cell, and fixed fan-out.
@@ -49,13 +64,18 @@ A web tool that learns an Excel report format from one example and then converts
 - A rules map with an editor, where users fix or add rules and see a live count of matching rows.
 - A preview with a diff against the example, and flagged rows.
 - Google and Microsoft sign-in.
-- Saved formats, re-running a format, and batch conversion.
+- Saved formats and sources, re-running, and batch conversion for paid accounts (mixed sources allowed).
 - Tier limits.
 - Usage events and an admin dashboard.
 - A business page with a lead form, plus privacy and terms pages, all in Hebrew and English.
 - A model evaluation harness.
 
 **Next, after the MVP:**
+- Adding a source from its input file alone (no example output), mapped to the known format.
+- A headers-only LLM suggestion when a known source renamed its columns (headers only, never values).
+- Ready-made formats (templates) for common systems, e.g. Priority load screens.
+- Comparing a run with the previous run of the same conversion (row count, totals) and flagging unusual changes.
+- A customer-hosted LLM endpoint (9.6).
 - Learning from an input file plus a text description, and from a description alone.
 - A side-by-side, merge-style view for resolving flags.
 
@@ -80,7 +100,7 @@ repo/
     engine/        pure TS: parse → detect table → profile → pair analysis → mask/unmask
                    → apply rules → validate → diff → write
                    no DOM and no Node-only APIs; used by web (Web Worker), api and eval
-    shared/        rules schema (zod) + generated JSON Schema, config (tiers, models, prices),
+    shared/        rules schema (zod) + generated JSON Schema, format/conversion types, config (tiers, models, prices),
                    prompts/ (loaded from LEARN_PROMPT.md content), event types, API types, i18n keys
   apps/
     web/           React + Vite + TS, i18n (he/en), RTL/LTR
@@ -92,7 +112,7 @@ repo/
 
 Libraries:
 - **Reading:** SheetJS (xlsx, xls, csv). Install it from the SheetJS CDN tarball as their docs describe. The `xlsx` package on the npm registry is years out of date and has known vulnerabilities.
-- **Writing:** ExcelJS, for styles, number formats, widths, the right-to-left sheet view and merged title cells. Use ExcelJS when you need to read sheet-view settings (e.g. the RTL flag) from xlsx files.
+- **Writing:** CSV and delimited text are written by the engine's own writer (delimiter, header on/off, quoting, encoding; iconv-lite for Windows-1255, since it runs in the browser). ExcelJS for xlsx: styles, number formats, widths, the right-to-left sheet view and merged title cells. Use ExcelJS when you need to read sheet-view settings (e.g. the RTL flag) from xlsx files.
 - **Numbers:** decimal.js for all arithmetic. Never use floating point for amounts.
 - **Schema:** zod, with a JSON Schema export for the LLM call.
 - **Sign-in:** openid-client, one implementation serving both Google and Microsoft.
@@ -127,6 +147,17 @@ Where each step runs:
 7. Show the rules map with its editor (8.11), the preview and the flagged rows.
    - Anonymous users see 20 rows.
    - Downloading the full file or saving the format requires sign-in.
+8. **Saving** creates two things: a **format** (the output side: columns, layout, file type and output checks) and its first **conversion** (this source → that format). See 8.12.
+
+### A2. Add a source to an existing format (MVP)
+A company receives the same kind of file from several parties (suppliers, insurers, clients), each in its own layout, and turns all of them into one format. The first source creates the format (flow A). Every other source is added to it:
+1. The user opens a format → **Add a source**, names it (e.g. the supplier), and drops that source's input file and an output they made from it by hand. The output must match the format (same headers in the same order and the same file type); if it doesn't, say which columns differ.
+   - Flow A detects this case too: if an example output matches a saved format, offer "This looks like your format *X*. Add this file as a new source for it?"
+2. Everything in flow A runs as before (pair analysis, pre-flight, fast path, masking, verification), with one difference: the payload includes `target` (LEARN_PROMPT section 3) and the output side is fixed by the format lock (8.12). The LLM only decides how this input produces the format's columns.
+3. Output columns this source can't produce are `unsupported` as usual. The format is never changed to fit a source.
+4. Saving creates a new conversion under the format.
+
+Adding a source *without* a hand-made output (the input file alone, mapped to the known format) comes after the MVP. Such a conversion can only be `userConfirmed`, never verified.
 
 ### B. Learn from a description (after the MVP)
 There are two variants:
@@ -135,16 +166,17 @@ There are two variants:
 
 Keep this in mind in the schema (`meta.source`, `meta.status`), but don't build it yet.
 
-### C. Run a saved format
-The user opens My formats → Run on a file. The engine checks the file against the format's input signature:
+### C. Convert a file
+The user drops a file on **Convert a file** (on Home, or on a format's page). They don't have to say which source it is:
+- code matches the file's headers against the input signature of every saved conversion (8.12), and either picks the conversion or asks the user to choose among the top matches;
 - missing required columns stop the run with a clear message;
 - extra columns are ignored;
-- renamed columns are matched through aliases or offered to the user for mapping.
+- renamed columns are matched through aliases or offered to the user for mapping. A confirmed mapping is saved as a new alias.
 
 The result is a download plus flagged rows. No LLM call.
 
 ### D. Batch
-Same as flow C with many files, processed one at a time in the worker. Each file gets a status: converted, converted with flags, or didn't match. The user downloads a zip plus a summary sheet of flags per file. No LLM call. The number of files is limited by tier.
+Same as flow C with many files, processed one at a time in the worker. A batch may mix sources: each file is matched on its own, and results are grouped by format. Each file gets a status: converted, converted with flags, or didn't match. The user downloads a zip plus a summary sheet of flags per file. No LLM call. Batch is a paid feature; the number of files is limited by tier.
 
 ### E. Sign-in wall
 Shown when an anonymous user tries to download the full output, save a format, run another file, or goes over an anonymous limit.
@@ -157,7 +189,7 @@ Shown when an anonymous user tries to download the full output, save a format, r
 Everything in this section runs in the browser, on the real data, and costs no tokens.
 
 ### 6.1 File checks
-Accepted types: .xlsx, .xls, .csv. The maximum size depends on the tier. Formulas are read as their last calculated values, and macros are ignored.
+Accepted types: .xlsx, .xls, .csv, and .txt (delimited). The maximum size depends on the tier. Formulas are read as their last calculated values, and macros are ignored.
 
 `detectTable(sheet)` returns `{ ok, headerRow, dataStart, dataEnd, titleRows, footerRows, direction, issues[] }`:
 - **Several non-empty sheets:** ask the user which one to use.
@@ -279,7 +311,9 @@ The full field list and an example are in `LEARN_PROMPT.md`. In short:
 - up to 12 aligned sample pairs, chosen to cover the first rows, empty cells, extreme values and each kind of layout row. When rows expand, up to 6 whole **families** are sent instead (one input row with all its output rows), including the smallest and the largest;
 - up to 5 dropped rows;
 - hints;
-- `skipColumns`.
+- `skipColumns`;
+- `output.file`, detected by code from the example output (8.13);
+- `target`, only when adding a source to an existing format (8.12).
 
 Hard caps (config): 60 columns, 12 pairs, 5 dropped rows, 40 characters per cell, 48 KB per payload.
 
@@ -298,6 +332,8 @@ Hebrew text uses more tokens per word than English, which is one more reason for
 The rules language has a closed set of operations. The LLM returns the whole object except `name` and `meta`, which the app fills in. The name defaults to the example output's file name, and the user can rename it. Every rules file carries a `schemaVersion`, and the engine must keep supporting old versions for good, because saved formats live on.
 
 ### 8.1 Example
+
+This example comes from commission control, one of many domains. Nothing in the language is domain-specific.
 
 ```json
 {
@@ -337,6 +373,7 @@ The rules language has a closed set of operations. The LLM returns the whole obj
     }
   },
   "output": {
+    "file": { "type": "xlsx" },
     "sheetName": "דוח עמלות",
     "direction": "rtl",
     "language": "he",
@@ -357,11 +394,12 @@ The rules language has a closed set of operations. The LLM returns the whole obj
   },
   "validations": [
     { "column": "insuredId", "rule": "israeliIdChecksum", "severity": "flag" },
-    { "column": "premium",   "rule": "range", "min": 0,   "severity": "flag" }
+    { "column": "premium",   "rule": "range", "min": 0,   "severity": "flag" },
+    { "on": "output", "column": "עמלה", "rule": "range", "min": 0, "severity": "flag" }
   ],
   "unsupported": [],
   "assumptions": [ { "outputColumn": "עמלה", "reasonCode": "roundingGuessed" } ],
-  "meta": { "source": "examplePair", "status": "verified", "model": "...", "promptVersion": "...", "masking": true, "createdAt": "..." }
+  "meta": { "formatId": "...", "sourceName": "...", "source": "examplePair", "status": "verified", "model": "...", "promptVersion": "...", "masking": true, "createdAt": "..." }
 }
 ```
 
@@ -379,24 +417,33 @@ The rules language has a closed set of operations. The LLM returns the whole obj
 7. **Value maps.**
 8. **Sort.** The sort is stable: ties keep the input order, so the rows of one family stay together unless the sort separates them.
 9. **Group.** Detail rows, subtotals and spacing.
-10. **Output layout.** Title rows, header, columns, grand total, direction and language.
-11. **Validations** → flags.
+10. **Output layout.** Title rows, header, columns, grand total, direction, language and file type (8.13).
+11. **Validations** → flags. Input validations (`on: "input"`, the default) check the normalized input columns; output validations (`on: "output"`) check the final data rows, by output header.
 
 The engine receives no clock. All arithmetic uses decimal.js. `round` rounds half away from zero, like Excel's ROUND.
 
-### 8.3 Expressions and filters
-Expressions are an AST that the engine interprets. There is no regex and no code in strings, ever.
+### 8.3 Expressions, functions and filters
+Expressions are an AST that the engine interprets. There is no regex and no code in strings, ever. The language is meant to be rich enough for real reports and still fully checkable by code before anything runs (9.2): a closed set of typed operations, reusable functions and constant tables (8.14), and hard limits.
 
-- **Values:** `col`, `const`
-- **Arithmetic:** `add`, `sub`, `mul`, `div` (dividing by zero raises a flag), `neg`, `abs`, `round{digits}`
-- **Text:** `concat`, `substr{start,length}`, `trim`, `upper`, `lower`, `replaceText{find,with}` (literal text only), `padLeft{length,char}`
-- **Dates:** `datePart{year|month|day}`, `dateFormat{format}`
-- **Logic:** `if{cond,then,else}`, `coalesce`
-- **Conditions:** `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `isEmpty`, `notEmpty`, `and`, `or`, `not`
+**Leaves:** `col`, `const`, and `param` (only inside a function body).
 
-Maximum nesting depth is 6. If the provider's structured output doesn't support recursive schemas, spell out expressions to a fixed depth in the schema and validate the rest in code.
+**Operations.** Each has a fixed signature (see Types):
+- **Arithmetic:** `add`, `sub`, `mul`, `div` (dividing by zero raises a flag), `neg`, `abs`, `round{digits}`, `floor`, `ceil`, `mod`, `min`, `max`
+- **Text:** `concat`, `substr{start,length}`, `trim`, `upper`, `lower`, `replaceText{find,with}` (literal text only), `padLeft{length,char}`, `split{separator,index}` (1-based; negative counts from the end), `length`
+- **Conversion:** `toNumber` (a value that doesn't parse raises a flag), `toText{format?}` (number or date format)
+- **Dates:** `datePart{year|month|day}`, `dateFormat{format}`, `dateAdd{days|months|years}`, `dateDiff{unit: days|months|years}`, `endOfMonth`
+- **Logic:** `if{cond,then,else}`, `switch{cases: [{when, then}], else}`, `coalesce`
+- **Lookup:** `lookup{table, key, return, onMissing: flag|empty|keep}` against a constant table in `transform.tables` (8.14)
+- **Calls:** `call{fn, args}` to a function in `transform.functions` (8.14)
+- **Conditions:** `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `isEmpty`, `notEmpty`, `oneOf{values}`, `startsWith{text}`, `endsWith{text}`, `contains{text}`, `and`, `or`, `not`
 
-**Row filters:** `{ column, op, value? }`, where op is one of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `isEmpty`, `notEmpty`, `oneOf` or `notOneOf` (value is an array). Several filters are ANDed.
+**Types.** Every value has one type: `text`, `idLike` (text whose leading zeros matter), `integer`, `decimal`, `date` or `boolean`. Every operation declares its argument and result types, e.g. `mul: (decimal, decimal, …) → decimal`, `dateDiff: (date, date) → integer`, `startsWith: (text) → boolean`. The only implicit widenings are `integer → decimal` and `idLike → text`. Anything else needs `toNumber` or `toText`. The signature table lives in `packages/engine` and is the single source for the type checker, the editor and the prompt.
+
+**Limits** (config): depth 8 per expression; 200 nodes per output column after expanding function calls; 20 functions; 20 tables of up to 500 rows each.
+
+If the provider's structured output doesn't support recursive schemas, spell expressions out to a fixed depth in the schema and check the rest in code.
+
+**Row filters:** `{ column, op, value? }` for simple cases, or `{ expr }` where expr is any condition. op is one of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `isEmpty`, `notEmpty`, `oneOf` or `notOneOf` (value is an array). Several filters are ANDed.
 
 **Date format tokens:** `D`, `DD`, `M`, `MM`, `MMMM`, `YY`, `YYYY`. `MMMM` is the month name in `output.language`, e.g. ספטמבר or September.
 
@@ -406,7 +453,7 @@ Maximum nesting depth is 6. If the provider's structured output doesn't support 
 - **Where it comes from:** either the example (pair analysis found that the dropped rows are copies of kept rows) or the user, who adds it in the editor.
 - **How rows are compared:** values are compared after type normalization: trimmed, padded, and with quote marks and geresh unified. There is no fuzzy matching.
 - **`remove`:** the extra copies are left out. With `keep: "first"` the later copies go; with `keep: "last"`, the earlier ones. Every removed row is listed in the run summary with its row number, so nothing disappears silently.
-- **`flag`:** all rows stay, and every extra copy is flagged, e.g. "duplicate of row 12". In commission control a duplicate is often the error itself (a commission paid twice), so the editor offers both actions.
+- **`flag`:** all rows stay, and every extra copy is flagged, e.g. "duplicate of row 12". In reconciliation-type work a duplicate is often the error itself (an item billed or paid twice), so the editor offers both actions.
 
 ### 8.5 Expand: one input row → several output rows
 `transform.expand` has three modes:
@@ -441,6 +488,7 @@ A title row is one of three kinds:
 Use `parts` when a title contains a period (e.g. a month). The title is then built from the data, so next month's file gets next month's title, and determinism is kept (no clock).
 
 ### 8.8 Validations
+- `on`: `input` (default) or `output`. A check that describes the format itself (a valid ID number in an output column, a non-negative output amount, a required output column) uses `on: "output"`, names the output header in `column`, and belongs to the format, so every source converted into it gets the check. A check about one source's input stays on the conversion.
 - `type` runs automatically for every declared column.
 - The others are `required`, `israeliIdChecksum`, `range{min,max}`, `lengthEquals`, `oneOf{values}`, `unique` and `dateRange{from,to}`. `dateRange` takes fixed dates only.
 - Severity is either `flag` (the row is written but highlighted) or `block` (the row is left out and listed).
@@ -537,6 +585,61 @@ Every column also has an output number or date format, with a preview.
 
 The raw JSON stays behind an "Advanced" toggle and is validated on save.
 
+### 8.12 Formats and conversions (the registry)
+
+The product keeps two kinds of objects:
+
+- **Format:** the shape of a file the company produces, owned by the company and named by the user (e.g. "Priority catalog load", "Monthly commission control"). It holds:
+  - `output` (columns, headers, number formats, widths, title rows, grand total, direction, language, `file`);
+  - the layout parts that live in `transform`, normalized to output headers: `sort`, and `group` (by, subtotal label and sums, blank rows, showDetailRows, per-column agg);
+  - output validations (`on: "output"`).
+- **Conversion:** how one kind of input file (a **source**: one supplier's price list, one insurer's report, one client's export) becomes that format. It is a full, self-contained rules file (8.1) plus `formatId` and `sourceName`. The engine only ever runs a conversion; it never needs the format object at run time.
+
+A format usually has several conversions. That is the point of the registry: the company defines its format once, and each new source is attached to it.
+
+**The format lock.** When a conversion belongs to a format:
+- its `output` section must equal the format's `output`, except `columns[].from`;
+- its `sort` and `group`, after code maps ids to output headers, must equal the format's;
+- its output validations must equal the format's.
+
+Code enforces this after every learn and every edit (9.2). A conversion that breaks the lock is rejected, and a repair call receives it as a `formatMismatch` problem.
+
+**Editing a format.** A change to the output side made from any conversion's rules map is a change to the format. The editor says so ("This changes the format for all N sources"), and on save the change is written to every conversion of that format. Conversions whose `from` references still resolve keep their status; the others become `needsReview`. Example files are not stored, so re-verification happens on each conversion's next run: its flags and summary are shown with a "format changed since last run" notice.
+
+**Matching a file to a conversion** (flow C, and detection in A2): code compares the file's headers with each conversion's input signature (exact, then aliases, then normalized headers, as in 8.2 step 1). Score = share of required columns found, minus a penalty for extra unknown columns. One conversion with a score ≥ 0.9 and at least 0.1 above the next is selected automatically; otherwise the user picks from the top 3. Never run automatically on a guess below the threshold (DECISION 10).
+
+**Ready-made formats (after the MVP).** A format doesn't have to come from an example. Known system formats (e.g. Priority load screens) can ship as templates: a format object with no conversions yet. Adding a source to it is flow A2. Nothing in the data model may assume that a format was learned.
+
+### 8.13 Output file types
+
+```json
+"file": { "type": "xlsx" | "csv" | "txt", "delimiter": "," | "\t" | ";" | "|", "header": true | false,
+          "encoding": "utf8bom" | "utf8" | "windows1255", "quote": "minimal" | "all" | "none" }
+```
+
+- The default is `{ "type": "xlsx" }`. Many system load files (ERP import screens) are delimited text with no header row and a fixed column order, which is why csv and txt are first-class outputs and not an export option.
+- Code detects `file` from the example output: extension, delimiter, whether the first row is a header (compared with the data types below it), and encoding. The LLM copies it.
+- `header: false`: output columns still have a `header`, used in the UI and for matching; it is written nowhere in the file. Pair analysis aligns such output columns by position.
+- csv and txt ignore styles, widths, bold and direction. Title rows, blank rows and subtotals are allowed but show a warning in the rules map, since load files rarely have them.
+- Encoding: by default the writer reproduces the example's encoding (DECISION 8).
+- Formula-injection protection (15) applies to csv and txt.
+
+### 8.14 Functions and tables
+Reusable logic lives in the rules file itself, so it is saved, versioned and checked together with the conversion.
+
+`transform.functions: [{ name, params: [{ name, type }], returns: type, body: expr }]`
+- Example: `netOf(gross, rate) = round(gross ÷ (1 + rate), 2)`, used by three output columns.
+- A body may use its params, constants, operations and other functions, but never `col`: a function sees only what it is given, so it can be tested on its own.
+- A function may call only functions defined above it. That makes recursion impossible by construction; code still checks that the call graph is acyclic.
+- Functions are pure: no row context, no clock, no state.
+- The LLM defines a function only when the same logic is needed in two or more places. Users can define and name their own in the editor.
+
+`transform.tables: [{ name, columns: [names], rows: [[values]] }]`
+- Constant reference data used by `lookup`, e.g. a product code → category and rate. Keys must be unique (checked).
+- Like value maps, tables hold real constants after unmasking and never data rows from the user's files.
+
+**In the rules map**, a **Functions and tables** section lists each one as a sentence with its signature. Each has a test panel: enter arguments or a key, see the result. Every function, table, output column, filter, dedupe, expand, sort, group and validation counts as one **rule** for tier limits (11).
+
 ## 9. LLM layer
 
 ### 9.1 One stateless call
@@ -549,15 +652,22 @@ The model writes no prose. `max_tokens` is capped in config (start at 4,000), an
 
 The prompt text is versioned (`promptVersion`) and logged with every call.
 
-### 9.2 Code checks after the call
-Validate with zod, then check that:
-- every referenced column id exists;
-- dedupe and expand reference existing columns, and the ids that expand creates don't collide with others;
-- every input header exists in the input profile;
-- `from` is null exactly for `skipColumns` plus `unsupported`;
-- no operation, field or id was invented.
+### 9.2 Checking what the LLM wrote
+A rules file is accepted only after it passes these layers, in order. Every failure becomes a precise problem for the repair call (9.3). Nothing is judged by another LLM.
+1. **Structure:** zod against the schema. Unknown fields, operations and enum values are rejected.
+2. **References:** every column id, table, function and param exists; ids created by expand and by computed columns don't collide; every input header exists in the input profile; `from` is null exactly for `skipColumns` plus `unsupported`; output validations name existing output headers.
+3. **Types:** a static type check of every expression, filter and function body against the declared column types and the operation signatures (8.3). Each output column's result type must fit its output type.
+4. **Limits and safety:** depth and node budgets, function and table counts, an acyclic call graph, unique table keys, and a rule count within the user's tier (11).
+5. **Format lock,** when the conversion belongs to a format (8.12).
+6. **Overfitting lint.** Never a rejection; each finding becomes a "Please check" line with assumption code `overfitSuspected`:
+   - a constant equal to a value that appears in only one input row;
+   - a condition that is true for exactly one sample row;
+   - a `switch`, value map or table with one entry per sample row;
+   - an expression far larger than needed by any other column.
+7. **Run on the samples** in the API, and diff.
+8. **Full verification** in the browser on every row of the real example (5 A step 6). The LLM saw at most 12 rows, so this is the hold-out test: rules that only memorized the samples fail here.
 
-After that, run the engine on the sample and diff.
+The same layers 1–6 run in the browser on every save from the editor.
 
 ### 9.3 Repair (optional, also stateless)
 If checks or the diff fail, send one more single message. It has two content blocks:
@@ -591,19 +701,26 @@ Prices per million tokens are in config, copied from the provider's pricing page
 - **Cache.** The key is a hash of the structure: headers, types, layout and masking mode. If the same structure comes in again, the saved rules are returned without an LLM call, and verification runs as usual.
 - **Ledger.** Every call is logged in `llm_calls`.
 
+### 9.6 One LLM interface
+All LLM calls go through one function in `apps/api`, e.g. `complete({ system, content[], schema, model }) → { json, usage }`. No provider SDK is imported anywhere else, and the provider is chosen in config.
+
+This keeps two later options cheap: switching providers, and a customer running learns on their own model endpoint, with their key never reaching our server. Design for it; don't build the customer endpoint in the MVP.
+
 ## 10. Model evaluation harness
 
 Build this in milestone 1, before the UI. Prompt quality decides everything else.
 
-- **Case format.** Each case lives in `eval/cases/<name>/` with `input.xlsx`, `output.xlsx` and `meta.json` (`difficulty`, `features`, `expect`: verified | unsupported:<code> | blocked:<reason>).
+- **Case format.** Each case lives in `eval/cases/<name>/` with `input.xlsx`, `output.xlsx` and `meta.json` (`difficulty`, `features`, `expect`: verified | unsupported:<code> | blocked:<reason>, and optional `attachTo`: another case whose output defines the format).
 - **Cases.** Start with 10 cases and grow to 25 or more:
   - **Easy:** rename, reorder, drop columns. These should hit the fast path.
   - **Medium:** date formats, padding, value maps, filters, calculations.
   - **Hard:** subtotals and spacer rows, a title with the month, a summary output, a totals footer in the input, Hebrew RTL output.
   - **Rows:** duplicates removed on all columns and on a key; columns to rows (months); split cell; fixed fan-out (debit/credit); an expansion with no pattern (must be blocked).
   - **Traps:** leading zeros, DD/MM vs MM/DD, numbers stored as text, prefix-of-ID columns (masking), a pivot (must be blocked), a column from another source (must be skipped).
+  - **Registry:** 3 different sources → the same format (e.g. three suppliers' price lists → one load file). The 2nd and 3rd are learned in attach mode; expect verified with the format lock intact.
+  - **Output files:** csv and tab-delimited txt, with and without a header row, in UTF-8 and Windows-1255.
   - **English LTR cases** alongside the Hebrew ones.
-- **Data.** Synthetic, modeled on insurance-commission and pension reports.
+- **Data.** Synthetic, spread across domains so the prompt doesn't overfit one of them: an importer's supplier price lists → an ERP catalog load file (tab-delimited, no header); freight invoices → a cost report; insurer commission reports → a commission control report; a payroll export → a pension deposits sheet; a customer list → a CRM import CSV; a bank export → a reconciliation sheet. The report also breaks results down by domain.
 - **Runner.** `pnpm eval --models <a>,<b> --masking on,off --runs 3` runs the full production pipeline, pre-flight included.
 - **Report.** Markdown plus CSV, per model and masking mode:
   - share blocked, share fast path, share schema-valid;
@@ -617,21 +734,24 @@ Build this in milestone 1, before the UI. Prompt quality decides everything else
 
 ## 11. Tiers and limits
 
-All numbers are starting placeholders in `packages/shared/config/tiers.ts`.
+All numbers are placeholders in `packages/shared/config/tiers.ts`.
 
-| | Anonymous | Registered (free) | Paid (MVP: waitlist only) |
+| | Free (not signed in) | Registered | Paid |
 |---|---|---|---|
+| What it's for | try it on one small file | a person's own recurring formats | a company's work |
 | Max rows per file | 300 | 5,000 | 100,000 |
 | Max columns | 20 | 50 | 150 |
-| Converted output | first 20 rows on screen | full download | full download |
-| Learns that reach the LLM | 2 per day | 10 per month | 100 per month |
+| Files per run | 1 | 1 | batch, up to 50 |
+| Converted output | first 20 rows on screen; sign in to download | full download | full download |
+| Saved formats | none | up to 3 | up to 50 new per month (DECISION 9) |
+| Sources per format | none | 3 | unlimited |
+| Rules per format (8.14) | 30 | 30 | 300 |
+| Learns that reach the LLM | 2 per day | 10 per month | 150 per month |
 | Fast-path learns | unlimited | unlimited | unlimited |
-| Saved formats | none | 3 | unlimited (soft cap 100) |
-| Batch | none | up to 3 files (DECISION) | up to 50 files |
 | Edit rules | view only | yes | yes |
 
-- **Upgrade button.** It opens a short form and records `upgrade_intent` with the limit that triggered it. There is no payment code in the MVP.
-- **Limit tracking.** Every stop is recorded as `limit_hit { limit }`.
+- **Upgrade button.** It opens a short form and records `upgrade_intent` with the limit that triggered it. There is no payment code in the MVP; paid tiers are assigned by an admin (14.2).
+- **Limit tracking.** Every stop is recorded as `limit_hit { limit }`. A learn whose result needs more rules than the tier allows is still shown in full, but saving it hits the limit.
 - **Deleting formats.** Deleting a saved format frees a slot but doesn't give back learns.
 - **Description character limits** (for after the MVP): 300 / 1,000 / 4,000.
 
@@ -660,12 +780,13 @@ All numbers are starting placeholders in `packages/shared/config/tiers.ts`.
 ## 13. Data (MongoDB)
 
 - **`users`:** identities[`{ provider, subject, tenantId?, email, emailVerified }`], name, avatarUrl, uiLanguage, tier, createdAt, lastSeenAt, anonIds[], limitOverrides?
-- **`formats`:**
-  - ownerId, name, schemaVersion, rules;
-  - inputSignature `{ columns: [{ header, type, required }] }`;
-  - source, status (`verified` | `differencesAccepted` | `userConfirmed` | `draft`), acceptedDifferences (count);
+- **`formats`:** ownerId, name, schemaVersion, output, layout (sort and group normalized to output headers), outputValidations, origin (`learned` | `template`), versions[`{ format, editedBy, at }`], createdAt.
+- **`conversions`:**
+  - ownerId, formatId, sourceName, schemaVersion, rules (the full self-contained rules file);
+  - inputSignature `{ columns: [{ header, aliases, type, required }] }`;
+  - source, status (`verified` | `differencesAccepted` | `userConfirmed` | `draft` | `needsReview`), acceptedDifferences (count);
   - exampleExceptions: example row numbers the user marked as fixed by hand. They are used only when checking the example, never on future runs;
-  - learnPath (`local` | `llm`), masking, model, promptVersion;
+  - learnPath (`local` | `llm` | `cache`), masking, model, promptVersion;
   - versions[`{ rules, editedBy, at }`], runCount, lastRunAt, createdAt.
 
   Rules contain only real constants (after unmasking) such as labels and value-map entries. They never contain data rows.
@@ -686,6 +807,7 @@ All numbers are starting placeholders in `packages/shared/config/tiers.ts`.
 - **Visits and files:** `page_view {path}`, `language_changed {lang}`, `file_uploaded {role, rows, cols, fileType, direction}`, `file_rejected {reason}`
 - **Pre-flight and learning:** `preflight {status, reason?, skipColumns}`, `masking_toggled {on}`, `learn_completed {path: local|llm|cache, status, rounds, model, masking}`, `dedupe_found {action}`, `expand_found {mode}`, `unsupported_found {codes}`, `assumptions_found {codes}`, `preview_shown`
 - **Accounts:** `signin_wall_shown {trigger}`, `signed_up {provider}`, `signed_in {provider}`
+- **Registry:** `format_created {origin}`, `source_added {formatId, sources}`, `file_matched {auto, score}`, `format_edited {sources}`
 - **Using formats:** `rule_editor_opened {section, method}`, `exception_marked`, `download {rows}`, `format_saved`, `format_run {formatId, daysSinceCreated}`, `batch_run {files, rows, flaggedRows, mismatchedFiles, duplicatesRemoved, duplicatesFlagged}`, `rules_edited {field}`, `flag_resolved {accepted}`
 - **Demand signals:** `limit_hit {limit}`, `upgrade_intent {trigger}`, `lead_submitted`, `feedback_given {rating}`
 
@@ -697,7 +819,8 @@ All numbers are starting placeholders in `packages/shared/config/tiers.ts`.
   - LLM spend this month.
 - **Returning use (the key metric):**
   - users who ran a saved format again 7 or more days after creating it;
-  - runs per active user.
+  - runs per active user;
+  - sources per format (distribution), and the share of formats with 2 or more sources.
 - **Funnel, last 30 days:** visited → uploaded → passed pre-flight → learned → saw the sign-in wall → signed up → downloaded → ran a saved format again.
 - **Learning:**
   - share of learns by path: blocked, local, cache, LLM;
@@ -715,6 +838,7 @@ All numbers are starting placeholders in `packages/shared/config/tiers.ts`.
   - UI language split;
   - masking on/off split.
 - **Tables:** latest sign-ups, leads and feedback.
+- **Users:** set a user's tier and limit overrides. Paid customers are assigned here in the MVP.
 - **Time range picker:** 7, 30 or 90 days, grouped by day or month.
 
 ## 15. Security and privacy
@@ -751,10 +875,11 @@ All numbers are starting placeholders in `packages/shared/config/tiers.ts`.
    - The flagged rows.
    - A status badge: Verified, "N columns need your input", or "N differences accepted".
    - Primary button: "Save format and download".
-5. **My formats.** A list with Run on a file, Run a batch, Edit rules, Rename and Delete.
+5. **My formats.** Each format with its sources underneath ("Priority catalog load ← 4 sources"). Actions: Convert a file (flow C), Add a source (flow A2), Run a batch, Edit rules, Rename, Delete. For a signed-in user who has formats, Home's first action becomes "Convert a file", with "Teach a new format" next to it.
 6. **Run result.** Download (file or zip), a summary (rows in, rows out, rows filtered, duplicates removed or flagged), and the flags with accept/reject.
 7. **For business (`/business`).**
-   - The problem: hours of manual Excel work, and human errors.
+   - The problem: files arrive from suppliers, insurers, clients and other systems in their own layout; someone rebuilds them by hand into the company's format, or the file its system loads, every month, and errors slip through.
+   - The idea: teach each format once, add each new source in minutes, and every file is checked.
    - How it's different:
      - readable rules;
      - the same file always gives the same result;
@@ -846,7 +971,7 @@ Follow the frontend-design skill's process. Present the design plan (palette, ty
 
 Stop after each milestone and report.
 
-- **M0: Engine without AI.**
+- **M0: Engine without AI.** (Built. Apply the amendments in section 21 before starting M1.)
   - monorepo setup;
   - rules schema (zod + JSON Schema);
   - table detection and the engine pipeline with decimal math, including duplicates and the three expand modes;
@@ -859,7 +984,9 @@ Stop after each milestone and report.
   - the payload builder;
   - the prompt from `LEARN_PROMPT.md`;
   - the LLM client with structured output, and the repair call;
-  - the eval harness with 10 cases, in both masking modes;
+  - `output.file` detection from the example output;
+  - attach mode in the payload builder, the prompt and the code checks (the format lock);
+  - the eval harness with 10 cases plus 2 registry cases, in both masking modes;
   - a first model comparison report.
 - **M2: Web tool.**
   - design plan first;
@@ -870,7 +997,7 @@ Stop after each milestone and report.
   - anonymous limits, Turnstile, budgets and cache.
 - **M3: Accounts.**
   - Google and Microsoft sign-in, and the sign-in wall;
-  - save, list, run and edit formats;
+  - the registry: formats with their sources, add a source (flow A2), convert a file with automatic matching (flow C), format edits that propagate (8.12);
   - tier config and usage counters;
   - batch conversion.
 - **M4: Launch pieces.**
@@ -880,6 +1007,11 @@ Stop after each milestone and report.
   - privacy and terms pages;
   - deploy.
 - **After the MVP:**
+  - adding a source without an example output;
+  - the headers-only LLM suggestion for renamed columns;
+  - ready-made formats (templates) for common systems;
+  - comparison with the previous run of the same conversion;
+  - a customer-hosted LLM endpoint;
   - description modes;
   - a merge-style view for flags;
   - eval grown to 25+ cases;
@@ -894,11 +1026,14 @@ M0–M4 is roughly 1.5–2 weeks of focused work. Bilingual UI, two sign-in prov
    - Storing them contradicts "your files never leave your computer".
    - Large files don't fit in MongoDB documents (16 MB limit).
    - If this is added later: make it opt-in, use encrypted object storage, delete files automatically, and update the privacy statement.
-3. **Batch for registered users.** Default: **up to 3 files**, as a taste. The alternative is none.
+3. **Batch for registered users.** Settled: **none.** Batch is paid.
 4. **Tier numbers.** Default: **placeholders**, to be tuned from `limit_hit` data.
 5. **Server repair rounds.** Default: **1**. Set it to 0 for exactly one LLM call per learn.
 6. **Product name and domain.** Currently a working name.
 7. **Hosting.** For example: static web on Vercel or Cloudflare Pages, the API on Render or Fly, and MongoDB Atlas.
+8. **Encoding of text outputs.** Default: **reproduce the example's encoding.** Which encoding each ERP load screen really needs must be confirmed with real load files from design partners before any templates are built.
+9. **Paid format limit.** Default: **50 new formats per calendar month**, as stated in the business model. The alternative is 50 saved in total. Sources per format are counted separately (11).
+10. **Auto-match threshold.** Default: **score ≥ 0.9 with a 0.1 margin**, tuned from `file_matched` events.
 
 Settled in this version:
 - Masking switch, on by default.
@@ -906,3 +1041,48 @@ Settled in this version:
 - Two-file learning only in the MVP.
 - Google and Microsoft sign-in.
 - Duplicates (remove or flag), row expansion in three patterns, and the rules editor are in the MVP.
+- Formats and conversions are separate objects; a format has many sources.
+- csv and delimited text outputs are first-class.
+- The product is domain-neutral.
+- Tiers: free (one small file, sign in to download), registered (3 formats, downloads), paid (50 formats a month, many rules, batch).
+- The rules language has typed operations, functions and constant tables, all checked by code (8.3, 8.14, 9.2).
+
+## 21. Changes in v2 and impact on the built M0
+
+v1 treated each learned result as one independent "format" and was written around commission control. v2 keeps everything that was built and adds the registry model the product is actually about: a company's formats, each fed by many sources.
+
+What changed:
+1. Positioning (1) and non-negotiable 9: domain-neutral. Commission control is one design-partner domain, not the product.
+2. Formats and conversions are separate objects (8.12). A learned result is a conversion; saving the first one also creates its format.
+3. Attach mode: learning a new source into an existing format, under the format lock (5 A2, 8.12, `LEARN_PROMPT.md` learn-v2).
+4. Convert a file with automatic matching to its conversion (5 C), and mixed-source batches (5 D).
+5. Output file types (8.13): csv and delimited text, with or without a header row, in several encodings, for system load files.
+6. Validations get `on: input | output`; output validations belong to the format (8.8).
+7. One LLM interface (9.6).
+8. Eval data spread across domains, plus registry and output-file cases (10).
+9. Data model: separate `formats` and `conversions` collections (13).
+
+**M0 amendments** (do these before M1):
+- **Schema:** add `output.file` (8.13) with default `{ type: "xlsx" }`; add `validations[].on` with default `"input"`; add optional `meta.formatId` and `meta.sourceName`. Keep `schemaVersion: 1`: every new field is optional, with a default that reproduces v1 behavior, so rules files written in M0 load and run exactly as before. Add a test that proves it on the existing golden files.
+- **Engine:** run output validations after the layout step, on the final data rows, by output header.
+- **Writer:** csv and txt with delimiter, header on/off, quoting and encoding (UTF-8 with BOM, UTF-8, Windows-1255); formula-injection protection; a byte-identical determinism test for each variant.
+- **Reader:** detect the delimiter, header presence and encoding of csv/txt files. M1 needs this to detect `output.file` from an example output.
+- **Registry helpers:** a pure function `formatOf(rules)` that extracts the format side (output, sort and group normalized to output headers, output validations), and `checkFormatLock(rules, format)` that returns problems. Unit-test both.
+- **Golden tests:** add at least 2 rules files outside insurance (a supplier price list → tab-delimited load file with no header; a customer export → CSV), and one pair of conversions that share a format and pass `checkFormatLock`.
+- **Naming:** rename domain-specific names in code and test titles wherever they describe the product rather than one test case (e.g. nothing called `commission*` outside fixtures).
+
+### v3 changes
+
+1. The core pipeline is stated explicitly (1): two files → deduce → rules file → engine.
+2. B2B is the business; the public app is a proof of concept and demand funnel. Paid tiers are assigned by an admin in the MVP (1, 11, 14.2).
+3. Tiers rewritten (11): free, registered, paid; batch is paid only; a rules-per-format limit.
+4. A richer rules language (8.3): more operations, `switch`, `lookup`, typed signatures; functions and constant tables (8.14).
+5. Layered checking of LLM output (9.2): structure, references, static types, limits, format lock, overfitting lint, sample run, full verification.
+
+**M0 amendments for v3** (together with the v2 list above, before M1):
+- **Engine:** the new operations in 8.3, with decimal.js arithmetic and flags on failure; `switch`, `lookup`, `call`, `param`; `rowFilters` with `{ expr }`.
+- **Schema:** `transform.functions` and `transform.tables`, both optional; still `schemaVersion: 1`.
+- **Type checker:** one signature table for all operations, and `typeCheck(rules, inputProfile?) → problems[]`, pure and usable in the browser and the API. Unit-test each operation's signature, the widenings, and rejection of mismatches.
+- **Limits:** `checkLimits(rules, tier) → problems[]` for depth, node budget (after expanding calls), function and table counts, call-graph cycles, table key uniqueness and the rule count.
+- **Golden tests:** one rules file that uses a function in three columns, one that uses a lookup table, and one that uses `switch`.
+- M1 adds the overfitting lint and learn-v3.

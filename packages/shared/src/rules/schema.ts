@@ -25,6 +25,20 @@ export const COLUMN_TYPES = [
 export type ColumnType = (typeof COLUMN_TYPES)[number];
 export const ColumnTypeSchema = z.enum(COLUMN_TYPES);
 
+// ---------- Value types for the expression type system (SPEC 8.3, 8.14) ----------
+// DECISION: SPEC 8.3 defines a narrower type system for expressions/functions than
+// ColumnType above ("Every value has one type: text, idLike, integer, decimal, date
+// or boolean" - no currency/percent, which are profile-only types from SPEC 7.1 that
+// normalize to decimal before they ever reach the rules language). `currency`/`percent`
+// are kept in ColumnType only because M0 golden fixtures already declare input columns
+// with them (SPEC amendments require old rules files to keep loading unchanged).
+// VALUE_TYPES is used where SPEC 8.3/8.14 actually specifies this narrower set:
+// transform.functions[].params[].type and .returns. Everywhere else (InputColumn.type,
+// Computed.type, expand.valueType) keeps using the wider ColumnType, unchanged from v1.
+export const VALUE_TYPES = ['text', 'idLike', 'integer', 'decimal', 'date', 'boolean'] as const;
+export type ValueType = (typeof VALUE_TYPES)[number];
+export const ValueTypeSchema = z.enum(VALUE_TYPES);
+
 // ---------- Expressions (SPEC 8.3, LEARN_PROMPT "Operations") ----------
 // A recursive AST. zod v4 supports recursive schemas via z.lazy + an explicit
 // z.ZodType<T> annotation (SPEC 8.3 permits spelling to a fixed depth only as a
@@ -34,7 +48,9 @@ export const ColumnTypeSchema = z.enum(COLUMN_TYPES);
 
 export type ExprConstValue = string | number | boolean | null;
 
-export type ExprLeaf = { col: string } | { const: ExprConstValue };
+/** `param` is a leaf usable only inside a `transform.functions[].body` (SPEC 8.14);
+ * `checkRules` rejects it everywhere else, and rejects `col` inside a function body. */
+export type ExprLeaf = { col: string } | { const: ExprConstValue } | { param: string };
 
 /** The condition-producing subset of Expr, usable anywhere an Expr is (e.g. `if.cond`). */
 export type ConditionOp =
@@ -46,25 +62,58 @@ export type ConditionOp =
   | 'lte'
   | 'isEmpty'
   | 'notEmpty'
+  | 'oneOf'
+  | 'startsWith'
+  | 'endsWith'
+  | 'contains'
   | 'and'
   | 'or'
   | 'not';
 
 export type ExprNode =
   | { op: 'add' | 'sub' | 'mul' | 'div'; args: Expr[] }
-  | { op: 'neg' | 'abs'; arg: Expr }
+  | { op: 'neg' | 'abs' | 'floor' | 'ceil'; arg: Expr }
+  | { op: 'mod'; args: [Expr, Expr] }
+  | { op: 'min' | 'max'; args: Expr[] }
   | { op: 'round'; arg: Expr; digits: number }
   | { op: 'concat'; args: Expr[] }
   | { op: 'substr'; arg: Expr; start: number; length: number }
   | { op: 'trim' | 'upper' | 'lower'; arg: Expr }
+  | { op: 'length'; arg: Expr }
   | { op: 'replaceText'; arg: Expr; find: string; with: string }
   | { op: 'padLeft'; arg: Expr; length: number; char: string }
+  /** SPEC 8.3: `index` is 1-based; negative counts from the end. Never 0. */
+  | { op: 'split'; arg: Expr; separator: string; index: number }
+  | { op: 'toNumber'; arg: Expr }
+  | { op: 'toText'; arg: Expr; format?: string }
   | { op: 'datePart'; arg: Expr; part: 'year' | 'month' | 'day' }
   | { op: 'dateFormat'; arg: Expr; format: string }
+  // DECISION: SPEC 8.3 writes dateAdd's amount the same way as e.g. round's `digits`
+  // (a bare parameter next to `arg`, not a sub-expression), and requires "exactly one
+  // of days|months|years". Modeled as a literal integer (not an Expr) on exactly one
+  // of three keys, matching LEARN_PROMPT §"Operations": `dateAdd: "arg", "days"|"months"|"years"`.
+  | ({ op: 'dateAdd'; arg: Expr } & (
+      | { days: number; months?: never; years?: never }
+      | { months: number; days?: never; years?: never }
+      | { years: number; days?: never; months?: never }
+    ))
+  | { op: 'dateDiff'; args: [Expr, Expr]; unit: 'days' | 'months' | 'years' }
+  | { op: 'endOfMonth'; arg: Expr }
   | { op: 'if'; cond: Expr; then: Expr; else: Expr }
+  | { op: 'switch'; cases: { when: Expr; then: Expr }[]; else: Expr }
   | { op: 'coalesce'; args: Expr[] }
+  | {
+      op: 'lookup';
+      table: string;
+      key: Expr;
+      return: string;
+      onMissing: 'flag' | 'empty' | 'keep';
+    }
+  | { op: 'call'; fn: string; args: Expr[] }
   | { op: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'; args: [Expr, Expr] }
   | { op: 'isEmpty' | 'notEmpty'; arg: Expr }
+  | { op: 'oneOf'; arg: Expr; values: ExprConstValue[] }
+  | { op: 'startsWith' | 'endsWith' | 'contains'; arg: Expr; text: string }
   | { op: 'and' | 'or'; args: Expr[] }
   | { op: 'not'; arg: Expr };
 
@@ -79,11 +128,32 @@ const ExprConstValueSchema = z.union([z.string(), z.number(), z.boolean(), z.nul
 const ExprLeafSchema = z.union([
   z.strictObject({ col: z.string() }),
   z.strictObject({ const: ExprConstValueSchema }),
+  z.strictObject({ param: z.string().min(1) }),
 ]);
+
+// dateAdd needs "exactly one of days|months|years" (SPEC 8.3), which a single
+// z.discriminatedUnion('op', ...) branch can't express (all three shapes share the
+// literal op "dateAdd"). Modeled as its own z.union of three strict shapes and joined
+// into the outer union alongside the op-discriminated union below, rather than inside it.
+// Wrapped in z.lazy (like ExprSchema itself) since it references ExprSchema before that
+// const finishes initializing.
+const DateAddSchema: z.ZodType<Extract<ExprNode, { op: 'dateAdd' }>> = z.lazy(() =>
+  z.union([
+    z.strictObject({ op: z.literal('dateAdd'), arg: ExprSchema, days: z.number().int() }),
+    z.strictObject({ op: z.literal('dateAdd'), arg: ExprSchema, months: z.number().int() }),
+    z.strictObject({ op: z.literal('dateAdd'), arg: ExprSchema, years: z.number().int() }),
+  ]),
+);
+
+const nonZeroInt = z
+  .number()
+  .int()
+  .refine((v) => v !== 0, 'index must be non-zero (1-based; negative counts from the end)');
 
 export const ExprSchema: z.ZodType<Expr> = z.lazy(() =>
   z.union([
     ExprLeafSchema,
+    DateAddSchema,
     z.discriminatedUnion('op', [
       z.strictObject({ op: z.literal('add'), args: z.array(ExprSchema).min(1) }),
       z.strictObject({ op: z.literal('sub'), args: z.array(ExprSchema).min(1) }),
@@ -91,6 +161,11 @@ export const ExprSchema: z.ZodType<Expr> = z.lazy(() =>
       z.strictObject({ op: z.literal('div'), args: z.array(ExprSchema).min(1) }),
       z.strictObject({ op: z.literal('neg'), arg: ExprSchema }),
       z.strictObject({ op: z.literal('abs'), arg: ExprSchema }),
+      z.strictObject({ op: z.literal('floor'), arg: ExprSchema }),
+      z.strictObject({ op: z.literal('ceil'), arg: ExprSchema }),
+      z.strictObject({ op: z.literal('mod'), args: z.tuple([ExprSchema, ExprSchema]) }),
+      z.strictObject({ op: z.literal('min'), args: z.array(ExprSchema).min(1) }),
+      z.strictObject({ op: z.literal('max'), args: z.array(ExprSchema).min(1) }),
       z.strictObject({ op: z.literal('round'), arg: ExprSchema, digits: z.number().int() }),
       z.strictObject({ op: z.literal('concat'), args: z.array(ExprSchema).min(1) }),
       z.strictObject({
@@ -102,6 +177,7 @@ export const ExprSchema: z.ZodType<Expr> = z.lazy(() =>
       z.strictObject({ op: z.literal('trim'), arg: ExprSchema }),
       z.strictObject({ op: z.literal('upper'), arg: ExprSchema }),
       z.strictObject({ op: z.literal('lower'), arg: ExprSchema }),
+      z.strictObject({ op: z.literal('length'), arg: ExprSchema }),
       z.strictObject({
         op: z.literal('replaceText'),
         arg: ExprSchema,
@@ -115,18 +191,45 @@ export const ExprSchema: z.ZodType<Expr> = z.lazy(() =>
         char: z.string().min(1).max(1),
       }),
       z.strictObject({
+        op: z.literal('split'),
+        arg: ExprSchema,
+        separator: z.string().min(1),
+        index: nonZeroInt,
+      }),
+      z.strictObject({ op: z.literal('toNumber'), arg: ExprSchema }),
+      z.strictObject({ op: z.literal('toText'), arg: ExprSchema, format: z.string().optional() }),
+      z.strictObject({
         op: z.literal('datePart'),
         arg: ExprSchema,
         part: z.enum(['year', 'month', 'day']),
       }),
       z.strictObject({ op: z.literal('dateFormat'), arg: ExprSchema, format: z.string() }),
       z.strictObject({
+        op: z.literal('dateDiff'),
+        args: z.tuple([ExprSchema, ExprSchema]),
+        unit: z.enum(['days', 'months', 'years']),
+      }),
+      z.strictObject({ op: z.literal('endOfMonth'), arg: ExprSchema }),
+      z.strictObject({
         op: z.literal('if'),
         cond: ExprSchema,
         then: ExprSchema,
         else: ExprSchema,
       }),
+      z.strictObject({
+        op: z.literal('switch'),
+        cases: z.array(z.strictObject({ when: ExprSchema, then: ExprSchema })).min(1),
+        else: ExprSchema,
+      }),
       z.strictObject({ op: z.literal('coalesce'), args: z.array(ExprSchema).min(1) }),
+      z.strictObject({
+        op: z.literal('lookup'),
+        table: z.string().min(1),
+        key: ExprSchema,
+        return: z.string().min(1),
+        onMissing: z.enum(['flag', 'empty', 'keep']),
+      }),
+      z.strictObject({ op: z.literal('call'), fn: z.string().min(1), args: z.array(ExprSchema) }),
       z.strictObject({ op: z.literal('eq'), args: z.tuple([ExprSchema, ExprSchema]) }),
       z.strictObject({ op: z.literal('ne'), args: z.tuple([ExprSchema, ExprSchema]) }),
       z.strictObject({ op: z.literal('gt'), args: z.tuple([ExprSchema, ExprSchema]) }),
@@ -135,6 +238,14 @@ export const ExprSchema: z.ZodType<Expr> = z.lazy(() =>
       z.strictObject({ op: z.literal('lte'), args: z.tuple([ExprSchema, ExprSchema]) }),
       z.strictObject({ op: z.literal('isEmpty'), arg: ExprSchema }),
       z.strictObject({ op: z.literal('notEmpty'), arg: ExprSchema }),
+      z.strictObject({
+        op: z.literal('oneOf'),
+        arg: ExprSchema,
+        values: z.array(ExprConstValueSchema).min(1),
+      }),
+      z.strictObject({ op: z.literal('startsWith'), arg: ExprSchema, text: z.string() }),
+      z.strictObject({ op: z.literal('endsWith'), arg: ExprSchema, text: z.string() }),
+      z.strictObject({ op: z.literal('contains'), arg: ExprSchema, text: z.string() }),
       z.strictObject({ op: z.literal('and'), args: z.array(ExprSchema).min(1) }),
       z.strictObject({ op: z.literal('or'), args: z.array(ExprSchema).min(1) }),
       z.strictObject({ op: z.literal('not'), arg: ExprSchema }),
@@ -209,11 +320,15 @@ export type FilterScalar = string | number | boolean | null;
 export type RowFilter =
   | { column: string; op: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'; value: FilterScalar }
   | { column: string; op: 'isEmpty' | 'notEmpty' }
-  | { column: string; op: 'oneOf' | 'notOneOf'; value: FilterScalar[] };
+  | { column: string; op: 'oneOf' | 'notOneOf'; value: FilterScalar[] }
+  // SPEC 8.3: "{ column, op, value? } for simple cases, or { expr } where expr is any
+  // condition." Schema-level this just takes any Expr; that its result type is boolean
+  // is a static TYPE check (SPEC 9.2 layer 3), which is the engine's typeCheck, not ours.
+  | { expr: Expr };
 
 const FilterScalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
-export const RowFilterSchema = z.discriminatedUnion('op', [
+const SimpleRowFilterSchema = z.discriminatedUnion('op', [
   z.strictObject({ column: z.string(), op: z.literal('eq'), value: FilterScalarSchema }),
   z.strictObject({ column: z.string(), op: z.literal('ne'), value: FilterScalarSchema }),
   z.strictObject({ column: z.string(), op: z.literal('gt'), value: FilterScalarSchema }),
@@ -232,6 +347,11 @@ export const RowFilterSchema = z.discriminatedUnion('op', [
     op: z.literal('notOneOf'),
     value: z.array(FilterScalarSchema).min(1),
   }),
+]);
+
+export const RowFilterSchema = z.union([
+  SimpleRowFilterSchema,
+  z.strictObject({ expr: ExprSchema }),
 ]);
 
 // ---------- input (SPEC 8.1) ----------
@@ -382,6 +502,44 @@ export const GroupSchema = z.strictObject({
   blankRowsAfter: z.number().int().min(0).optional(),
 });
 
+// ---------- transform.functions / transform.tables (SPEC 8.14) ----------
+
+export interface FunctionParam {
+  name: string;
+  type: ValueType;
+}
+export const FunctionParamSchema = z.strictObject({
+  name: z.string().min(1),
+  type: ValueTypeSchema,
+});
+
+export interface RulesFunction {
+  name: string;
+  params: FunctionParam[];
+  returns: ValueType;
+  body: Expr;
+}
+export const RulesFunctionSchema = z.strictObject({
+  name: z.string().min(1),
+  params: z.array(FunctionParamSchema),
+  returns: ValueTypeSchema,
+  body: ExprSchema,
+});
+
+export type TableCellValue = string | number | boolean | null;
+const TableCellValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
+export interface RulesTable {
+  name: string;
+  columns: string[];
+  rows: TableCellValue[][];
+}
+export const RulesTableSchema = z.strictObject({
+  name: z.string().min(1),
+  columns: z.array(z.string().min(1)).min(1),
+  rows: z.array(z.array(TableCellValueSchema)),
+});
+
 // ---------- transform (SPEC 8.1 / LEARN_PROMPT §5: dedupe/expand optional, rest required) ----------
 
 export interface RulesTransform {
@@ -391,10 +549,15 @@ export interface RulesTransform {
   valueMaps: ValueMap[];
   sort: SortKey[];
   group?: Group;
+  /** SPEC 8.14: reusable logic, both optional so v1 rules files keep loading. */
+  functions?: RulesFunction[];
+  tables?: RulesTable[];
 }
 export const RulesTransformSchema = z.strictObject({
   dedupe: DedupeSchema.optional(),
   expand: ExpandSchema.optional(),
+  functions: z.array(RulesFunctionSchema).optional(),
+  tables: z.array(RulesTableSchema).optional(),
   computed: z.array(ComputedSchema),
   valueMaps: z.array(ValueMapSchema),
   sort: z.array(SortKeySchema),
@@ -456,9 +619,42 @@ export const GrandTotalSchema = z.strictObject({
   sum: z.array(z.string()).min(1),
 });
 
+// ---------- output.file (SPEC 8.13) ----------
+
+export const OUTPUT_FILE_TYPES = ['xlsx', 'csv', 'txt'] as const;
+export type OutputFileType = (typeof OUTPUT_FILE_TYPES)[number];
+
+export const OUTPUT_FILE_DELIMITERS = [',', '\t', ';', '|'] as const;
+export type OutputFileDelimiter = (typeof OUTPUT_FILE_DELIMITERS)[number];
+
+export const OUTPUT_FILE_ENCODINGS = ['utf8bom', 'utf8', 'windows1255'] as const;
+export type OutputFileEncoding = (typeof OUTPUT_FILE_ENCODINGS)[number];
+
+export const OUTPUT_FILE_QUOTES = ['minimal', 'all', 'none'] as const;
+export type OutputFileQuote = (typeof OUTPUT_FILE_QUOTES)[number];
+
+export interface OutputFile {
+  type: OutputFileType;
+  delimiter?: OutputFileDelimiter;
+  header?: boolean;
+  encoding?: OutputFileEncoding;
+  quote?: OutputFileQuote;
+}
+export const OutputFileSchema = z.strictObject({
+  type: z.enum(OUTPUT_FILE_TYPES),
+  delimiter: z.enum(OUTPUT_FILE_DELIMITERS).optional(),
+  header: z.boolean().optional(),
+  encoding: z.enum(OUTPUT_FILE_ENCODINGS).optional(),
+  quote: z.enum(OUTPUT_FILE_QUOTES).optional(),
+});
+
+/** SPEC 8.13: "The default is `{ type: 'xlsx' }`" when `output.file` is absent. */
+export const DEFAULT_OUTPUT_FILE: OutputFile = { type: 'xlsx' };
+
 // ---------- output (SPEC 8.1) ----------
 
 export interface RulesOutput {
+  file?: OutputFile;
   sheetName: string;
   direction: 'rtl' | 'ltr';
   language: 'he' | 'en';
@@ -468,6 +664,7 @@ export interface RulesOutput {
   grandTotal?: GrandTotal;
 }
 export const RulesOutputSchema = z.strictObject({
+  file: OutputFileSchema.optional(),
   sheetName: z.string(),
   direction: z.enum(['rtl', 'ltr']),
   language: z.enum(['he', 'en']),
@@ -482,25 +679,63 @@ export const RulesOutputSchema = z.strictObject({
 export type ValidationSeverity = 'flag' | 'block';
 const SeveritySchema = z.enum(['flag', 'block']);
 
+/** SPEC 8.8: `on` defaults to "input". "output" means `column` names an output header
+ * instead of an input/computed id, and the check belongs to the format (8.12). */
+export type ValidationOn = 'input' | 'output';
+const ValidationOnSchema = z.enum(['input', 'output']).optional();
+
 const DateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
 export type Validation =
-  | { column: string; rule: 'required'; severity: ValidationSeverity }
-  | { column: string; rule: 'israeliIdChecksum'; severity: ValidationSeverity }
-  | { column: string; rule: 'range'; min?: number; max?: number; severity: ValidationSeverity }
-  | { column: string; rule: 'lengthEquals'; length: number; severity: ValidationSeverity }
-  | { column: string; rule: 'oneOf'; values: string[]; severity: ValidationSeverity }
-  | { column: string; rule: 'unique'; severity: ValidationSeverity }
-  | { column: string; rule: 'dateRange'; from: string; to: string; severity: ValidationSeverity };
+  | { on?: ValidationOn; column: string; rule: 'required'; severity: ValidationSeverity }
+  | { on?: ValidationOn; column: string; rule: 'israeliIdChecksum'; severity: ValidationSeverity }
+  | {
+      on?: ValidationOn;
+      column: string;
+      rule: 'range';
+      min?: number;
+      max?: number;
+      severity: ValidationSeverity;
+    }
+  | {
+      on?: ValidationOn;
+      column: string;
+      rule: 'lengthEquals';
+      length: number;
+      severity: ValidationSeverity;
+    }
+  | {
+      on?: ValidationOn;
+      column: string;
+      rule: 'oneOf';
+      values: string[];
+      severity: ValidationSeverity;
+    }
+  | { on?: ValidationOn; column: string; rule: 'unique'; severity: ValidationSeverity }
+  | {
+      on?: ValidationOn;
+      column: string;
+      rule: 'dateRange';
+      from: string;
+      to: string;
+      severity: ValidationSeverity;
+    };
 
 export const ValidationSchema = z.discriminatedUnion('rule', [
-  z.strictObject({ column: z.string(), rule: z.literal('required'), severity: SeveritySchema }),
   z.strictObject({
+    on: ValidationOnSchema,
+    column: z.string(),
+    rule: z.literal('required'),
+    severity: SeveritySchema,
+  }),
+  z.strictObject({
+    on: ValidationOnSchema,
     column: z.string(),
     rule: z.literal('israeliIdChecksum'),
     severity: SeveritySchema,
   }),
   z.strictObject({
+    on: ValidationOnSchema,
     column: z.string(),
     rule: z.literal('range'),
     min: z.number().optional(),
@@ -508,19 +743,27 @@ export const ValidationSchema = z.discriminatedUnion('rule', [
     severity: SeveritySchema,
   }),
   z.strictObject({
+    on: ValidationOnSchema,
     column: z.string(),
     rule: z.literal('lengthEquals'),
     length: z.number().int().positive(),
     severity: SeveritySchema,
   }),
   z.strictObject({
+    on: ValidationOnSchema,
     column: z.string(),
     rule: z.literal('oneOf'),
     values: z.array(z.string()).min(1),
     severity: SeveritySchema,
   }),
-  z.strictObject({ column: z.string(), rule: z.literal('unique'), severity: SeveritySchema }),
   z.strictObject({
+    on: ValidationOnSchema,
+    column: z.string(),
+    rule: z.literal('unique'),
+    severity: SeveritySchema,
+  }),
+  z.strictObject({
+    on: ValidationOnSchema,
     column: z.string(),
     rule: z.literal('dateRange'),
     from: DateStringSchema,
@@ -582,6 +825,10 @@ export const RULES_META_STATUSES = [
   'differencesAccepted',
   'userConfirmed',
   'draft',
+  // SPEC 8.12 "Editing a format": conversions whose `from` references stop resolving
+  // after a format edit become needsReview, since example files aren't stored for
+  // re-verification (SPEC 13 formats.status/conversions.status already listed it).
+  'needsReview',
 ] as const;
 export type RulesMetaStatus = (typeof RULES_META_STATUSES)[number];
 
@@ -589,6 +836,10 @@ export const RULES_META_LEARN_PATHS = ['local', 'llm', 'cache'] as const;
 export type RulesMetaLearnPath = (typeof RULES_META_LEARN_PATHS)[number];
 
 export interface RulesMeta {
+  /** SPEC 8.12/13: set once this conversion belongs to a saved format. */
+  formatId?: string;
+  /** SPEC 8.12/13: the source name (e.g. the supplier) this conversion was taught for. */
+  sourceName?: string;
   source: RulesMetaSource;
   status: RulesMetaStatus;
   model?: string;
@@ -598,6 +849,8 @@ export interface RulesMeta {
   createdAt?: string;
 }
 export const RulesMetaSchema = z.strictObject({
+  formatId: z.string().min(1).optional(),
+  sourceName: z.string().min(1).optional(),
   source: z.enum(RULES_META_SOURCES),
   status: z.enum(RULES_META_STATUSES),
   model: z.string().optional(),

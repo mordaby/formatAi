@@ -5,7 +5,7 @@ import type { CellRange, RawCell, RawSheet, RawWorkbook } from '../types';
 
 export type ReadErrorCode = 'unsupportedFileType';
 
-/** Thrown by readWorkbook for anything other than .xlsx/.xls/.csv. */
+/** Thrown by readWorkbook for anything other than .xlsx/.xls/.csv/.txt. */
 export class UnsupportedFileTypeError extends Error {
   readonly code: ReadErrorCode = 'unsupportedFileType';
   readonly fileName: string;
@@ -20,7 +20,8 @@ export class UnsupportedFileTypeError extends Error {
 }
 
 /**
- * Reads an xlsx/xls/csv file into the engine's neutral RawWorkbook shape.
+ * Reads an xlsx/xls/csv/txt file into the engine's neutral RawWorkbook shape.
+ * .txt is treated as delimited text, same path as .csv (SPEC 6.1).
  * Must run identically in a browser Web Worker and in Node: no Node-only APIs.
  */
 export async function readWorkbook(
@@ -30,8 +31,8 @@ export async function readWorkbook(
   const bytes = toUint8Array(data);
   const ext = getExtension(fileName);
 
-  if (ext === 'csv') {
-    return readCsvWorkbook(bytes, fileName);
+  if (ext === 'csv' || ext === 'txt') {
+    return readDelimitedWorkbook(bytes, fileName, ext);
   }
   if (ext === 'xlsx' || ext === 'xls') {
     return readExcelWorkbook(bytes, ext);
@@ -214,12 +215,16 @@ async function overlayWithExceljs(bytes: Uint8Array, sheets: RawSheet[]): Promis
   });
 }
 
-// ---------- csv ----------
+// ---------- csv / txt (delimited text) ----------
 
-async function readCsvWorkbook(bytes: Uint8Array, fileName: string): Promise<RawWorkbook> {
+async function readDelimitedWorkbook(
+  bytes: Uint8Array,
+  fileName: string,
+  fileType: 'csv' | 'txt'
+): Promise<RawWorkbook> {
   const encoding = detectCsvEncoding(bytes);
   const text = decodeCsvBytes(bytes, encoding);
-  const delimiter = detectCsvDelimiter(text);
+  const delimiter = detectDelimiter(text);
   const parsed = parseCsv(text, delimiter);
 
   const rows: (RawCell | null)[][] = parsed.map((fields) => fields.map((f): RawCell => ({ v: f })));
@@ -233,7 +238,7 @@ async function readCsvWorkbook(bytes: Uint8Array, fileName: string): Promise<Raw
     colWidths: [],
   };
 
-  return { fileType: 'csv', sheets: [sheet], encoding };
+  return { fileType, sheets: [sheet], encoding, delimiter };
 }
 
 /** Exported for tests; not part of the public io surface. */
@@ -249,20 +254,100 @@ export function detectCsvEncoding(bytes: Uint8Array): 'utf-8' | 'utf-8-bom' | 'w
   }
 }
 
-function decodeCsvBytes(bytes: Uint8Array, encoding: 'utf-8' | 'utf-8-bom' | 'windows-1255'): string {
+/** Exported for detectFileSpec.ts's sniffDelimitedText (see io/detectFileSpec.ts). */
+export function decodeCsvBytes(bytes: Uint8Array, encoding: 'utf-8' | 'utf-8-bom' | 'windows-1255'): string {
   if (encoding === 'utf-8-bom') return new TextDecoder('utf-8').decode(bytes.subarray(3));
   if (encoding === 'utf-8') return new TextDecoder('utf-8').decode(bytes);
   return new TextDecoder('windows-1255').decode(bytes);
 }
 
-// DECISION: delimiter is sniffed from the first line only, comparing raw comma
-// vs semicolon counts (quoting is ignored for this heuristic). Good enough for
-// the MVP's single-table files; ties default to comma.
-function detectCsvDelimiter(text: string): ',' | ';' {
-  const firstLine = text.split(/\r\n|\r|\n/, 1)[0] ?? '';
-  const commas = (firstLine.match(/,/g) ?? []).length;
-  const semicolons = (firstLine.match(/;/g) ?? []).length;
-  return semicolons > commas ? ';' : ',';
+const DELIMITER_CANDIDATES = [',', '\t', ';', '|'] as const;
+export type DetectedDelimiter = (typeof DELIMITER_CANDIDATES)[number];
+
+/**
+ * Splits `text` into up to `maxLines` logical lines, respecting quotes (a
+ * quoted field may itself contain a literal CR/LF, which must not be treated
+ * as a line break while sniffing).
+ */
+function sampleLines(text: string, maxLines: number): string[] {
+  const lines: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length && lines.length < maxLines; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      current += ch;
+      continue;
+    }
+    if (!inQuotes && (ch === '\n' || ch === '\r')) {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      lines.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current !== '' && lines.length < maxLines) lines.push(current);
+  return lines;
+}
+
+/** Occurrences of `delimiter` outside of quoted spans. */
+function countDelimiterOutsideQuotes(line: string, delimiter: string): number {
+  let count = 0;
+  let inQuotes = false;
+  for (const ch of line) {
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && ch === delimiter) count++;
+  }
+  return count;
+}
+
+/** The most frequent value in `nums`; ties favor the larger value. */
+function mostCommon(nums: number[]): number {
+  const freq = new Map<number, number>();
+  for (const n of nums) freq.set(n, (freq.get(n) ?? 0) + 1);
+  let bestVal = nums[0]!;
+  let bestFreq = 0;
+  for (const [val, f] of freq) {
+    if (f > bestFreq || (f === bestFreq && val > bestVal)) {
+      bestVal = val;
+      bestFreq = f;
+    }
+  }
+  return bestVal;
+}
+
+/**
+ * DECISION: sniffs the delimiter among `, \t ; |` using several lines
+ * (quote-aware), rather than just the first line. For each candidate, score
+ * = (typical field-separator count per line) x (how many of the sampled
+ * lines share that count) -- this favors a delimiter that appears often *and*
+ * consistently, so a stray comma inside an otherwise tab-delimited file
+ * doesn't win. Ties default to comma.
+ */
+export function detectDelimiter(text: string, maxLines = 10): DetectedDelimiter {
+  const lines = sampleLines(text, maxLines).filter((l) => l.length > 0);
+  if (lines.length === 0) return ',';
+
+  let best: { delimiter: DetectedDelimiter; score: number } | null = null;
+  for (const delimiter of DELIMITER_CANDIDATES) {
+    const counts = lines.map((line) => countDelimiterOutsideQuotes(line, delimiter));
+    const nonZero = counts.filter((c) => c > 0);
+    if (nonZero.length === 0) continue;
+    const modeCount = mostCommon(nonZero);
+    const consistentLines = counts.filter((c) => c === modeCount).length;
+    const score = modeCount * consistentLines;
+    // DELIMITER_CANDIDATES is comma-first, so a strict ">" here already makes
+    // ties default to comma (the earliest candidate keeps its `best` slot).
+    if (!best || score > best.score) {
+      best = { delimiter, score };
+    }
+  }
+  return best?.delimiter ?? ',';
 }
 
 /**

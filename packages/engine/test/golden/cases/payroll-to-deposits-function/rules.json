@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "name": "שכר → דוח הפקדות",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "empId", "header": "מספר עובד", "type": "idLike", "padLeft": 2, "required": true },
+      { "id": "name", "header": "שם עובד", "type": "text", "required": true },
+      { "id": "base", "header": "שכר בסיס", "type": "decimal", "required": true }
+    ]
+  },
+  "transform": {
+    "functions": [
+      {
+        "name": "pct",
+        "params": [ { "name": "base", "type": "decimal" }, { "name": "rate", "type": "decimal" } ],
+        "returns": "decimal",
+        "body": {
+          "op": "round",
+          "digits": 2,
+          "arg": { "op": "mul", "args": [ { "param": "base" }, { "param": "rate" } ] }
+        }
+      }
+    ],
+    "computed": [
+      { "id": "pensionEmployee", "type": "decimal", "expr": { "op": "call", "fn": "pct", "args": [ { "col": "base" }, { "const": 0.06 } ] } },
+      { "id": "pensionEmployer", "type": "decimal", "expr": { "op": "call", "fn": "pct", "args": [ { "col": "base" }, { "const": 0.0833 } ] } },
+      { "id": "studyFund", "type": "decimal", "expr": { "op": "call", "fn": "pct", "args": [ { "col": "base" }, { "const": 0.025 } ] } }
+    ],
+    "valueMaps": [],
+    "sort": [ { "column": "empId", "dir": "asc" } ]
+  },
+  "output": {
+    "sheetName": "הפקדות",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [ { "text": "הפקדות פנסיוניות", "bold": true } ],
+    "columns": [
+      { "header": "מספר עובד", "from": "empId" },
+      { "header": "שם עובד", "from": "name" },
+      { "header": "שכר בסיס", "from": "base", "format": "#,##0.00" },
+      { "header": "הפקדת עובד לפנסיה", "from": "pensionEmployee", "format": "#,##0.00" },
+      { "header": "הפקדת מעביד לפנסיה", "from": "pensionEmployer", "format": "#,##0.00" },
+      { "header": "קרן השתלמות", "from": "studyFund", "format": "#,##0.00" }
+    ],
+    "headerStyle": { "bold": true },
+    "grandTotal": { "labelColumn": "empId", "label": "סה\"כ", "sum": ["pensionEmployee", "pensionEmployer", "studyFund"] }
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

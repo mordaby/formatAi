@@ -263,6 +263,58 @@ describe('detectTable - headerRow override', () => {
   });
 });
 
+describe('detectTable - noHeader', () => {
+  it('reports headerRow -1 and dataStart at the first non-empty row', () => {
+    const s = sheet([row('1001', 'Dana', 100), row('1002', 'Yossi', 200), row('1003', 'Noa', 300)]);
+    const d = detectTable(s, { noHeader: true });
+    expect(d.ok).toBe(true);
+    expect(d.headerRow).toBe(-1);
+    expect(d.dataStart).toBe(0);
+    expect(d.dataEnd).toBe(2);
+    expect(d.titleRows).toEqual([]);
+    expect(d.footerRows).toEqual([]);
+  });
+
+  it('skips leading blank rows to find dataStart', () => {
+    const s = sheet([row(null, null), row('1001', 'Dana', 100), row('1002', 'Yossi', 200)]);
+    const d = detectTable(s, { noHeader: true });
+    expect(d.ok).toBe(true);
+    expect(d.dataStart).toBe(1);
+    expect(d.dataEnd).toBe(2);
+  });
+
+  it('applies no header-based rejections (a merged/split-header-shaped sheet still passes)', () => {
+    const s = sheet(
+      [row('קבוצה א', 'קבוצה ב'), row('שם', 'סכום'), row('א', 1), row('ב', 2)],
+      { merges: [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }] as CellRange[] }
+    );
+    const d = detectTable(s, { noHeader: true });
+    expect(d.ok).toBe(true);
+    expect(d.headerRow).toBe(-1);
+    expect(d.issues).toEqual([]);
+  });
+
+  it('still rejects a wholly empty sheet', () => {
+    const s = sheet([row(null, null), row(null, null)]);
+    const d = detectTable(s, { noHeader: true });
+    expect(d.ok).toBe(false);
+    expect(d.issues).toEqual([{ code: 'emptySheet', severity: 'reject' }]);
+  });
+
+  it('still adds the hiddenRowsOrCols notice', () => {
+    const s = sheet([row('1001', 'Dana'), row('1002', 'Yossi')], { hiddenRows: [0] });
+    const d = detectTable(s, { noHeader: true });
+    expect(d.ok).toBe(true);
+    expect(d.issues).toEqual([{ code: 'hiddenRowsOrCols', severity: 'notice' }]);
+  });
+
+  it('infers direction from the first data row, since there is no header row to sample', () => {
+    const s = sheet([row('שם', 1), row('סכום', 2)]);
+    const d = detectTable(s, { noHeader: true });
+    expect(d.direction).toBe('rtl');
+  });
+});
+
 describe('nonEmptySheets', () => {
   it('lists indices of sheets with content or drawings, skipping empty ones', () => {
     const wb: RawWorkbook = {

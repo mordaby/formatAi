@@ -35,6 +35,19 @@ export const limits = {
     dailyAnonUsd: 5,
     dailyOverallUsd: 50,
   },
+  /**
+   * SPEC 8.3/8.14/21 (v3): limits on the rules language itself, checked by
+   * `checkRules` (maxExprDepth only) and by the engine's `checkLimits` (the rest -
+   * node budgets after expanding calls, function/table counts, table row counts;
+   * the rules-per-format count itself lives in `tiers.ts`, since it's per tier).
+   */
+  rules: {
+    maxExprDepth: 8,
+    maxNodesPerOutputColumn: 200,
+    maxFunctions: 20,
+    maxTables: 20,
+    maxTableRows: 500,
+  },
 } as const;
 
 export type Limits = typeof limits;

@@ -25,6 +25,11 @@ export const ASSUMPTION_REASON_CODES = [
   'sortGuessed',
   'formatGuessed',
   'titleGuessed',
+  // SPEC 9.2 layer 6 "Overfitting lint": never a rejection, but every finding (a
+  // constant/condition/switch/table/value-map entry that only fits one sample row,
+  // or an expression far larger than any other column needs) becomes a "Please
+  // check" line with this code, code-added rather than LLM-written.
+  'overfitSuspected',
   'other',
 ] as const;
 export type AssumptionReasonCode = (typeof ASSUMPTION_REASON_CODES)[number];
@@ -65,6 +70,8 @@ export const FLAG_MESSAGE_KEYS = [
   'flag.expr.notDate',
   // rule "valueMap"
   'flag.valueMapMissing',
+  // rule "expr" (lookup, SPEC 8.3/8.14). params: none; value is the lookup key
+  'flag.lookupMissing',
   // declared validations (SPEC 8.8)
   'flag.validation.required',
   'flag.validation.israeliIdChecksum',

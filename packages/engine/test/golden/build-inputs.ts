@@ -260,6 +260,184 @@ function buildWin1255CsvRename(): void {
   ]);
 }
 
+// ---------------------------------------------------------------------------
+// Case 8: supplier-pricelist-to-erp-load (SPEC 21 v3 amendment: output.file txt,
+// tab-delimited, no header, Windows-1255)
+// ---------------------------------------------------------------------------
+async function buildSupplierPricelistToErpLoad(): Promise<void> {
+  await writeXlsxFile('supplier-pricelist-to-erp-load', 'input.xlsx', (wb) => {
+    const ws = wb.addWorksheet('מחירון', { views: [{ rightToLeft: true }] });
+    const header = ws.getRow(1);
+    ['מקט', 'תיאור', 'עלות', 'סטטוס'].forEach((h, i) => (header.getCell(i + 1).value = h));
+
+    type R = [number, string, number, string];
+    const rows: R[] = [
+      [7, 'פטיש', 19.99, 'פעיל'], // row 2
+      [1234, 'מברגה', 13.5, 'פעיל'], // row 3
+      [88, 'פלס', 45, 'מופסק'], // row 4: discontinued, filtered out
+      [305, 'פטישון', 8, 'פעיל'], // row 5
+      [12, 'מסור', 120, 'פעיל'], // row 6
+      [9999, 'סרגל', 2.49, 'פעיל'], // row 7
+      [45, 'פלייר', 0, 'פעיל'], // row 8
+      [6, 'מקדח', 75.25, 'מופסק'], // row 9: discontinued, filtered out
+      [100, 'סולם', 999.99, 'פעיל'], // row 10
+      [21, 'פינצטה', 3.33, 'פעיל'], // row 11
+    ];
+    rows.forEach((r, i) => {
+      const row = ws.getRow(2 + i);
+      row.getCell(1).value = r[0];
+      row.getCell(2).value = r[1];
+      row.getCell(3).value = r[2];
+      row.getCell(4).value = r[3];
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Case 9: customer-export-to-crm-csv (SPEC 21 v3 amendment: name concat, phone
+// normalization, email lower-case, switch by amount band)
+// ---------------------------------------------------------------------------
+function buildCustomerExportToCrmCsv(): void {
+  writeUtf8Csv('customer-export-to-crm-csv', 'input.csv', [
+    'First Name,Last Name,Phone,Email,Total Spend',
+    'Dana,Cohen,052-1234567,Dana.COHEN@Example.com,15000',
+    'Yossi,Levi,0541234567,yossi_l@example.com,500',
+    'Noa,Bar,54-9876543,NOA.BAR@EXAMPLE.COM,2500',
+    'Omer,Katz,052 111 2222,omer.katz@example.com,10000',
+    'Maya,Gil,0501234567,maya.gil@Example.com,999.99',
+    'Eli,Peretz,53-4445555,eli.peretz@example.com,1000',
+    'Shira,Adar,0587654321,Shira.Adar@example.com,0',
+    'Tomer,Ben,052-9998888,tomer.ben@EXAMPLE.com,25000',
+    'Roni,Oz,54 111 0000,roni.oz@example.com,1500.5',
+    'Gal,Dagan,0523334444,gal.dagan@example.com,9999.99',
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Case 10/11: freight-carrier-a / freight-carrier-b (SPEC 21 v3 amendment: a
+// registry pair -- two different carriers' invoices sharing one format, SPEC
+// 8.12). Dates are written as plain text (not native Excel date cells) so each
+// conversion's own `inputFormats` is what actually parses them.
+// ---------------------------------------------------------------------------
+async function buildFreightCarrierA(): Promise<void> {
+  await writeXlsxFile('freight-carrier-a', 'input.xlsx', (wb) => {
+    const ws = wb.addWorksheet('Invoice');
+    const header = ws.getRow(1);
+    ['Carrier Name', 'Ship ID', 'Date', 'Amount (USD)'].forEach((h, i) => (header.getCell(i + 1).value = h));
+
+    type R = [string, string, string, number];
+    const rows: R[] = [
+      ['Atlas Freight', 'SH-1001', '03/05/2024', 1200.5], // row 2
+      ['Blue Ocean Logistics', 'SH-2001', '01/15/2024', 850], // row 3
+      ['Atlas Freight', 'SH-1002', '02/20/2024', 640.25], // row 4
+      ['Blue Ocean Logistics', 'SH-2002', '03/01/2024', 975.75], // row 5
+      ['Atlas Freight', 'SH-1003', '01/10/2024', 300], // row 6
+      ['Blue Ocean Logistics', 'SH-2003', '02/28/2024', 420.1], // row 7
+      ['Atlas Freight', 'SH-1004', '03/15/2024', 1100], // row 8
+      ['Blue Ocean Logistics', 'SH-2004', '01/05/2024', 560.4], // row 9
+    ];
+    rows.forEach((r, i) => {
+      const row = ws.getRow(2 + i);
+      row.getCell(1).value = r[0];
+      row.getCell(2).value = r[1];
+      row.getCell(3).value = r[2];
+      row.getCell(4).value = r[3];
+    });
+  });
+}
+
+async function buildFreightCarrierB(): Promise<void> {
+  await writeXlsxFile('freight-carrier-b', 'input.xlsx', (wb) => {
+    const ws = wb.addWorksheet('Invoice');
+    const header = ws.getRow(1);
+    ['Reference No', 'Vendor', 'Total Cost', 'Invoice Date'].forEach((h, i) => (header.getCell(i + 1).value = h));
+
+    type R = [string, string, number, string];
+    const rows: R[] = [
+      ['INV-501', 'Swift Cargo', 430, '2024-01-12'], // row 2
+      ['INV-777', 'Northern Star Shipping', 690.5, '2024-02-02'], // row 3
+      ['INV-502', 'Swift Cargo', 210.75, '2024-01-25'], // row 4
+      ['INV-778', 'Northern Star Shipping', 980, '2024-03-10'], // row 5
+      ['INV-503', 'Swift Cargo', 75.2, '2024-02-14'], // row 6
+      ['INV-779', 'Northern Star Shipping', 150, '2024-01-30'], // row 7
+      ['INV-504', 'Swift Cargo', 999.99, '2024-03-05'], // row 8
+      ['INV-780', 'Northern Star Shipping', 60.1, '2024-02-20'], // row 9
+    ];
+    rows.forEach((r, i) => {
+      const row = ws.getRow(2 + i);
+      row.getCell(1).value = r[0];
+      row.getCell(2).value = r[1];
+      row.getCell(3).value = r[2];
+      row.getCell(4).value = r[3];
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Case 12: payroll-to-deposits-function (SPEC 21 v3 amendment: one
+// transform.functions entry called from three computed columns)
+// ---------------------------------------------------------------------------
+async function buildPayrollToDepositsFunction(): Promise<void> {
+  await writeXlsxFile('payroll-to-deposits-function', 'input.xlsx', (wb) => {
+    const ws = wb.addWorksheet('שכר', { views: [{ rightToLeft: true }] });
+    const header = ws.getRow(1);
+    ['מספר עובד', 'שם עובד', 'שכר בסיס'].forEach((h, i) => (header.getCell(i + 1).value = h));
+
+    type R = [number, string, number];
+    const rows: R[] = [
+      [1, 'דנה כהן', 10000], // row 2
+      [2, 'יוסי לוי', 15500.5], // row 3
+      [3, 'מאיה גל', 8000], // row 4
+      [4, 'עומר כץ', 0], // row 5
+      [5, 'שירה אדר', 12345.67], // row 6
+      [6, 'אבי פרץ', 9999.99], // row 7
+      [7, 'נועה בר', 7500], // row 8
+      [8, 'תומר בן', 20000], // row 9
+      [9, 'רותם עוז', 6321.45], // row 10
+      [10, 'אלי דגן', 11111.11], // row 11
+    ];
+    rows.forEach((r, i) => {
+      const row = ws.getRow(2 + i);
+      row.getCell(1).value = r[0];
+      row.getCell(2).value = r[1];
+      row.getCell(3).value = r[2];
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Case 13: bank-export-lookup (SPEC 21 v3 amendment: a transform.tables lookup,
+// with one transaction code missing from the table)
+// ---------------------------------------------------------------------------
+async function buildBankExportLookup(): Promise<void> {
+  await writeXlsxFile('bank-export-lookup', 'input.xlsx', (wb) => {
+    const ws = wb.addWorksheet('Export');
+    const header = ws.getRow(1);
+    ['Txn ID', 'Code', 'Amount', 'Description'].forEach((h, i) => (header.getCell(i + 1).value = h));
+
+    type R = [string, string, number, string];
+    const rows: R[] = [
+      ['T1001', 'DEP', 5000, 'Salary deposit'], // row 2
+      ['T1002', 'WD', 1200.5, 'ATM withdrawal'], // row 3
+      ['T1003', 'FEE', 15, 'Monthly fee'], // row 4
+      ['T1004', 'INT', 3.25, 'Interest credit'], // row 5
+      ['T1005', 'DEP', 2500, 'Client payment'], // row 6
+      ['T1006', 'CHG', 89.99, 'Disputed charge'], // row 7
+      ['T1007', 'WD', 300, 'Cash withdrawal'], // row 8
+      ['T1008', 'XFER', 750, 'Wire transfer'], // row 9: unknown code
+      ['T1009', 'FEE', 5.5, 'Card fee'], // row 10
+      ['T1010', 'DEP', 10000, 'Bonus deposit'], // row 11
+    ];
+    rows.forEach((r, i) => {
+      const row = ws.getRow(2 + i);
+      row.getCell(1).value = r[0];
+      row.getCell(2).value = r[1];
+      row.getCell(3).value = r[2];
+      row.getCell(4).value = r[3];
+    });
+  });
+}
+
 async function main(): Promise<void> {
   await buildHeCommissionsReport();
   buildEnRenameReorder();
@@ -268,6 +446,12 @@ async function main(): Promise<void> {
   await buildFixedFanOutDebitCredit();
   await buildSummaryByAgent();
   buildWin1255CsvRename();
+  await buildSupplierPricelistToErpLoad();
+  buildCustomerExportToCrmCsv();
+  await buildFreightCarrierA();
+  await buildFreightCarrierB();
+  await buildPayrollToDepositsFunction();
+  await buildBankExportLookup();
   console.log('Golden test inputs written.');
 }
 

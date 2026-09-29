@@ -12,17 +12,17 @@ function withCommas(n: number): string {
 }
 
 function bigTable() {
-  const headers = ['סוכן', 'פוליסה', 'ת.ז.', 'מוצר', 'סטטוס', 'פרמיה', 'שיעור', 'תאריך', 'תאריך טקסט', 'הערה'];
-  const products = ['חיים', 'בריאות', 'רכב', 'דירה'];
+  const headers = ['ספק', 'הזמנה', 'מזהה', 'פריט', 'סטטוס', 'סכום', 'שיעור', 'תאריך', 'תאריך טקסט', 'הערה'];
+  const items = ['אלקטרוניקה', 'ריהוט', 'ביגוד', 'ספרים'];
   const rows: CellInput[][] = [];
   for (let i = 0; i < ROWS; i++) {
     const day = (i % 28) + 1;
     const month = (i % 12) + 1;
     rows.push([
-      (i % 37) + 1, // agent: number → idLike
-      String(100000 + (i % 4900)), // policy (some duplicates)
+      (i % 37) + 1, // supplier: number → idLike
+      String(100000 + (i % 4900)), // order (some duplicates)
       makeValidIsraeliId(String(10000000 + i).slice(0, 8)),
-      products[i % 4] as string,
+      items[i % 4] as string,
       i % 10 === 0 ? 'מבוטל' : 'פעיל',
       i % 3 === 0 ? `₪${withCommas(1000 + i)}.50` : 123.45 + i, // text with ₪ and commas, or numbers
       0.17,
@@ -37,58 +37,88 @@ function bigTable() {
 function bigRules() {
   return rules({
     columns: [
-      col('agent', 'idLike', { header: 'סוכן', padLeft: 5 }),
-      col('policy', 'idLike', { header: 'פוליסה', padLeft: 9 }),
-      col('insuredId', 'idLike', { header: 'ת.ז.', padLeft: 9 }),
-      col('product', 'text', { header: 'מוצר' }),
+      col('supplier', 'idLike', { header: 'ספק', padLeft: 5 }),
+      col('order', 'idLike', { header: 'הזמנה', padLeft: 9 }),
+      col('taxId', 'idLike', { header: 'מזהה', padLeft: 9 }),
+      col('item', 'text', { header: 'פריט' }),
       col('status', 'text', { header: 'סטטוס' }),
-      col('premium', 'decimal', { header: 'פרמיה' }),
+      col('amount', 'decimal', { header: 'סכום' }),
       col('rate', 'percent', { header: 'שיעור' }),
       col('start', 'date', { header: 'תאריך' }),
-      col('signed', 'date', { header: 'תאריך טקסט', inputFormats: ['DD/MM/YYYY'] }),
+      col('confirmed', 'date', { header: 'תאריך טקסט', inputFormats: ['DD/MM/YYYY'] }),
       col('note', 'text', { header: 'הערה' }),
     ],
     rowFilters: [{ column: 'status', op: 'ne', value: 'מבוטל' }],
     transform: {
-      dedupe: { keys: ['policy'], keep: 'first', action: 'flag' },
+      dedupe: { keys: ['order'], keep: 'first', action: 'flag' },
       computed: [
-        { id: 'commission', type: 'decimal', expr: { op: 'round', digits: 2, arg: { op: 'mul', args: [{ col: 'premium' }, { col: 'rate' }] } } },
-        { id: 'withVat', type: 'decimal', expr: { op: 'round', digits: 2, arg: { op: 'mul', args: [{ col: 'commission' }, { const: 1.18 }] } } },
+        { id: 'total', type: 'decimal', expr: { op: 'round', digits: 2, arg: { op: 'mul', args: [{ col: 'amount' }, { col: 'rate' }] } } },
+        { id: 'withTax', type: 'decimal', expr: { op: 'round', digits: 2, arg: { op: 'mul', args: [{ col: 'total' }, { const: 1.18 }] } } },
+        // min/max: exercised here even though amount is never empty.
+        { id: 'capped', type: 'decimal', expr: { op: 'min', args: [{ col: 'amount' }, { const: 5000 }] } },
+        { id: 'boosted', type: 'decimal', expr: { op: 'max', args: [{ col: 'amount' }, { const: 50 }] } },
+        // toNumber + mod (Excel MOD sign rule).
+        { id: 'remainder', type: 'integer', expr: { op: 'mod', args: [{ op: 'toNumber', arg: { col: 'supplier' } }, { const: 7 }] } },
+        // dateAdd (days).
+        { id: 'dueDate', type: 'date', expr: { op: 'dateAdd', arg: { col: 'start' }, days: 30 } },
+        // switch, first matching case.
+        {
+          id: 'sizeLabel',
+          type: 'text',
+          expr: {
+            op: 'switch',
+            cases: [
+              { when: { op: 'gt', args: [{ col: 'amount' }, { const: 1000 }] }, then: { const: 'big' } },
+              { when: { op: 'gt', args: [{ col: 'amount' }, { const: 100 }] }, then: { const: 'medium' } },
+            ],
+            else: { const: 'small' },
+          },
+        },
+        // toText with a number format.
+        { id: 'amountText', type: 'text', expr: { op: 'toText', arg: { col: 'amount' }, format: '#,##0.00' } },
         { id: 'period', type: 'text', expr: { op: 'dateFormat', arg: { col: 'start' }, format: 'MM/YYYY' } },
-        { id: 'label', type: 'text', expr: { op: 'concat', args: [{ col: 'agent' }, { const: '-' }, { col: 'policy' }] } },
+        { id: 'label', type: 'text', expr: { op: 'concat', args: [{ col: 'supplier' }, { const: '-' }, { col: 'order' }] } },
       ],
-      valueMaps: [{ column: 'product', map: { חיים: 'LIFE', בריאות: 'HEALTH', רכב: 'CAR' }, onMissing: 'flag' }],
-      sort: [{ column: 'agent', dir: 'asc' }, { column: 'start', dir: 'asc' }],
-      group: { by: 'agent', showDetailRows: true, subtotal: { labelColumn: 'policy', label: 'סה"כ', sum: ['premium', 'commission'] }, blankRowsAfter: 1 },
+      valueMaps: [{ column: 'item', map: { אלקטרוניקה: 'ELECTRONICS', ריהוט: 'FURNITURE', ביגוד: 'CLOTHING' }, onMissing: 'flag' }],
+      sort: [{ column: 'supplier', dir: 'asc' }, { column: 'start', dir: 'asc' }],
+      group: { by: 'supplier', showDetailRows: true, subtotal: { labelColumn: 'order', label: 'סה"כ', sum: ['amount', 'total'] }, blankRowsAfter: 1 },
     },
     output: {
       titleRows: [{ parts: [{ text: 'דוח ' }, { agg: 'max', column: 'start', format: 'MMMM YYYY' }], bold: true }],
-      grandTotal: { labelColumn: 'policy', label: 'סה"כ כללי', sum: ['premium', 'commission', 'withVat'] },
+      grandTotal: { labelColumn: 'order', label: 'סה"כ כללי', sum: ['amount', 'total', 'withTax'] },
     },
     out: [
-      'agent',
-      'policy',
-      'insuredId',
-      'product',
-      { header: 'premium', from: 'premium', format: '#,##0.00' },
-      { header: 'commission', from: 'commission', format: '#,##0.00' },
-      { header: 'withVat', from: 'withVat', format: '#,##0.00' },
+      'supplier',
+      'order',
+      'taxId',
+      'item',
+      { header: 'amount', from: 'amount', format: '#,##0.00' },
+      { header: 'total', from: 'total', format: '#,##0.00' },
+      { header: 'withTax', from: 'withTax', format: '#,##0.00' },
+      { header: 'capped', from: 'capped', format: '#,##0.00' },
+      { header: 'boosted', from: 'boosted', format: '#,##0.00' },
+      'remainder',
       { header: 'start', from: 'start', format: 'DD/MM/YYYY' },
-      'signed',
+      { header: 'dueDate', from: 'dueDate', format: 'DD/MM/YYYY' },
+      'confirmed',
       'period',
+      'sizeLabel',
+      'amountText',
       'label',
       'note',
     ],
     validations: [
-      { column: 'insuredId', rule: 'israeliIdChecksum', severity: 'flag' },
-      { column: 'premium', rule: 'range', min: 0, severity: 'flag' },
-      { column: 'policy', rule: 'lengthEquals', length: 9, severity: 'flag' },
+      { column: 'taxId', rule: 'israeliIdChecksum', severity: 'flag' },
+      { column: 'amount', rule: 'range', min: 0, severity: 'flag' },
+      { column: 'order', rule: 'lengthEquals', length: 9, severity: 'flag' },
+      // An output validation too (SPEC 8.8): checked by output header, after layout.
+      { on: 'output', column: 'total', rule: 'range', min: 0, severity: 'flag' },
     ],
   });
 }
 
 describe('performance', () => {
-  it(`runs ${ROWS} rows × 10 columns with computed columns well under the live-check budget`, () => {
+  it(`runs ${ROWS} rows × 10 input columns, 10 computed columns (incl. mod/min/max/dateAdd/switch/toText) well under the live-check budget`, () => {
     const r = bigRules();
     const t = bigTable();
 
@@ -104,7 +134,7 @@ describe('performance', () => {
     }
     const warmMs = Math.min(...warm);
     // eslint-disable-next-line no-console
-    console.log(`[perf] runRules ${ROWS} rows × 10 cols: cold ${coldMs.toFixed(1)} ms, warm ${warmMs.toFixed(1)} ms`);
+    console.log(`[perf] runRules ${ROWS} rows × 10 cols (+ mod/min/max/dateAdd/switch/toText): cold ${coldMs.toFixed(1)} ms, warm ${warmMs.toFixed(1)} ms`);
 
     expect(cold.ok).toBe(true);
     if (cold.ok) {

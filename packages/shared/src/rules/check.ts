@@ -1,12 +1,20 @@
 // Code checks that go beyond what zod can express (SPEC 9.2): every referenced
-// column id exists at the pipeline step where it's used, ids are unique and
-// expand-created ids don't collide, and expression nesting depth <= 6 (SPEC 8.3).
+// column id, function, table and param exists at the point it's used, ids are
+// unique and expand-created ids don't collide, function calls only reach
+// functions defined above them (so the call graph is acyclic by construction,
+// SPEC 8.14), lookup tables exist with unique columns and unique first-column
+// keys, and expression nesting depth stays within the configured limit (SPEC 8.3).
+//
+// Node budgets, rule-count limits and static TYPE checking are NOT here: SPEC 9.2
+// layers 3-4 (types, limits) belong to the engine's typeCheck/checkLimits, which
+// read this same rules language but need the input profile and the tier.
 //
 // Engine pipeline order (SPEC 8.2 / LEARN_PROMPT "Operations"):
 //   read -> rowFilters -> dedupe -> expand -> computed -> valueMaps -> sort -> group -> output -> validations
-import type { Expr, LearnResult, Rules } from './schema';
+import { limits } from '../config/limits';
+import type { Expr, ExprNode, LearnResult, Rules, TableCellValue } from './schema';
 
-export type RuleProblemKind = 'reference' | 'depth' | 'duplicateId';
+export type RuleProblemKind = 'reference' | 'depth' | 'duplicateId' | 'arity';
 
 export interface RuleProblem {
   kind: RuleProblemKind;
@@ -15,11 +23,13 @@ export interface RuleProblem {
   message: string;
 }
 
-const MAX_EXPR_DEPTH = 6;
+/** SPEC 8.3 (v3): depth 8 per expression. Read from config (SPEC non-negotiable #8),
+ * never hard-coded. */
+const MAX_EXPR_DEPTH = limits.rules.maxExprDepth;
 
 /** Every direct child Expr of a node (leaves have none). */
 function exprChildren(e: Expr): Expr[] {
-  if ('col' in e || 'const' in e) return [];
+  if ('col' in e || 'const' in e || 'param' in e) return [];
   switch (e.op) {
     case 'add':
     case 'sub':
@@ -29,31 +39,59 @@ function exprChildren(e: Expr): Expr[] {
     case 'coalesce':
     case 'and':
     case 'or':
+    case 'min':
+    case 'max':
       return e.args;
+    case 'mod':
     case 'eq':
     case 'ne':
     case 'gt':
     case 'gte':
     case 'lt':
     case 'lte':
+    case 'dateDiff':
       return e.args;
     case 'neg':
     case 'abs':
+    case 'floor':
+    case 'ceil':
     case 'round':
     case 'substr':
     case 'trim':
     case 'upper':
     case 'lower':
+    case 'length':
     case 'replaceText':
     case 'padLeft':
+    case 'split':
+    case 'toNumber':
+    case 'toText':
     case 'datePart':
     case 'dateFormat':
+    case 'dateAdd':
+    case 'endOfMonth':
     case 'isEmpty':
     case 'notEmpty':
     case 'not':
+    case 'oneOf':
+    case 'startsWith':
+    case 'endsWith':
+    case 'contains':
       return [e.arg];
     case 'if':
       return [e.cond, e.then, e.else];
+    case 'switch': {
+      const children: Expr[] = [];
+      for (const c of e.cases) {
+        children.push(c.when, c.then);
+      }
+      children.push(e.else);
+      return children;
+    }
+    case 'lookup':
+      return [e.key];
+    case 'call':
+      return e.args;
   }
 }
 
@@ -61,38 +99,6 @@ function exprDepth(e: Expr): number {
   const children = exprChildren(e);
   if (children.length === 0) return 1;
   return 1 + Math.max(...children.map(exprDepth));
-}
-
-function collectColRefs(e: Expr, out: string[]): void {
-  if ('col' in e) {
-    out.push(e.col);
-    return;
-  }
-  if ('const' in e) return;
-  for (const child of exprChildren(e)) collectColRefs(child, out);
-}
-
-function checkExpr(
-  expr: Expr,
-  available: ReadonlySet<string>,
-  path: string,
-  problems: RuleProblem[],
-): void {
-  const refs: string[] = [];
-  collectColRefs(expr, refs);
-  for (const id of refs) {
-    if (!available.has(id)) {
-      problems.push({ kind: 'reference', path, message: `unknown column id "${id}"` });
-    }
-  }
-  const depth = exprDepth(expr);
-  if (depth > MAX_EXPR_DEPTH) {
-    problems.push({
-      kind: 'depth',
-      path,
-      message: `expression nesting depth ${depth} exceeds the maximum of ${MAX_EXPR_DEPTH}`,
-    });
-  }
 }
 
 function checkRef(
@@ -124,13 +130,227 @@ function addNewId(
   }
 }
 
+interface ExprCheckContext {
+  /** Functions in declaration order, keyed by name. A `call` inside a function body may
+   * only name a function whose index is strictly less than the caller's (SPEC 8.14:
+   * "A function may call only functions defined above it" - this makes the call graph
+   * acyclic by construction, so no separate cycle-detection pass is needed). A top-level
+   * `call` (outside any function body) may name any declared function. */
+  functionsByName: Map<string, { index: number; paramCount: number }>;
+  tablesByName: Map<string, { columns: ReadonlySet<string> }>;
+}
+
+interface ExprCheckScope {
+  /** `col` ids in scope for a top-level expr (computed, rowFilters.expr, the fixedFanOut
+   * `set` expressions). Omit when checking a function body, where `col` is never valid
+   * (SPEC 8.14: "a body may use its params, constants and other functions... but never
+   * col: a function sees only what it is given"). */
+  colIds?: ReadonlySet<string>;
+  /** A function body's declared param names. Omit for top-level exprs, where `param`
+   * is never valid (SPEC 8.3: "param" leaf, "only inside a function body"). */
+  paramNames?: ReadonlySet<string>;
+  /** Set to the function's own index while checking that function's body, so `call`
+   * can enforce "defined above it". Omitted for top-level exprs. */
+  callerFunctionIndex?: number;
+}
+
+/** Walks an expression tree, checking depth once for the whole tree plus, per node:
+ * `col`/`param` references against the given scope, and `call`/`lookup` references
+ * against the rules file's declared functions/tables. */
+function checkExprTree(
+  expr: Expr,
+  scope: ExprCheckScope,
+  ctx: ExprCheckContext,
+  path: string,
+  problems: RuleProblem[],
+): void {
+  const depth = exprDepth(expr);
+  if (depth > MAX_EXPR_DEPTH) {
+    problems.push({
+      kind: 'depth',
+      path,
+      message: `expression nesting depth ${depth} exceeds the maximum of ${MAX_EXPR_DEPTH}`,
+    });
+  }
+
+  const walk = (e: Expr, p: string): void => {
+    if ('col' in e) {
+      if (scope.colIds) {
+        checkRef(e.col, scope.colIds, p, problems);
+      } else {
+        problems.push({
+          kind: 'reference',
+          path: p,
+          message: 'a function body cannot reference "col"; use "param" instead',
+        });
+      }
+      return;
+    }
+    if ('const' in e) return;
+    if ('param' in e) {
+      if (scope.paramNames) {
+        if (!scope.paramNames.has(e.param)) {
+          problems.push({ kind: 'reference', path: p, message: `unknown param "${e.param}"` });
+        }
+      } else {
+        problems.push({
+          kind: 'reference',
+          path: p,
+          message: '"param" is only allowed inside a function body',
+        });
+      }
+      return;
+    }
+
+    const node = e as ExprNode;
+    if (node.op === 'call') {
+      const fn = ctx.functionsByName.get(node.fn);
+      if (!fn) {
+        problems.push({ kind: 'reference', path: p, message: `unknown function "${node.fn}"` });
+      } else {
+        if (scope.callerFunctionIndex !== undefined && fn.index >= scope.callerFunctionIndex) {
+          problems.push({
+            kind: 'reference',
+            path: p,
+            message: `function "${node.fn}" must be defined above the function that calls it`,
+          });
+        }
+        if (node.args.length !== fn.paramCount) {
+          problems.push({
+            kind: 'arity',
+            path: p,
+            message: `function "${node.fn}" takes ${fn.paramCount} argument(s), got ${node.args.length}`,
+          });
+        }
+      }
+      node.args.forEach((a, i) => walk(a, `${p}.args[${i}]`));
+      return;
+    }
+
+    if (node.op === 'lookup') {
+      const table = ctx.tablesByName.get(node.table);
+      if (!table) {
+        problems.push({ kind: 'reference', path: p, message: `unknown table "${node.table}"` });
+      } else if (!table.columns.has(node.return)) {
+        problems.push({
+          kind: 'reference',
+          path: p,
+          message: `table "${node.table}" has no column "${node.return}"`,
+        });
+      }
+      walk(node.key, `${p}.key`);
+      return;
+    }
+
+    exprChildren(node).forEach((child, i) => walk(child, `${p}[${i}]`));
+  };
+
+  walk(expr, path);
+}
+
+/** Builds the functions/tables lookup context and checks their own declarations
+ * (SPEC 8.14): unique names, unique params, unique table columns, unique first-column
+ * (key) values, and - for each function body - that it only references its own params,
+ * never `col`, and only calls functions defined above it. */
+function checkFunctionsAndTables(
+  rules: LearnResult | Rules,
+  problems: RuleProblem[],
+): ExprCheckContext {
+  const functionsByName = new Map<string, { index: number; paramCount: number }>();
+  const functions = rules.transform.functions ?? [];
+  functions.forEach((fn, i) => {
+    if (functionsByName.has(fn.name)) {
+      problems.push({
+        kind: 'duplicateId',
+        path: `transform.functions[${i}].name`,
+        message: `duplicate function name "${fn.name}"`,
+      });
+    } else {
+      functionsByName.set(fn.name, { index: i, paramCount: fn.params.length });
+    }
+  });
+
+  const tablesByName = new Map<string, { columns: ReadonlySet<string> }>();
+  const tables = rules.transform.tables ?? [];
+  tables.forEach((table, i) => {
+    const columns = new Set(table.columns);
+    if (tablesByName.has(table.name)) {
+      problems.push({
+        kind: 'duplicateId',
+        path: `transform.tables[${i}].name`,
+        message: `duplicate table name "${table.name}"`,
+      });
+    } else {
+      tablesByName.set(table.name, { columns });
+    }
+
+    const seenColumns = new Set<string>();
+    table.columns.forEach((col, ci) => {
+      if (seenColumns.has(col)) {
+        problems.push({
+          kind: 'duplicateId',
+          path: `transform.tables[${i}].columns[${ci}]`,
+          message: `duplicate column name "${col}" in table "${table.name}"`,
+        });
+      } else {
+        seenColumns.add(col);
+      }
+    });
+
+    // SPEC 8.14: "The first column is the key and must be unique."
+    const seenKeys = new Set<TableCellValue>();
+    table.rows.forEach((row, ri) => {
+      const key = row[0] ?? null;
+      if (seenKeys.has(key)) {
+        problems.push({
+          kind: 'duplicateId',
+          path: `transform.tables[${i}].rows[${ri}][0]`,
+          message: `duplicate key "${String(key)}" in table "${table.name}"`,
+        });
+      } else {
+        seenKeys.add(key);
+      }
+    });
+  });
+
+  const ctx: ExprCheckContext = { functionsByName, tablesByName };
+
+  functions.forEach((fn, i) => {
+    const paramNames = new Set<string>();
+    fn.params.forEach((p, pi) => {
+      if (paramNames.has(p.name)) {
+        problems.push({
+          kind: 'duplicateId',
+          path: `transform.functions[${i}].params[${pi}].name`,
+          message: `duplicate param name "${p.name}" in function "${fn.name}"`,
+        });
+      } else {
+        paramNames.add(p.name);
+      }
+    });
+    checkExprTree(
+      fn.body,
+      { paramNames, callerFunctionIndex: i },
+      ctx,
+      `transform.functions[${i}].body`,
+      problems,
+    );
+  });
+
+  return ctx;
+}
+
 /**
  * Validates cross-references, id uniqueness/collisions and expression depth in
  * an already schema-valid LearnResult/Rules object. Complements zod validation;
- * it does not re-check shapes zod already enforces.
+ * it does not re-check shapes zod already enforces, static types (engine typeCheck)
+ * or size/count limits (engine checkLimits).
  */
 export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
   const problems: RuleProblem[] = [];
+
+  // ----- Step -1: functions and tables (SPEC 8.14), independent of the row pipeline -----
+  const ctx = checkFunctionsAndTables(rules, problems);
 
   // ----- Step 0: input column ids must be unique -----
   const inputIds = new Set<string>();
@@ -148,7 +368,11 @@ export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
 
   // ----- Step 1: rowFilters (against ids from read) -----
   rules.input.rowFilters?.forEach((f, i) => {
-    checkRef(f.column, inputIds, `input.rowFilters[${i}].column`, problems);
+    if ('expr' in f) {
+      checkExprTree(f.expr, { colIds: inputIds }, ctx, `input.rowFilters[${i}].expr`, problems);
+    } else {
+      checkRef(f.column, inputIds, `input.rowFilters[${i}].column`, problems);
+    }
   });
 
   // ----- Step 2: dedupe (against ids from read, before expand) -----
@@ -208,7 +432,13 @@ export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
       // since fixedFanOut runs directly on the read+filtered+deduped row).
       ex.rows.forEach((row, ri) => {
         for (const [id, expr] of Object.entries(row.set)) {
-          checkExpr(expr, inputIds, `transform.expand.rows[${ri}].set.${id}`, problems);
+          checkExprTree(
+            expr,
+            { colIds: inputIds },
+            ctx,
+            `transform.expand.rows[${ri}].set.${id}`,
+            problems,
+          );
           afterExpand.add(id);
         }
       });
@@ -218,7 +448,13 @@ export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
   // ----- Step 4: computed (sequential; may reference earlier computed ids) -----
   const availableForComputed = new Set(afterExpand);
   rules.transform.computed.forEach((c, i) => {
-    checkExpr(c.expr, availableForComputed, `transform.computed[${i}].expr`, problems);
+    checkExprTree(
+      c.expr,
+      { colIds: availableForComputed },
+      ctx,
+      `transform.computed[${i}].expr`,
+      problems,
+    );
     if (availableForComputed.has(c.id)) {
       problems.push({
         kind: 'duplicateId',
@@ -277,9 +513,21 @@ export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
     );
   }
 
-  // ----- Step 9: validations -----
+  // ----- Step 9: validations (SPEC 8.8: "on" input columns/computed ids, or "output" headers) -----
+  const outputHeaders = new Set(rules.output.columns.map((c) => c.header));
   rules.validations.forEach((v, i) => {
-    checkRef(v.column, finalIds, `validations[${i}].column`, problems);
+    const on = v.on ?? 'input';
+    if (on === 'output') {
+      if (!outputHeaders.has(v.column)) {
+        problems.push({
+          kind: 'reference',
+          path: `validations[${i}].column`,
+          message: `unknown output header "${v.column}"`,
+        });
+      }
+    } else {
+      checkRef(v.column, finalIds, `validations[${i}].column`, problems);
+    }
   });
 
   return problems;

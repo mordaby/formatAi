@@ -1,6 +1,8 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { UnsupportedFileTypeError, detectCsvEncoding, readWorkbook } from '../../src/io/read';
+import { UnsupportedFileTypeError, detectCsvEncoding, detectDelimiter, readWorkbook } from '../../src/io/read';
+import { writeDelimited } from '../../src/io/writeDelimited';
+import type { OutputSheet } from '../../src/types';
 
 async function buildXlsxFixture(): Promise<Uint8Array> {
   const wb = new ExcelJS.Workbook();
@@ -162,5 +164,93 @@ describe('readWorkbook - csv', () => {
     const bytes = new TextEncoder().encode('a\n1\n');
     const wb = await readWorkbook(bytes, 'Ledger 2024.csv');
     expect(wb.sheets[0]!.name).toBe('Ledger 2024');
+  });
+
+  it('sets wb.delimiter on the returned workbook', async () => {
+    const bytes = new TextEncoder().encode('a,b\n1,2\n');
+    const wb = await readWorkbook(bytes, 'input.csv');
+    expect(wb.delimiter).toBe(',');
+  });
+});
+
+describe('readWorkbook - txt (delimited text)', () => {
+  it('accepts .txt as delimited text, same path as .csv', async () => {
+    const bytes = new TextEncoder().encode('id,name\n007,Dana\n');
+    const wb = await readWorkbook(bytes, 'input.txt');
+    expect(wb.fileType).toBe('txt');
+    expect(wb.sheets[0]!.rows[0]).toEqual([{ v: 'id' }, { v: 'name' }]);
+  });
+
+  it('reads a tab-delimited .txt file', async () => {
+    const text = 'id\tname\tamount\r\n007\tDana\t100\r\n042\tYossi\t200\r\n';
+    const bytes = new TextEncoder().encode(text);
+    const wb = await readWorkbook(bytes, 'load.txt');
+    expect(wb.fileType).toBe('txt');
+    expect(wb.delimiter).toBe('\t');
+    expect(wb.sheets[0]!.rows).toEqual([
+      [{ v: 'id' }, { v: 'name' }, { v: 'amount' }],
+      [{ v: '007' }, { v: 'Dana' }, { v: '100' }],
+      [{ v: '042' }, { v: 'Yossi' }, { v: '200' }],
+    ]);
+  });
+
+  it('reads a pipe-delimited .txt file', async () => {
+    const text = 'a|b|c\n1|2|3\n4|5|6\n';
+    const bytes = new TextEncoder().encode(text);
+    const wb = await readWorkbook(bytes, 'load.txt');
+    expect(wb.delimiter).toBe('|');
+    expect(wb.sheets[0]!.rows).toEqual([
+      [{ v: 'a' }, { v: 'b' }, { v: 'c' }],
+      [{ v: '1' }, { v: '2' }, { v: '3' }],
+      [{ v: '4' }, { v: '5' }, { v: '6' }],
+    ]);
+  });
+
+  it('csv with quoted fields containing the delimiter still parses correctly', async () => {
+    const text = 'a,b\n"1,2",3\n"4,5",6\n';
+    const bytes = new TextEncoder().encode(text);
+    const wb = await readWorkbook(bytes, 'input.csv');
+    expect(wb.delimiter).toBe(',');
+    expect(wb.sheets[0]!.rows[1]).toEqual([{ v: '1,2' }, { v: '3' }]);
+  });
+});
+
+describe('detectDelimiter', () => {
+  it('is quote-aware: a quoted field containing a comma does not fool tab detection', () => {
+    const text = '"a,b"\tc\td\n1\t2\t3\n4\t5\t6\n7\t8\t9\n';
+    expect(detectDelimiter(text)).toBe('\t');
+  });
+
+  it('samples several lines rather than only the first', () => {
+    // First line only has one field (no delimiter at all); the real delimiter
+    // only shows up from the second line on.
+    const text = 'header\n1;2;3\n4;5;6\n7;8;9\n';
+    expect(detectDelimiter(text)).toBe(';');
+  });
+
+  it('defaults to comma when nothing else matches', () => {
+    expect(detectDelimiter('justonefield\nanother\n')).toBe(',');
+  });
+});
+
+describe('readWorkbook - Windows-1255 round trip', () => {
+  it('writeDelimited(encoding: "windows1255") -> readWorkbook decodes the same text back', async () => {
+    const sheet: OutputSheet = {
+      name: 'S',
+      direction: 'rtl',
+      language: 'he',
+      columns: [{ header: 'שם' }, { header: 'הערה' }],
+      rows: [
+        { kind: 'header', cells: [{ v: 'שם' }, { v: 'הערה' }] },
+        { kind: 'data', cells: [{ v: 'שלום עולם' }, { v: 'טקסט "מצוטט", עם פסיק' }] },
+      ],
+      merges: [],
+    };
+    const bytes = writeDelimited(sheet, { type: 'csv', encoding: 'windows1255' });
+
+    const wb = await readWorkbook(bytes, 'roundtrip.csv');
+    expect(wb.encoding).toBe('windows-1255');
+    expect(wb.sheets[0]!.rows[0]).toEqual([{ v: 'שם' }, { v: 'הערה' }]);
+    expect(wb.sheets[0]!.rows[1]).toEqual([{ v: 'שלום עולם' }, { v: 'טקסט "מצוטט", עם פסיק' }]);
   });
 });

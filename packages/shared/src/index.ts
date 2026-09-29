@@ -1,6 +1,7 @@
 export * from './rules/schema';
 export * from './rules/check';
 export * from './rules/jsonSchema';
+export * from './format';
 
 export * from './codes';
 export * from './i18n/messages';
@@ -11,4 +12,4 @@ export * from './config/models';
 export * from './config/prices';
 export * from './config/prompts';
 
-export * from './prompts/learnV1';
+export * from './prompts/learnV3';

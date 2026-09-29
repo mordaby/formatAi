@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "name": "Bank export to reconciliation sheet",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "txnId", "header": "Txn ID", "type": "idLike", "required": true },
+      { "id": "code", "header": "Code", "type": "text", "required": true },
+      { "id": "amount", "header": "Amount", "type": "decimal", "required": true },
+      { "id": "description", "header": "Description", "type": "text" }
+    ]
+  },
+  "transform": {
+    "tables": [
+      {
+        "name": "txnCodes",
+        "columns": ["code", "category", "sign"],
+        "rows": [
+          ["DEP", "Deposit", 1],
+          ["WD", "Withdrawal", -1],
+          ["FEE", "Bank Fee", -1],
+          ["INT", "Interest", 1],
+          ["CHG", "Chargeback", -1]
+        ]
+      }
+    ],
+    "computed": [
+      { "id": "category", "type": "text", "expr": { "op": "lookup", "table": "txnCodes", "key": { "col": "code" }, "return": "category", "onMissing": "flag" } },
+      { "id": "sign", "type": "integer", "expr": { "op": "lookup", "table": "txnCodes", "key": { "col": "code" }, "return": "sign", "onMissing": "flag" } },
+      { "id": "signedAmount", "type": "decimal", "expr": { "op": "round", "digits": 2, "arg": { "op": "mul", "args": [ { "col": "amount" }, { "col": "sign" } ] } } }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Reconciliation",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [ { "text": "Bank Reconciliation", "bold": true } ],
+    "columns": [
+      { "header": "Txn ID", "from": "txnId" },
+      { "header": "Category", "from": "category" },
+      { "header": "Description", "from": "description" },
+      { "header": "Amount", "from": "amount", "format": "#,##0.00" },
+      { "header": "Signed Amount", "from": "signedAmount", "format": "#,##0.00" }
+    ],
+    "headerStyle": { "bold": true }
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

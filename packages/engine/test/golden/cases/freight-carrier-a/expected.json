@@ -1,0 +1,69 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "Freight Cost Report",
+  "direction": "ltr",
+  "columns": [
+    { "header": "Carrier" },
+    { "header": "Shipment ID" },
+    { "header": "Ship Date", "format": "dd/mm/yyyy" },
+    { "header": "Cost", "format": "#,##0.00", "numeric": true }
+  ],
+  "merges": [],
+  "rows": [
+    { "kind": "header", "bold": true, "cells": ["Carrier", "Shipment ID", "Ship Date", "Cost"] },
+    {
+      "kind": "data",
+      "sourceRow": 2,
+      "cells": ["Atlas Freight", "SH-1001", { "date": { "y": 2024, "m": 3, "d": 5 }, "serial": 45356 }, 1200.5]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 4,
+      "cells": ["Atlas Freight", "SH-1002", { "date": { "y": 2024, "m": 2, "d": 20 }, "serial": 45342 }, 640.25]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 6,
+      "cells": ["Atlas Freight", "SH-1003", { "date": { "y": 2024, "m": 1, "d": 10 }, "serial": 45301 }, 300]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 8,
+      "cells": ["Atlas Freight", "SH-1004", { "date": { "y": 2024, "m": 3, "d": 15 }, "serial": 45366 }, 1100]
+    },
+    { "kind": "subtotal", "cells": [null, "Subtotal", null, 3240.75] },
+    { "kind": "blank", "cells": [null, null, null, null] },
+    {
+      "kind": "data",
+      "sourceRow": 3,
+      "cells": ["Blue Ocean Logistics", "SH-2001", { "date": { "y": 2024, "m": 1, "d": 15 }, "serial": 45306 }, 850]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 5,
+      "cells": ["Blue Ocean Logistics", "SH-2002", { "date": { "y": 2024, "m": 3, "d": 1 }, "serial": 45352 }, 975.75]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 7,
+      "cells": ["Blue Ocean Logistics", "SH-2003", { "date": { "y": 2024, "m": 2, "d": 28 }, "serial": 45350 }, 420.1]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 9,
+      "cells": ["Blue Ocean Logistics", "SH-2004", { "date": { "y": 2024, "m": 1, "d": 5 }, "serial": 45296 }, 560.4]
+    },
+    { "kind": "subtotal", "cells": [null, "Subtotal", null, 2806.25] },
+    { "kind": "blank", "cells": [null, null, null, null] },
+    { "kind": "grandTotal", "cells": [null, "Total", null, 6047] }
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 8,
+    "rowsOut": 8,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

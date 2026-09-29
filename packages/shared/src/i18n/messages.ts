@@ -64,6 +64,10 @@ export const assumptionMessages: Record<AssumptionReasonCode, Localized> = {
     en: 'We guessed how the title should be built. Please check it.',
     he: 'ניחשנו איך לבנות את הכותרת. אנא בדקו.',
   },
+  overfitSuspected: {
+    en: 'This rule looks tailored to the example rows rather than the general case. Please check it.',
+    he: 'הכלל הזה נראה מותאם לשורות הדוגמה ולא למקרה הכללי. אנא בדקו אותו.',
+  },
   other: {
     en: 'We made a guess here. Please check it.',
     he: 'ניחשנו כאן משהו. אנא בדקו.',
@@ -111,6 +115,10 @@ export const flagMessages: Record<FlagMessageKey, Localized> = {
   'flag.valueMapMissing': {
     en: "This value isn't in the translation list. We kept it as it is.",
     he: 'הערך הזה לא מופיע ברשימת התרגום. השארנו אותו כפי שהוא.',
+  },
+  'flag.lookupMissing': {
+    en: "This value isn't in the lookup table. We left the result empty.",
+    he: 'הערך הזה לא נמצא בטבלת החיפוש. השארנו את התוצאה ריקה.',
   },
   'flag.validation.required': {
     en: 'This cell is empty, but it should always have a value.',

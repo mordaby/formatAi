@@ -79,9 +79,9 @@ describe('sort', () => {
 });
 
 describe('group', () => {
-  const columns = [col('agent', 'idLike'), col('policy', 'idLike'), col('premium', 'decimal'), col('note', 'text')];
+  const columns = [col('customer', 'idLike'), col('item', 'idLike'), col('amount', 'decimal'), col('note', 'text')];
   const t = table(
-    ['agent', 'policy', 'premium', 'note'],
+    ['customer', 'item', 'amount', 'note'],
     [
       [2, 'p1', 100, 'x'], // 2
       [1, 'p2', 50.5, 'y'], // 3
@@ -91,33 +91,33 @@ describe('group', () => {
     ],
   );
   const out = [
-    { header: 'סוכן', from: 'agent' },
-    { header: 'פוליסה', from: 'policy' },
-    { header: 'פרמיה', from: 'premium', format: '#,##0.00' },
+    { header: 'לקוח', from: 'customer' },
+    { header: 'פריט', from: 'item' },
+    { header: 'סכום', from: 'amount', format: '#,##0.00' },
   ];
 
   it('detail rows, subtotals, blank rows and a grand total', () => {
     const r = rules({
       columns,
       transform: {
-        sort: [{ column: 'agent', dir: 'asc' }],
-        group: { by: 'agent', showDetailRows: true, subtotal: { labelColumn: 'policy', label: 'סה"כ לסוכן', sum: ['premium'] }, blankRowsAfter: 1 },
+        sort: [{ column: 'customer', dir: 'asc' }],
+        group: { by: 'customer', showDetailRows: true, subtotal: { labelColumn: 'item', label: 'סה"כ ללקוח', sum: ['amount'] }, blankRowsAfter: 1 },
       },
-      output: { grandTotal: { labelColumn: 'policy', label: 'סה"כ', sum: ['premium'] } },
+      output: { grandTotal: { labelColumn: 'item', label: 'סה"כ', sum: ['amount'] } },
       out,
     });
     const res = runOk(r, t);
     expect(body(res.sheet)).toEqual([
       ['data', '1', 'p2', 50.5],
       ['data', '1', 'p4', 'oops'],
-      ['subtotal', null, 'סה"כ לסוכן', 50.5],
+      ['subtotal', null, 'סה"כ ללקוח', 50.5],
       ['blank', null, null, null],
       ['data', '2', 'p1', 100],
       ['data', '2', 'p3', 25],
-      ['subtotal', null, 'סה"כ לסוכן', 125],
+      ['subtotal', null, 'סה"כ ללקוח', 125],
       ['blank', null, null, null],
       ['data', '3', 'p5', 10],
-      ['subtotal', null, 'סה"כ לסוכן', 10],
+      ['subtotal', null, 'סה"כ ללקוח', 10],
       ['blank', null, null, null],
       ['grandTotal', null, 'סה"כ', 185.5],
     ]);
@@ -129,7 +129,7 @@ describe('group', () => {
   it('without a grand total, no trailing blank rows are written', () => {
     const r = rules({
       columns,
-      transform: { sort: [{ column: 'agent', dir: 'asc' }], group: { by: 'agent', showDetailRows: true, blankRowsAfter: 2 } },
+      transform: { sort: [{ column: 'customer', dir: 'asc' }], group: { by: 'customer', showDetailRows: true, blankRowsAfter: 2 } },
       out,
     });
     const kinds = body(runOk(r, t).sheet).map((x) => x[0]);
@@ -139,7 +139,7 @@ describe('group', () => {
   it('non-contiguous keys are gathered by first appearance', () => {
     const r = rules({
       columns,
-      transform: { group: { by: 'agent', showDetailRows: true, subtotal: { labelColumn: 'agent', label: 'Total', sum: ['premium'] } } },
+      transform: { group: { by: 'customer', showDetailRows: true, subtotal: { labelColumn: 'customer', label: 'Total', sum: ['amount'] } } },
       out,
     });
     expect(body(runOk(r, t).sheet)).toEqual([
@@ -157,15 +157,15 @@ describe('group', () => {
   it('summary output: one row per group with sum/count/min/max/first', () => {
     const r = rules({
       columns,
-      transform: { sort: [{ column: 'agent', dir: 'desc' }], group: { by: 'agent', showDetailRows: false } },
-      output: { grandTotal: { labelColumn: 'agent', label: 'Total', sum: ['premium', 'policy'] } },
+      transform: { sort: [{ column: 'customer', dir: 'desc' }], group: { by: 'customer', showDetailRows: false } },
+      output: { grandTotal: { labelColumn: 'customer', label: 'Total', sum: ['amount', 'item'] } },
       out: [
-        { header: 'agent', from: 'agent', agg: 'first' },
-        { header: 'sum', from: 'premium', agg: 'sum', format: '0.00' },
-        { header: 'count', from: 'policy', agg: 'count' },
+        { header: 'customer', from: 'customer', agg: 'first' },
+        { header: 'sum', from: 'amount', agg: 'sum', format: '0.00' },
+        { header: 'count', from: 'item', agg: 'count' },
         { header: 'rows', from: 'note', agg: 'count' },
-        { header: 'min', from: 'policy', agg: 'min' },
-        { header: 'max', from: 'premium', agg: 'max' },
+        { header: 'min', from: 'item', agg: 'min' },
+        { header: 'max', from: 'amount', agg: 'max' },
         { header: 'note', from: 'note' },
       ],
     });
@@ -178,7 +178,7 @@ describe('group', () => {
     ]);
     expect(dataRows(res.sheet).map((x) => x.sourceRow)).toEqual([6, 2, 3]);
     expect(res.sheet.columns.map((c) => c.numeric === true)).toEqual([false, true, true, true, false, true, false]);
-    // the group containing the unparsed premium is highlighted in the aggregated cell
+    // the group containing the unparsed amount is highlighted in the aggregated cell
     expect(dataRows(res.sheet)[2]!.cells[1]!.flagged).toBe(true);
     expect(res.summary.rowsOut).toBe(3);
   });
@@ -288,5 +288,26 @@ describe('output layout', () => {
     expect(formatNumberText(new Decimal('-1234.5'), '#,##0')).toBe('-1,235');
     expect(formatNumberText(new Decimal('0.175'), '0.0%')).toBe('17.5%');
     expect(formatNumberText(new Decimal('12.5'), 'General')).toBe('12.5');
+  });
+
+  describe('output.file (SPEC 8.13)', () => {
+    it('is absent from OutputSheet when the rules declare none (xlsx by default)', () => {
+      const res = runOk(rules({ columns: [col('x')] }), table(['x'], [['a']]));
+      expect(res.sheet.file).toBeUndefined();
+      expect(Object.hasOwn(res.sheet, 'file')).toBe(false);
+    });
+
+    it('is copied onto OutputSheet.file exactly as declared', () => {
+      const res = runOk(
+        rules({ columns: [col('x')], output: { file: { type: 'csv', delimiter: ';', header: false, encoding: 'windows1255', quote: 'all' } } }),
+        table(['x'], [['a']]),
+      );
+      expect(res.sheet.file).toEqual({ type: 'csv', delimiter: ';', header: false, encoding: 'windows1255', quote: 'all' });
+    });
+
+    it('a bare { type: "txt" } is copied as-is (writeOutput/writeDelimited own the defaults)', () => {
+      const res = runOk(rules({ columns: [col('x')], output: { file: { type: 'txt' } } }), table(['x'], [['a']]));
+      expect(res.sheet.file).toEqual({ type: 'txt' });
+    });
   });
 });

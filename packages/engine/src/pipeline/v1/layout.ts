@@ -15,7 +15,7 @@ import { DISPLAY_DATE_FORMAT, DateVal, canonicalKey, decInt, decText, toText, ty
 
 type ColKind = 'number' | 'date' | 'text';
 
-interface OutCol {
+export interface OutCol {
   rule: OutputColumnRule;
   /** Row slot of `from`, or -1 for `from: null` (an empty column). */
   slot: number;
@@ -30,7 +30,7 @@ interface OutCol {
   dateText: Map<number, string>;
 }
 
-function isDateFormat(fmt: string, lang: 'he' | 'en'): boolean {
+export function isDateFormat(fmt: string, lang: 'he' | 'en'): boolean {
   return isExcelDateFormat(toExcelDateFormat(fmt, lang));
 }
 
@@ -45,7 +45,7 @@ function inferKind(rows: Row[], slot: number): ColKind {
   return 'text';
 }
 
-function planColumns(ctx: RunCtx, rules: LearnResult, rows: Row[]): OutCol[] {
+export function planColumns(ctx: RunCtx, rules: LearnResult, rows: Row[]): OutCol[] {
   const lang = ctx.language;
   return rules.output.columns.map((rule) => {
     const slot = rule.from === null ? -1 : slotOrThrow(ctx.plan, rule.from);
@@ -363,6 +363,10 @@ export function buildSheet(ctx: RunCtx, rules: LearnResult, rows: Row[]): { shee
   return {
     sheet: {
       name: out.sheetName,
+      // SPEC 8.13: absent `output.file` means xlsx; leave OutputSheet.file
+      // absent too (rather than present-and-undefined) so writeOutput's own
+      // "absent -> xlsx" default is the only place that default lives.
+      ...(out.file !== undefined ? { file: out.file } : {}),
       direction: out.direction,
       language: out.language,
       columns,

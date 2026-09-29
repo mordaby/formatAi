@@ -5,6 +5,9 @@
 
 import type { ColumnType } from '@formatai/shared';
 import type { Flag } from '../../types';
+// Type-only: erased at compile time (isolatedModules), so this doesn't create a
+// runtime import cycle even though expr.ts imports InternalRulesError from here.
+import type { CompiledTable, Fn } from './expr';
 import { flagValue, type Val } from './values';
 
 /** The input row a pipeline row came from. Shared by every row of an expand family. */
@@ -38,6 +41,9 @@ export interface RunCtx {
   language: 'he' | 'en';
   date1904: boolean;
   plan: SlotPlan;
+  /** `transform.functions` / `transform.tables`, compiled once per run (SPEC 8.14). */
+  functions: ReadonlyMap<string, Fn>;
+  tables: ReadonlyMap<string, CompiledTable>;
 }
 
 export interface FlagInit {

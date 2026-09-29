@@ -9,14 +9,14 @@ describe('header mapping (SPEC 8.2 step 1, SPEC 17)', () => {
   it('matches exact, then aliases, then normalized headers; extra input columns are ignored', () => {
     const r = rules({
       columns: [
-        col('agent', 'idLike', { header: 'מספר סוכן', aliases: ['סוכן'] }),
-        col('policy', 'idLike', { header: "מס' פוליסה" }),
+        col('supplier', 'idLike', { header: 'מספר ספק', aliases: ['ספק'] }),
+        col('order', 'idLike', { header: "מס' הזמנה" }),
         col('total', 'decimal', { header: 'סה"כ' }),
-        col('name', 'text', { header: 'Agent  Name' }),
+        col('name', 'text', { header: 'Supplier  Name' }),
       ],
     });
     const t = table(
-      ['הערות', 'סוכן', 'מס׳ פוליסה', ' סה״כ ', 'agent name'],
+      ['הערות', 'ספק', 'מס׳ הזמנה', ' סה״כ ', 'supplier name'],
       [['x', 7, '123', '10', 'Dana']],
     );
     expect(values(runOk(r, t).sheet)).toEqual([['7', '123', 10, 'Dana']]);

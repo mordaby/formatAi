@@ -155,254 +155,270 @@
         "rowFilters": {
           "type": "array",
           "items": {
-            "oneOf": [
+            "anyOf": [
               {
-                "type": "object",
-                "properties": {
-                  "column": {
-                    "type": "string"
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "eq"
+                      },
+                      "value": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "additionalProperties": false
                   },
-                  "op": {
-                    "type": "string",
-                    "const": "eq"
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "ne"
+                      },
+                      "value": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "additionalProperties": false
                   },
-                  "value": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "gt"
+                      },
+                      "value": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "gte"
+                      },
+                      "value": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "lt"
+                      },
+                      "value": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "lte"
+                      },
+                      "value": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "isEmpty"
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "notEmpty"
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "oneOf"
+                      },
+                      "value": {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": [
+                            "string",
+                            "number",
+                            "boolean",
+                            "null"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "type": "string",
+                        "const": "notOneOf"
+                      },
+                      "value": {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": [
+                            "string",
+                            "number",
+                            "boolean",
+                            "null"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "column",
-                  "op",
-                  "value"
-                ],
-                "additionalProperties": false
+                ]
               },
               {
                 "type": "object",
                 "properties": {
-                  "column": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "type": "string",
-                    "const": "ne"
-                  },
-                  "value": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
+                  "expr": {
+                    "$ref": "#/$defs/__schema0"
                   }
                 },
                 "required": [
-                  "column",
-                  "op",
-                  "value"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "column": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "type": "string",
-                    "const": "gt"
-                  },
-                  "value": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "column",
-                  "op",
-                  "value"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "column": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "type": "string",
-                    "const": "gte"
-                  },
-                  "value": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "column",
-                  "op",
-                  "value"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "column": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "type": "string",
-                    "const": "lt"
-                  },
-                  "value": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "column",
-                  "op",
-                  "value"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "column": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "type": "string",
-                    "const": "lte"
-                  },
-                  "value": {
-                    "type": [
-                      "string",
-                      "number",
-                      "boolean",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "column",
-                  "op",
-                  "value"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "column": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "type": "string",
-                    "const": "isEmpty"
-                  }
-                },
-                "required": [
-                  "column",
-                  "op"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "column": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "type": "string",
-                    "const": "notEmpty"
-                  }
-                },
-                "required": [
-                  "column",
-                  "op"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "column": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "type": "string",
-                    "const": "oneOf"
-                  },
-                  "value": {
-                    "minItems": 1,
-                    "type": "array",
-                    "items": {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    }
-                  }
-                },
-                "required": [
-                  "column",
-                  "op",
-                  "value"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "column": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "type": "string",
-                    "const": "notOneOf"
-                  },
-                  "value": {
-                    "minItems": 1,
-                    "type": "array",
-                    "items": {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean",
-                        "null"
-                      ]
-                    }
-                  }
-                },
-                "required": [
-                  "column",
-                  "op",
-                  "value"
+                  "expr"
                 ],
                 "additionalProperties": false
               }
@@ -601,6 +617,107 @@
             }
           ]
         },
+        "functions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "params": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "text",
+                        "idLike",
+                        "integer",
+                        "decimal",
+                        "date",
+                        "boolean"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "returns": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "idLike",
+                  "integer",
+                  "decimal",
+                  "date",
+                  "boolean"
+                ]
+              },
+              "body": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "required": [
+              "name",
+              "params",
+              "returns",
+              "body"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "columns": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "name",
+              "columns",
+              "rows"
+            ],
+            "additionalProperties": false
+          }
+        },
         "computed": {
           "type": "array",
           "items": {
@@ -747,6 +864,51 @@
     "output": {
       "type": "object",
       "properties": {
+        "file": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "xlsx",
+                "csv",
+                "txt"
+              ]
+            },
+            "delimiter": {
+              "type": "string",
+              "enum": [
+                ",",
+                "\t",
+                ";",
+                "|"
+              ]
+            },
+            "header": {
+              "type": "boolean"
+            },
+            "encoding": {
+              "type": "string",
+              "enum": [
+                "utf8bom",
+                "utf8",
+                "windows1255"
+              ]
+            },
+            "quote": {
+              "type": "string",
+              "enum": [
+                "minimal",
+                "all",
+                "none"
+              ]
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
         "sheetName": {
           "type": "string"
         },
@@ -945,6 +1107,13 @@
           {
             "type": "object",
             "properties": {
+              "on": {
+                "type": "string",
+                "enum": [
+                  "input",
+                  "output"
+                ]
+              },
               "column": {
                 "type": "string"
               },
@@ -970,6 +1139,13 @@
           {
             "type": "object",
             "properties": {
+              "on": {
+                "type": "string",
+                "enum": [
+                  "input",
+                  "output"
+                ]
+              },
               "column": {
                 "type": "string"
               },
@@ -995,6 +1171,13 @@
           {
             "type": "object",
             "properties": {
+              "on": {
+                "type": "string",
+                "enum": [
+                  "input",
+                  "output"
+                ]
+              },
               "column": {
                 "type": "string"
               },
@@ -1026,6 +1209,13 @@
           {
             "type": "object",
             "properties": {
+              "on": {
+                "type": "string",
+                "enum": [
+                  "input",
+                  "output"
+                ]
+              },
               "column": {
                 "type": "string"
               },
@@ -1057,6 +1247,13 @@
           {
             "type": "object",
             "properties": {
+              "on": {
+                "type": "string",
+                "enum": [
+                  "input",
+                  "output"
+                ]
+              },
               "column": {
                 "type": "string"
               },
@@ -1090,6 +1287,13 @@
           {
             "type": "object",
             "properties": {
+              "on": {
+                "type": "string",
+                "enum": [
+                  "input",
+                  "output"
+                ]
+              },
               "column": {
                 "type": "string"
               },
@@ -1115,6 +1319,13 @@
           {
             "type": "object",
             "properties": {
+              "on": {
+                "type": "string",
+                "enum": [
+                  "input",
+                  "output"
+                ]
+              },
               "column": {
                 "type": "string"
               },
@@ -1249,6 +1460,92 @@
                 "const"
               ],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "param": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "param"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "dateAdd"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "days": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "days"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "dateAdd"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "months": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "months"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "dateAdd"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "years": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "years"
+              ],
+              "additionalProperties": false
             }
           ]
         },
@@ -1369,6 +1666,110 @@
               "required": [
                 "op",
                 "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "floor"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "op",
+                "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "ceil"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "op",
+                "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "mod"
+                },
+                "args": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "required": [
+                "op",
+                "args"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "min"
+                },
+                "args": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/__schema0"
+                  }
+                }
+              },
+              "required": [
+                "op",
+                "args"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "max"
+                },
+                "args": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/__schema0"
+                  }
+                }
+              },
+              "required": [
+                "op",
+                "args"
               ],
               "additionalProperties": false
             },
@@ -1501,6 +1902,23 @@
               "properties": {
                 "op": {
                   "type": "string",
+                  "const": "length"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "op",
+                "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
                   "const": "replaceText"
                 },
                 "arg": {
@@ -1547,6 +1965,71 @@
                 "arg",
                 "length",
                 "char"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "split"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "separator": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "separator",
+                "index"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "toNumber"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "op",
+                "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "toText"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "format": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "arg"
               ],
               "additionalProperties": false
             },
@@ -1602,6 +2085,60 @@
               "properties": {
                 "op": {
                   "type": "string",
+                  "const": "dateDiff"
+                },
+                "args": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "days",
+                    "months",
+                    "years"
+                  ]
+                }
+              },
+              "required": [
+                "op",
+                "args",
+                "unit"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "endOfMonth"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "op",
+                "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
                   "const": "if"
                 },
                 "cond": {
@@ -1627,6 +2164,44 @@
               "properties": {
                 "op": {
                   "type": "string",
+                  "const": "switch"
+                },
+                "cases": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "when": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "then": {
+                        "$ref": "#/$defs/__schema0"
+                      }
+                    },
+                    "required": [
+                      "when",
+                      "then"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "else": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "op",
+                "cases",
+                "else"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
                   "const": "coalesce"
                 },
                 "args": {
@@ -1639,6 +2214,67 @@
               },
               "required": [
                 "op",
+                "args"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "lookup"
+                },
+                "table": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "key": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "return": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "onMissing": {
+                  "type": "string",
+                  "enum": [
+                    "flag",
+                    "empty",
+                    "keep"
+                  ]
+                }
+              },
+              "required": [
+                "op",
+                "table",
+                "key",
+                "return",
+                "onMissing"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "call"
+                },
+                "fn": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/__schema0"
+                  }
+                }
+              },
+              "required": [
+                "op",
+                "fn",
                 "args"
               ],
               "additionalProperties": false
@@ -1842,6 +2478,99 @@
               "required": [
                 "op",
                 "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "oneOf"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "values": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "values"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "startsWith"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "text"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "endsWith"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "text"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "contains"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "text"
               ],
               "additionalProperties": false
             },

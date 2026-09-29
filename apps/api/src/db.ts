@@ -4,6 +4,7 @@ import type {
   BudgetDoc,
   EventDoc,
   FeedbackDoc,
+  ConversionDoc,
   FormatDoc,
   LeadDoc,
   LlmCallDoc,
@@ -17,6 +18,7 @@ export interface AppDb {
   db: Db;
   users: Collection<UserDoc>;
   formats: Collection<FormatDoc>;
+  conversions: Collection<ConversionDoc>;
   events: Collection<EventDoc>;
   llmCalls: Collection<LlmCallDoc>;
   usageCounters: Collection<UsageCounterDoc>;
@@ -45,6 +47,7 @@ export async function connectDb(env: Env): Promise<AppDb | null> {
     db,
     users: db.collection<UserDoc>('users'),
     formats: db.collection<FormatDoc>('formats'),
+    conversions: db.collection<ConversionDoc>('conversions'),
     events: db.collection<EventDoc>('events'),
     llmCalls: db.collection<LlmCallDoc>('llm_calls'),
     usageCounters: db.collection<UsageCounterDoc>('usage_counters'),
@@ -63,6 +66,8 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
       { unique: true, name: 'identities_provider_subject_unique' },
     ),
     appDb.formats.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'formats_ownerId_createdAt' }),
+    appDb.conversions.createIndex({ ownerId: 1, formatId: 1 }, { name: 'conversions_ownerId_formatId' }),
+    appDb.conversions.createIndex({ formatId: 1, createdAt: -1 }, { name: 'conversions_formatId_createdAt' }),
     appDb.events.createIndex({ ts: 1 }, { name: 'events_ts' }),
     appDb.events.createIndex({ type: 1, ts: 1 }, { name: 'events_type_ts' }),
     appDb.events.createIndex({ userId: 1 }, { name: 'events_userId' }),

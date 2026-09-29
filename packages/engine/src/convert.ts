@@ -1,13 +1,18 @@
 import type { LearnResult, Rules } from '@formatai/shared';
 import { readWorkbook } from './io/read';
 import { extractTable } from './io/extractTable';
-import { writeCsv } from './io/writeCsv';
-import { writeXlsx } from './io/writeXlsx';
+import { writeOutput } from './io/writeOutput';
 import { runRules } from './pipeline';
-import type { RunResult, TableDetection } from './types';
+import type { OutputFileSpec, RunResult, TableDetection } from './types';
 
 export interface ConvertOptions {
-  outputType: 'xlsx' | 'csv';
+  /**
+   * Overrides the rules' own `output.file` (SPEC 8.13) for this conversion,
+   * e.g. to force a csv/txt preview of a format that's normally xlsx. When
+   * omitted, the file type/options written are exactly `result.sheet.file`
+   * (absent -> xlsx, per writeOutput's own default).
+   */
+  file?: OutputFileSpec;
 }
 
 export type ConvertResult =
@@ -19,13 +24,14 @@ export async function convertFile(
   rules: LearnResult | Rules,
   data: Uint8Array | ArrayBuffer,
   fileName: string,
-  opts: ConvertOptions,
+  opts: ConvertOptions = {},
 ): Promise<ConvertResult> {
   const wb = await readWorkbook(data, fileName);
   const extracted = extractTable(wb, rules.input);
   if (!extracted.ok) return { ok: false, error: extracted.error, detection: extracted.detection };
   const result = runRules(rules, extracted.table, { fileName });
   if (!result.ok) return { ...result, detection: extracted.detection };
-  const bytes = opts.outputType === 'csv' ? writeCsv(result.sheet) : await writeXlsx(result.sheet);
+  const sheet = opts.file !== undefined ? { ...result.sheet, file: opts.file } : result.sheet;
+  const bytes = await writeOutput(sheet);
   return { ...result, bytes, detection: extracted.detection };
 }
