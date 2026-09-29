@@ -32,31 +32,61 @@ export interface UserDoc {
   limitOverrides?: Record<string, number>;
 }
 
-export type FormatStatus = 'verified' | 'differencesAccepted' | 'userConfirmed' | 'draft';
-export type LearnPath = 'local' | 'llm';
+// ---- Registry (SPEC 8.12): a format has many conversions (one per source) ----
 
-export interface FormatColumnSignature {
+export type ConversionStatus = 'verified' | 'differencesAccepted' | 'userConfirmed' | 'draft' | 'needsReview';
+export type LearnPath = 'local' | 'llm' | 'cache';
+export type LearnSource = 'examplePair' | 'inputDescription' | 'descriptionOnly';
+
+export interface FormatVersion {
+  /** The format side at that version (output, layout, outputValidations). */
+  format: unknown;
+  editedBy?: ObjectId;
+  at: Date;
+}
+
+/** The shape of a file the company produces. Kept as unknown here - validated in @formatai/shared. */
+export interface FormatDoc {
+  _id?: ObjectId;
+  ownerId: ObjectId;
+  name: string;
+  schemaVersion: number;
+  /** Rules `output` section (columns without `from`, layout, file). */
+  output: unknown;
+  /** sort and group normalized to output headers. */
+  layout: unknown;
+  /** Validations with `on: "output"`. */
+  outputValidations: unknown[];
+  origin: 'learned' | 'template';
+  versions: FormatVersion[];
+  createdAt: Date;
+}
+
+export interface InputColumnSignature {
   header: string;
+  aliases: string[];
   type: string;
   required: boolean;
 }
 
-export interface FormatVersion {
-  /** Rules language document (schema v1, SPEC section 8). Kept as unknown here - validated with zod in @formatai/shared. */
+export interface ConversionVersion {
+  /** Full rules file (schema v1, SPEC 8). */
   rules: unknown;
   editedBy?: ObjectId;
   at: Date;
 }
 
-export interface FormatDoc {
+/** How one source becomes a format: a full, self-contained rules file. */
+export interface ConversionDoc {
   _id?: ObjectId;
   ownerId: ObjectId;
-  name: string;
-  schemaVersion: string;
+  formatId: ObjectId;
+  sourceName: string;
+  schemaVersion: number;
   rules: unknown;
-  inputSignature: { columns: FormatColumnSignature[] };
-  source: LearnPath;
-  status: FormatStatus;
+  inputSignature: { columns: InputColumnSignature[] };
+  source: LearnSource;
+  status: ConversionStatus;
   acceptedDifferences: number;
   /** Example row numbers the user marked as fixed by hand; used only when checking the example. */
   exampleExceptions: number[];
@@ -64,7 +94,7 @@ export interface FormatDoc {
   masking: boolean;
   model?: string;
   promptVersion?: string;
-  versions: FormatVersion[];
+  versions: ConversionVersion[];
   runCount: number;
   lastRunAt?: Date;
   createdAt: Date;

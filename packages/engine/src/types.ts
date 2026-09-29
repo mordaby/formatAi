@@ -36,13 +36,27 @@ export interface RawSheet {
   hasDrawings?: boolean;
 }
 
+// ---------- File types (SPEC 8.13) ----------
+
+/** Output file spec. Mirrors rules `output.file`; defaults: csv delimiter ',', txt '\t', header true, encoding 'utf8bom', quote 'minimal'. */
+export interface OutputFileSpec {
+  type: 'xlsx' | 'csv' | 'txt';
+  delimiter?: ',' | '\t' | ';' | '|';
+  /** Write a header row. false = no header line (typical for system load files). */
+  header?: boolean;
+  encoding?: 'utf8bom' | 'utf8' | 'windows1255';
+  quote?: 'minimal' | 'all' | 'none';
+}
+
 export interface RawWorkbook {
-  fileType: 'xlsx' | 'xls' | 'csv';
+  fileType: 'xlsx' | 'xls' | 'csv' | 'txt';
   sheets: RawSheet[];
   /** Workbook uses the 1904 date system (serials must be shifted by 1462 days). */
   date1904?: boolean;
-  /** CSV only: detected encoding. */
+  /** csv/txt only: detected encoding. */
   encoding?: 'utf-8' | 'utf-8-bom' | 'windows-1255';
+  /** csv/txt only: detected delimiter. */
+  delimiter?: ',' | '\t' | ';' | '|';
 }
 
 // ---------- Table detection (SPEC 6.1) ----------
@@ -136,6 +150,8 @@ export interface OutputColumn {
 
 export interface OutputSheet {
   name: string;
+  /** File type and text options. Absent = xlsx. csv/txt ignore styles, widths, bold and direction. */
+  file?: OutputFileSpec;
   direction: 'rtl' | 'ltr';
   language: 'he' | 'en';
   columns: OutputColumn[];

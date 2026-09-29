@@ -64,6 +64,10 @@ export const assumptionMessages: Record<AssumptionReasonCode, Localized> = {
     en: 'We guessed how the title should be built. Please check it.',
     he: 'ניחשנו איך לבנות את הכותרת. אנא בדקו.',
   },
+  overfitSuspected: {
+    en: 'This rule looks tailored to the example rows rather than the general case. Please check it.',
+    he: 'הכלל הזה נראה מותאם לשורות הדוגמה ולא למקרה הכללי. אנא בדקו אותו.',
+  },
   other: {
     en: 'We made a guess here. Please check it.',
     he: 'ניחשנו כאן משהו. אנא בדקו.',

@@ -11,4 +11,4 @@ export * from './config/models';
 export * from './config/prices';
 export * from './config/prompts';
 
-export * from './prompts/learnV1';
+export * from './prompts/learnV3';
