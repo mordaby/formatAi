@@ -220,7 +220,9 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
 
 **Hints:**
 - Each hint is `{ out?, rel, in, ...params, coverage, failsOn? }`.
-- `rel` is one of: `copy`, `normalize`, `padLeft {length}`, `substr {from: "start"|"end"|index, length}`, `concat {separator}`, `valueMap {pairs}`, `constant {value}`, `dateFormat {from, to}`, `numberFormat {format}`, `mulConst {const, round}`, `addConst {const, round}`, `add`/`sub`/`mul`/`div {round}`, `sum {round}`, `aggregate {fn}`, `filter {keptValues | droppedWhen}`, `dedupe {keys | "all", keep}`, `expand {mode, ...}` (see below).
+- `rel` is one of: `copy`, `normalize`, `padLeft {length}`, `substr {from: "start"|"end"|index, length}`, `concat {separator}`, `valueMap {pairs}`, `constant {value}`, `dateFormat {from, to}`, `numberFormat {format}`, `mulConst {const, round}`, `addConst {const, round}`, `add`/`sub`/`mul`/`div {round}`, `sum {round}`, `aggregate {fn: sum|count|min|max|average|first|last}`, `filter {keptValues | droppedWhen}`, `dedupe {keys | "all", keep}`, `expand {mode, ...}` (see below).
+- A relation the app tested that has no Hint shape here (a whole-part text split that isn't one of the `expand` modes) is simply not sent as a hint for that column; nothing needs to change in how you read hints.
+- `filter`'s `droppedWhen.value` is a number for a numeric threshold, or an ISO "YYYY-MM-DD" string for a date threshold (the same convention as date cells elsewhere in the payload).
 - `expand` hints by mode:
   - `columnsToRows`: `{ in: [cols], labelOut, valueOut, skipEmpty }`
   - `splitCell`: `{ in: [col], separator, out }`

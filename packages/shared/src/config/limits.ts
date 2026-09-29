@@ -48,6 +48,15 @@ export const limits = {
     maxTables: 20,
     maxTableRows: 500,
   },
+  /**
+   * SPEC 6.5: the local fast path.
+   * DECISION: 'wide' (a looser fast path that would also cover some cases that
+   * currently need the LLM) is reserved for later, once eval data shows the
+   * strict path is too narrow to matter; only 'strict' is implemented in M1.
+   */
+  learn: {
+    fastPathMode: 'strict',
+  },
 } as const;
 
 export type Limits = typeof limits;

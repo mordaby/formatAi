@@ -1,6 +1,7 @@
 export * from './rules/schema';
 export * from './rules/check';
 export * from './rules/jsonSchema';
+export * from './rules/wire';
 export * from './format';
 
 export * from './codes';

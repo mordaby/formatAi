@@ -1,7 +1,13 @@
 // Plain-language he/en text for every unsupported and assumption code (SPEC 8.10,
 // tone per SPEC 16.3: no jargon, say exactly what's true and what the user can do).
 // The LLM never writes UI text (SPEC 16.2); this dictionary is the only source of it.
-import type { AssumptionReasonCode, FlagMessageKey, UnsupportedReasonCode } from '../codes';
+import type {
+  AssumptionReasonCode,
+  FlagMessageKey,
+  PreflightBlockReason,
+  PreflightWarnReason,
+  UnsupportedReasonCode,
+} from '../codes';
 
 export interface Localized {
   en: string;
@@ -71,6 +77,47 @@ export const assumptionMessages: Record<AssumptionReasonCode, Localized> = {
   other: {
     en: 'We made a guess here. Please check it.',
     he: 'ניחשנו כאן משהו. אנא בדקו.',
+  },
+};
+
+// Pre-flight messages (SPEC 6.3 block, 6.4 warn). A `tableRejected` block also
+// carries the underlying `tableIssueCode`/`side` in its params, for a UI that
+// wants a more specific message than this generic one.
+export const preflightBlockMessages: Record<PreflightBlockReason, Localized> = {
+  tableRejected: {
+    en: "We couldn't read this file as a table. Check the sheet and try again.",
+    he: 'לא הצלחנו לקרוא את הקובץ הזה כטבלה. בדקו את הגיליון ונסו שוב.',
+  },
+  rowExpansionUnsupported: {
+    en: 'One input row needs to become several output rows in a way we don’t recognize yet.',
+    he: 'שורת קלט אחת צריכה להפוך למספר שורות פלט, בדרך שאנחנו לא מזהים עדיין.',
+  },
+  pivotDetected: {
+    en: "This report turns values into column headers, which isn't supported yet.",
+    he: 'הדוח הזה הופך ערכים לכותרות עמודות, ואפשרות זו עדיין לא נתמכת.',
+  },
+  noColumnTraced: {
+    en: "None of the output columns could be traced back to your input file. Are these the right two files?",
+    he: 'אף אחת מעמודות הפלט לא נמצאה מתאימה לקובץ הקלט. אלה שני הקבצים הנכונים?',
+  },
+  identicalFiles: {
+    en: 'These two files are identical, so there is nothing to learn.',
+    he: 'שני הקבצים זהים, אז אין מה ללמוד.',
+  },
+  overTierLimits: {
+    en: 'This file is larger than your plan allows.',
+    he: 'הקובץ הזה גדול יותר ממה שהתוכנית שלכם מאפשרת.',
+  },
+};
+
+export const preflightWarnMessages: Record<PreflightWarnReason, Localized> = {
+  unknownOutputColumns: {
+    en: "These columns have values that don't appear in your input file. They probably come from another source, which isn't supported yet. We'll learn everything else and leave these empty.",
+    he: 'לעמודות האלה יש ערכים שלא מופיעים בקובץ הקלט שלכם. הם כנראה מגיעים ממקור אחר, ואפשרות זו עדיין לא נתמכת. נלמד את כל השאר ונשאיר את אלה ריקות.',
+  },
+  rowsNotAligned: {
+    en: 'We couldn’t match rows between the two files. Are they from the same data?',
+    he: 'לא הצלחנו להתאים שורות בין שני הקבצים. הם מאותם נתונים?',
   },
 };
 

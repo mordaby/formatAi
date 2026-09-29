@@ -4,12 +4,16 @@ import { limits } from '@formatai/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { AppDb } from './db.js';
 import type { Env } from './env.js';
+import type { CompleteFn } from './learn/index.js';
+import { registerLearnRoutes } from './routes/learn.js';
 
 export interface BuildServerOptions {
   env: Env;
   db: AppDb | null;
   /** Set false in tests to keep output quiet. Defaults to true. */
   logger?: boolean;
+  /** Dependency injection for tests - see `routes/learn.ts`'s `RegisterLearnRoutesOptions.complete`. */
+  complete?: CompleteFn;
 }
 
 /**
@@ -18,7 +22,7 @@ export interface BuildServerOptions {
  * no file-upload endpoint, which is what makes "your files never leave your computer" true.
  */
 export async function buildServer(opts: BuildServerOptions): Promise<FastifyInstance> {
-  const { env, db, logger = true } = opts;
+  const { env, db, logger = true, complete } = opts;
 
   const app = Fastify({
     bodyLimit: limits.api.maxBodyBytes,
@@ -60,6 +64,15 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
       return { ok: true, db: 'error' as const };
     }
   });
+
+  // SPEC 5 A steps 5-6 / 9: the learn endpoints make real LLM calls, which cost real
+  // money, with no limits, budgets, Turnstile or cache in front of them yet (those
+  // land in M2 - SPEC 9.5). Registering them at all in production would let anyone
+  // spend LLM budget with no ceiling, so they only exist outside production for now
+  // (dev, tests, the eval harness) - see `routes/learn.ts`'s own file doc comment.
+  if (env.NODE_ENV !== 'production') {
+    registerLearnRoutes(app, { env, db, complete });
+  }
 
   return app;
 }

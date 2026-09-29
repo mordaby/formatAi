@@ -3,6 +3,8 @@
 // and the only user-derived content the LLM ever sees. Contains no file names,
 // no UI language and no user identity.
 
+import { z } from 'zod';
+import { limits } from './config/limits';
 import type { Format } from './format';
 import type { OutputFile } from './rules/schema';
 
@@ -138,7 +140,11 @@ export type ColumnHint = HintBase & { out: number } & (
   | ({ rel: 'mulConst' | 'addConst'; in: [number]; const: number } & Round)
   | ({ rel: 'add' | 'sub' | 'mul' | 'div'; in: [number, number] } & Round)
   | ({ rel: 'sum'; in: number[] } & Round)
-  | { rel: 'aggregate'; in: [number]; fn: 'sum' | 'count' | 'min' | 'max' }
+  // v1 amendment (M1): fn widened from 'sum'|'count'|'min'|'max' to the full
+  // SummaryAgg set (adds 'average'|'first'|'last'), matching what the pair
+  // analysis's summaryRelations actually tests for a summary output's columns
+  // (SPEC 8.6 v4) - LEARN_PROMPT.md §3 updated to match.
+  | { rel: 'aggregate'; in: [number]; fn: SummaryAgg }
 );
 
 export type RowHint = HintBase &
@@ -148,7 +154,11 @@ export type RowHint = HintBase &
         in: [number];
         keptValues?: PayloadCell[];
         droppedValues?: PayloadCell[];
-        droppedWhen?: { op: 'isEmpty' | 'notEmpty' | 'gt' | 'gte' | 'lt' | 'lte'; value?: number };
+        // v1 amendment (M1): value widened from `number` to `number | string` so a
+        // date threshold (dropped.ts reports it as an ISO "YYYY-MM-DD" string, the
+        // same convention samples/dropped cells use for real dates) can be sent as
+        // a fact instead of silently truncated - LEARN_PROMPT.md §3 updated to match.
+        droppedWhen?: { op: 'isEmpty' | 'notEmpty' | 'gt' | 'gte' | 'lt' | 'lte'; value?: number | string };
       }
     | { rel: 'dedupe'; in: number[]; keys: number[] | 'all'; keep: 'first' | 'last' }
   );
@@ -223,3 +233,70 @@ export interface RepairBlock<Rules = unknown> {
 
 /** Appended to the repair user content (LEARN_PROMPT §4). */
 export const REPAIR_INSTRUCTION = 'Fix only what the problems require. Keep everything else identical.';
+
+// ---------- LearnPayload validation (routes/learn.ts: "validated minimally - shape
+// and size", not a full structural mirror of every Hint variant) ----------
+//
+// The API never re-derives or deeply re-validates payload content: the browser built
+// it, the JSON body is already capped at `limits.api.maxBodyBytes` (SPEC 15), and the
+// only thing that ever actually gets executed is the LLM's structured output, which
+// IS fully schema-validated (SPEC 9.2). This schema exists to reject an obviously
+// malformed or oversized body cheaply, before a learn ever reaches the LLM (SPEC 9.5
+// "Code first") - it checks the top-level shape and the SPEC 7.3/7.4 size limits, and
+// deliberately uses `z.looseObject`/`z.unknown()` for the nested layout and hint
+// shapes rather than re-encoding every `Hint`/`TitleRowLayout`/`SummaryRowLayout`
+// variant a second time.
+
+const PayloadCellSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
+const PROFILE_TYPES = [
+  'text',
+  'integer',
+  'decimal',
+  'currency',
+  'percent',
+  'date',
+  'boolean',
+  'idLike',
+  'empty',
+] as const;
+const ProfileTypeSchema = z.enum(PROFILE_TYPES);
+
+const PayloadColumnSchema = z.looseObject({
+  i: z.number().int().min(0),
+  header: z.string(),
+  type: ProfileTypeSchema,
+  shape: z.string().optional(),
+  stats: z.looseObject({}).optional(),
+  format: z.string().optional(),
+  width: z.number().optional(),
+});
+
+const SampleSchema = z.looseObject({
+  in: z.array(PayloadCellSchema),
+  out: z.union([z.array(PayloadCellSchema), z.array(z.array(PayloadCellSchema))]),
+});
+
+/** `samples` may hold up to `maxPairs` pairs OR up to `maxFamilies` families (SPEC
+ * 7.3); either way it never exceeds the larger of the two. */
+const MAX_SAMPLES = Math.max(limits.payload.maxPairs, limits.payload.maxFamilies);
+
+export const LearnPayloadSchema = z.looseObject({
+  masking: z.boolean(),
+  input: z.looseObject({
+    sheetName: z.string(),
+    direction: z.enum(['rtl', 'ltr']),
+    layout: z.looseObject({}),
+    columns: z.array(PayloadColumnSchema).min(1).max(limits.payload.maxColumns),
+  }),
+  output: z.looseObject({
+    file: z.looseObject({ type: z.enum(['xlsx', 'csv', 'txt']) }),
+    layout: z.looseObject({}),
+    columns: z.array(PayloadColumnSchema).min(1).max(limits.payload.maxColumns),
+  }),
+  target: z.looseObject({}).optional(),
+  samples: z.array(SampleSchema).min(1).max(MAX_SAMPLES),
+  dropped: z.array(z.array(PayloadCellSchema)).max(limits.payload.maxDropped).optional(),
+  hints: z.array(z.unknown()),
+  skipColumns: z.array(z.number().int().min(0)).optional(),
+});
