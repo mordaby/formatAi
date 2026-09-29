@@ -1,0 +1,230 @@
+{
+  "schemaVersion": 1,
+  "name": "עמלות חודשיות → דוח בקרה",
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "stopAt": {
+      "when": "firstCellMatches",
+      "values": [
+        "סה\"כ",
+        "Total"
+      ]
+    },
+    "columns": [
+      {
+        "id": "agent",
+        "header": "מספר סוכן",
+        "aliases": [
+          "סוכן"
+        ],
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "policy",
+        "header": "מס' פוליסה",
+        "type": "idLike",
+        "padLeft": 9,
+        "required": true
+      },
+      {
+        "id": "insuredId",
+        "header": "ת.ז. מבוטח",
+        "type": "idLike",
+        "padLeft": 9
+      },
+      {
+        "id": "product",
+        "header": "מוצר",
+        "type": "text"
+      },
+      {
+        "id": "status",
+        "header": "סטטוס",
+        "type": "text"
+      },
+      {
+        "id": "premium",
+        "header": "פרמיה",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "startDate",
+        "header": "תאריך תחילה",
+        "type": "date",
+        "inputFormats": [
+          "DD/MM/YYYY",
+          "excelSerial"
+        ]
+      }
+    ],
+    "rowFilters": [
+      {
+        "column": "status",
+        "op": "ne",
+        "value": "מבוטל"
+      }
+    ]
+  },
+  "transform": {
+    "dedupe": {
+      "keys": [
+        "policy"
+      ],
+      "keep": "first",
+      "action": "flag"
+    },
+    "computed": [
+      {
+        "id": "commission",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "digits": 2,
+          "arg": {
+            "op": "mul",
+            "args": [
+              {
+                "col": "premium"
+              },
+              {
+                "const": 0.17
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "valueMaps": [
+      {
+        "column": "product",
+        "map": {
+          "חיים": "LIFE",
+          "בריאות": "HEALTH"
+        },
+        "onMissing": "flag"
+      }
+    ],
+    "sort": [
+      {
+        "column": "agent",
+        "dir": "asc"
+      },
+      {
+        "column": "startDate",
+        "dir": "asc"
+      }
+    ],
+    "group": {
+      "by": "agent",
+      "showDetailRows": true,
+      "subtotal": {
+        "labelColumn": "policy",
+        "label": "סה\"כ לסוכן",
+        "sum": [
+          "premium",
+          "commission"
+        ]
+      },
+      "blankRowsAfter": 1
+    }
+  },
+  "output": {
+    "sheetName": "דוח עמלות",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [
+      {
+        "parts": [
+          {
+            "text": "דוח עמלות "
+          },
+          {
+            "agg": "max",
+            "column": "startDate",
+            "format": "MMMM YYYY"
+          }
+        ],
+        "bold": true
+      },
+      {
+        "blank": true
+      }
+    ],
+    "columns": [
+      {
+        "header": "סוכן",
+        "from": "agent",
+        "width": 10
+      },
+      {
+        "header": "פוליסה",
+        "from": "policy",
+        "width": 12
+      },
+      {
+        "header": "מוצר",
+        "from": "product"
+      },
+      {
+        "header": "תאריך תחילה",
+        "from": "startDate",
+        "format": "DD/MM/YYYY"
+      },
+      {
+        "header": "פרמיה",
+        "from": "premium",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "עמלה",
+        "from": "commission",
+        "format": "#,##0.00"
+      }
+    ],
+    "headerStyle": {
+      "bold": true
+    },
+    "grandTotal": {
+      "labelColumn": "policy",
+      "label": "סה\"כ",
+      "sum": [
+        "premium",
+        "commission"
+      ]
+    }
+  },
+  "validations": [
+    {
+      "column": "insuredId",
+      "rule": "israeliIdChecksum",
+      "severity": "flag"
+    },
+    {
+      "column": "premium",
+      "rule": "range",
+      "min": 0,
+      "severity": "flag"
+    }
+  ],
+  "unsupported": [],
+  "assumptions": [
+    {
+      "outputColumn": "עמלה",
+      "reasonCode": "roundingGuessed"
+    }
+  ],
+  "meta": {
+    "source": "examplePair",
+    "status": "verified",
+    "model": "claude-haiku-4-5-20251001",
+    "promptVersion": "learn-v1",
+    "masking": true,
+    "learnPath": "llm",
+    "createdAt": "2026-01-15T10:00:00.000Z"
+  }
+}

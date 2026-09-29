@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "agentName",
+        "header": "שם סוכן",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "idNumber",
+        "header": "ת.ז.",
+        "type": "idLike",
+        "padLeft": 9,
+        "required": true
+      },
+      {
+        "id": "status",
+        "header": "סטטוס",
+        "type": "text"
+      },
+      {
+        "id": "amount",
+        "header": "סכום",
+        "type": "decimal",
+        "required": true
+      }
+    ],
+    "rowFilters": [
+      {
+        "column": "status",
+        "op": "ne",
+        "value": "צחלדפ"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "amountWithVat",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "digits": 2,
+          "arg": {
+            "op": "mul",
+            "args": [
+              {
+                "col": "amount"
+              },
+              {
+                "const": 1.18
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "פעילים",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "columns": [
+      {
+        "header": "ת.ז.",
+        "from": "idNumber",
+        "format": "@",
+        "width": 12
+      },
+      {
+        "header": "שם",
+        "from": "agentName",
+        "format": "General",
+        "width": 18
+      },
+      {
+        "header": "סכום כולל מע\"מ",
+        "from": "amountWithVat",
+        "format": "#,##0.00",
+        "width": 14
+      }
+    ],
+    "headerStyle": {
+      "bold": true
+    }
+  },
+  "validations": [
+    {
+      "column": "idNumber",
+      "rule": "israeliIdChecksum",
+      "severity": "flag"
+    },
+    {
+      "column": "idNumber",
+      "rule": "unique",
+      "severity": "flag"
+    },
+    {
+      "column": "amount",
+      "rule": "range",
+      "min": 0,
+      "severity": "flag"
+    }
+  ],
+  "unsupported": [],
+  "assumptions": [
+    {
+      "reasonCode": "filterGuessed"
+    }
+  ]
+}
