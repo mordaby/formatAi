@@ -3,6 +3,9 @@
 // and the only user-derived content the LLM ever sees. Contains no file names,
 // no UI language and no user identity.
 
+import type { Format } from './format';
+import type { OutputFile } from './rules/schema';
+
 /** A sample cell. Numbers are JSON numbers; real Excel dates are ISO "YYYY-MM-DD" strings; text dates stay as written. */
 export type PayloadCell = string | number | boolean | null;
 
@@ -69,6 +72,20 @@ export interface TitleRowLayout {
   containsDate?: { in: number; agg: 'min' | 'max'; format: string };
 }
 
+/** Aggregates a summary row can show per column (generic; replaces sum-only totals). */
+export type SummaryAgg = 'sum' | 'count' | 'min' | 'max' | 'average' | 'first' | 'last';
+
+/** A summary row detected in the example output (after all data, or after each group). */
+export interface SummaryRowLayout {
+  /** Label text as it appears (label words are sent real, SPEC 7.2). */
+  label?: string;
+  /** Output column holding the label. */
+  labelOut?: number;
+  bold?: boolean;
+  /** Per output column, the aggregate that explains the value on ALL groups/rows of the real data. */
+  cells: { out: number; agg: SummaryAgg }[];
+}
+
 export interface OutputLayout {
   sheetName: string;
   direction: 'rtl' | 'ltr';
@@ -82,9 +99,11 @@ export interface OutputLayout {
   groupBy: {
     out: number;
     blankRowsAfter: number;
-    subtotal?: { labelOut: number; label: string; sums: number[] };
+    /** Summary rows after each group. */
+    summaryRows?: SummaryRowLayout[];
   } | null;
-  grandTotal: { labelOut: number; label: string; sums: number[] } | null;
+  /** Summary rows after all data rows. */
+  summaryRows: SummaryRowLayout[];
   sort: { out: number; dir: 'asc' | 'desc' }[] | null;
 }
 
@@ -152,8 +171,16 @@ export interface LearnPayload {
     columns: PayloadColumn[];
   };
   output: {
+    /** Detected by code from the example output (SPEC 8.13). */
+    file: OutputFile;
     layout: OutputLayout;
     columns: PayloadColumn[];
+  };
+  /** Attach mode only (SPEC 8.12): the existing format this input must produce. Layout is normalized to output headers. */
+  target?: {
+    output: Format['output'];
+    layout: Format['layout'];
+    validations: Format['outputValidations'];
   };
   /** Up to 12 pairs, or up to 6 families when rows expand. */
   samples: Sample[];
@@ -182,7 +209,10 @@ export type RepairProblem =
       actual: PayloadCell;
     }
   | { kind: 'rowCount'; expected: number; actual: number }
-  | { kind: 'layout'; message: string };
+  | { kind: 'layout'; message: string }
+  | { kind: 'formatMismatch'; path: string; message: string }
+  | { kind: 'type'; path: string; message: string }
+  | { kind: 'limit'; path?: string; message: string };
 
 export interface RepairBlock<Rules = unknown> {
   mode: 'repair';
