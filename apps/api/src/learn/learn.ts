@@ -65,6 +65,18 @@ export interface LearnOptions {
    * `apps/api/src/llm`'s `complete()`. Defaults to the real one, which resolves the
    * provider from `env`/`LLM_PROVIDER` as usual (SPEC 9.6). */
   complete?: CompleteFn;
+  /**
+   * SPEC 10 (the eval harness): force specific models for this run, bypassing
+   * `resolveModel(env, ...)` / `config/models.ts`. Lets the runner benchmark a
+   * candidate model (`--models a,b`) without an env var per run; the provider itself
+   * is still selected the normal way (via `env.LLM_PROVIDER`, e.g.
+   * `{ ...loadEnv(), LLM_PROVIDER: 'anthropic' }` - no separate `provider` option is
+   * needed since `env` already carries it).
+   */
+  models?: { firstTry: string; escalation: string };
+  /** SPEC 10 `--no-escalation`: skip the escalation attempt entirely (the first-try
+   * model and its server repair round(s) still run) for a cheaper/faster eval pass. */
+  noEscalation?: boolean;
 }
 
 export interface LearnOutcome {
@@ -199,7 +211,7 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
   const attempts: Attempt[] = [];
   const block = payloadBlock(payload);
 
-  const firstTryModel = resolveModel(env, 'firstTry');
+  const firstTryModel = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
   const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier);
   calls.push(first.record);
   attempts.push(first.attempt);
@@ -221,8 +233,8 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
     current = repair.attempt;
   }
 
-  if (current.problems.length > 0 && !opts.signal?.aborted) {
-    const escalationModel = resolveModel(env, 'escalation');
+  if (current.problems.length > 0 && !opts.signal?.aborted && !opts.noEscalation) {
+    const escalationModel = opts.models?.escalation ?? resolveModel(env, 'escalation');
     const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier);
     calls.push(escalated.record);
     attempts.push(escalated.attempt);
@@ -256,7 +268,7 @@ export async function repairFromBrowser(
   const block = payloadBlock(payload);
   const previous: Attempt = { raw: null, rules: previousRules, problems };
 
-  const model = resolveModel(env, 'firstTry');
+  const model = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
   const { record, attempt } = await callAndCheck(
     completeFn,
     env,

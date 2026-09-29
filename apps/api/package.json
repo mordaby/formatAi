@@ -24,6 +24,7 @@
   },
   "exports": {
     "./learn": "./src/learn/index.ts",
-    "./llm": "./src/llm/index.ts"
+    "./llm": "./src/llm/index.ts",
+    "./env": "./src/env.ts"
   }
 }
