@@ -132,6 +132,92 @@ describe('layout: groups, blank rows and summary rows', () => {
     expect(a.columns[4]!.relations[0]).toMatchObject({ rel: 'mul', in: [2, 3], coverage: 1 });
   });
 
+  it('a numeric group code that collides with a distinct id column after zero-stripping still aligns as a plain report (regression)', () => {
+    // The group code ("01".."04") and the id column ("00001".."00020") both
+    // normalize to plain small integers once leading zeros are stripped
+    // (SPEC 6.2 step 2: "match one-to-one after normalization"), so codes
+    // 1-4 coincidentally also identify the first few ids. Picking the group
+    // column as the alignment key by mistake maps every detail row of a
+    // group onto that one coincidental id row, which then looks like an
+    // ill-formed family: row expansion, which SPEC 6.3 blocks as unsupported.
+    const groups = ['01', '02', '03', '04'];
+    interface Member {
+      group: string;
+      id: number;
+      name: string;
+      value: number;
+      dateCell: V;
+    }
+    const members: Member[] = [];
+    const r = rng(17);
+    let id = 1;
+    let day = 0;
+    for (const g of groups) {
+      for (let i = 0; i < 5; i++) {
+        // A random value (not an arithmetic progression): an increasing
+        // 100, 200, 300... would let a later row's own value coincide with
+        // the running sum of the rows above it, a false summary row.
+        const value = (5 + Math.floor(r() * 95)) * 10;
+        members.push({ group: g, id: id++, name: `פריט ${i % 3}`, value, dateCell: date(2024, 3, 1 + day++) });
+      }
+    }
+    const input: V[][] = [['קבוצה', 'מזהה', 'שם', 'תאריך', 'ערך']];
+    for (const m of members) input.push([m.group, String(m.id).padStart(5, '0'), m.name, m.dateCell, m.value]);
+
+    const output: V[][] = [
+      ['דוח קבוצות - מרץ 2024', null, null, null, null, null],
+      [],
+      ['קבוצה', 'מזהה', 'שם', 'תאריך', 'ערך', 'ניקוד'],
+    ];
+    for (const g of groups) {
+      const rows = members.filter((m) => m.group === g);
+      for (const m of rows) output.push([m.group, String(m.id).padStart(5, '0'), m.name, m.dateCell, m.value, m.value / 10]);
+      const sum = rows.reduce((s, m) => s + m.value, 0);
+      const avgScore = rows.reduce((s, m) => s + m.value / 10, 0) / rows.length;
+      output.push([null, rows.length, null, null, sum, avgScore]);
+      output.push([]);
+    }
+    const totalValue = members.reduce((s, m) => s + m.value, 0);
+    const totalScore = members.reduce((s, m) => s + m.value / 10, 0);
+    output.push(['סה"כ', null, null, null, totalValue, totalScore]);
+
+    const a = analyzeOk(xlsx(input, { rtl: true }), xlsx(output, { rtl: true }));
+
+    // The real key is the id column (out 1 / in 1); the coincidentally
+    // matching group column (out 0) must lose the tie.
+    expect(a.alignment.method).toBe('key');
+    expect(a.alignment.key).toMatchObject({ in: [1], out: [1], matchRate: 1, uniqueness: 1 });
+    expect(a.output.dataRows).toHaveLength(members.length);
+    expect(a.alignment.rows).toHaveLength(members.length);
+    expect(a.shape).toEqual({ kind: 'plain' });
+    expect(a.columns.some((c) => c.unknown)).toBe(false);
+
+    expect(a.layout.titleRows[0]).toMatchObject({ containsDate: { in: 3, agg: 'min', format: 'MMMM YYYY' } });
+
+    const g = a.layout.groupBy!;
+    expect(g.out).toBe(0);
+    expect(g.blankRowsAfter).toBe(1);
+    expect(g.summaryRows).toHaveLength(1);
+    expect(g.summaryRows![0]).toMatchObject({
+      cells: [
+        { out: 1, agg: 'count' },
+        { out: 4, agg: 'sum' },
+        { out: 5, agg: 'average' },
+      ],
+      unexplained: [],
+    });
+    expect(a.layout.summaryRows).toHaveLength(1);
+    expect(a.layout.summaryRows[0]).toMatchObject({
+      label: 'סה"כ',
+      labelOut: 0,
+      cells: [
+        { out: 4, agg: 'sum' },
+        { out: 5, agg: 'sum' },
+      ],
+    });
+    expect(a.layout.unexplainedBlankRows).toEqual([]);
+  });
+
   it('a blank row after each change of a column, no summary rows', () => {
     const ms = teams();
     const input: V[][] = [['Team', 'Member', 'Hours']];

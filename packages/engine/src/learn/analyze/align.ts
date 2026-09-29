@@ -87,6 +87,17 @@ interface KeyCand extends KeyMatch {
   index: KeyIndex;
   outKeys: (string | null)[];
   inDistinct: number;
+  /** Memoized keyExplainScore (SPEC 6.2 step 2), computed lazily on a tie. */
+  explainScore?: number;
+}
+
+/** Context a tie between two key candidates needs to score them past matchRate/uniqueness. */
+interface KeyContext {
+  nIn: number;
+  nOut: number;
+  valuePairs: ValuePair[];
+  inKeys: (string | null)[][];
+  outKeys: (string | null)[][];
 }
 
 function evalKey(
@@ -123,11 +134,34 @@ function keyOk(m: { matchRate: number; uniqueness: number; spread: number }): bo
   return m.matchRate >= KEY_MIN_MATCH && (m.uniqueness >= KEY_MIN_UNIQUE || m.spread <= 1.5);
 }
 
-function betterKey(a: KeyCand, b: KeyCand | null): boolean {
+/**
+ * How well a key candidate explains the OTHER output columns once its rows
+ * are assigned: assigns every output row through it, then counts output
+ * columns that equal some input column on most of those rows (same measure
+ * `alignRows` uses to pick between a key and a summary reading). Memoized on
+ * the candidate: a tie can be compared against several times.
+ */
+function keyExplainScore(cand: KeyCand, ctx: KeyContext): number {
+  if (cand.explainScore === undefined) {
+    const { rows } = assign(cand, ctx.nIn, ctx.nOut, ctx.valuePairs, ctx.inKeys, ctx.outKeys);
+    cand.explainScore = explainKey(ctx.inKeys, ctx.outKeys, rows);
+  }
+  return cand.explainScore;
+}
+
+function betterKey(a: KeyCand, b: KeyCand | null, ctx: KeyContext): boolean {
   if (b === null) return true;
   if (a.matchRate !== b.matchRate) return a.matchRate > b.matchRate;
   if (a.uniqueness !== b.uniqueness) return a.uniqueness > b.uniqueness;
   if (a.inDistinct !== b.inDistinct) return a.inDistinct > b.inDistinct;
+  // DECISION: still tied on the input-side stats — two different columns can
+  // point to the same input row for every sampled key by coincidence (e.g. a
+  // small group id and an unrelated id column both stripped of leading zeros
+  // land on the same 1..N range). The real key also makes the OTHER output
+  // columns line up with the row it assigns; a coincidental one doesn't.
+  const explainA = keyExplainScore(a, ctx);
+  const explainB = keyExplainScore(b, ctx);
+  if (explainA !== explainB) return explainA > explainB;
   return false; // earlier (lower out, then lower in) wins ties
 }
 
@@ -153,9 +187,10 @@ export function alignRows(inCols: ColumnData[], outCols: ColumnData[], nIn: numb
     return ix;
   };
   const sample = sampleIndices(nOut, 1000, (seed ^ 0x9e3779b9) >>> 0);
+  const ctx: KeyContext = { nIn, nOut, valuePairs: [], inKeys, outKeys };
+  const valuePairs = ctx.valuePairs;
 
   // Value pairs: output values found among an input column's values.
-  const valuePairs: ValuePair[] = [];
   for (let o = 0; o < outCols.length; o++) {
     const ok = outKeys[o]!;
     for (let i = 0; i < inCols.length; i++) {
@@ -181,7 +216,7 @@ export function alignRows(inCols: ColumnData[], outCols: ColumnData[], nIn: numb
       const { spread: _s, ...m } = evalKey(ix, outKeys[o]!, sample);
       if (!keyOk({ ...m, spread: _s })) continue;
       const cand: KeyCand = { in: [i], out: [o], ...m, index: ix, outKeys: outKeys[o]!, inDistinct: ix.distinct / ix.nonEmpty };
-      if (betterKey(cand, best)) best = cand;
+      if (betterKey(cand, best, ctx)) best = cand;
     }
   }
 
@@ -200,7 +235,7 @@ export function alignRows(inCols: ColumnData[], outCols: ColumnData[], nIn: numb
         const { spread: _s, ...m } = evalKey(ix, ok, sample);
         if (!keyOk({ ...m, spread: _s })) continue;
         const cand: KeyCand = { in: [a.in, b.in], out: [a.out, b.out], ...m, index: ix, outKeys: ok, inDistinct: ix.distinct / Math.max(1, ix.nonEmpty) };
-        if (betterKey(cand, best)) best = cand;
+        if (betterKey(cand, best, ctx)) best = cand;
       }
     }
   }
