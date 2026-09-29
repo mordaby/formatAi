@@ -1,7 +1,9 @@
+import { delimiter, join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
-import { createClaudeCliProvider, type SpawnFn } from '../../src/llm/providers/claudeCli.js';
+import { createClaudeCliProvider, resolveClaudeCommand, type SpawnFn } from '../../src/llm/providers/claudeCli.js';
 import type { CompleteRequest } from '../../src/llm/types.js';
 
 function baseRequest(overrides: Partial<CompleteRequest> = {}): CompleteRequest {
@@ -48,11 +50,16 @@ function asSpawnFn(mock: ReturnType<typeof vi.fn>): SpawnFn {
 }
 
 describe('claude-cli provider - argument building', () => {
-  it('spawns `claude -p` with the system prompt, schema, output-format json, model alias, and no tools', async () => {
-    const spawn = vi.fn().mockImplementation(() => fakeChild(successResult({ answer: 'hi' })));
-    const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development' });
+  it('spawns `claude -p` with the system prompt file, schema, output-format json, model alias, and no tools', async () => {
+    let systemFileContent: string | undefined;
+    const spawn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
+      systemFileContent = readFileSync(args[args.indexOf('--system-prompt-file') + 1]!, 'utf8');
+      return fakeChild(successResult({ answer: 'hi' }));
+    });
+    const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development', cliPath: 'claude' });
 
     await provider.complete(baseRequest());
+    expect(systemFileContent).toBe('you are a rules writer');
 
     expect(spawn).toHaveBeenCalledTimes(1);
     const [command, args] = spawn.mock.calls[0] as [string, string[]];
@@ -60,8 +67,7 @@ describe('claude-cli provider - argument building', () => {
     expect(args).toEqual(
       expect.arrayContaining([
         '-p',
-        '--system-prompt',
-        'you are a rules writer',
+        '--system-prompt-file',
         '--json-schema',
         JSON.stringify(baseRequest().schema),
         '--output-format',
@@ -72,8 +78,20 @@ describe('claude-cli provider - argument building', () => {
         '',
         '--permission-prompts',
         'none',
+        '--no-session-persistence',
       ]),
     );
+    // The temp dir holding the system prompt is removed after the call.
+    expect(existsSync(args[args.indexOf('--system-prompt-file') + 1]!)).toBe(false);
+  });
+
+  it('resolves the bundled claude.exe next to the npm claude.cmd shim on Windows', () => {
+    const npmDir = join('C:', 'npm');
+    const exe = join(npmDir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+    const files = new Set([join(npmDir, 'claude.cmd'), exe]);
+    const pathEnv = [join('C:', 'other'), npmDir].join(delimiter);
+    expect(resolveClaudeCommand('win32', pathEnv, (f) => files.has(f))).toBe(exe);
+    expect(resolveClaudeCommand('linux', '/usr/bin')).toBe('claude');
   });
 
   it('maps a model id containing "sonnet" to the "sonnet" CLI alias', async () => {
@@ -99,7 +117,7 @@ describe('claude-cli provider - argument building', () => {
     expect(spawn.mock.calls[0]![0]).toBe('/opt/claude/bin/claude');
   });
 
-  it('falls back to `npx -y @anthropic-ai/claude-code` when the command is not on PATH (ENOENT)', async () => {
+  it.skipIf(process.platform === 'win32')('falls back to `npx -y @anthropic-ai/claude-code` when the command is not on PATH (ENOENT)', async () => {
     let call = 0;
     const spawn = vi.fn().mockImplementation((command: string) => {
       call += 1;
@@ -115,7 +133,7 @@ describe('claude-cli provider - argument building', () => {
       return fakeChild(successResult({ answer: 'hi' }));
     });
 
-    const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development' });
+    const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development', cliPath: 'claude' });
     const result = await provider.complete(baseRequest());
 
     expect(spawn).toHaveBeenCalledTimes(2);

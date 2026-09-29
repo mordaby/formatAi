@@ -3,13 +3,16 @@
 // pricing. This file may import `node:child_process` freely (it isn't a "provider
 // SDK" in the SPEC 9.6 sense), but must never import `@anthropic-ai/sdk` or `openai`.
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, dirname, join } from 'node:path';
 import { LlmError } from '../errors.js';
 import type { CompleteRequest, CompleteResult, LlmProvider, LlmUsage } from '../types.js';
 
 export type SpawnFn = (
   command: string,
   args: string[],
-  options: { env: NodeJS.ProcessEnv },
+  options: { env: NodeJS.ProcessEnv; cwd?: string },
 ) => ChildProcessWithoutNullStreams;
 
 /**
@@ -17,6 +20,29 @@ export type SpawnFn = (
  * present, Claude Code would bill that key instead of the user's subscription login, which is the
  * whole point of this dev provider.
  */
+/**
+ * Resolve the CLI executable. On Windows the npm shim is `claude.cmd`, which Node cannot spawn
+ * without a shell (and a shell would mangle the long arguments), so we start the real
+ * `claude.exe` shipped inside the npm package.
+ */
+export function resolveClaudeCommand(
+  platform: string = process.platform,
+  pathEnv: string = process.env.PATH ?? '',
+  exists: (p: string) => boolean = existsSync,
+): string {
+  if (platform !== 'win32') return 'claude';
+  for (const dir of pathEnv.split(delimiter)) {
+    if (!dir) continue;
+    const direct = join(dir, 'claude.exe');
+    if (exists(direct)) return direct;
+    if (exists(join(dir, 'claude.cmd'))) {
+      const bundled = join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+      if (exists(bundled)) return bundled;
+    }
+  }
+  return 'claude';
+}
+
 export function cliChildEnv(parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env = { ...parent };
   delete env.ANTHROPIC_API_KEY;
@@ -63,11 +89,12 @@ function runProcess(
   command: string,
   args: string[],
   stdin: string,
+  cwd?: string,
 ): Promise<{ stdout: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawnFn(command, args, { env: cliChildEnv() });
+      child = spawnFn(command, args, { env: cliChildEnv(), ...(cwd ? { cwd } : {}) });
     } catch (err) {
       reject(err);
       return;
@@ -107,13 +134,18 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
       }
 
       const start = Date.now();
-      const command = opts.cliPath ?? 'claude';
+      const command = opts.cliPath ?? resolveClaudeCommand();
+      // The system prompt goes through a temp file: Windows caps a command line at ~32k chars.
+      // The child also runs in that temp dir so no project CLAUDE.md is picked up.
+      const workDir = mkdtempSync(join(tmpdir(), 'formatai-cli-'));
+      const systemFile = join(workDir, 'system.txt');
+      writeFileSync(systemFile, req.system, 'utf8');
       const userContent = req.content.map((block) => block.text).join('\n\n');
 
       const args = [
         '-p',
-        '--system-prompt',
-        req.system,
+        '--system-prompt-file',
+        systemFile,
         '--json-schema',
         JSON.stringify(req.schema),
         '--output-format',
@@ -125,23 +157,39 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
         '',
         '--permission-prompts',
         'none',
+        // Never write the session (it contains the payload) to disk; ignore user MCP servers.
+        '--no-session-persistence',
+        '--strict-mcp-config',
       ];
 
       let outcome: { stdout: string; exitCode: number | null };
       try {
-        outcome = await runProcess(spawnFn, command, args, userContent);
-      } catch (err) {
-        if (!isEnoent(err)) {
-          throw new LlmError('providerError', 'claude-cli', 'failed to spawn the claude CLI', { cause: err });
-        }
-        // Not found on PATH: fall back to `npx -y @anthropic-ai/claude-code`.
         try {
-          outcome = await runProcess(spawnFn, 'npx', ['-y', '@anthropic-ai/claude-code', ...args], userContent);
-        } catch (fallbackErr) {
-          throw new LlmError('providerError', 'claude-cli', 'failed to spawn the claude CLI via npx', {
-            cause: fallbackErr,
-          });
+          outcome = await runProcess(spawnFn, command, args, userContent, workDir);
+        } catch (err) {
+          if (!isEnoent(err)) {
+            throw new LlmError('providerError', 'claude-cli', 'failed to spawn the claude CLI', { cause: err });
+          }
+          // Windows can't spawn npm's .cmd shims without a shell, so there is no npx fallback there.
+          if (process.platform === 'win32') {
+            throw new LlmError(
+              'providerError',
+              'claude-cli',
+              'claude CLI not found: run `npm i -g @anthropic-ai/claude-code` and log in, or set CLAUDE_CLI_PATH',
+              { cause: err },
+            );
+          }
+          // Not found on PATH: fall back to `npx -y @anthropic-ai/claude-code`.
+          try {
+            outcome = await runProcess(spawnFn, 'npx', ['-y', '@anthropic-ai/claude-code', ...args], userContent, workDir);
+          } catch (fallbackErr) {
+            throw new LlmError('providerError', 'claude-cli', 'failed to spawn the claude CLI via npx', {
+              cause: fallbackErr,
+            });
+          }
         }
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
       }
 
       let cliResult: ClaudeCliJsonResult;
