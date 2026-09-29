@@ -135,3 +135,5 @@ pnpm --filter @formatai/eval exec tsx cases/verify-cases.ts   # sanity-check the
 Both scripts are deterministic (seeded PRNG, `lib/prng.ts`): re-running
 `build.ts` with no code changes reproduces byte-identical files, so a diff
 after rebuilding means something about a case actually changed.
+
+**Update after the first Haiku run (2026-09-29):** `payroll-pension-deposits` now expects `verified` in both modes. The first-2-digits relation is a *prefix*, which pair analysis finds on the real, unmasked data and hands over as a hint — so with masking on the case is solved by the fast path, exactly as SPEC 7.2 intends. A true `hiddenByMasking` case needs a relation inside a word that pair analysis doesn't detect; add one when such a pattern shows up in real files.

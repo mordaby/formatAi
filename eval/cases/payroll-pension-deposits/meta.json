@@ -8,8 +8,5 @@
     "prefixOfId",
     "maskingGap"
   ],
-  "expect": {
-    "masking_on": "unsupported:hiddenByMasking",
-    "masking_off": "verified"
-  }
+  "expect": "verified"
 }

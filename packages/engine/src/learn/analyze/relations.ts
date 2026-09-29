@@ -941,6 +941,12 @@ function valueMapCands(env: RelationEnv, out: ColumnData): Cand[] {
       bump(m, out.kind[k] === EMPTY ? '' : out.text[k]!);
     }
     if (table.size >= a.n || table.size < 2) return;
+    // DECISION: a value map is evidence only when its keys repeat — rows whose key was already
+    // seen confirm the mapping. With (almost) one row per key, any column "maps" onto any other
+    // (e.g. 19 dates → 19 warehouses assigned by another system): that is memorizing, not a rule,
+    // and must stay `unknown` so pre-flight can report it. Require on average ≥ 1.5 rows per key.
+    const confirmingRows = a.n - table.size;
+    if (confirmingRows < Math.max(2, Math.ceil(table.size / 2))) return;
     const map = new Map<string, string>();
     let identity = true;
     for (const [key, m] of table) {

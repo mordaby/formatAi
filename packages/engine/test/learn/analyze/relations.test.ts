@@ -265,3 +265,22 @@ describe('relations: traps', () => {
     expect(a.input.profile[1]).toMatchObject({ type: 'date', serialDates: true });
   });
 });
+
+describe('value maps need repeated keys (no memorizing)', () => {
+  // An output column filled by another system (e.g. a warehouse assigned per order): its values
+  // line up with an almost-unique input column only by coincidence. Must stay unknown.
+  it('does not explain an externally-filled column with a near-unique key column', () => {
+    const header = ['Order', 'Requested', 'Qty'];
+    const outHeader = ['Order', 'Qty', 'Warehouse'];
+    const inRows: V[][] = [header];
+    const outRows: V[][] = [outHeader];
+    for (let i = 0; i < 20; i++) {
+      const requested = `2026-03-${String((i % 19) + 1).padStart(2, '0')}`; // 19 distinct of 20
+      inRows.push([`PO-${1000 + i}`, requested, 5 + (i % 4)]);
+      outRows.push([`PO-${1000 + i}`, 5 + (i % 4), ['WH-A', 'WH-B', 'WH-C'][(i * 7) % 3]!]);
+    }
+    const a = analyzeOk(xlsx(inRows), xlsx(outRows));
+    expect(findRel(a, 2, 'valueMap')).toBeUndefined();
+    expect(a.columns[2]?.unknown).toBe(true);
+  });
+});

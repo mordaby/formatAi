@@ -541,10 +541,8 @@ async function buildCase05(): Promise<CaseSpec> {
       difficulty: 'medium',
       domain: 'payroll',
       features: ['calculation', 'rounding', 'sharedFunction', 'prefixOfId', 'maskingGap'],
-      // SPEC 7.2/10: the branch-code column is built from a prefix *inside* a
-      // masked word, so it should come back `unsupported:hiddenByMasking` with
-      // masking on, but fully verify with masking off (see README.md).
-      expect: { masking_on: 'unsupported:hiddenByMasking', masking_off: 'verified' },
+      // Prefix of the id: pair analysis finds it on the real data, so masking does not hide it (README).
+      expect: 'verified',
     },
     input,
     output,
