@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "name": "מחירון ספק → טעינת קטלוג ERP",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "code", "header": "מקט", "type": "idLike", "padLeft": 6, "required": true },
+      { "id": "desc", "header": "תיאור", "type": "text", "required": true },
+      { "id": "cost", "header": "עלות", "type": "decimal", "required": true },
+      { "id": "status", "header": "סטטוס", "type": "text", "required": true }
+    ],
+    "rowFilters": [ { "column": "status", "op": "ne", "value": "מופסק" } ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "price",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "digits": 2,
+          "arg": { "op": "mul", "args": [ { "col": "cost" }, { "const": 1.15 } ] }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "file": { "type": "txt", "delimiter": "\t", "header": false, "encoding": "windows1255" },
+    "sheetName": "ERP_LOAD",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "columns": [
+      { "header": "מקט", "from": "code" },
+      { "header": "תיאור", "from": "desc" },
+      { "header": "מחיר", "from": "price", "format": "#,##0.00" }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

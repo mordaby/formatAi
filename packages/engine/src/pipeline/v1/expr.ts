@@ -182,7 +182,7 @@ export function compileExpr(e: Expr, env: CompileEnv): Fn {
 }
 
 // DECISION: empty operands in arithmetic. Like Excel, an empty operand counts
-// as 0 in add/sub/mul/div (so premium + empty bonus = premium, and empty ÷ n = 0),
+// as 0 in add/sub/mul/div (so amount + empty surcharge = amount, and empty ÷ n = 0),
 // except that when *every* operand is empty the result is empty. A divisor that
 // is 0 or empty gives an empty result and a "flag.expr.divByZero" flag. Text
 // that isn't a number gives an empty result and "flag.expr.notNumber".

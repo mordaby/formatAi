@@ -1,0 +1,22 @@
+{
+  "outputType": "txt",
+  "lines": [
+    "000007\tפטיש\t22.99",
+    "001234\tמברגה\t15.53",
+    "000305\tפטישון\t9.2",
+    "000012\tמסור\t138",
+    "009999\tסרגל\t2.86",
+    "000045\tפלייר\t0",
+    "000100\tסולם\t1149.99",
+    "000021\tפינצטה\t3.83"
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 10,
+    "rowsOut": 8,
+    "rowsFiltered": 2,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "name": "Customer export to CRM import",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "firstName", "header": "First Name", "type": "text", "required": true },
+      { "id": "lastName", "header": "Last Name", "type": "text", "required": true },
+      { "id": "phone", "header": "Phone", "type": "text", "required": true },
+      { "id": "email", "header": "Email", "type": "text", "required": true },
+      { "id": "spend", "header": "Total Spend", "type": "decimal", "required": true }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "fullName",
+        "type": "text",
+        "expr": {
+          "op": "concat",
+          "args": [ { "col": "firstName" }, { "const": " " }, { "col": "lastName" } ]
+        }
+      },
+      {
+        "id": "phoneNorm",
+        "type": "text",
+        "expr": {
+          "op": "padLeft",
+          "arg": {
+            "op": "replaceText",
+            "arg": {
+              "op": "replaceText",
+              "arg": { "col": "phone" },
+              "find": "-",
+              "with": ""
+            },
+            "find": " ",
+            "with": ""
+          },
+          "length": 10,
+          "char": "0"
+        }
+      },
+      {
+        "id": "emailLower",
+        "type": "text",
+        "expr": { "op": "lower", "arg": { "col": "email" } }
+      },
+      {
+        "id": "segment",
+        "type": "text",
+        "expr": {
+          "op": "switch",
+          "cases": [
+            { "when": { "op": "gte", "args": [ { "col": "spend" }, { "const": 10000 } ] }, "then": { "const": "VIP" } },
+            { "when": { "op": "gte", "args": [ { "col": "spend" }, { "const": 1000 } ] }, "then": { "const": "Regular" } }
+          ],
+          "else": { "const": "Low" }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "file": { "type": "csv", "header": true, "encoding": "utf8", "quote": "all" },
+    "sheetName": "CRM Import",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "columns": [
+      { "header": "Full Name", "from": "fullName" },
+      { "header": "Phone", "from": "phoneNorm" },
+      { "header": "Email", "from": "emailLower" },
+      { "header": "Segment", "from": "segment" },
+      { "header": "Total Spend", "from": "spend", "format": "#,##0.00" }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

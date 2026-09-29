@@ -1,0 +1,25 @@
+{
+  "outputType": "csv",
+  "lines": [
+    "\"Full Name\",\"Phone\",\"Email\",\"Segment\",\"Total Spend\"",
+    "\"Dana Cohen\",\"0521234567\",\"dana.cohen@example.com\",\"VIP\",\"15000\"",
+    "\"Yossi Levi\",\"0541234567\",\"yossi_l@example.com\",\"Low\",\"500\"",
+    "\"Noa Bar\",\"0549876543\",\"noa.bar@example.com\",\"Regular\",\"2500\"",
+    "\"Omer Katz\",\"0521112222\",\"omer.katz@example.com\",\"VIP\",\"10000\"",
+    "\"Maya Gil\",\"0501234567\",\"maya.gil@example.com\",\"Low\",\"999.99\"",
+    "\"Eli Peretz\",\"0534445555\",\"eli.peretz@example.com\",\"Regular\",\"1000\"",
+    "\"Shira Adar\",\"0587654321\",\"shira.adar@example.com\",\"Low\",\"0\"",
+    "\"Tomer Ben\",\"0529998888\",\"tomer.ben@example.com\",\"VIP\",\"25000\"",
+    "\"Roni Oz\",\"0541110000\",\"roni.oz@example.com\",\"Regular\",\"1500.5\"",
+    "\"Gal Dagan\",\"0523334444\",\"gal.dagan@example.com\",\"Regular\",\"9999.99\""
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 10,
+    "rowsOut": 10,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

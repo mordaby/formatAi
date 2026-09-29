@@ -1,0 +1,69 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "Freight Cost Report",
+  "direction": "ltr",
+  "columns": [
+    { "header": "Carrier" },
+    { "header": "Shipment ID" },
+    { "header": "Ship Date", "format": "dd/mm/yyyy" },
+    { "header": "Cost", "format": "#,##0.00", "numeric": true }
+  ],
+  "merges": [],
+  "rows": [
+    { "kind": "header", "bold": true, "cells": ["Carrier", "Shipment ID", "Ship Date", "Cost"] },
+    {
+      "kind": "data",
+      "sourceRow": 3,
+      "cells": ["Northern Star Shipping", "INV-777", { "date": { "y": 2024, "m": 2, "d": 2 }, "serial": 45324 }, 690.5]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 5,
+      "cells": ["Northern Star Shipping", "INV-778", { "date": { "y": 2024, "m": 3, "d": 10 }, "serial": 45361 }, 980]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 7,
+      "cells": ["Northern Star Shipping", "INV-779", { "date": { "y": 2024, "m": 1, "d": 30 }, "serial": 45321 }, 150]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 9,
+      "cells": ["Northern Star Shipping", "INV-780", { "date": { "y": 2024, "m": 2, "d": 20 }, "serial": 45342 }, 60.1]
+    },
+    { "kind": "subtotal", "cells": [null, "Subtotal", null, 1880.6] },
+    { "kind": "blank", "cells": [null, null, null, null] },
+    {
+      "kind": "data",
+      "sourceRow": 2,
+      "cells": ["Swift Cargo", "INV-501", { "date": { "y": 2024, "m": 1, "d": 12 }, "serial": 45303 }, 430]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 4,
+      "cells": ["Swift Cargo", "INV-502", { "date": { "y": 2024, "m": 1, "d": 25 }, "serial": 45316 }, 210.75]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 6,
+      "cells": ["Swift Cargo", "INV-503", { "date": { "y": 2024, "m": 2, "d": 14 }, "serial": 45336 }, 75.2]
+    },
+    {
+      "kind": "data",
+      "sourceRow": 8,
+      "cells": ["Swift Cargo", "INV-504", { "date": { "y": 2024, "m": 3, "d": 5 }, "serial": 45356 }, 999.99]
+    },
+    { "kind": "subtotal", "cells": [null, "Subtotal", null, 1715.94] },
+    { "kind": "blank", "cells": [null, null, null, null] },
+    { "kind": "grandTotal", "cells": [null, "Total", null, 3596.54] }
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 8,
+    "rowsOut": 8,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

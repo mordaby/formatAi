@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "name": "Carrier A invoice to freight cost report",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "carrier", "header": "Carrier Name", "type": "text", "required": true },
+      { "id": "shipId", "header": "Ship ID", "type": "idLike", "required": true },
+      { "id": "shipDate", "header": "Date", "type": "date", "inputFormats": ["MM/DD/YYYY"] },
+      { "id": "cost", "header": "Amount (USD)", "type": "decimal", "required": true }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": [ { "column": "carrier", "dir": "asc" }, { "column": "shipId", "dir": "asc" } ],
+    "group": {
+      "by": "carrier",
+      "showDetailRows": true,
+      "subtotal": { "labelColumn": "shipId", "label": "Subtotal", "sum": ["cost"] },
+      "blankRowsAfter": 1
+    }
+  },
+  "output": {
+    "sheetName": "Freight Cost Report",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "columns": [
+      { "header": "Carrier", "from": "carrier" },
+      { "header": "Shipment ID", "from": "shipId" },
+      { "header": "Ship Date", "from": "shipDate", "format": "DD/MM/YYYY" },
+      { "header": "Cost", "from": "cost", "format": "#,##0.00" }
+    ],
+    "headerStyle": { "bold": true },
+    "grandTotal": { "labelColumn": "shipId", "label": "Total", "sum": ["cost"] }
+  },
+  "validations": [
+    { "on": "output", "column": "Cost", "rule": "range", "min": 0, "severity": "flag" }
+  ],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

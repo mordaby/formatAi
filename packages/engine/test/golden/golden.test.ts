@@ -13,9 +13,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
+import { RulesSchema } from '@formatai/shared';
 import type { Rules } from '@formatai/shared';
 import { convertFile } from '../../src/convert';
-import type { Flag, RunSummary } from '../../src/types';
+import { checkLimits, typeCheck } from '../../src/check';
+import { checkFormatLock, formatOf } from '../../src/registry';
+import { readWorkbook } from '../../src/io/read';
+import type { Flag, OutputFileSpec, RunSummary } from '../../src/types';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const casesDir = path.join(here, 'cases');
@@ -71,7 +75,10 @@ interface ExpectedXlsx extends ExpectedBase {
 }
 
 interface ExpectedCsv extends ExpectedBase {
-  outputType: 'csv';
+  // SPEC 21 v3 amendment: 'txt' added alongside 'csv' so the same shape covers
+  // both delimited-text output.file types (8.13) -- old cases here are always
+  // 'csv'; the new supplier-pricelist-to-erp-load case below is 'txt'.
+  outputType: 'csv' | 'txt';
   lines: string[];
 }
 
@@ -228,5 +235,221 @@ describe.each(CASES)('golden case: %s', (name) => {
     if (!a.ok || !b.ok) throw new Error('convertFile failed');
     expect(a.bytes.length, `${name}: determinism (length)`).toBe(b.bytes.length);
     expect(Buffer.from(b.bytes), `${name}: determinism (bytes)`).toEqual(Buffer.from(a.bytes));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC 21 v3 amendment cases: output.file variety (a txt load file with no
+// header in Windows-1255, and a csv with a non-default encoding/quoting), a
+// transform.functions entry shared by three columns, a transform.tables
+// lookup with an unknown key, and a registry pair proving the format lock
+// (SPEC 8.12). Same ground rules as the M0 cases above: every expected.json
+// was worked out by hand from that case's rules.json and input file, never by
+// running the engine. These cases additionally assert that their rules.json
+// parses cleanly (RulesSchema), type-checks and limit-checks with no
+// problems, and -- for the csv/txt outputs -- round-trips through
+// readWorkbook.
+// ---------------------------------------------------------------------------
+
+interface ExpectedDelimitedV3 extends ExpectedBase {
+  outputType: 'csv' | 'txt';
+  lines: string[];
+}
+
+/**
+ * Standalone reference encoder for Windows-1255 (ASCII plus the Hebrew
+ * alphabet block U+05D0-U+05EA only, which is all this suite's fixtures ever
+ * use), written independently of writeDelimited.ts's own encoder so the
+ * byte-exact check below doesn't just compare the engine against itself.
+ * Mirrors build-inputs.ts's own encodeWindows1255 helper (used there to build
+ * *input* fixtures) for the *output* side.
+ */
+function referenceEncodeWindows1255(text: string): Uint8Array {
+  const bytes: number[] = [];
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp < 0x80) {
+      bytes.push(cp);
+    } else if (cp >= 0x05d0 && cp <= 0x05ea) {
+      bytes.push(0xe0 + (cp - 0x05d0));
+    } else {
+      throw new Error(`referenceEncodeWindows1255: unsupported character U+${cp.toString(16)}`);
+    }
+  }
+  return new Uint8Array(bytes);
+}
+
+function decodeDelimitedBytes(
+  bytes: Uint8Array,
+  encoding: NonNullable<OutputFileSpec['encoding']>,
+  label: string,
+): string {
+  const hasBom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  if (encoding === 'utf8bom') {
+    expect(hasBom, `${label}: UTF-8 BOM`).toBe(true);
+    return new TextDecoder('utf-8').decode(bytes.subarray(3));
+  }
+  expect(hasBom, `${label}: no BOM`).toBe(false);
+  if (encoding === 'utf8') return new TextDecoder('utf-8').decode(bytes);
+  return new TextDecoder('windows-1255').decode(bytes);
+}
+
+/** Byte-exact assertion for a csv/txt output whose `output.file` (SPEC 8.13) the
+ * rules file declares itself (unlike the M0 cases above, no `convertOpts` override
+ * is needed here: these rules already carry the file spec being tested). */
+function assertDelimitedOutputV3(
+  bytes: Uint8Array,
+  expected: ExpectedDelimitedV3,
+  file: OutputFileSpec,
+  label: string,
+): void {
+  const encoding = file.encoding ?? 'utf8bom';
+  const text = decodeDelimitedBytes(bytes, encoding, label);
+  const expectedText = expected.lines.map((l) => `${l}\r\n`).join('');
+  expect(text, `${label}: exact text (BOM-stripped, CRLF line endings)`).toBe(expectedText);
+
+  if (encoding === 'windows1255') {
+    expect(Buffer.from(bytes), `${label}: exact windows-1255 bytes`).toEqual(
+      Buffer.from(referenceEncodeWindows1255(expectedText)),
+    );
+  }
+}
+
+const V3_XLSX_CASES = [
+  'freight-carrier-a',
+  'freight-carrier-b',
+  'payroll-to-deposits-function',
+  'bank-export-lookup',
+] as const;
+
+describe.each(V3_XLSX_CASES)('golden case (SPEC 21 v3 amendment): %s', (name) => {
+  it('rules parse with RulesSchema, and type-check/limit-check cleanly', () => {
+    const { rules } = loadCase(name);
+    expect(() => RulesSchema.parse(rules), `${name}: RulesSchema`).not.toThrow();
+    expect(typeCheck(rules), `${name}: typeCheck`).toEqual([]);
+    expect(checkLimits(rules, 'paid'), `${name}: checkLimits`).toEqual([]);
+  });
+
+  it('matches the hand-derived expected output', async () => {
+    const { rules, expected, inputFile, bytes } = loadCase(name);
+    if (expected.outputType !== 'xlsx') throw new Error(`${name}: expected an xlsx case`);
+    const result = await convertFile(rules, bytes, inputFile);
+    if (!result.ok) throw new Error(`convertFile failed: ${JSON.stringify(result.error)}`);
+
+    expect(result.flags, `${name}: flags`).toEqual(expected.flags);
+    expect(result.summary, `${name}: summary`).toEqual(expected.summary);
+    expect(result.sheet.rows.map((r) => r.kind), `${name}: row kinds`).toEqual(
+      expected.rows.map((r) => r.kind),
+    );
+    expected.rows.forEach((r, i) => {
+      if (r.sourceRow !== undefined) {
+        expect(result.sheet.rows[i]?.sourceRow, `${name}: row ${i} sourceRow`).toBe(r.sourceRow);
+      }
+    });
+    await assertXlsxOutput(result.bytes, expected, name);
+  });
+
+  it('is deterministic: converting the same input twice is byte-identical', async () => {
+    const { rules, inputFile, bytes } = loadCase(name);
+    const a = await convertFile(structuredClone(rules), bytes, inputFile);
+    const b = await convertFile(structuredClone(rules), bytes, inputFile);
+    if (!a.ok || !b.ok) throw new Error('convertFile failed');
+    expect(a.bytes.length, `${name}: determinism (length)`).toBe(b.bytes.length);
+    expect(Buffer.from(b.bytes), `${name}: determinism (bytes)`).toEqual(Buffer.from(a.bytes));
+  });
+});
+
+const V3_DELIMITED_CASES = ['supplier-pricelist-to-erp-load', 'customer-export-to-crm-csv'] as const;
+
+describe.each(V3_DELIMITED_CASES)('golden case (SPEC 21 v3 amendment): %s', (name) => {
+  it('rules parse with RulesSchema, and type-check/limit-check cleanly', () => {
+    const { rules } = loadCase(name);
+    expect(() => RulesSchema.parse(rules), `${name}: RulesSchema`).not.toThrow();
+    expect(typeCheck(rules), `${name}: typeCheck`).toEqual([]);
+    expect(checkLimits(rules, 'paid'), `${name}: checkLimits`).toEqual([]);
+  });
+
+  it('matches the hand-derived expected output', async () => {
+    const { rules, expected, inputFile, bytes } = loadCase(name);
+    if (expected.outputType === 'xlsx') throw new Error(`${name}: expected a delimited case`);
+    const result = await convertFile(rules, bytes, inputFile);
+    if (!result.ok) throw new Error(`convertFile failed: ${JSON.stringify(result.error)}`);
+
+    expect(result.flags, `${name}: flags`).toEqual(expected.flags);
+    expect(result.summary, `${name}: summary`).toEqual(expected.summary);
+    const file = rules.output.file;
+    if (!file) throw new Error(`${name}: rules.output.file must be declared (SPEC 8.13)`);
+    assertDelimitedOutputV3(result.bytes, expected as ExpectedDelimitedV3, file, name);
+  });
+
+  it('is deterministic: converting the same input twice is byte-identical', async () => {
+    const { rules, inputFile, bytes } = loadCase(name);
+    const a = await convertFile(structuredClone(rules), bytes, inputFile);
+    const b = await convertFile(structuredClone(rules), bytes, inputFile);
+    if (!a.ok || !b.ok) throw new Error('convertFile failed');
+    expect(a.bytes.length, `${name}: determinism (length)`).toBe(b.bytes.length);
+    expect(Buffer.from(b.bytes), `${name}: determinism (bytes)`).toEqual(Buffer.from(a.bytes));
+  });
+});
+
+describe('golden case (SPEC 21 v3 amendment): csv/txt outputs round-trip through readWorkbook', () => {
+  it('supplier-pricelist-to-erp-load: tab-delimited, no header, Windows-1255 values round-trip', async () => {
+    const { rules, expected, inputFile, bytes } = loadCase('supplier-pricelist-to-erp-load');
+    if (expected.outputType === 'xlsx') throw new Error('expected a delimited case');
+    const result = await convertFile(rules, bytes, inputFile);
+    if (!result.ok) throw new Error('convertFile failed');
+
+    const wb = await readWorkbook(result.bytes, 'output.txt');
+    expect(wb.delimiter, 'detected delimiter').toBe('\t');
+    expect(wb.encoding, 'detected encoding').toBe('windows-1255');
+    const actualFields = (wb.sheets[0]?.rows ?? []).map((row) => row.map((c) => c?.v ?? null));
+    const expectedFields = expected.lines.map((l) => l.split('\t'));
+    expect(actualFields).toEqual(expectedFields);
+  });
+
+  it('customer-export-to-crm-csv: comma-delimited, quoted, header values round-trip', async () => {
+    const { rules, expected, inputFile, bytes } = loadCase('customer-export-to-crm-csv');
+    if (expected.outputType === 'xlsx') throw new Error('expected a delimited case');
+    const result = await convertFile(rules, bytes, inputFile);
+    if (!result.ok) throw new Error('convertFile failed');
+
+    const wb = await readWorkbook(result.bytes, 'output.csv');
+    expect(wb.delimiter, 'detected delimiter').toBe(',');
+    expect(wb.encoding, 'detected encoding').toBe('utf-8');
+    const actualFields = (wb.sheets[0]?.rows ?? []).map((row) => row.map((c) => c?.v ?? null));
+    // Every field is individually quoted (quote: "all") and none of this
+    // case's data contains a comma or a quote character, so stripping the
+    // outer quotes and splitting on `","` recovers the raw written values
+    // without needing a full RFC-4180 parser here.
+    const expectedFields = expected.lines.map((l) => l.slice(1, -1).split('","'));
+    expect(actualFields).toEqual(expectedFields);
+  });
+});
+
+describe('registry pair (SPEC 8.12): freight-carrier-a / freight-carrier-b share one format', () => {
+  const { rules: rulesA } = loadCase('freight-carrier-a');
+  const { rules: rulesB } = loadCase('freight-carrier-b');
+  const format = formatOf(rulesA);
+
+  // Both conversions matching their own hand-derived expected output is
+  // already asserted by the V3_XLSX_CASES loop above; these tests cover the
+  // registry-specific relationship between the two rules files instead.
+
+  it("carrier B's rules reproduce carrier A's format: checkFormatLock finds no problems", () => {
+    expect(checkFormatLock(rulesB, format)).toEqual([]);
+  });
+
+  it('a deliberately altered copy of carrier B breaks the lock: a formatMismatch problem', () => {
+    const altered = structuredClone(rulesB);
+    const costColumn = altered.output.columns[3];
+    if (!costColumn || costColumn.header !== 'Cost') {
+      throw new Error('expected output.columns[3] to be the shared "Cost" column');
+    }
+    costColumn.header = 'Total Cost Adjusted';
+
+    const problems = checkFormatLock(altered, format);
+    expect(problems).toContainEqual(
+      expect.objectContaining({ kind: 'formatMismatch', path: 'output.columns[3].header' }),
+    );
   });
 });
