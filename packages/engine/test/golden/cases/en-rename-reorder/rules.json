@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "name": "Commission export rename",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "policy", "header": "Policy No", "type": "idLike" },
+      { "id": "client", "header": "Client Name", "type": "text" },
+      { "id": "amount", "header": "Amount", "type": "currency", "required": true },
+      { "id": "effDate", "header": "Effective Date", "type": "date", "inputFormats": ["DD/MM/YYYY"] },
+      { "id": "region", "header": "Region", "type": "text" }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Export",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "columns": [
+      { "header": "Client Name", "from": "client" },
+      { "header": "Policy Number", "from": "policy" },
+      { "header": "Date", "from": "effDate", "format": "yyyy-mm-dd" },
+      { "header": "Amount (NIS)", "from": "amount", "format": "#,##0.00" }
+    ],
+    "headerStyle": { "bold": true }
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

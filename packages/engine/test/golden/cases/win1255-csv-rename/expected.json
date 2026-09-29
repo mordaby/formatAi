@@ -1,0 +1,20 @@
+{
+  "outputType": "csv",
+  "lines": [
+    "Amount,Name",
+    "100,דנה",
+    "250.5,יוסי",
+    "75,רותם",
+    "0,אבי",
+    "-30,מיכל"
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 5,
+    "rowsOut": 5,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

@@ -1,7 +1,7 @@
 // Plain-language he/en text for every unsupported and assumption code (SPEC 8.10,
 // tone per SPEC 16.3: no jargon, say exactly what's true and what the user can do).
 // The LLM never writes UI text (SPEC 16.2); this dictionary is the only source of it.
-import type { AssumptionReasonCode, UnsupportedReasonCode } from '../codes';
+import type { AssumptionReasonCode, FlagMessageKey, UnsupportedReasonCode } from '../codes';
 
 export interface Localized {
   en: string;
@@ -67,5 +67,77 @@ export const assumptionMessages: Record<AssumptionReasonCode, Localized> = {
   other: {
     en: 'We made a guess here. Please check it.',
     he: 'ניחשנו כאן משהו. אנא בדקו.',
+  },
+};
+
+// Flag messages (SPEC 8.9). `{name}` placeholders are filled from Flag.params.
+export const flagMessages: Record<FlagMessageKey, Localized> = {
+  'flag.parseFailed.number': {
+    en: "This isn't a number. We kept it as it is.",
+    he: 'זה לא מספר. השארנו אותו כפי שהוא.',
+  },
+  'flag.parseFailed.integer': {
+    en: "This isn't a whole number. We kept it as it is.",
+    he: 'זה לא מספר שלם. השארנו אותו כפי שהוא.',
+  },
+  'flag.parseFailed.date': {
+    en: "This isn't a date we can read. We kept it as it is.",
+    he: 'זה לא תאריך שאנחנו יכולים לקרוא. השארנו אותו כפי שהוא.',
+  },
+  'flag.parseFailed.idLike': {
+    en: "This doesn't look like an ID number. We kept it as it is.",
+    he: 'זה לא נראה כמו מספר מזהה. השארנו אותו כפי שהוא.',
+  },
+  'flag.parseFailed.boolean': {
+    en: 'Expected yes/no (TRUE/FALSE or 1/0). We kept it as it is.',
+    he: 'ציפינו לכן/לא (TRUE/FALSE או 1/0). השארנו את הערך כפי שהוא.',
+  },
+  'flag.duplicateOf': {
+    en: 'Duplicate of row {duplicateOf}.',
+    he: 'כפילות של שורה {duplicateOf}.',
+  },
+  'flag.expr.divByZero': {
+    en: 'Division by zero or by an empty cell. The result was left empty.',
+    he: 'חלוקה באפס או בתא ריק. התוצאה נשארה ריקה.',
+  },
+  'flag.expr.notNumber': {
+    en: 'The calculation needs a number here, but found text.',
+    he: 'החישוב צריך כאן מספר, אבל נמצא טקסט.',
+  },
+  'flag.expr.notDate': {
+    en: 'The calculation needs a date here, but found something else.',
+    he: 'החישוב צריך כאן תאריך, אבל נמצא ערך אחר.',
+  },
+  'flag.valueMapMissing': {
+    en: "This value isn't in the translation list. We kept it as it is.",
+    he: 'הערך הזה לא מופיע ברשימת התרגום. השארנו אותו כפי שהוא.',
+  },
+  'flag.validation.required': {
+    en: 'This cell is empty, but it should always have a value.',
+    he: 'התא ריק, אבל תמיד אמור להיות בו ערך.',
+  },
+  'flag.validation.israeliIdChecksum': {
+    en: "This isn't a valid Israeli ID number (the check digit doesn't match).",
+    he: 'זה לא מספר זהות תקין (ספרת הביקורת לא מתאימה).',
+  },
+  'flag.validation.range': {
+    en: 'This value is outside the expected range.',
+    he: 'הערך מחוץ לטווח הצפוי.',
+  },
+  'flag.validation.lengthEquals': {
+    en: 'This value should be {length} characters long.',
+    he: 'הערך צריך להיות באורך {length} תווים.',
+  },
+  'flag.validation.oneOf': {
+    en: "This value isn't one of the allowed values.",
+    he: 'הערך הזה אינו אחד מהערכים המותרים.',
+  },
+  'flag.validation.unique': {
+    en: 'This value already appears in row {firstRow}.',
+    he: 'הערך הזה כבר מופיע בשורה {firstRow}.',
+  },
+  'flag.validation.dateRange': {
+    en: 'This date is outside {from} – {to}.',
+    he: 'התאריך מחוץ לטווח {from} – {to}.',
   },
 };

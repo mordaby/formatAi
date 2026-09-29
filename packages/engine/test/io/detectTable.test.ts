@@ -114,6 +114,28 @@ describe('detectTable - input mode rejections', () => {
     expect(d.issues.map((i) => i.code)).toEqual(['splitHeader']);
   });
 
+  it('does not misread a single-row header as split just because the first data row also looks header-like', () => {
+    // Regression: every column here but one is text with all-distinct values
+    // (agent id, policy id, a free-text product, a free-text note), which on
+    // its own satisfies looksLikeHeaderRow just like a real header would. A
+    // single real header followed by 3 such rows must still resolve as a
+    // normal ('ok') header, not a false 'splitHeader' -- unlike the genuine
+    // two-row header case above, where the immediate 3-row block right after
+    // the real header is never internally consistent (it starts with the
+    // second header row itself).
+    const s = sheet([
+      row('סוכן', 'פוליסה', 'מוצר', 'סכום', 'הערות'),
+      row('A1', 'P100', 'חיים', 300, 'רגיל'),
+      row('A2', 'P200', 'בריאות', 150, 'מיוחד'),
+      row('A3', 'P300', 'רכב', 400, 'בדיקה'),
+    ]);
+    const d = detectTable(s);
+    expect(d.ok).toBe(true);
+    expect(d.headerRow).toBe(0);
+    expect(d.dataStart).toBe(1);
+    expect(d.dataEnd).toBe(3);
+  });
+
   it('rejects tooFewDataRows when fewer than 2 real data rows remain', () => {
     const s = sheet([row('שם', 'סכום'), row('א', 10), row('סה"כ', 10)]);
     const d = detectTable(s);

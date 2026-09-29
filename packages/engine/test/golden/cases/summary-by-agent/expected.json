@@ -1,0 +1,34 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "Summary",
+  "direction": "ltr",
+  "columns": [
+    { "header": "Agent" },
+    { "header": "First Client" },
+    { "header": "Deals", "numeric": true },
+    { "header": "Total Amount", "format": "#,##0.00", "numeric": true },
+    { "header": "Max Amount", "format": "#,##0.00", "numeric": true }
+  ],
+  "merges": ["A1:E1"],
+  "rows": [
+    {
+      "kind": "title",
+      "bold": true,
+      "cells": ["Agent Summary Report", "Agent Summary Report", "Agent Summary Report", "Agent Summary Report", "Agent Summary Report"]
+    },
+    { "kind": "header", "bold": true, "cells": ["Agent", "First Client", "Deals", "Total Amount", "Max Amount"] },
+    { "kind": "data", "sourceRow": 5, "cells": ["Agent A", "C4", 4, 500, 200] },
+    { "kind": "data", "sourceRow": 3, "cells": ["Agent B", "C2", 3, 365, 200] },
+    { "kind": "data", "sourceRow": 9, "cells": ["Agent C", "C8", 3, 480, 300] },
+    { "kind": "grandTotal", "cells": ["Total", null, 10, 1345, null] }
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 10,
+    "rowsOut": 3,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "Export",
+  "direction": "ltr",
+  "columns": [
+    { "header": "Client Name" },
+    { "header": "Policy Number" },
+    { "header": "Date", "format": "yyyy-mm-dd" },
+    { "header": "Amount (NIS)", "format": "#,##0.00", "numeric": true }
+  ],
+  "merges": [],
+  "rows": [
+    { "kind": "header", "bold": true, "cells": ["Client Name", "Policy Number", "Date", "Amount (NIS)"] },
+    { "kind": "data", "sourceRow": 2, "cells": ["Dana Cohen", "00123", { "date": { "y": 2024, "m": 3, "d": 5 }, "serial": 45356 }, 1234.56] },
+    { "kind": "data", "sourceRow": 3, "cells": ["Yossi Levi", "00456", { "date": { "y": 2024, "m": 7, "d": 12 }, "serial": 45485 }, 500] },
+    { "kind": "data", "sourceRow": 4, "cells": ["Noa Bar", "00789", { "date": { "y": 2024, "m": 12, "d": 25 }, "serial": 45651 }, -200] },
+    { "kind": "data", "sourceRow": 5, "cells": ["Omer Katz", "01011", { "date": { "y": 2024, "m": 1, "d": 1 }, "serial": 45292 }, 999.99] },
+    { "kind": "data", "sourceRow": 6, "cells": ["Maya Gil", "01212", { "date": { "y": 2024, "m": 6, "d": 15 }, "serial": 45458 }, 10000] },
+    { "kind": "data", "sourceRow": 7, "cells": ["Eli Peretz", "01313", { "date": { "y": 2024, "m": 4, "d": 30 }, "serial": 45412 }, 2750] },
+    { "kind": "data", "sourceRow": 8, "cells": ["Shira Adar", "01414", { "date": { "y": 2024, "m": 9, "d": 19 }, "serial": 45554 }, -75.25] },
+    { "kind": "data", "sourceRow": 9, "cells": ["Tomer Ben", "01515", { "date": { "y": 2024, "m": 10, "d": 10 }, "serial": 45575 }, 0] }
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 8,
+    "rowsOut": 8,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

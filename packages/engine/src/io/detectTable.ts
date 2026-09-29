@@ -96,14 +96,27 @@ function findHeaderInput(rows: Cell[][], colCount: number): HeaderSearchResult {
   for (let r = 0; r < limit; r++) {
     if (!looksLikeHeaderRow(rows[r], colCount)) continue;
 
+    // DECISION: check the single-header reading first. `looksLikeHeaderRow`
+    // only requires "mostly text, all distinct" (SPEC 6.1), which plenty of
+    // ordinary first data rows satisfy too (e.g. a row of unique text ids/names
+    // with just one numeric column) -- especially for CSV, where every cell is
+    // a string and so trivially reads as "text". Checking the 3-row data block
+    // right after `r` first, before asking whether row r+1 *also* looks
+    // header-ish, means a normal single-row header is never misclassified as
+    // "split" just because its first data row happens to look header-like too.
+    // A genuine two-row (grouped/merged) header still falls through to the
+    // split check below, because a block starting on its own second header
+    // row is never internally consistent (the header row's column doesn't
+    // match the data rows' types).
+    if (isDataLikeBlock(rows, r + 1, 3, colCount)) {
+      return { kind: 'ok', row: r };
+    }
+
     const secondLineAlsoHeaderish = looksLikeHeaderRow(rows[r + 1], colCount);
     if (secondLineAlsoHeaderish && isDataLikeBlock(rows, r + 2, 2, colCount)) {
       return { kind: 'split', row: r };
     }
 
-    if (isDataLikeBlock(rows, r + 1, 3, colCount)) {
-      return { kind: 'ok', row: r };
-    }
     if (fallback === null && isDataLikeBlock(rows, r + 1, 2, colCount)) {
       fallback = r;
     }

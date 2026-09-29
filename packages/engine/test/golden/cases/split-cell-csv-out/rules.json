@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "name": "פיצול מוצרים לשורות",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "agent", "header": "סוכן", "type": "text", "required": true },
+      { "id": "policy", "header": "פוליסה", "type": "idLike", "required": true },
+      { "id": "products", "header": "מוצרים", "type": "text", "required": true },
+      { "id": "amount", "header": "סכום", "type": "decimal", "required": true },
+      { "id": "notes", "header": "הערות", "type": "text" }
+    ]
+  },
+  "transform": {
+    "expand": {
+      "mode": "splitCell",
+      "column": "products",
+      "separator": ";",
+      "trim": true,
+      "partId": "product",
+      "indexId": "partIndex",
+      "countId": "partCount",
+      "skipEmpty": true
+    },
+    "computed": [
+      {
+        "id": "amountPerPart",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "digits": 2,
+          "arg": { "op": "div", "args": [ { "col": "amount" }, { "col": "partCount" } ] }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Out",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "columns": [
+      { "header": "סוכן", "from": "agent" },
+      { "header": "פוליסה", "from": "policy" },
+      { "header": "מוצר", "from": "product" },
+      { "header": "מס' חלק", "from": "partIndex" },
+      { "header": "מספר חלקים", "from": "partCount" },
+      { "header": "סכום לחלק", "from": "amountPerPart", "format": "#,##0.00" },
+      { "header": "הערות", "from": "notes" }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

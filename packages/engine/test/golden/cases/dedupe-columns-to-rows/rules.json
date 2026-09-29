@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "name": "Quarterly amounts unpivot",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "id", "header": "ID", "type": "integer", "required": true },
+      { "id": "name", "header": "Name", "type": "text" },
+      { "id": "jan", "header": "Jan", "type": "decimal" },
+      { "id": "feb", "header": "Feb", "type": "decimal" },
+      { "id": "mar", "header": "Mar", "type": "decimal" }
+    ]
+  },
+  "transform": {
+    "dedupe": { "keys": "all", "keep": "last", "action": "remove" },
+    "expand": {
+      "mode": "columnsToRows",
+      "columns": ["jan", "feb", "mar"],
+      "labelId": "month",
+      "valueId": "amount",
+      "valueType": "decimal",
+      "skipEmpty": true
+    },
+    "computed": [],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Monthly",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "columns": [
+      { "header": "ID", "from": "id" },
+      { "header": "Name", "from": "name" },
+      { "header": "Month", "from": "month" },
+      { "header": "Amount", "from": "amount", "format": "#,##0.00" }
+    ],
+    "headerStyle": { "bold": true },
+    "grandTotal": { "labelColumn": "name", "label": "Total", "sum": ["amount"] }
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

@@ -1,0 +1,9 @@
+Policy No,Client Name,Amount,Effective Date,Region
+00123,Dana Cohen,"1,234.56",05/03/2024,North
+00456,Yossi Levi,₪500.00,12/07/2024,South
+00789,Noa Bar,(200.00),25/12/2024,North
+01011,Omer Katz,999.99,01/01/2024,East
+01212,Maya Gil,"10,000",15/06/2024,South
+01313,Eli Peretz,"2,750.00",30/04/2024,East
+01414,Shira Adar,-75.25,19/09/2024,North
+01515,Tomer Ben,0.00,10/10/2024,South

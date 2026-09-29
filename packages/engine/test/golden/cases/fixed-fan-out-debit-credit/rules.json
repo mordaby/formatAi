@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "name": "יומן חובה זכות",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "agent", "header": "סוכן", "type": "text", "required": true },
+      { "id": "policy", "header": "פוליסה", "type": "idLike", "padLeft": 6, "required": true },
+      { "id": "amount", "header": "סכום", "type": "decimal", "required": true },
+      { "id": "date", "header": "תאריך", "type": "date" }
+    ]
+  },
+  "transform": {
+    "expand": {
+      "mode": "fixedFanOut",
+      "rows": [
+        { "set": { "side": { "const": "חובה" }, "value": { "col": "amount" } } },
+        { "set": { "side": { "const": "זכות" }, "value": { "op": "neg", "arg": { "col": "amount" } } } }
+      ]
+    },
+    "computed": [],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "יומן",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "columns": [
+      { "header": "סוכן", "from": "agent" },
+      { "header": "פוליסה", "from": "policy" },
+      { "header": "צד", "from": "side" },
+      { "header": "סכום", "from": "value", "format": "#,##0.00" },
+      { "header": "תאריך", "from": "date", "format": "DD/MM/YYYY" }
+    ],
+    "headerStyle": { "bold": true },
+    "grandTotal": { "labelColumn": "policy", "label": "סה\"כ", "sum": ["value"] }
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

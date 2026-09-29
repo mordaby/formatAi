@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "name": "Agent summary",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "agent", "header": "Agent", "type": "text", "required": true },
+      { "id": "client", "header": "Client", "type": "text" },
+      { "id": "amount", "header": "Amount", "type": "decimal", "required": true },
+      { "id": "date", "header": "Date", "type": "date" }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": [ { "column": "agent", "dir": "asc" }, { "column": "date", "dir": "asc" } ],
+    "group": {
+      "by": "agent",
+      "showDetailRows": false
+    }
+  },
+  "output": {
+    "sheetName": "Summary",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [
+      { "text": "Agent Summary Report", "bold": true }
+    ],
+    "columns": [
+      { "header": "Agent", "from": "agent", "agg": "first" },
+      { "header": "First Client", "from": "client", "agg": "first" },
+      { "header": "Deals", "from": "amount", "agg": "count" },
+      { "header": "Total Amount", "from": "amount", "agg": "sum", "format": "#,##0.00" },
+      { "header": "Max Amount", "from": "amount", "agg": "max", "format": "#,##0.00" }
+    ],
+    "headerStyle": { "bold": true },
+    "grandTotal": { "labelColumn": "agent", "label": "Total", "sum": ["amount"] }
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

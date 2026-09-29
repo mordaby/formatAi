@@ -1,0 +1,41 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "Monthly",
+  "direction": "ltr",
+  "columns": [
+    { "header": "ID" },
+    { "header": "Name" },
+    { "header": "Month" },
+    { "header": "Amount", "format": "#,##0.00", "numeric": true }
+  ],
+  "merges": [],
+  "rows": [
+    { "kind": "header", "bold": true, "cells": ["ID", "Name", "Month", "Amount"] },
+    { "kind": "data", "sourceRow": 4, "cells": [1, "Alice", "Jan", 100] },
+    { "kind": "data", "sourceRow": 4, "cells": [1, "Alice", "Feb", 200] },
+    { "kind": "data", "sourceRow": 4, "cells": [1, "Alice", "Mar", 300] },
+    { "kind": "data", "sourceRow": 5, "cells": [3, "Carol", "Feb", 400] },
+    { "kind": "data", "sourceRow": 6, "cells": [4, "Dave", "Jan", 500] },
+    { "kind": "data", "sourceRow": 6, "cells": [4, "Dave", "Feb", 500] },
+    { "kind": "data", "sourceRow": 6, "cells": [4, "Dave", "Mar", 500] },
+    { "kind": "data", "sourceRow": 7, "cells": [2, "Bob", "Jan", 150] },
+    { "kind": "data", "sourceRow": 7, "cells": [2, "Bob", "Mar", 250] },
+    { "kind": "data", "sourceRow": 8, "cells": [5, "Erin", "Jan", 0] },
+    { "kind": "data", "sourceRow": 8, "cells": [5, "Erin", "Feb", 0] },
+    { "kind": "data", "sourceRow": 8, "cells": [5, "Erin", "Mar", 0] },
+    { "kind": "data", "sourceRow": 9, "cells": [6, "Frank", "Jan", 700] },
+    { "kind": "grandTotal", "cells": [null, "Total", null, 3600] }
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 8,
+    "rowsOut": 13,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [
+      { "rowNumber": 2, "duplicateOf": 4 },
+      { "rowNumber": 3, "duplicateOf": 7 }
+    ],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

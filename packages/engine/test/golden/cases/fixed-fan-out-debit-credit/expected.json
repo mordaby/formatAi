@@ -1,0 +1,36 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "יומן",
+  "direction": "rtl",
+  "columns": [
+    { "header": "סוכן" },
+    { "header": "פוליסה" },
+    { "header": "צד" },
+    { "header": "סכום", "format": "#,##0.00", "numeric": true },
+    { "header": "תאריך", "format": "dd/mm/yyyy" }
+  ],
+  "merges": [],
+  "rows": [
+    { "kind": "header", "bold": true, "cells": ["סוכן", "פוליסה", "צד", "סכום", "תאריך"] },
+    { "kind": "data", "sourceRow": 2, "cells": ["עוסק א", "001001", "חובה", 1000, { "date": { "y": 2024, "m": 5, "d": 1 }, "serial": 45413 }] },
+    { "kind": "data", "sourceRow": 2, "cells": ["עוסק א", "001001", "זכות", -1000, { "date": { "y": 2024, "m": 5, "d": 1 }, "serial": 45413 }] },
+    { "kind": "data", "sourceRow": 3, "cells": ["עוסק ב", "001002", "חובה", 250.75, { "date": { "y": 2024, "m": 5, "d": 2 }, "serial": 45414 }] },
+    { "kind": "data", "sourceRow": 3, "cells": ["עוסק ב", "001002", "זכות", -250.75, { "date": { "y": 2024, "m": 5, "d": 2 }, "serial": 45414 }] },
+    { "kind": "data", "sourceRow": 4, "cells": ["עוסק א", "001003", "חובה", -300, { "date": { "y": 2024, "m": 5, "d": 3 }, "serial": 45415 }] },
+    { "kind": "data", "sourceRow": 4, "cells": ["עוסק א", "001003", "זכות", 300, { "date": { "y": 2024, "m": 5, "d": 3 }, "serial": 45415 }] },
+    { "kind": "data", "sourceRow": 5, "cells": ["עוסק ג", "001004", "חובה", 0, { "date": { "y": 2024, "m": 5, "d": 4 }, "serial": 45416 }] },
+    { "kind": "data", "sourceRow": 5, "cells": ["עוסק ג", "001004", "זכות", 0, { "date": { "y": 2024, "m": 5, "d": 4 }, "serial": 45416 }] },
+    { "kind": "data", "sourceRow": 6, "cells": ["עוסק ב", "001005", "חובה", 87.5, { "date": { "y": 2024, "m": 5, "d": 5 }, "serial": 45417 }] },
+    { "kind": "data", "sourceRow": 6, "cells": ["עוסק ב", "001005", "זכות", -87.5, { "date": { "y": 2024, "m": 5, "d": 5 }, "serial": 45417 }] },
+    { "kind": "grandTotal", "cells": [null, "סה\"כ", null, 0, null] }
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 5,
+    "rowsOut": 10,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

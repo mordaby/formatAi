@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "name": "Windows-1255 rename",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "name", "header": "שם", "type": "text", "required": true },
+      { "id": "amount", "header": "סכום", "type": "decimal", "required": true }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Out",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "columns": [
+      { "header": "Amount", "from": "amount", "format": "#,##0.00" },
+      { "header": "Name", "from": "name" }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}
