@@ -6,7 +6,23 @@ import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from 'node:ch
 import { LlmError } from '../errors.js';
 import type { CompleteRequest, CompleteResult, LlmProvider, LlmUsage } from '../types.js';
 
-export type SpawnFn = (command: string, args: string[]) => ChildProcessWithoutNullStreams;
+export type SpawnFn = (
+  command: string,
+  args: string[],
+  options: { env: NodeJS.ProcessEnv },
+) => ChildProcessWithoutNullStreams;
+
+/**
+ * The child gets our environment minus API credentials: with ANTHROPIC_API_KEY (or an auth token)
+ * present, Claude Code would bill that key instead of the user's subscription login, which is the
+ * whole point of this dev provider.
+ */
+export function cliChildEnv(parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...parent };
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  return env;
+}
 
 export interface CreateClaudeCliProviderOptions {
   /** `CLAUDE_CLI_PATH` env value. Defaults to "claude" (resolved via PATH). */
@@ -51,7 +67,7 @@ function runProcess(
   return new Promise((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawnFn(command, args);
+      child = spawnFn(command, args, { env: cliChildEnv() });
     } catch (err) {
       reject(err);
       return;
