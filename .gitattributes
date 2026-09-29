@@ -4,3 +4,5 @@
 *.tgz binary
 *.png binary
 *.csv binary
+eval/cases/**/*.txt binary
+packages/engine/test/golden/cases/**/*.txt binary
