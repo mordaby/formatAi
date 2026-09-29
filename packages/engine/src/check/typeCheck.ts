@@ -22,6 +22,7 @@ import type {
   RowFilter,
   Rules,
   RulesTable,
+  SummaryRow,
   Validation,
 } from '@formatai/shared';
 import { fits, OP_SIGNATURES, unify, type ArgSpec, type ResultSpec, type SigType } from './signatures';
@@ -452,6 +453,41 @@ function checkValidationParam(
   }
 }
 
+/** SPEC 8.12 v4: a summary row's `cells` name output headers, and their aggregate
+ * (`SummaryAgg`) constrains the source output column's final type: `sum`/`average`
+ * need a numeric column; `min`/`max` need numeric or date; `count`/`first`/`last`
+ * accept any type. */
+function checkSummaryRow(
+  row: SummaryRow,
+  path: string,
+  finalTypes: ReadonlyMap<string, SigType>,
+  outputColumns: readonly OutputColumnRule[],
+  problems: TypeProblem[],
+): void {
+  for (const [header, agg] of Object.entries(row.cells)) {
+    const outCol = outputColumns.find((c) => c.header === header);
+    const colType = outCol?.from != null ? finalTypes.get(outCol.from) : undefined;
+    if (colType === undefined) continue; // unresolved column: checkRules already reports it
+    if (agg === 'sum' || agg === 'average') {
+      if (!NUMERIC_ONLY.has(colType)) {
+        problems.push({
+          kind: 'type',
+          path: `${path}.cells.${header}`,
+          message: `${agg} applies to a numeric column; "${header}" is ${colType}`,
+        });
+      }
+    } else if (agg === 'min' || agg === 'max') {
+      if (!NUMERIC_ONLY.has(colType) && colType !== 'date') {
+        problems.push({
+          kind: 'type',
+          path: `${path}.cells.${header}`,
+          message: `${agg} applies to a numeric or date column; "${header}" is ${colType}`,
+        });
+      }
+    }
+  }
+}
+
 /** SPEC 7's profile categories are looser/wider than the rules language's ColumnType
  * (e.g. "number" rather than integer/decimal/currency/percent); compared by family
  * rather than requiring an exact string match. Unrecognized profile/declared strings
@@ -597,6 +633,15 @@ export function typeCheck(rules: LearnResult | Rules, opts?: TypeCheckOptions): 
 
   // ----- validations' params must suit their column -----
   rules.validations.forEach((v, i) => checkValidationParam(v, i, finalTypes, rules.output.columns, problems));
+
+  // ----- summary rows (SPEC 8.12 v4): sum/average need numeric, min/max need
+  // numeric or date -----
+  rules.output.summaryRows?.forEach((row, i) =>
+    checkSummaryRow(row, `output.summaryRows[${i}]`, finalTypes, rules.output.columns, problems),
+  );
+  rules.transform.group?.summaryRows?.forEach((row, i) =>
+    checkSummaryRow(row, `transform.group.summaryRows[${i}]`, finalTypes, rules.output.columns, problems),
+  );
 
   return problems;
 }

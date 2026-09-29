@@ -368,7 +368,9 @@ This example comes from commission control, one of many domains. Nothing in the 
     "group": {
       "by": "agent",
       "showDetailRows": true,
-      "subtotal": { "labelColumn": "policy", "label": "סה\"כ לסוכן", "sum": ["premium", "commission"] },
+      "summaryRows": [
+        { "labelColumn": "פוליסה", "label": "סה\"כ לסוכן", "cells": { "פרמיה": "sum", "עמלה": "sum" } }
+      ],
       "blankRowsAfter": 1
     }
   },
@@ -390,7 +392,9 @@ This example comes from commission control, one of many domains. Nothing in the 
       { "header": "עמלה",        "from": "commission", "format": "#,##0.00" }
     ],
     "headerStyle": { "bold": true },
-    "grandTotal": { "labelColumn": "policy", "label": "סה\"כ", "sum": ["premium", "commission"] }
+    "summaryRows": [
+      { "labelColumn": "פוליסה", "label": "סה\"כ", "cells": { "פרמיה": "sum", "עמלה": "sum" } }
+    ]
   },
   "validations": [
     { "column": "insuredId", "rule": "israeliIdChecksum", "severity": "flag" },
@@ -416,8 +420,8 @@ This example comes from commission control, one of many domains. Nothing in the 
 6. **Computed columns.** These run after expand, so calculations apply to each new row.
 7. **Value maps.**
 8. **Sort.** The sort is stable: ties keep the input order, so the rows of one family stay together unless the sort separates them.
-9. **Group.** Detail rows, subtotals and spacing.
-10. **Output layout.** Title rows, header, columns, grand total, direction, language and file type (8.13).
+9. **Group.** Detail rows, summary rows (8.6, 8.12) and spacing.
+10. **Output layout.** Title rows, header, columns, summary rows (8.6, 8.12), direction, language and file type (8.13).
 11. **Validations** → flags. Input validations (`on: "input"`, the default) check the normalized input columns; output validations (`on: "output"`) check the final data rows, by output header.
 
 The engine receives no clock. All arithmetic uses decimal.js. `round` rounds half away from zero, like Excel's ROUND.
@@ -477,7 +481,16 @@ If the provider's structured output doesn't support recursive schemas, spell exp
 Families that fit none of these modes are blocked in pre-flight (6.3).
 
 ### 8.6 Summary outputs
-If the output has one row per group and no detail rows, the LLM sets `group.showDetailRows: false`, and each output column gets `agg`: `sum`, `count`, `min`, `max` or `first` (the group key uses `first`).
+Generic summary rows (v4, 8.21):
+```
+summaryRow = { label?: string, labelColumn?: <output header>, bold?: boolean,
+               cells: { <output header>: "sum" | "count" | "min" | "max" | "average" | "first" | "last" } }
+output.summaryRows?: summaryRow[]                   // after all data rows, in order
+transform.group.summaryRows?: summaryRow[]          // after each group, in order, before blankRowsAfter
+```
+`labelColumn` and the keys of `cells` name OUTPUT HEADERS, never ids, so a summary row belongs to the format and is identical across every source of that format (8.12). Without `labelColumn`, `label` goes in the first output column that has no entry in `cells` (falling back to the first column). `count` counts non-empty cells (a row a `block` validation left out never counts); `min`/`max` work on numbers and dates; `sum`/`average` need a numeric column, in exact decimal; `first`/`last` are the first/last non-empty value of the rows the row summarizes.
+
+If the output has one row per group and no detail rows, the LLM sets `group.showDetailRows: false`, and each output column gets `agg`: `sum`, `count`, `min`, `max`, `average`, `first` or `last` (the group key uses `first`).
 
 ### 8.7 Title rows
 A title row is one of three kinds:
@@ -590,9 +603,10 @@ The raw JSON stays behind an "Advanced" toggle and is validated on save.
 The product keeps two kinds of objects:
 
 - **Format:** the shape of a file the company produces, owned by the company and named by the user (e.g. "Priority catalog load", "Monthly commission control"). It holds:
-  - `output` (columns, headers, number formats, widths, title rows, grand total, direction, language, `file`);
-  - the layout parts that live in `transform`, normalized to output headers: `sort`, and `group` (by, subtotal label and sums, blank rows, showDetailRows, per-column agg);
+  - `output` (columns, headers, number formats, widths, title rows, summary rows, direction, language, `file`);
+  - the layout parts that live in `transform`, normalized to output headers: `sort`, and `group` (by, summary rows, blank rows, showDetailRows, per-column agg);
   - output validations (`on: "output"`).
+  - Summary rows (8.6) are already keyed by output header, so - unlike `sort`/`group.by` - they need no id translation to belong to the format.
 - **Conversion:** how one kind of input file (a **source**: one supplier's price list, one insurer's report, one client's export) becomes that format. It is a full, self-contained rules file (8.1) plus `formatId` and `sourceName`. The engine only ever runs a conversion; it never needs the format object at run time.
 
 A format usually has several conversions. That is the point of the registry: the company defines its format once, and each new source is attached to it.
@@ -1086,3 +1100,7 @@ What changed:
 - **Limits:** `checkLimits(rules, tier) → problems[]` for depth, node budget (after expanding calls), function and table counts, call-graph cycles, table key uniqueness and the rule count.
 - **Golden tests:** one rules file that uses a function in three columns, one that uses a lookup table, and one that uses `switch`.
 - M1 adds the overfitting lint and learn-v3.
+
+### v4 change: generic summary rows
+
+`output.grandTotal` and `transform.group.subtotal` (8.1: sum-only, one label, ids) are replaced by generic `summaryRows` (8.6, 8.12): any number of rows, each naming, by OUTPUT HEADER, the aggregate (`sum`, `count`, `min`, `max`, `average`, `first`, `last`) that fills each cell - so a summary row belongs to the format like the rest of `output`, with no id translation (8.12). A summary-output column's own `agg` (8.6) gains `average`/`last` too, for the same set either way. Each `summaryRows` entry counts as one rule (8.14). Stored rules files keep `grandTotal`/`subtotal` loading and running byte-identical; the LLM (`learn-v4`) only ever writes `summaryRows`.

@@ -191,6 +191,13 @@ function findDuplicateTableKeys(table: RulesTable): unknown[] {
  * (8.11) likewise shows one "Sort" line under Layout regardless of how many keys it
  * has. Counted here as at most one rule for the whole `transform.sort` list (zero when
  * it's empty), not one per key.
+ *
+ * SPEC 21 v4: each `summaryRows` entry (`output.summaryRows` and
+ * `transform.group.summaryRows`) counts as one rule too. The deprecated
+ * `grandTotal`/`subtotal` were never counted on their own (folded into "group" above,
+ * or free for `grandTotal`) - that stays unchanged for stored rules files that still
+ * carry them (SPEC 21 v4 backward compatibility), so an old-style rules file's rule
+ * count doesn't retroactively grow.
  */
 function countRules(rules: LearnResult | Rules): number {
   const functions = rules.transform.functions?.length ?? 0;
@@ -202,7 +209,21 @@ function countRules(rules: LearnResult | Rules): number {
   const sort = rules.transform.sort.length > 0 ? 1 : 0;
   const group = rules.transform.group ? 1 : 0;
   const validations = rules.validations.length;
-  return functions + tables + outputColumns + filters + dedupe + expand + sort + group + validations;
+  const outputSummaryRows = rules.output.summaryRows?.length ?? 0;
+  const groupSummaryRows = rules.transform.group?.summaryRows?.length ?? 0;
+  return (
+    functions +
+    tables +
+    outputColumns +
+    filters +
+    dedupe +
+    expand +
+    sort +
+    group +
+    validations +
+    outputSummaryRows +
+    groupSummaryRows
+  );
 }
 
 // ---------- The public entry point ----------

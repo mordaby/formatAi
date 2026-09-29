@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "name": "Inventory summary rows",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "warehouse", "header": "Warehouse", "type": "text", "required": true },
+      { "id": "sku", "header": "SKU", "type": "text", "required": true },
+      { "id": "item", "header": "Item", "type": "text" },
+      { "id": "qty", "header": "Qty", "type": "integer", "required": true },
+      { "id": "cost", "header": "Cost", "type": "decimal", "required": true }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": [ { "column": "warehouse", "dir": "asc" } ],
+    "group": {
+      "by": "warehouse",
+      "showDetailRows": true,
+      "summaryRows": [
+        { "label": "Subtotal", "labelColumn": "Item", "bold": true, "cells": { "SKU": "count", "Qty": "average", "Cost": "max" } }
+      ],
+      "blankRowsAfter": 1
+    }
+  },
+  "output": {
+    "sheetName": "Warehouse Report",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "columns": [
+      { "header": "Warehouse", "from": "warehouse" },
+      { "header": "SKU", "from": "sku" },
+      { "header": "Item", "from": "item" },
+      { "header": "Qty", "from": "qty", "format": "0" },
+      { "header": "Cost", "from": "cost", "format": "0.00" }
+    ],
+    "headerStyle": { "bold": true },
+    "summaryRows": [
+      { "label": "Grand total", "labelColumn": "Item", "bold": true, "cells": { "SKU": "count", "Qty": "min", "Cost": "average" } }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

@@ -1,6 +1,8 @@
-# LEARN_PROMPT: the learn call (promptVersion: learn-v3)
+# LEARN_PROMPT: the learn call (promptVersion: learn-v4)
 
-This file defines exactly what is sent to the LLM when a format is learned from two files. The code keeps the system prompt in `packages/shared/prompts/learn-v3.txt`, copied verbatim from section 2. Any change to it means a new `promptVersion` and a new eval run.
+This file defines exactly what is sent to the LLM when a format is learned from two files. The code keeps the system prompt in `packages/shared/prompts/learn-v4.txt`, copied verbatim from section 2. Any change to it means a new `promptVersion` and a new eval run.
+
+**learn-v4 changes from learn-v3:** generic summary rows (SPEC 8.6, 8.12, 21). `output.grandTotal` / `transform.group.subtotal` (sum-only, id-based) are replaced by `output.summaryRows` / `transform.group.summaryRows`: one or more rows, each naming its cells by OUTPUT HEADER with an aggregate (`sum`, `count`, `min`, `max`, `average`, `first`, `last`). The LLM only ever writes `summaryRows`.
 
 **learn-v3 changes from learn-v2:** more operations, typed signatures, functions and constant tables (SPEC 8.3, 8.14), and guidance on when to use them.
 
@@ -38,7 +40,7 @@ One JSON object:
 - masking: true if text values are masked (see "Masked values").
 - input.columns, output.columns: one entry per column. i = position (0-based). header, type, shape (character pattern: D = digit, A = Latin letter, H = Hebrew letter, other characters literal; "|" separates alternative shapes), stats, and for output columns the Excel number format (format) and width.
 - input.layout: headerRow, rowsAbove (rows above the header to skip), footerFirstCell (values that start footer rows to stop at).
-- output.layout: detected by code. titleRows, headerRow, headerBold, summary (true if one row per group), groupBy, grandTotal, sort, sheetName, direction (rtl or ltr), language (he or en). References to columns use "in": n for input columns and "out": n for output columns.
+- output.layout: detected by code. titleRows, headerRow, headerBold, summary (true if one row per group), groupBy, summaryRows, sort, sheetName, direction (rtl or ltr), language (he or en). References to columns use "in": n for input columns and "out": n for output columns.
 - output.file: the output file type (xlsx, csv or txt), delimiter, whether it has a header row, and encoding. Detected by code; copy it.
 - target: present only when this input is being added as a new source to a format that already exists. See "Adding a source to an existing format".
 - samples: aligned pairs. "out" is an output data row, "in" is the input row it came from. Rows are arrays in column order. When rows expand, each sample is a family instead: "in" is one input row and "out" is the list of all output rows it produced, in order.
@@ -49,7 +51,7 @@ One JSON object:
 # Adding a source to an existing format
 
 When target is present, the output format already exists and other sources already feed it. The format is fixed:
-- Copy target.output into output exactly, character for character, including file, titleRows, grandTotal, headers, formats and widths. The only field you choose in output.columns is from.
+- Copy target.output into output exactly, character for character, including file, titleRows, summaryRows, headers, formats and widths. The only field you choose in output.columns is from.
 - Build transform.sort and transform.group so that they sort and group by the same output columns, with the same labels, sums and blank rows, as target.layout.
 - Copy target.validations (the output validations) exactly.
 - Your work is input, the rest of transform (rowFilters, dedupe, expand, computed, valueMaps) and input validations: how THIS input produces the format's columns.
@@ -90,7 +92,7 @@ Headers, values and labels may be Hebrew, English or mixed. Copy them exactly. N
    - For fixedFanOut, write one entry in rows per position, in order, with a set expression for every column that differs by position.
    - Never add expand without a hint. If the samples are families but no hint explains them, report the affected columns as unsupported with rowExpansion.
 7. Sort: copy output.layout.sort when present. Otherwise add no sort.
-8. Groups and totals: build transform.group and output.grandTotal from output.layout. If output.layout.summary is true, set group.showDetailRows to false and give every output column an agg (sum, count, min, max, or first for the group key).
+8. Groups and summary rows: build transform.group from output.layout.groupBy (by, blankRowsAfter). Copy output.layout.groupBy.summaryRows into transform.group.summaryRows, and output.layout.summaryRows into output.summaryRows: each is a list of rows in order; a row's labelOut and cells[].out are output positions, so use the output header at that position for the copy's labelColumn and cells keys (summaryRows are keyed by output header, SPEC 8.12). If output.layout.summary is true, set group.showDetailRows to false and give every output column an agg (sum, count, min, max, average, first, or last for the group key).
 9. Formats: copy output.file, and each output column's format and width. For input date columns, list inputFormats; use "excelSerial" when the input stats say the dates are serial numbers.
 10. Types: declare ID-like columns as idLike (text; leading zeros matter). When stats.leadingZerosLost is true and the output has the zeros, set padLeft on the input column.
 11. Validations: add only checks that follow from the data and that no sample contradicts:
@@ -159,7 +161,9 @@ valueMaps: [{"column": id, "map": {from: to}, "onMissing": "flag" | "keep"}].
 
 sort: [{"column": id, "dir": "asc" | "desc"}].
 
-group: {"by": id, "showDetailRows": bool, "subtotal": {"labelColumn": id, "label": text, "sum": [ids]}, "blankRowsAfter": n}.
+group: {"by": id, "showDetailRows": bool, "blankRowsAfter": n, "summaryRows": [summaryRow, ...]}.
+
+summaryRow: {"label": text, "labelColumn": output header, "bold": bool, "cells": {output header: "sum" | "count" | "min" | "max" | "average" | "first" | "last"}}. output.summaryRows: [summaryRow, ...], after all data rows, in order. group.summaryRows: [summaryRow, ...], after each group, in order, before blankRowsAfter. label and labelColumn are both optional; cells and labelColumn name OUTPUT headers, never ids.
 
 titleRows: {"text": ..., "bold": bool} | {"blank": true} | {"parts": [{"text": ...} | {"agg": "min" | "max", "column": id, "format": ...}], "bold": bool}.
 
@@ -172,7 +176,7 @@ Date format tokens: D, DD, M, MM, MMMM (month name in output.language), YY, YYYY
 # Example
 
 <example_payload>
-{"masking":true,"input":{"sheetName":"גיליון1","direction":"rtl","layout":{"headerRow":0,"rowsAbove":0,"footerFirstCell":[]},"columns":[{"i":0,"header":"שם לקוח","type":"text","shape":"HHH HHH","stats":{"empty":0,"distinct":0.4}},{"i":1,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDD|DDDDDDDDD","stats":{"empty":0,"distinct":1,"key":true,"leadingZerosLost":true,"israeliId":true}},{"i":2,"header":"סטטוס","type":"text","shape":"HHHH|HHHHH","stats":{"empty":0,"values":2}},{"i":3,"header":"סכום","type":"decimal","stats":{"empty":0,"range":[150,9800]}}]},"output":{"file":{"type":"xlsx"},"layout":{"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"headerRow":0,"headerBold":true,"summary":false,"groupBy":null,"grandTotal":null,"sort":null},"columns":[{"i":0,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDDD","format":"@","width":12},{"i":1,"header":"שם","type":"text","format":"General","width":18},{"i":2,"header":"סכום כולל מע\"מ","type":"decimal","format":"#,##0.00","width":14}]},"samples":[{"in":["זקמ עגש","40217763","נברט",1000],"out":["040217763","זקמ עגש",1180]},{"in":["פלר חינ","203948576","נברט",342.05],"out":["203948576","פלר חינ",403.62]}],"dropped":[["שכט מצב","55120934","צחלדפ",780]],"hints":[{"out":0,"rel":"padLeft","in":[1],"length":9,"coverage":1},{"out":1,"rel":"copy","in":[0],"coverage":1},{"out":2,"rel":"mulConst","in":[3],"const":1.18,"round":2,"coverage":1},{"rel":"filter","in":[2],"keptValues":["נברט"],"droppedValues":["צחלדפ"],"coverage":1}],"skipColumns":[]}
+{"masking":true,"input":{"sheetName":"גיליון1","direction":"rtl","layout":{"headerRow":0,"rowsAbove":0,"footerFirstCell":[]},"columns":[{"i":0,"header":"שם לקוח","type":"text","shape":"HHH HHH","stats":{"empty":0,"distinct":0.4}},{"i":1,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDD|DDDDDDDDD","stats":{"empty":0,"distinct":1,"key":true,"leadingZerosLost":true,"israeliId":true}},{"i":2,"header":"סטטוס","type":"text","shape":"HHHH|HHHHH","stats":{"empty":0,"values":2}},{"i":3,"header":"סכום","type":"decimal","stats":{"empty":0,"range":[150,9800]}}]},"output":{"file":{"type":"xlsx"},"layout":{"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"headerRow":0,"headerBold":true,"summary":false,"groupBy":null,"summaryRows":[],"sort":null},"columns":[{"i":0,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDDD","format":"@","width":12},{"i":1,"header":"שם","type":"text","format":"General","width":18},{"i":2,"header":"סכום כולל מע\"מ","type":"decimal","format":"#,##0.00","width":14}]},"samples":[{"in":["זקמ עגש","40217763","נברט",1000],"out":["040217763","זקמ עגש",1180]},{"in":["פלר חינ","203948576","נברט",342.05],"out":["203948576","פלר חינ",403.62]}],"dropped":[["שכט מצב","55120934","צחלדפ",780]],"hints":[{"out":0,"rel":"padLeft","in":[1],"length":9,"coverage":1},{"out":1,"rel":"copy","in":[0],"coverage":1},{"out":2,"rel":"mulConst","in":[3],"const":1.18,"round":2,"coverage":1},{"rel":"filter","in":[2],"keptValues":["נברט"],"droppedValues":["צחלדפ"],"coverage":1}],"skipColumns":[]}
 </example_payload>
 
 <example_result>
@@ -192,14 +196,14 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
 | `input.sheetName`, `input.direction` | from the input sheet |
 | `input.layout` | `{ headerRow, rowsAbove, footerFirstCell[] }` |
 | `input.columns[]` | `{ i, header, type, shape, stats }` |
-| `output.layout` | `{ sheetName, direction, language, titleRows[], headerRow, headerBold, summary, groupBy, grandTotal, sort }` |
+| `output.layout` | `{ sheetName, direction, language, titleRows[], headerRow, headerBold, summary, groupBy, summaryRows, sort }` |
 | `output.columns[]` | `{ i, header, type, shape, format, width, stats }` |
 | `samples[]` | up to 12 `{ in: [...], out: [...] }`, or up to 6 families `{ in: [...], out: [[...], [...]] }` when rows expand; values masked when masking is on |
 | `dropped[]` | up to 5 input rows |
 | `hints[]` | see below |
 | `skipColumns[]` | output positions |
 | `output.file` | `{ type, delimiter?, header, encoding? }`, detected by code from the example output |
-| `target` | attach mode only: `{ output, layout, validations }` of the existing format. `layout` is normalized to output headers: `sort: [{ header, dir }]`, `group: { by: header, showDetailRows, subtotal?: { labelHeader, label, sums: [headers] }, blankRowsAfter, agg?: { header: fn } }` |
+| `target` | attach mode only: `{ output, layout, validations }` of the existing format. `output.summaryRows` (like `output` itself) is already keyed by output header, copied as-is. `layout` is normalized to output headers: `sort: [{ header, dir }]`, `group: { by: header, showDetailRows, blankRowsAfter, agg?: { header: fn }, summaryRows: [{ label?, labelColumn?, bold?, cells: { header: agg } }] }` |
 
 **`stats` keys:** included only when relevant, to save tokens.
 - `empty` (share of empty cells)
@@ -210,8 +214,8 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
 
 **`output.layout` details:**
 - `titleRows[]`: `{ row, text?, blank?, bold?, containsDate?: { in, agg, format } }`
-- `groupBy`: `{ out, blankRowsAfter, subtotal?: { labelOut, label, sums: [out...] } }`
-- `grandTotal`: `{ labelOut, label, sums: [out...] }`
+- `groupBy`: `{ out, blankRowsAfter, summaryRows?: [{ label?, labelOut?, bold?, cells: [{out, agg}] }] }`
+- `summaryRows`: `[{ label?, labelOut?, bold?, cells: [{out, agg}] }]` (top level: after all data rows, in order; `agg` is `sum` | `count` | `min` | `max` | `average` | `first` | `last`)
 - `sort[]`: `{ out, dir }`
 
 **Hints:**
@@ -222,7 +226,7 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
   - `splitCell`: `{ in: [col], separator, out }`
   - `fixedFanOut`: `{ size, positions: [[hints for position 1], [hints for position 2], ...] }`. For example, position 1: `{ out: 3, rel: "constant", value: "חובה" }`; position 2: `{ out: 3, rel: "constant", value: "זכות" }` and `{ out: 4, rel: "mulConst", in: [5], const: -1 }`.
 - With masking on, values inside hints (value-map pairs, filter values, constants) are masked with the same map as the samples.
-- With masking on, words in `target` that also appear in data cells are masked with the same map; label words (titles, subtotal and total labels, headers) are sent real, as in the samples.
+- With masking on, words in `target` that also appear in data cells are masked with the same map; label words (titles, summary-row labels, headers) are sent real, as in the samples.
 
 **Size rules:**
 - Serialize compactly.
@@ -275,4 +279,4 @@ After the call, code checks follow the layers in SPEC 9.2 (structure, references
 - **Every change goes through the eval harness.** Run both masking modes, compare with the previous `promptVersion`, and ship only if verified rates don't drop and cost per learn doesn't rise without a reason.
 - **Keep the eval spread across domains.** A prompt change that improves one domain and hurts another is a regression.
 - **Fix recurring failures in code first when possible.** A new hint type or pre-flight check is free on every future call. A new paragraph in the prompt costs tokens on every call, even when cached.
-- **Grow the examples gradually.** Once the eval set exists, add 1–2 more examples taken from it: one with groups and subtotals, and one with a title built from a date. When the registry cases exist, add one compact attach-mode example. Keep them all compact and from different domains.
+- **Grow the examples gradually.** Once the eval set exists, add 1–2 more examples taken from it: one with groups and summary rows, and one with a title built from a date. When the registry cases exist, add one compact attach-mode example. Keep them all compact and from different domains.

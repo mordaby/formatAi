@@ -1,6 +1,8 @@
 // Internal text-normalization helpers used by detectTable and extractTable.
 // Not re-exported from io/index.ts: this is plumbing, not part of the public contract.
 
+import { detection } from '@formatai/shared';
+
 /**
  * Unify the various quote-mark and geresh characters that show up in Hebrew
  * spreadsheets into plain ASCII `"` and `'` (SPEC 17: "different quote characters
@@ -24,12 +26,11 @@ export function normalizeCellText(input: string): string {
   return normalizeQuotes(collapsed);
 }
 
-const FOOTER_PREFIXES = ['סה"כ', 'total'];
-
-/** True when `text` (after normalization) starts with a known footer/total label. */
+/** True when `text` (after normalization) starts with a known footer/total label
+ * (SPEC non-negotiable 8: the label words live in shared config, not here). */
 export function isFooterLabel(text: string): boolean {
   const norm = normalizeCellText(text).toLowerCase();
-  return FOOTER_PREFIXES.some((p) => norm.startsWith(p.toLowerCase()));
+  return detection.footerLabelPrefixes.some((p) => norm.startsWith(p.toLowerCase()));
 }
 
 const HEBREW_RE = /[֐-׿]/;

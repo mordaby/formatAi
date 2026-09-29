@@ -9,6 +9,13 @@ import {
   type AssumptionReasonCode,
   type UnsupportedReasonCode,
 } from '../codes';
+// `SummaryAgg` is canonically declared in payload.ts (LEARN_PROMPT §3's
+// `output.layout.summaryRows`/`groupBy.summaryRows`, keyed by output *position*);
+// the rules-language `SummaryRow.cells` below uses the same aggregate names, keyed
+// by output *header* instead (SPEC 8.12). Imported as a type only (erased at compile
+// time), so re-using it here creates no runtime dependency on payload.ts, only a
+// type-level one - and avoids two independently-declared literal unions drifting apart.
+import type { SummaryAgg } from '../payload';
 
 // ---------- Column type (SPEC 8.1) ----------
 
@@ -476,8 +483,42 @@ export const SortKeySchema = z.strictObject({
   dir: z.enum(['asc', 'desc']),
 });
 
+// ---------- summaryRows (SPEC 8.12 v4: generic summary rows) ----------
+// v4 DECISION (replaces the v1-v3 sum-only `output.grandTotal` / `group.subtotal`):
+// a summary row names its cells by OUTPUT HEADER, not by id, so - like the rest of
+// `output` - it belongs to the format and is identical across every source of that
+// format (SPEC 8.12), with no id-to-header translation needed. `count` counts
+// non-empty cells (blocked rows never count, same as today); `min`/`max` work on
+// numbers and dates; `sum`/`average` need a numeric column (checked by the engine's
+// typeCheck, since this schema has no type information); `first`/`last` are the
+// first/last non-empty value of the rows the row summarizes (the group, or - for
+// `output.summaryRows` - all rows).
+
+export const SUMMARY_AGGS = ['sum', 'count', 'min', 'max', 'average', 'first', 'last'] as const;
+export const SummaryAggSchema = z.enum(SUMMARY_AGGS);
+
+export interface SummaryRow {
+  /** Label text, as written (omit for a summary row with no label). */
+  label?: string;
+  /** Output header of the column that shows `label`. When omitted, the engine uses
+   * the first output column with no entry in `cells` (falling back to column 0). */
+  labelColumn?: string;
+  bold?: boolean;
+  /** Output header -> the aggregate that fills that column's cell. */
+  cells: Record<string, SummaryAgg>;
+}
+export const SummaryRowSchema = z.strictObject({
+  label: z.string().optional(),
+  labelColumn: z.string().optional(),
+  bold: z.boolean().optional(),
+  cells: z.record(z.string(), SummaryAggSchema),
+});
+
 // ---------- transform.group ----------
 
+/** @deprecated SPEC 21 v4: replaced by `Group.summaryRows`. Stored rules files
+ * (`RulesSchema`) may still carry it; the LLM (`LearnResultSchema`) never writes it -
+ * the engine translates it into a `summaryRows` entry at run time (SPEC 21 v4). */
 export interface GroupSubtotal {
   labelColumn: string;
   label: string;
@@ -492,14 +533,22 @@ export const GroupSubtotalSchema = z.strictObject({
 export interface Group {
   by: string;
   showDetailRows: boolean;
+  /** @deprecated SPEC 21 v4: replaced by `summaryRows`. */
   subtotal?: GroupSubtotal;
   blankRowsAfter?: number;
+  /** SPEC 8.12 v4: summary rows after this group, in order, before `blankRowsAfter`. */
+  summaryRows?: SummaryRow[];
 }
 export const GroupSchema = z.strictObject({
   by: z.string(),
   showDetailRows: z.boolean(),
-  subtotal: GroupSubtotalSchema.optional(),
   blankRowsAfter: z.number().int().min(0).optional(),
+  summaryRows: z.array(SummaryRowSchema).optional(),
+});
+/** SPEC 21 v4 backward compatibility: accepts the deprecated `subtotal` too, for
+ * stored rules files (`RulesSchema`) only - never for `LearnResultSchema`. */
+export const StoredGroupSchema = GroupSchema.extend({
+  subtotal: GroupSubtotalSchema.optional(),
 });
 
 // ---------- transform.functions / transform.tables (SPEC 8.14) ----------
@@ -563,6 +612,11 @@ export const RulesTransformSchema = z.strictObject({
   sort: z.array(SortKeySchema),
   group: GroupSchema.optional(),
 });
+/** SPEC 21 v4 backward compatibility: `group` accepts the deprecated `subtotal`
+ * (`StoredGroupSchema`), for stored rules files (`RulesSchema`) only. */
+export const StoredRulesTransformSchema = RulesTransformSchema.extend({
+  group: StoredGroupSchema.optional(),
+});
 
 // ---------- output.titleRows (SPEC 8.7) ----------
 
@@ -585,7 +639,10 @@ export const TitleRowSchema = z.union([
 
 // ---------- output.columns / headerStyle / grandTotal (SPEC 8.1, 8.6) ----------
 
-export const OUTPUT_COLUMN_AGGS = ['sum', 'count', 'min', 'max', 'first'] as const;
+/** SPEC 8.6/21 v4: the same aggregate set as `SummaryAgg` (extended with `average`
+ * and `last` in v4, for consistency between a summary output's per-column `agg` and
+ * a generic summary row's `cells` aggregate). */
+export const OUTPUT_COLUMN_AGGS = SUMMARY_AGGS;
 export type OutputColumnAgg = (typeof OUTPUT_COLUMN_AGGS)[number];
 
 export interface OutputColumnRule {
@@ -608,6 +665,9 @@ export interface HeaderStyle {
 }
 export const HeaderStyleSchema = z.strictObject({ bold: z.boolean().optional() });
 
+/** @deprecated SPEC 21 v4: replaced by `RulesOutput.summaryRows`. Stored rules files
+ * (`RulesSchema`) may still carry it; the LLM (`LearnResultSchema`) never writes it -
+ * the engine translates it into a `summaryRows` entry at run time (SPEC 21 v4). */
 export interface GrandTotal {
   labelColumn: string;
   label: string;
@@ -661,7 +721,10 @@ export interface RulesOutput {
   titleRows: TitleRow[];
   columns: OutputColumnRule[];
   headerStyle?: HeaderStyle;
+  /** @deprecated SPEC 21 v4: replaced by `summaryRows`. */
   grandTotal?: GrandTotal;
+  /** SPEC 8.12 v4: summary rows after all data rows, in order. */
+  summaryRows?: SummaryRow[];
 }
 export const RulesOutputSchema = z.strictObject({
   file: OutputFileSchema.optional(),
@@ -671,6 +734,11 @@ export const RulesOutputSchema = z.strictObject({
   titleRows: z.array(TitleRowSchema),
   columns: z.array(OutputColumnRuleSchema).min(1),
   headerStyle: HeaderStyleSchema.optional(),
+  summaryRows: z.array(SummaryRowSchema).optional(),
+});
+/** SPEC 21 v4 backward compatibility: accepts the deprecated `grandTotal` too, for
+ * stored rules files (`RulesSchema`) only - never for `LearnResultSchema`. */
+export const StoredRulesOutputSchema = RulesOutputSchema.extend({
   grandTotal: GrandTotalSchema.optional(),
 });
 
@@ -864,8 +932,15 @@ export interface Rules extends LearnResult {
   name: string;
   meta: RulesMeta;
 }
+/** SPEC 21 v4 backward compatibility: unlike `LearnResultSchema`, a stored rules file
+ * may still carry the deprecated `transform.group.subtotal` / `output.grandTotal`
+ * (`StoredRulesTransformSchema` / `StoredRulesOutputSchema`) - a format learned before
+ * v4 keeps loading and running exactly as before. The LLM never writes them; see
+ * `LearnResultSchema` below. */
 export const RulesSchema = z.strictObject({
   ...learnResultShape,
+  transform: StoredRulesTransformSchema,
+  output: StoredRulesOutputSchema,
   name: z.string().min(1),
   meta: RulesMetaSchema,
 });

@@ -68,8 +68,14 @@ describe('validations: severity block', () => {
       ],
       {
         columns,
-        transform: { group: { by: 'status', showDetailRows: true, subtotal: { labelColumn: 'id', label: 'sub', sum: ['amount'] } } },
-        output: { grandTotal: { labelColumn: 'id', label: 'total', sum: ['amount'] } },
+        transform: {
+          group: {
+            by: 'status',
+            showDetailRows: true,
+            summaryRows: [{ labelColumn: 'id', label: 'sub', cells: { amount: 'sum' } }],
+          },
+        },
+        output: { summaryRows: [{ labelColumn: 'id', label: 'total', cells: { amount: 'sum' } }] },
         out: ['id', 'amount'],
       },
     );
@@ -80,8 +86,8 @@ describe('validations: severity block', () => {
     expect(body(res.sheet)).toEqual([
       ['data', VALID_ID, 100],
       ['data', VALID_ID, 20],
-      ['subtotal', 'sub', 120],
-      ['grandTotal', 'total', 120],
+      ['summaryRow', 'sub', 120],
+      ['summaryRow', 'total', 120],
     ]);
     // Row 3 failed the checksum too, but it is blocked: no flag for a row that isn't written.
     expect(res.flags).toEqual([]);
@@ -156,8 +162,14 @@ describe('validations: on "output"', () => {
       [{ on: 'output', column: 'Amount', rule: 'range', min: 0, severity: 'block' }],
       {
         columns,
-        transform: { group: { by: 'status', showDetailRows: true, subtotal: { labelColumn: 'id', label: 'sub', sum: ['amount'] } } },
-        output: { grandTotal: { labelColumn: 'id', label: 'total', sum: ['amount'] } },
+        transform: {
+          group: {
+            by: 'status',
+            showDetailRows: true,
+            summaryRows: [{ labelColumn: 'ID', label: 'sub', cells: { Amount: 'sum' } }],
+          },
+        },
+        output: { summaryRows: [{ labelColumn: 'ID', label: 'total', cells: { Amount: 'sum' } }] },
         out: outCols,
       },
     );
@@ -168,11 +180,11 @@ describe('validations: on "output"', () => {
     expect(body(res.sheet)).toEqual([
       ['data', VALID_ID, 100],
       ['data', VALID_ID, 20],
-      ['subtotal', 'sub', 120],
+      ['summaryRow', 'sub', 120],
       ['data', null, 50],
-      ['subtotal', 'sub', 50],
+      ['summaryRow', 'sub', 50],
       // 170 = 100 + 20 + 50: row 3's -5 never reaches this total.
-      ['grandTotal', 'total', 170],
+      ['summaryRow', 'total', 170],
     ]);
   });
 });

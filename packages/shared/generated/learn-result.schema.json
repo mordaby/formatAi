@@ -817,34 +817,49 @@
             "showDetailRows": {
               "type": "boolean"
             },
-            "subtotal": {
-              "type": "object",
-              "properties": {
-                "labelColumn": {
-                  "type": "string"
-                },
-                "label": {
-                  "type": "string"
-                },
-                "sum": {
-                  "minItems": 1,
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              },
-              "required": [
-                "labelColumn",
-                "label",
-                "sum"
-              ],
-              "additionalProperties": false
-            },
             "blankRowsAfter": {
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            "summaryRows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "labelColumn": {
+                    "type": "string"
+                  },
+                  "bold": {
+                    "type": "boolean"
+                  },
+                  "cells": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "sum",
+                        "count",
+                        "min",
+                        "max",
+                        "average",
+                        "first",
+                        "last"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "cells"
+                ],
+                "additionalProperties": false
+              }
             }
           },
           "required": [
@@ -1046,7 +1061,9 @@
                   "count",
                   "min",
                   "max",
-                  "first"
+                  "average",
+                  "first",
+                  "last"
                 ]
               }
             },
@@ -1066,29 +1083,44 @@
           },
           "additionalProperties": false
         },
-        "grandTotal": {
-          "type": "object",
-          "properties": {
-            "labelColumn": {
-              "type": "string"
-            },
-            "label": {
-              "type": "string"
-            },
-            "sum": {
-              "minItems": 1,
-              "type": "array",
-              "items": {
+        "summaryRows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
                 "type": "string"
+              },
+              "labelColumn": {
+                "type": "string"
+              },
+              "bold": {
+                "type": "boolean"
+              },
+              "cells": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "enum": [
+                    "sum",
+                    "count",
+                    "min",
+                    "max",
+                    "average",
+                    "first",
+                    "last"
+                  ]
+                }
               }
-            }
-          },
-          "required": [
-            "labelColumn",
-            "label",
-            "sum"
-          ],
-          "additionalProperties": false
+            },
+            "required": [
+              "cells"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -1406,6 +1438,7 @@
               "sortGuessed",
               "formatGuessed",
               "titleGuessed",
+              "overfitSuspected",
               "other"
             ]
           }

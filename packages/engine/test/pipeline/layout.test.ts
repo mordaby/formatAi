@@ -101,27 +101,32 @@ describe('group', () => {
       columns,
       transform: {
         sort: [{ column: 'customer', dir: 'asc' }],
-        group: { by: 'customer', showDetailRows: true, subtotal: { labelColumn: 'item', label: 'סה"כ ללקוח', sum: ['amount'] }, blankRowsAfter: 1 },
+        group: {
+          by: 'customer',
+          showDetailRows: true,
+          summaryRows: [{ labelColumn: 'פריט', label: 'סה"כ ללקוח', cells: { סכום: 'sum' } }],
+          blankRowsAfter: 1,
+        },
       },
-      output: { grandTotal: { labelColumn: 'item', label: 'סה"כ', sum: ['amount'] } },
+      output: { summaryRows: [{ labelColumn: 'פריט', label: 'סה"כ', cells: { סכום: 'sum' } }] },
       out,
     });
     const res = runOk(r, t);
     expect(body(res.sheet)).toEqual([
       ['data', '1', 'p2', 50.5],
       ['data', '1', 'p4', 'oops'],
-      ['subtotal', null, 'סה"כ ללקוח', 50.5],
+      ['summaryRow', null, 'סה"כ ללקוח', 50.5],
       ['blank', null, null, null],
       ['data', '2', 'p1', 100],
       ['data', '2', 'p3', 25],
-      ['subtotal', null, 'סה"כ ללקוח', 125],
+      ['summaryRow', null, 'סה"כ ללקוח', 125],
       ['blank', null, null, null],
       ['data', '3', 'p5', 10],
-      ['subtotal', null, 'סה"כ ללקוח', 10],
+      ['summaryRow', null, 'סה"כ ללקוח', 10],
       ['blank', null, null, null],
-      ['grandTotal', null, 'סה"כ', 185.5],
+      ['summaryRow', null, 'סה"כ', 185.5],
     ]);
-    const sub = res.sheet.rows.find((x) => x.kind === 'subtotal')!;
+    const sub = res.sheet.rows.find((x) => x.kind === 'summaryRow')!;
     expect(sub.cells[2]).toEqual({ v: 50.5, z: '#,##0.00' });
     expect(res.summary.rowsOut).toBe(5);
   });
@@ -139,18 +144,24 @@ describe('group', () => {
   it('non-contiguous keys are gathered by first appearance', () => {
     const r = rules({
       columns,
-      transform: { group: { by: 'customer', showDetailRows: true, subtotal: { labelColumn: 'customer', label: 'Total', sum: ['amount'] } } },
+      transform: {
+        group: {
+          by: 'customer',
+          showDetailRows: true,
+          summaryRows: [{ labelColumn: 'לקוח', label: 'Total', cells: { סכום: 'sum' } }],
+        },
+      },
       out,
     });
     expect(body(runOk(r, t).sheet)).toEqual([
       ['data', '2', 'p1', 100],
       ['data', '2', 'p3', 25],
-      ['subtotal', 'Total', null, 125],
+      ['summaryRow', 'Total', null, 125],
       ['data', '1', 'p2', 50.5],
       ['data', '1', 'p4', 'oops'],
-      ['subtotal', 'Total', null, 50.5],
+      ['summaryRow', 'Total', null, 50.5],
       ['data', '3', 'p5', 10],
-      ['subtotal', 'Total', null, 10],
+      ['summaryRow', 'Total', null, 10],
     ]);
   });
 
@@ -158,7 +169,7 @@ describe('group', () => {
     const r = rules({
       columns,
       transform: { sort: [{ column: 'customer', dir: 'desc' }], group: { by: 'customer', showDetailRows: false } },
-      output: { grandTotal: { labelColumn: 'customer', label: 'Total', sum: ['amount', 'item'] } },
+      output: { summaryRows: [{ labelColumn: 'customer', label: 'Total', cells: { sum: 'sum', count: 'count' } }] },
       out: [
         { header: 'customer', from: 'customer', agg: 'first' },
         { header: 'sum', from: 'amount', agg: 'sum', format: '0.00' },
@@ -174,7 +185,7 @@ describe('group', () => {
       ['data', '3', 10, 1, 1, 'p5', 10, 'w'],
       ['data', '2', 125, 2, 1, 'p1', 100, 'x'],
       ['data', '1', 50.5, 2, 2, 'p2', 'oops', 'y'],
-      ['grandTotal', 'Total', 185.5, 5, null, null, null, null],
+      ['summaryRow', 'Total', 185.5, 5, null, null, null, null],
     ]);
     expect(dataRows(res.sheet).map((x) => x.sourceRow)).toEqual([6, 2, 3]);
     expect(res.sheet.columns.map((c) => c.numeric === true)).toEqual([false, true, true, true, false, true, false]);

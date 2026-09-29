@@ -1,11 +1,12 @@
-// Steps 9-10 (SPEC 8.2, 8.6, 8.7): group, then the output sheet (title rows,
-// header, data rows, subtotals, blank rows, grand total, direction, language).
+// Steps 9-10 (SPEC 8.2, 8.6, 8.7, 8.12 v4): group, then the output sheet (title rows,
+// header, data rows, summary rows, blank rows, direction, language).
 // Cell encoding happens here, at the boundary: this is the only place a
 // Decimal becomes a JS number.
 
 import Decimal from 'decimal.js';
-import type { GrandTotal, GroupSubtotal, LearnResult, OutputColumnRule, TitleRow } from '@formatai/shared';
-import type { CellRange, OutCell, OutputColumn, OutputSheet, OutRow } from '../../types';
+import type { LearnResult, OutputColumnRule, SummaryAgg, SummaryRow, TitleRow } from '@formatai/shared';
+import type { CellRange, OutCell, OutputColumn, OutputSheet, OutRow, OutRowKind } from '../../types';
+import { effectiveGroupSummaryRows, effectiveOutputSummaryRows } from '../../rules/summaryRows';
 import { formatYmd, isExcelDateFormat, toExcelDateFormat } from '../../values/dates';
 import { excelRound } from '../../values/numbers';
 import { typeCat } from './normalize';
@@ -134,49 +135,18 @@ function sumSlot(rows: Row[], slot: number): Decimal | null {
   return acc;
 }
 
-/** Subtotal / grand-total row: the label in the label column, sums in the summed columns. */
-function totalRow(
-  kind: 'subtotal' | 'grandTotal',
-  rows: Row[],
-  spec: GroupSubtotal | GrandTotal,
-  cols: OutCol[],
-  lang: 'he' | 'en',
-  summaryMode = false,
-): OutRow {
-  const cells = emptyCells(cols.length);
-  const sumIds = new Set(spec.sum);
-  // DECISION: the label goes in the first output column showing labelColumn;
-  // if no output column shows it, in the first output column that isn't summed.
-  let labelAt = cols.findIndex((c) => c.rule.from === spec.labelColumn);
-  if (labelAt < 0) labelAt = cols.findIndex((c) => c.rule.from === null || !sumIds.has(c.rule.from));
-  if (labelAt < 0) labelAt = 0;
-  if (spec.label !== '' && cols.length > 0) cells[labelAt] = { v: spec.label };
-  cols.forEach((c, i) => {
-    if (c.rule.from === null || !sumIds.has(c.rule.from)) return;
-    let s: Decimal | null;
-    if (!summaryMode) s = sumSlot(rows, c.slot);
-    else {
-      // DECISION: in a summary output the grand total adds up the summary
-      // column itself: sum columns get the total sum, count columns the total
-      // count; min/max/first columns stay empty.
-      const agg = c.rule.agg ?? 'first';
-      if (agg === 'sum') s = sumSlot(rows, c.slot);
-      else if (agg === 'count') s = aggregate(rows, c).v as Decimal;
-      else s = null;
-    }
-    if (s !== null) cells[i] = encode(s, c, lang, false);
-  });
-  return { kind, cells };
-}
-
-/** Aggregate for a summary output column (SPEC 8.6). */
-function aggregate(rows: Row[], col: OutCol): { v: Val; flagged: boolean } {
-  if (col.slot < 0) return { v: null, flagged: false };
-  const slot = col.slot;
+/**
+ * One column's aggregate over `rows` (SPEC 8.6 summary-output columns and SPEC 8.12 v4
+ * summary rows share this set - v4 adds `average`/`last`). `count` counts non-empty
+ * cells (blocked rows never reach `rows` at all, so they never count - unchanged);
+ * `min`/`max` compare like `sort` (numbers and dates); `average` is the sum of the
+ * numeric values divided by their count, in exact decimal.js precision (DECISION:
+ * SPEC 8.12 v4 leaves rounding to the column's own number format, so the value itself
+ * is never pre-rounded here); `first`/`last` are the first/last non-empty value, in
+ * row order.
+ */
+function aggregateValue(rows: Row[], slot: number, agg: SummaryAgg): { v: Val; flagged: boolean } {
   const flagged = rows.some((r) => r.flagged !== null && r.flagged.has(slot));
-  // DECISION: a summary column without `agg` uses "first"; "first" is the first
-  // non-empty value of the group; "count" counts non-empty values (like COUNTA).
-  const agg = col.rule.agg ?? 'first';
   switch (agg) {
     case 'sum':
       return { v: sumSlot(rows, slot), flagged };
@@ -184,6 +154,18 @@ function aggregate(rows: Row[], col: OutCol): { v: Val; flagged: boolean } {
       let n = 0;
       for (const r of rows) if ((r.v[slot] ?? null) !== null) n++;
       return { v: decInt(n), flagged };
+    }
+    case 'average': {
+      let sum: Decimal | null = null;
+      let n = 0;
+      for (const r of rows) {
+        const v = r.v[slot];
+        if (v instanceof Decimal) {
+          sum = sum === null ? v : sum.plus(v);
+          n++;
+        }
+      }
+      return { v: sum === null ? null : sum.dividedBy(n), flagged };
     }
     case 'min':
     case 'max':
@@ -195,7 +177,59 @@ function aggregate(rows: Row[], col: OutCol): { v: Val; flagged: boolean } {
       }
       return { v: null, flagged };
     }
+    case 'last': {
+      let last: Val = null;
+      for (const r of rows) {
+        const v = r.v[slot] ?? null;
+        if (v !== null) last = v;
+      }
+      return { v: last, flagged };
+    }
   }
+}
+
+/** `aggregateValue` for a summary-output column (SPEC 8.6): the column's own `agg`,
+ * defaulting to "first" (the group key's own column has none). */
+function aggregateCol(rows: Row[], col: OutCol): { v: Val; flagged: boolean } {
+  if (col.slot < 0) return { v: null, flagged: false };
+  return aggregateValue(rows, col.slot, col.rule.agg ?? 'first');
+}
+
+/**
+ * Renders one generic summary row (SPEC 8.12 v4): the label goes in `labelColumn`
+ * (falling back to the first output column with no `cells` entry, then column 0 - the
+ * same fallback the deprecated, id-based `grandTotal`/`subtotal` used), and each named
+ * output column shows its aggregate over `rows` (the group's rows for
+ * `group.summaryRows`, all rows for `output.summaryRows`). Cells that aren't listed in
+ * `cells` are left empty, like today's grand total/subtotal.
+ */
+function buildSummaryRow(
+  rows: Row[],
+  summaryRow: SummaryRow,
+  cols: OutCol[],
+  lang: 'he' | 'en',
+  kind: OutRowKind,
+): OutRow {
+  const cells = emptyCells(cols.length);
+  let labelAt =
+    summaryRow.labelColumn === undefined ? -1 : cols.findIndex((c) => c.rule.header === summaryRow.labelColumn);
+  if (labelAt < 0) labelAt = cols.findIndex((c) => !(c.rule.header in summaryRow.cells));
+  if (labelAt < 0) labelAt = 0;
+  if (summaryRow.label !== undefined && summaryRow.label !== '' && cols.length > 0) {
+    cells[labelAt] = { v: summaryRow.label };
+  }
+  cols.forEach((c, i) => {
+    if (c.slot < 0) return;
+    const agg = summaryRow.cells[c.rule.header];
+    if (agg === undefined) return;
+    // DECISION: like the deprecated grandTotal/subtotal before it, a summary-row cell
+    // is never highlighted, even when a flagged row feeds its aggregate.
+    const { v } = aggregateValue(rows, c.slot, agg);
+    if (v !== null) cells[i] = encode(v, c, lang, false);
+  });
+  const row: OutRow = { kind, cells };
+  if (summaryRow.bold === true) row.bold = true;
+  return row;
 }
 
 /** Typed min/max over non-empty values (same ordering as sort). */
@@ -300,6 +334,10 @@ export function buildSheet(ctx: RunCtx, rules: LearnResult, rows: Row[]): { shee
   // Body.
   let dataRows = 0;
   const group = rules.transform.group;
+  // SPEC 8.12 v4: `output.summaryRows` as written, or the deprecated `grandTotal`
+  // translated (SPEC 21 v4) - computed once, since it's also needed below to decide
+  // whether a blank row follows the last group.
+  const outputSummary = effectiveOutputSummaryRows(out, group);
   if (group === undefined) {
     for (const r of rows) sheetRows.push(dataRow(r, cols, lang));
     dataRows = rows.length;
@@ -321,35 +359,40 @@ export function buildSheet(ctx: RunCtx, rules: LearnResult, rows: Row[]): { shee
       (order[gi] as Row[]).push(r);
     }
     const blanks = group.blankRowsAfter ?? 0;
+    // SPEC 8.12 v4: `group.summaryRows` as written, or the deprecated `subtotal`
+    // translated (SPEC 21 v4) - same list after every group.
+    const groupSummary = effectiveGroupSummaryRows(group, rules.output.columns);
     order.forEach((g, gi) => {
       if (group.showDetailRows) {
         for (const r of g) sheetRows.push(dataRow(r, cols, lang));
         dataRows += g.length;
-        if (group.subtotal !== undefined) sheetRows.push(totalRow('subtotal', g, group.subtotal, cols, lang));
       } else {
-        // Summary output (SPEC 8.6): one row per group; the subtotal spec does
-        // not apply (the summary row is the total).
+        // Summary output (SPEC 8.6): one row per group.
         const cells = cols.map((c) => {
-          const a = aggregate(g, c);
+          const a = aggregateCol(g, c);
           return c.slot < 0 ? { v: null } : encode(a.v, c, lang, a.flagged);
         });
         // sourceRow: the group's first input row, so the UI can point at it.
         sheetRows.push({ kind: 'data', cells, sourceRow: (g[0] as Row).o.rowNumber });
         dataRows++;
       }
+      // SPEC 8.12 v4: summary rows after each group, in order, before blankRowsAfter.
+      for (const sr of groupSummary.rows) {
+        sheetRows.push(buildSummaryRow(g, sr, cols, lang, groupSummary.legacyKind ?? 'summaryRow'));
+      }
       // DECISION: blankRowsAfter follows every group, including the last one
-      // when a grand total comes next; trailing blank rows at the very end of
-      // the sheet are not written.
+      // when output-level summary rows come next; trailing blank rows at the
+      // very end of the sheet are not written.
       const isLast = gi === order.length - 1;
-      if (!isLast || out.grandTotal !== undefined) {
+      if (!isLast || outputSummary.rows.length > 0) {
         for (let b = 0; b < blanks; b++) sheetRows.push({ kind: 'blank', cells: emptyCells(n) });
       }
     });
   }
 
-  if (out.grandTotal !== undefined) {
-    const summaryMode = group !== undefined && !group.showDetailRows;
-    sheetRows.push(totalRow('grandTotal', rows, out.grandTotal, cols, lang, summaryMode));
+  // SPEC 8.12 v4: summary rows after all data rows, in order.
+  for (const sr of outputSummary.rows) {
+    sheetRows.push(buildSummaryRow(rows, sr, cols, lang, outputSummary.legacyKind ?? 'summaryRow'));
   }
 
   const columns: OutputColumn[] = cols.map((c) => {

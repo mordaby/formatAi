@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LLM_PROVIDERS, type LlmProviderName } from '@formatai/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +29,16 @@ loadDotEnvFile();
 /** Optional string keys documented in `.env.example` that this service doesn't need yet (M1-M3). */
 const OPTIONAL_STRING_KEYS = [
   'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  /** Path to the Claude Code CLI binary (SPEC 9.6 "claude-cli" provider, dev only). Falls back to "claude" on PATH, then `npx -y @anthropic-ai/claude-code`, when unset. */
+  'CLAUDE_CLI_PATH',
+  /**
+   * SPEC 9.4/9.6: optional overrides for the model registry (`config/models.ts`) so
+   * switching models needs no code change. When set, they replace the active
+   * provider's `firstTry`/`escalation` entry; when unset, config wins.
+   */
+  'LLM_MODEL_FIRST_TRY',
+  'LLM_MODEL_ESCALATION',
   'SESSION_SECRET',
   'GOOGLE_CLIENT_ID',
   'GOOGLE_CLIENT_SECRET',
@@ -47,6 +58,8 @@ export type Env = {
   /** Empty string means "not configured" - see src/db.ts. */
   MONGODB_URI: string;
   MONGODB_DB: string;
+  /** SPEC 9.6: which LLM provider `apps/api/src/llm` selects. Defaults to "claude-cli" (dev). */
+  LLM_PROVIDER: LlmProviderName;
 } & Partial<Record<OptionalStringKey, string>>;
 
 function parsePort(raw: string | undefined): number {
@@ -64,6 +77,18 @@ function trimmedOrUndefined(raw: string | undefined): string | undefined {
   return trimmed === '' ? undefined : trimmed;
 }
 
+function isLlmProviderName(value: string): value is LlmProviderName {
+  return (LLM_PROVIDERS as readonly string[]).includes(value);
+}
+
+function parseLlmProvider(raw: string | undefined): LlmProviderName {
+  const trimmed = trimmedOrUndefined(raw) ?? 'claude-cli';
+  if (!isLlmProviderName(trimmed)) {
+    throw new Error(`Invalid LLM_PROVIDER env var: expected one of ${LLM_PROVIDERS.join(', ')}, got "${raw}"`);
+  }
+  return trimmed;
+}
+
 /**
  * Parses and validates the process environment into a typed Env.
  * Never logs values (some are secrets) - only this module's own errors,
@@ -76,6 +101,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     WEB_ORIGIN: trimmedOrUndefined(source.WEB_ORIGIN) ?? 'http://localhost:5173',
     MONGODB_URI: trimmedOrUndefined(source.MONGODB_URI) ?? '',
     MONGODB_DB: trimmedOrUndefined(source.MONGODB_DB) ?? 'formatai',
+    LLM_PROVIDER: parseLlmProvider(source.LLM_PROVIDER),
   };
 
   for (const key of OPTIONAL_STRING_KEYS) {

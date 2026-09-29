@@ -64,8 +64,8 @@ function compareOutput(a: FormatOutput, b: FormatOutput, problems: FormatProblem
   if (!deepEqual(a.headerStyle, b.headerStyle)) {
     problems.push({ kind: 'formatMismatch', path: 'output.headerStyle', message: "must equal the format's header style" });
   }
-  if (!deepEqual(a.grandTotal, b.grandTotal)) {
-    problems.push({ kind: 'formatMismatch', path: 'output.grandTotal', message: "must equal the format's grand total" });
+  if (!deepEqual(a.summaryRows, b.summaryRows)) {
+    problems.push({ kind: 'formatMismatch', path: 'output.summaryRows', message: "must equal the format's summary rows" });
   }
 
   // SPEC 8.12: "except columns[].from" - every other column field (header, format,
