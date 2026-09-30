@@ -68,6 +68,12 @@ export interface LearnFromExamplesOptions<Call = unknown> {
    */
   callRepair?: (payload: LearnPayload, previousRules: LearnResult, problems: RepairProblem[]) => Promise<LearnCallResult<Call>>;
   onProgress?: (p: AnalysisProgress) => void;
+  /**
+   * Called once with the successful pair analysis, before pre-flight. The web worker keeps it
+   * in memory so the rules editor's live check (SPEC 8.11) can re-run the rules on the example
+   * without reading the two files again. Purely an observer: it cannot change the flow.
+   */
+  onAnalysis?: (analysis: PairAnalysis) => void;
 }
 
 export type LearnPath = 'blocked' | 'local' | 'llm';
@@ -150,6 +156,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   if (opts.target) analysisOpts.outputFileSpec = opts.target.output.file;
 
   const analysis = analyzePair(inputWb, outputWb, analysisOpts);
+  if (analysis.ok) opts.onAnalysis?.(analysis);
 
   // ---- SPEC 5 A step 2 / 6.3-6.4: pre-flight ----
   const pf = preflight(analysis, opts.tier);

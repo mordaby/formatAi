@@ -70,6 +70,6 @@ export default defineConfig({
   },
   test: {
     environment: 'happy-dom',
-    include: ['test/**/*.test.{ts,tsx}'],
+    include: ['test/**/*.test.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
   },
 });

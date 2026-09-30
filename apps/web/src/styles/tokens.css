@@ -1,0 +1,100 @@
+/* formatAI design tokens (docs/design-plan.md). One set of roles; the dark theme re-maps
+   the same roles, it does not add new ones. Teal = "this is right / do this", amber =
+   differences and flags only, danger = real errors only. */
+
+:root {
+  color-scheme: light dark;
+
+  /* surfaces and lines */
+  --paper: #fbfaf7;
+  --surface: #ffffff;
+  --line: #ece9e1;
+  --line-strong: #b9b4a6;
+
+  /* text */
+  --ink: #1f2328;
+  --ink-2: #5f5e5a;
+
+  /* brand: primary actions, "verified", the selected method */
+  --brand: #0f6e6a;
+  --brand-strong: #0b5a56;
+  --on-brand: #ffffff;
+  --brand-tint: #e3f1ee;
+  --on-brand-tint: #085041;
+
+  /* differences and flags only */
+  --diff: #e08a00;
+  --diff-icon: #b86e00;
+  --diff-tint: #fff1d6; /* a flagged row */
+  --diff-tint-strong: #ffe3b0; /* a changed cell */
+  --on-diff-tint: #633806;
+
+  /* real errors only (a file that cannot be read, the server is down) */
+  --danger: #b3261e;
+  --danger-tint: #fbe9e7;
+  --on-danger-tint: #7a1a14;
+
+  --focus: #0f6e6a;
+  --scrim: rgb(31 35 40 / 0.45);
+  --shadow: 0 12px 40px rgb(31 35 40 / 0.16);
+
+  /* type: IBM Plex Sans Hebrew covers Hebrew and Latin; weights 400 and 500 only */
+  --font: 'IBM Plex Sans Hebrew', system-ui, -apple-system, 'Segoe UI', 'Noto Sans Hebrew', Arial, sans-serif;
+  --mono: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, 'Liberation Mono', monospace;
+  --fs-small: 13px;
+  --fs-body: 15px;
+  --fs-section: 18px;
+  --fs-title: clamp(22px, 1.4vw + 18px, 28px);
+  --lh: 1.55;
+
+  /* space, radius, motion */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 72px;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur-1: 140ms;
+  --dur-2: 240ms;
+  --dur-3: 480ms;
+
+  --page: 1040px;
+  --header-h: 60px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14171a;
+    --surface: #1b1f23;
+    --line: #2a2f35;
+    --line-strong: #4d535a;
+
+    --ink: #ece9e2;
+    --ink-2: #a6a49c;
+
+    --brand: #4fbfb6;
+    --brand-strong: #74d2ca;
+    --on-brand: #06231f;
+    --brand-tint: #173430;
+    --on-brand-tint: #a9e4dd;
+
+    --diff: #f0a030;
+    --diff-icon: #f0a030;
+    --diff-tint: #33270f;
+    --diff-tint-strong: #4a3812;
+    --on-diff-tint: #ffd9a0;
+
+    --danger: #f2938b;
+    --danger-tint: #3a1f1d;
+    --on-danger-tint: #ffc9c3;
+
+    --focus: #74d2ca;
+    --scrim: rgb(0 0 0 / 0.6);
+    --shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+  }
+}

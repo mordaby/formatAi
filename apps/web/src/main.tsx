@@ -1,9 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import { App } from './App';
+import { App } from './app/App';
 import { applyDocumentLang, I18nProvider, initialLang } from './i18n';
 import { ServicesProvider } from './services';
+import './styles/index.css';
 
 // SPEC 16.2: set <html lang dir> before the first paint, from the cookie or the browser language.
 const lang = initialLang();

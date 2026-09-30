@@ -10,11 +10,11 @@
 // simply never visited (the local fast path goes checking -> done, with no learning or
 // verifying). The HTTP calls are made HERE, on the main thread, on the worker's behalf.
 import type { LearnPayload, LearnResult, RepairProblem, Tier } from '@formatai/shared';
-import type { AnalysisStage, LearnCallResult, LearnFromExamplesResult, PreflightIssue } from '@formatai/engine';
+import type { AnalysisStage, LearnCallResult, PreflightIssue } from '@formatai/engine';
 import type { Api } from '../api';
 import { webConfig } from '../config';
 import type { EngineClient } from '../worker/engineClient';
-import type { LearnArgs, LearnHost, LearnProgress } from '../worker/engineApi';
+import type { LearnArgs, LearnHost, LearnOutput, LearnProgress } from '../worker/engineApi';
 import { CancelledError, isCancellation, toFlowError, type FlowError } from './errors';
 
 /** What the browser actually sent to the API ("See what we send", SPEC 15). */
@@ -47,8 +47,9 @@ export type LearnFlowState =
       /** For `confirmSkipColumns`: the headers of the output columns that will be left empty. */
       columns: string[];
     } & Common)
-  | ({ status: 'blocked'; result: LearnFromExamplesResult } & Common)
-  | ({ status: 'done'; result: LearnFromExamplesResult } & Common)
+  | ({ status: 'blocked'; result: LearnOutput } & Common)
+  /** `result.exampleId` is the example the worker kept for the rules editor's live check (SPEC 8.11). */
+  | ({ status: 'done'; result: LearnOutput } & Common)
   | ({ status: 'error'; error: FlowError } & Common);
 
 export type LearnFlowStatus = LearnFlowState['status'];

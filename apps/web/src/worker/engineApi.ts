@@ -13,6 +13,16 @@ import type {
   RunSummary,
   VerifyResult,
 } from '@formatai/engine';
+import type {
+  LiveCheckArgs,
+  LiveCheckResult,
+  LoadExampleArgs,
+  LoadExampleOutput,
+  StaticChecksArgs,
+  StaticProblem,
+} from './editorApi';
+
+export type * from './editorApi';
 
 export interface FileBytes {
   name: string;
@@ -41,7 +51,8 @@ export type LearnProgress =
   | { phase: 'learning'; attempt: 'learn' | 'repair' }
   | { phase: 'verifying' };
 
-export type LearnOutput = LearnFromExamplesResult;
+/** `exampleId`: set when the worker kept the example (the rules editor's live check reads it, SPEC 8.11). */
+export type LearnOutput = LearnFromExamplesResult & { exampleId?: string };
 
 /** What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). */
 export interface LearnHost {
@@ -85,9 +96,29 @@ export interface VerifyArgs {
 
 export type VerifyOutput = { ok: true; verification: VerifyResult } | { ok: false; reason: 'analysisFailed' };
 
+// ---------- inspect ----------
+
+/** A quick look at a dropped file, so the drop zone can show its size ("1,204 rows, 8 columns") before anything is learned. */
+export interface InspectArgs {
+  file: FileBytes;
+  /** The example output is read more loosely (a report may have title rows). */
+  side: 'input' | 'output';
+}
+
+export type InspectOutput =
+  | { readable: false }
+  /** `rows`/`columns` are null when no table was found: the pre-flight explains why when the user goes on. */
+  | { readable: true; rows: number | null; columns: number | null; direction: 'rtl' | 'ltr' };
+
 export interface EngineMethodMap {
   learn: { args: LearnArgs; result: LearnOutput; progress: LearnProgress };
+  inspect: { args: InspectArgs; result: InspectOutput; progress: never };
   convert: { args: ConvertArgs; result: ConvertOutput; progress: never };
   verify: { args: VerifyArgs; result: VerifyOutput; progress: never };
+  loadExample: { args: LoadExampleArgs; result: LoadExampleOutput; progress: never };
+  liveCheck: { args: LiveCheckArgs; result: LiveCheckResult; progress: never };
+  /** Like `liveCheck`, but every row (the editor's Apply). */
+  fullCheck: { args: Omit<LiveCheckArgs, 'subset'>; result: LiveCheckResult; progress: never };
+  staticChecks: { args: StaticChecksArgs; result: StaticProblem[]; progress: never };
 }
 export type EngineMethodName = keyof EngineMethodMap;

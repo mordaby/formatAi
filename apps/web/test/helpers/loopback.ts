@@ -7,7 +7,7 @@ import { serveMethods, type WorkerScopeLike } from '../../src/worker/runtime';
  * wired to the real RpcClient through a loopback that structured-clones every message
  * (and honours transfer lists), as postMessage does.
  */
-export function loopback(methods: Parameters<typeof serveMethods>[1]) {
+export function loopbackWorker(methods: Parameters<typeof serveMethods>[1]): WorkerHandle {
   let toWorker: ((ev: { data: unknown }) => void) | undefined;
   let toMain: { message(data: WorkerToMain): void; error(message: string): void } | undefined;
 
@@ -22,7 +22,7 @@ export function loopback(methods: Parameters<typeof serveMethods>[1]) {
   };
   serveMethods(scope, methods);
 
-  const handle: WorkerHandle = {
+  return {
     post: (message, transfer) => {
       const cloned = structuredClone(message, transfer ? { transfer } : undefined);
       queueMicrotask(() => toWorker?.({ data: cloned }));
@@ -32,5 +32,9 @@ export function loopback(methods: Parameters<typeof serveMethods>[1]) {
       toMain = handlers;
     },
   };
+}
+
+export function loopback(methods: Parameters<typeof serveMethods>[1]) {
+  const handle = loopbackWorker(methods);
   return new RpcClient({ createWorker: () => handle, defaultTimeoutMs: 5000 });
 }

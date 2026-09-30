@@ -15,6 +15,12 @@ export const webConfig = {
     learn: 120_000,
     convert: 60_000,
     verify: 60_000,
+    inspect: 30_000,
+    /** The rules editor (SPEC 8.11): reading the example again, then quick checks on it. */
+    loadExample: 60_000,
+    liveCheck: 10_000,
+    fullCheck: 60_000,
+    staticChecks: 10_000,
   },
   /** SPEC 15 "Enforce a maximum file size": the free tier's size until the session says otherwise. */
   maxFileBytes: tiers.anonymous.maxFileBytes,

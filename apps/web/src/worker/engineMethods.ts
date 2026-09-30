@@ -5,14 +5,18 @@
 import {
   analyzePair,
   convertFile,
+  detectTable,
   learnFromExamples,
+  nonEmptySheets,
   readWorkbook,
   sniffDelimitedText,
   verifyAgainstExample,
   type LearnCallResult,
 } from '@formatai/engine';
-import type { AnalysisProgress } from '@formatai/engine';
-import type { ConvertArgs, ConvertOutput, LearnArgs, LearnOutput, LearnProgress, VerifyArgs, VerifyOutput } from './engineApi';
+import type { AnalysisProgress, PairAnalysis } from '@formatai/engine';
+import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress, VerifyArgs, VerifyOutput } from './engineApi';
+import type { LiveCheckArgs, LiveCheckResult, LoadExampleArgs, LoadExampleOutput, StaticChecksArgs, StaticProblem } from './editorApi';
+import { checkExample, getExample, rememberExample, runStaticChecks } from './liveCheck';
 import { Transfer, type MethodContext, type MethodMap } from './runtime';
 
 /**
@@ -37,7 +41,8 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> {
   const emit = (p: LearnProgress): void => ctx.progress(p);
   emit({ phase: 'reading' });
-  return learnFromExamples({
+  let analysis: PairAnalysis | undefined;
+  const result = await learnFromExamples({
     input: { bytes: new Uint8Array(args.input.bytes), name: args.input.name },
     output: { bytes: new Uint8Array(args.output.bytes), name: args.output.name },
     masking: args.masking,
@@ -46,6 +51,9 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     ...(args.target ? { target: args.target } : {}),
     ...(args.tryAnyway ? { tryAnyway: true } : {}),
     onProgress: (p: AnalysisProgress) => emit({ phase: 'checking', stage: p.stage, fraction: p.fraction }),
+    onAnalysis: (a) => {
+      analysis = a;
+    },
     callLearn: async (payload) => {
       emit({ phase: 'learning', attempt: 'learn' });
       const out = await ctx.host<LearnCallResult>('callLearn', payload);
@@ -59,6 +67,8 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
       return out;
     },
   });
+  // The rules editor's live check (SPEC 8.11) re-runs rules on this example; it stays in the worker.
+  return analysis && result.rules ? { ...result, exampleId: rememberExample(analysis) } : result;
 }
 
 async function convert(args: ConvertArgs): Promise<Transfer<ConvertOutput> | ConvertOutput> {
@@ -86,4 +96,56 @@ async function verify(args: VerifyArgs): Promise<VerifyOutput> {
   return { ok: true, verification: verifyAgainstExample(args.rules, analysis, args.exceptions ? { exceptions: args.exceptions } : {}) };
 }
 
-export const engineMethods = { learn, convert, verify } satisfies MethodMap;
+/**
+ * A cheap look at one dropped file: does it open, and how big is its table (first non-empty sheet).
+ * Only counts: whether the file is acceptable is the pre-flight's decision when the user goes on.
+ */
+async function inspect(args: InspectArgs): Promise<InspectOutput> {
+  let wb;
+  try {
+    wb = await readWorkbook(new Uint8Array(args.file.bytes), args.file.name);
+  } catch {
+    return { readable: false };
+  }
+  const sheet = wb.sheets[nonEmptySheets(wb)[0] ?? 0];
+  if (!sheet) return { readable: true, rows: null, columns: null, direction: 'ltr' };
+  const detection = detectTable(sheet, { mode: args.side });
+  if (detection.headerRow < 0) return { readable: true, rows: null, columns: null, direction: detection.direction };
+  const header = sheet.rows[detection.headerRow] ?? [];
+  const columns = header.filter((c) => c && c.v !== null && !(typeof c.v === 'string' && c.v.trim() === '')).length;
+  const rows = Math.max(0, detection.dataEnd - detection.dataStart + 1);
+  return { readable: true, rows, columns, direction: detection.direction };
+}
+
+// ---------- the rules editor (SPEC 8.11) ----------
+
+/** Reads the example pair again and keeps it, for the live check of a saved conversion (example files are never stored). */
+async function loadExample(args: LoadExampleArgs): Promise<LoadExampleOutput> {
+  const inputWb = await readWorkbook(new Uint8Array(args.input.bytes), args.input.name);
+  const outputWb = await readWorkbook(new Uint8Array(args.output.bytes), args.output.name);
+  const outputSniff =
+    outputWb.fileType === 'csv' || outputWb.fileType === 'txt' ? sniffDelimitedText(new Uint8Array(args.output.bytes)) : undefined;
+  const analysis = analyzePair(inputWb, outputWb, {
+    ...(outputSniff ? { outputSniff } : {}),
+    ...(args.target ? { outputFileSpec: args.target.output.file } : {}),
+  });
+  if (!analysis.ok) return { ok: false, reason: 'analysisFailed' };
+  return { ok: true, exampleId: rememberExample(analysis), inputRows: analysis.input.rows.length, outputRows: analysis.output.dataRows.length };
+}
+
+/** Runs the rules on the example in memory (a subset above 5,000 rows, unless `subset: false`). */
+function liveCheck(args: LiveCheckArgs): LiveCheckResult {
+  return checkExample(getExample(args.exampleId), args.rules, { ...(args.exceptions ? { exceptions: args.exceptions } : {}), subset: args.subset !== false });
+}
+
+/** The same check on every row (the editor's Apply). */
+function fullCheck(args: Omit<LiveCheckArgs, 'subset'>): LiveCheckResult {
+  return checkExample(getExample(args.exampleId), args.rules, { ...(args.exceptions ? { exceptions: args.exceptions } : {}), subset: false });
+}
+
+/** SPEC 9.2 layers 1-5: structure, references, types, limits, and the format lock inside a format. */
+function staticChecks(args: StaticChecksArgs): StaticProblem[] {
+  return runStaticChecks(args.rules, { tier: args.tier, ...(args.format ? { format: args.format } : {}) });
+}
+
+export const engineMethods = { learn, convert, verify, inspect, loadExample, liveCheck, fullCheck, staticChecks } satisfies MethodMap;

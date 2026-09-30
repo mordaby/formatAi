@@ -1,0 +1,446 @@
+/* App shell and the first screens (Home, pre-flight, learning progress). Logical properties only. */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100dvh;
+}
+
+.skip-link {
+  position: absolute;
+  inset-block-start: var(--s-2);
+  inset-inline-start: var(--s-2);
+  z-index: 100;
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--radius-sm);
+  background: var(--ink);
+  color: var(--paper);
+  transform: translateY(-200%);
+}
+.skip-link:focus {
+  transform: none;
+}
+
+/* ---------- Header ---------- */
+.app-header {
+  border-block-end: 1px solid var(--line);
+  background: var(--paper);
+}
+.app-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  max-inline-size: var(--page);
+  min-block-size: var(--header-h);
+  margin-inline: auto;
+  padding-inline: var(--s-5);
+}
+.wordmark {
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.wordmark:hover {
+  color: var(--ink);
+}
+.wordmark__ai {
+  color: var(--brand);
+}
+.app-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* ---------- Page ---------- */
+.page {
+  flex: 1 0 auto;
+  inline-size: 100%;
+  max-inline-size: var(--page);
+  margin-inline: auto;
+  padding-block: var(--s-6) var(--s-8);
+  padding-inline: var(--s-5);
+}
+.page:focus {
+  outline: none;
+}
+
+.tool {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+}
+.tool__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.lead {
+  max-inline-size: 60ch;
+  color: var(--ink-2);
+}
+.muted {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  animation: view-in var(--dur-3) var(--ease) both;
+}
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- Home: the two zones ---------- */
+.zones {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-4);
+}
+.zones__arrow {
+  color: var(--line-strong);
+}
+@media (max-width: 720px) {
+  .zones {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-3);
+  }
+  .zones__arrow {
+    display: none;
+  }
+}
+
+/* ---------- Home: masking, privacy, learn ---------- */
+.masking {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  align-items: flex-start;
+}
+.masking__text {
+  max-inline-size: 68ch;
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.masking .panel {
+  inline-size: 100%;
+}
+.copy-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  margin: 0;
+}
+.copy-table dt {
+  margin-block-end: 2px;
+  font-weight: 500;
+}
+.copy-table dd {
+  margin: 0;
+  color: var(--ink-2);
+}
+.copy-table__always {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.privacy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.privacy__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.privacy__line .icon {
+  color: var(--brand);
+}
+.bullets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.bullets li {
+  position: relative;
+  padding-inline-start: var(--s-4);
+}
+.bullets li::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 2px;
+  inset-block-start: 0.65em;
+  inline-size: 5px;
+  block-size: 5px;
+  border-radius: 50%;
+  background: var(--brand);
+}
+.send-record {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.send-record__head {
+  font-weight: 500;
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.learn-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-4);
+}
+.learn-row__hint {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.turnstile:empty {
+  display: none;
+}
+.turnstile {
+  margin-block-start: calc(var(--s-3) * -1);
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding-inline: var(--s-4);
+    padding-block-start: var(--s-5);
+  }
+  .app-header__inner {
+    padding-inline: var(--s-4);
+  }
+  .tool {
+    gap: var(--s-5);
+  }
+  .learn-row .btn--primary {
+    inline-size: 100%;
+  }
+}
+
+/* ---------- Home: how it works ---------- */
+.how {
+  margin-block-start: var(--s-8);
+  padding-block-start: var(--s-6);
+  border-block-start: 1px solid var(--line);
+}
+.how__title {
+  margin-block-end: var(--s-5);
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+.how__list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+.how__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding-inline: var(--s-5);
+  border-inline-start: 1px solid var(--line);
+}
+.how__item:first-child {
+  padding-inline-start: 0;
+  border-inline-start: 0;
+}
+.how__item:last-child {
+  padding-inline-end: 0;
+}
+.how__n {
+  color: var(--brand);
+  font-size: var(--fs-section);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.how__item p {
+  color: var(--ink-2);
+}
+@media (max-width: 720px) {
+  .how__list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .how__item,
+  .how__item:first-child,
+  .how__item:last-child {
+    padding-inline: 0;
+    padding-block: var(--s-4);
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--line);
+  }
+  .how__item:first-child {
+    border-block-start: 0;
+    padding-block-start: 0;
+  }
+}
+
+/* ---------- Pre-flight and errors ---------- */
+.preflight__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-inline-size: 720px;
+}
+.preflight__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+.chips-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-block-start: var(--s-3);
+}
+.chips-block__lead {
+  font-size: var(--fs-small);
+  font-weight: 500;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.chips li {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--diff-tint-strong);
+  color: var(--on-diff-tint);
+  font-size: var(--fs-small);
+}
+
+/* ---------- Learning progress ---------- */
+.learning__files {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  max-inline-size: 520px;
+}
+.steps__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  animation: step-in var(--dur-3) var(--ease) both;
+}
+.steps__mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 24px;
+  block-size: 24px;
+  margin-block-start: 1px;
+  border-radius: 50%;
+  color: var(--brand);
+}
+.steps__item[data-state='done'] .steps__mark {
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+}
+.steps__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  flex: 1;
+  min-inline-size: 0;
+}
+.steps__item[data-state='done'] .steps__label {
+  color: var(--ink-2);
+}
+.steps__item[data-state='active'] .steps__label {
+  font-weight: 500;
+}
+.steps__note {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.learning__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+/* ---------- Sign-in wall ---------- */
+.signin__buttons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.signin__button {
+  justify-content: space-between;
+}
+
+/* ---------- Footer ---------- */
+.app-footer {
+  border-block-start: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.app-footer__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-5);
+  max-inline-size: var(--page);
+  margin-inline: auto;
+  padding: var(--s-5);
+}
+.app-footer__nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-5);
+}
+.app-footer a {
+  color: var(--ink-2);
+}
+.app-footer a:hover {
+  color: var(--brand);
+}
+@media (max-width: 640px) {
+  .app-footer__inner {
+    padding-inline: var(--s-4);
+  }
+}

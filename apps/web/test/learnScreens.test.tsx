@@ -1,0 +1,273 @@
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../src/api';
+import { csv, fakeApi, fakeEngine, learnResult, PAYLOAD_SKIP, renderApp } from './helpers/renderApp';
+
+beforeEach(() => {
+  document.cookie = 'lang=; Path=/; Max-Age=0';
+});
+afterEach(() => {
+  cleanup();
+  document.cookie = 'lang=; Path=/; Max-Age=0';
+});
+
+async function dropBoth(): Promise<void> {
+  fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('crm.csv')] } });
+  fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('crm-out.csv')] } });
+  // Both files are read by the worker; the rows and columns settle in.
+  await waitFor(() => expect(screen.getAllByText('1,204 rows')).toHaveLength(2));
+}
+
+const learnButton = () => screen.getByRole('button', { name: /Learn the format/ }) as HTMLButtonElement;
+
+describe('Home', () => {
+  it('is the tool: two zones, the masking switch, the privacy line, one primary button, and how it works below', () => {
+    renderApp();
+    expect(screen.getByLabelText('Example input')).toBeTruthy();
+    expect(screen.getByLabelText('Example output')).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Masking' })).toBeTruthy();
+    expect(screen.getByText('Your full files never leave your computer.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'See what we send' })).toBeTruthy();
+    expect(learnButton().disabled).toBe(true);
+    expect(screen.getByText('Add both files to continue.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'How it works' })).toBeTruthy();
+    // The journey is visible: 1 Upload, 2 Learn, 3 Use, and we are on the first.
+    const steps = screen.getByRole('list', { name: 'Steps' });
+    expect(within(steps).getByText('Upload').closest('li')?.getAttribute('aria-current')).toBe('step');
+  });
+
+  it('shows what WILL be sent before a learn, and what was sent once there is a payload', () => {
+    renderApp();
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    const panel = screen.getByRole('region', { name: 'See what we send' });
+    expect(panel.textContent).toContain('Up to 12 sample rows. Names, ID numbers and other text are replaced with look-alike values first.');
+    fireEvent.click(screen.getByRole('switch', { name: 'Masking' }));
+    expect(panel.textContent).toContain('Up to 12 sample rows, exactly as they are.');
+  });
+
+  it('enables Learn only with both files, and shows their rows and columns', async () => {
+    renderApp();
+    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('crm.csv')] } });
+    await waitFor(() => expect(screen.getByText('1,204 rows')).toBeTruthy());
+    expect(screen.getByText('8 columns')).toBeTruthy();
+    expect(learnButton().disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('crm-out.csv')] } });
+    await waitFor(() => expect(learnButton().disabled).toBe(false));
+  });
+
+  it('keeps Learn off and explains when a file cannot be read', async () => {
+    const { engine } = fakeEngine(undefined, () => ({ readable: false }));
+    renderApp({ engine });
+    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('broken.xlsx')] } });
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain("We couldn't read this file."));
+    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('out.csv')] } });
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(1));
+    expect(learnButton().disabled).toBe(true);
+  });
+
+  it('fast path: learns with the files and masking choice, and lands on /result', async () => {
+    const { engine, learn } = fakeEngine(async () => learnResult({ path: 'local' }));
+    const api = fakeApi();
+    renderApp({ engine, api });
+    await dropBoth();
+    fireEvent.click(screen.getByRole('switch', { name: 'Masking' })); // off
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('The result screen goes here.'));
+    expect(learn).toHaveBeenCalledTimes(1);
+    const args = learn.mock.calls[0]![0] as { masking: boolean; input: { name: string }; output: { name: string }; tier: string };
+    expect(args).toMatchObject({ masking: false, tier: 'anonymous', input: { name: 'crm.csv' }, output: { name: 'crm-out.csv' } });
+    expect(api.learn).not.toHaveBeenCalled(); // no LLM call on the fast path
+    expect(screen.getByText('Solved on your computer', { exact: false })).toBeTruthy();
+    // "Use" is the current step now.
+    expect(within(screen.getByRole('list', { name: 'Steps' })).getByText('Use').closest('li')?.getAttribute('aria-current')).toBe('step');
+  });
+
+  it('starting over from the result goes back to an empty Home', async () => {
+    renderApp();
+    await dropBoth();
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    await waitFor(() => screen.getByRole('button', { name: 'Start over' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Show us one example');
+    expect(learnButton().disabled).toBe(true);
+    expect(screen.queryByText('crm.csv')).toBeNull();
+  });
+});
+
+describe('pre-flight (screen 2)', () => {
+  it('unknown columns: lists them with the SPEC 6.4 copy; Continue goes ahead, Cancel goes back', async () => {
+    const { engine, learn } = fakeEngine(async (host) => {
+      const r = await host.callLearn(PAYLOAD_SKIP);
+      return learnResult({ path: 'llm', rules: r.rules });
+    });
+    const api = fakeApi();
+    renderApp({ engine, api });
+    await dropBoth();
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+
+    await waitFor(() => screen.getByRole('heading', { name: 'One thing to check first' }));
+    const status = screen.getByRole('status');
+    expect(status.textContent).toContain("These columns have values that don't appear in your input file. They probably come from another source, which isn't supported yet. We'll learn everything else and leave these empty.");
+    expect(within(status).getByText('Assigned Warehouse')).toBeTruthy();
+    expect(api.learn).not.toHaveBeenCalled(); // nothing is sent until the user goes on
+
+    // Cancel: back to the form, files kept.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => screen.getByRole('button', { name: /Learn the format/ }));
+    expect(screen.getByText('crm.csv')).toBeTruthy();
+
+    // Again, and this time Continue.
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    await waitFor(() => screen.getByRole('button', { name: 'Continue' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    });
+    await waitFor(() => expect(api.learn).toHaveBeenCalledTimes(1));
+    await waitFor(() => screen.getByRole('button', { name: 'Start over' }));
+    expect(learn).toHaveBeenCalledTimes(2);
+  });
+
+  it('rows not aligned: "Try anyway" runs the learn again, knowing the user said so', async () => {
+    let call = 0;
+    const { engine, learn } = fakeEngine(async () => {
+      call += 1;
+      if (call === 1) {
+        return learnResult({ path: 'blocked', rules: null, verification: null, preflight: { status: 'warn', issues: [{ code: 'rowsNotAligned', severity: 'warn' }], skipColumns: [] } });
+      }
+      return learnResult({ path: 'llm' });
+    });
+    renderApp({ engine });
+    await dropBoth();
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    await waitFor(() => screen.getByRole('button', { name: 'Try anyway' }));
+    const status = screen.getByRole('status');
+    expect(status.textContent).toContain('We couldn’t match rows between the two files. Are they from the same data?');
+    expect(status.textContent).toContain('Trying anyway counts as a learn.');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Try anyway' }));
+    });
+    await waitFor(() => screen.getByRole('button', { name: 'Start over' }));
+    expect((learn.mock.calls[1]![0] as { tryAnyway?: boolean }).tryAnyway).toBe(true);
+  });
+
+  it('a block says exactly what is wrong and what to do, and never calls the server', async () => {
+    const { engine } = fakeEngine(async () =>
+      learnResult({
+        path: 'blocked',
+        rules: null,
+        verification: null,
+        preflight: {
+          status: 'block',
+          issues: [{ code: 'tableRejected', severity: 'block', params: { side: 'input', tableIssueCode: 'mergedHeader', row: 1, fromCol: 'B', toCol: 'D' } }],
+          skipColumns: [],
+        },
+      }),
+    );
+    const api = fakeApi();
+    renderApp({ engine, api });
+    await dropBoth();
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    await waitFor(() => screen.getByRole('heading', { name: "We can't learn from these files" }));
+    expect(screen.getByRole('alert').textContent).toBe('In the example input, row 1 has cells merged across columns B–D. Unmerge them and upload the file again.');
+    expect(api.learn).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose other files' }));
+    await waitFor(() => screen.getByRole('button', { name: /Learn the format/ }));
+  });
+
+  it('a block over the free limits offers to sign in', async () => {
+    const { engine } = fakeEngine(async () =>
+      learnResult({
+        path: 'blocked',
+        rules: null,
+        verification: null,
+        preflight: { status: 'block', issues: [{ code: 'overTierLimits', severity: 'block', params: { dimension: 'rows', value: 412, limit: 300 } }], skipColumns: [] },
+      }),
+    );
+    renderApp({ engine });
+    await dropBoth();
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    await waitFor(() => screen.getByRole('alert'));
+    expect(screen.getByRole('alert').textContent).toBe('Your file has 412 rows, and the free plan allows up to 300. Use a smaller file, or sign in for a higher limit.');
+    fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Sign in' }));
+    expect(screen.getByRole('dialog', { name: 'Sign in' })).toBeTruthy();
+    expect(screen.getByText('Sign in to keep going.')).toBeTruthy();
+  });
+
+  it('reads in Hebrew too', async () => {
+    const { engine } = fakeEngine(async (host) => {
+      await host.callLearn(PAYLOAD_SKIP);
+      return learnResult({ path: 'llm' });
+    });
+    renderApp({ engine, lang: 'he' });
+    fireEvent.change(screen.getByLabelText('דוגמת קלט'), { target: { files: [csv('a.csv')] } });
+    fireEvent.change(screen.getByLabelText('דוגמת פלט'), { target: { files: [csv('b.csv')] } });
+    await waitFor(() => expect((screen.getByRole('button', { name: /ללמוד את הפורמט/ }) as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /ללמוד את הפורמט/ }));
+    });
+    await waitFor(() => screen.getByRole('heading', { name: 'דבר אחד לבדוק קודם' }));
+    expect(screen.getByRole('button', { name: 'המשך' })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toContain('לעמודות האלה יש ערכים שלא מופיעים בקובץ הקלט שלכם.');
+  });
+});
+
+describe('API errors on the learn screen', () => {
+  async function failWith(error: ApiError) {
+    const api = fakeApi({ learn: vi.fn(async () => Promise.reject(error)) as never });
+    const { engine } = fakeEngine(async (host) => {
+      await host.callLearn(PAYLOAD_SKIP_NOSKIP);
+      return learnResult({ path: 'llm' });
+    });
+    renderApp({ engine, api });
+    await dropBoth();
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    await waitFor(() => screen.getByRole('button', { name: 'Change files' }));
+  }
+
+  it('anonBudgetExhausted: "Sign in to keep going." with a Sign in button', async () => {
+    await failWith(new ApiError('anonBudgetExhausted', 429));
+    const main = within(screen.getByRole('main'));
+    expect(main.getByText('Sign in to keep going.')).toBeTruthy();
+    fireEvent.click(main.getByRole('button', { name: 'Sign in' }));
+    expect(screen.getByRole('dialog', { name: 'Sign in' })).toBeTruthy();
+  });
+
+  it('limitHit shows the text of its own limit', async () => {
+    await failWith(new ApiError('limitHit', 429, { limit: 'learnsPerDay' }));
+    expect(screen.getByRole('status').textContent).toContain("You've used today's free tries. Come back tomorrow, or sign in to keep going.");
+  });
+
+  it('turnstileFailed asks for a refresh', async () => {
+    await failWith(new ApiError('turnstileFailed', 403));
+    expect(screen.getByRole('alert').textContent).toContain("We couldn't confirm you're not a robot.");
+    expect(screen.getByRole('button', { name: 'Refresh the page' })).toBeTruthy();
+  });
+
+  it('a network failure can be retried with the same files', async () => {
+    await failWith(new ApiError('network', 0));
+    expect(screen.getByRole('alert').textContent).toContain("We couldn't reach the server.");
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Change files' }));
+    await waitFor(() => screen.getByRole('button', { name: /Learn the format/ }));
+    expect(screen.getByText('crm.csv')).toBeTruthy();
+  });
+});
+
+// A payload without skipColumns, so the learn goes straight to the (failing) API call.
+const PAYLOAD_SKIP_NOSKIP = { masking: true, output: { columns: [{ i: 0, header: 'A' }] }, samples: [] } as unknown as typeof PAYLOAD_SKIP;
