@@ -14,6 +14,8 @@ export const repoRoot = path.resolve(__dirname, '../../..');
  * Guarded: does nothing if the file is missing, and never throws.
  */
 function loadDotEnvFile(): void {
+  // Tests must not depend on a developer's local .env (keys there would change behaviour).
+  if (process.env.VITEST) return;
   const envPath = path.join(repoRoot, '.env');
   if (!existsSync(envPath)) return;
   if (typeof process.loadEnvFile !== 'function') return;
@@ -47,6 +49,12 @@ const OPTIONAL_STRING_KEYS = [
   'ADMIN_EMAILS',
   'TURNSTILE_SECRET_KEY',
   'VITE_TURNSTILE_SITE_KEY',
+  /** Public Turnstile site key served by GET /api/session; falls back to `VITE_TURNSTILE_SITE_KEY` (same repo-root .env). */
+  'TURNSTILE_SITE_KEY',
+  /** Secret mixed into the IP hash for `ip:<hash>:<day>` counters and into learnId signatures (SPEC 13). Falls back to SESSION_SECRET. Required in production. */
+  'IP_HASH_SECRET',
+  /** How many proxy hops to trust for `req.ip` (an integer), or "true" to trust them all. Unset = trust none (req.ip is the socket address). */
+  'TRUST_PROXY',
 ] as const;
 
 type OptionalStringKey = (typeof OPTIONAL_STRING_KEYS)[number];

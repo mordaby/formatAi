@@ -4,6 +4,7 @@ export { buildSampleInputTable, runOnSamples } from './sampleRun.js';
 export { runChecks, type ChecksOptions, type ChecksResult } from './checks.js';
 export { overfitLint } from './overfitLint.js';
 export {
+  countProblems,
   learn,
   repairFromBrowser,
   type CompleteFn,

@@ -5,7 +5,7 @@
 // never by a word list alone.
 
 import Decimal from 'decimal.js';
-import { detectFileSpec } from '../../io/detectFileSpec';
+import { detectFileSpecWithConfidence, type HeaderConfidence } from '../../io/detectFileSpec';
 import { detectTable, nonEmptySheets } from '../../io/detectTable';
 import { isFooterLabel } from '../../io/text';
 import type { OutputFileSpec, RawCell, RawSheet, RawWorkbook, TableDetection } from '../../types';
@@ -124,6 +124,13 @@ export interface OutputData {
   all: ColumnData[];
   /** Columns over the data rows only (text dates detected), indexed by output data row. */
   cols: ColumnData[];
+  /**
+   * True when `side.headerless` is only a default that the pair itself should confirm (see
+   * headerCheck.ts): the file spec was detected (not given), it is a csv/txt, the first row is not
+   * a header by other proof, and the detection had either no type evidence (all-text columns,
+   * default header) or read the first row as data.
+   */
+  headerUncertain: boolean;
 }
 
 function firstNonEmptyRow(sheet: RawSheet): number {
@@ -145,30 +152,53 @@ function firstRowIsHeader(sheet: RawSheet, inputHeaders: string[]): boolean {
   return hits / cells.length >= 0.5;
 }
 
+/**
+ * Reads the example output. `forceHeader` reads it one way regardless of the detected file spec:
+ * true = a header row is present, false = every row is data (used by headerCheck.ts to test both
+ * readings against the input). A forced true reading that finds no header row fails.
+ */
 export function readOutput(
   wb: RawWorkbook,
   opts: AnalyzeOptions,
   inputHeaders: string[],
+  forceHeader?: boolean,
 ): { ok: true; data: OutputData; notices: SideIssue[] } | { ok: false; issues: SideIssue[] } {
   const idx = pickSheet(wb, opts.outputSheet);
   const sheet = idx >= 0 ? wb.sheets[idx] : undefined;
   if (!sheet) return { ok: false, issues: [{ side: 'output', code: 'emptySheet', severity: 'reject' }] };
 
-  let file: OutputFileSpec = opts.outputFileSpec ?? detectFileSpec(wb, idx, opts.outputSniff);
+  const detected = opts.outputFileSpec === undefined;
+  let file: OutputFileSpec;
+  let confidence: HeaderConfidence = 'evidence';
+  if (opts.outputFileSpec !== undefined) file = opts.outputFileSpec;
+  else {
+    const d = detectFileSpecWithConfidence(wb, idx, opts.outputSniff);
+    file = d.spec;
+    confidence = d.headerConfidence;
+  }
   let headerless = file.header === false;
-  // DECISION: detectFileSpec reads "header: false" when an all-text csv has no
-  // typed column to compare with; a first row that repeats the input's headers is
-  // a header anyway. Only when the spec was detected, never when it was given.
-  if (headerless && opts.outputFileSpec === undefined && firstRowIsHeader(sheet, inputHeaders)) {
+  // The header answer is a default (not proof) for a detected csv/txt spec with no type evidence
+  // (all-text columns) or one that read the first row as data.
+  let uncertain = detected && file.type !== 'xlsx' && (headerless || confidence === 'ambiguous');
+  // DECISION: a first row that repeats the input's headers is a header, whatever the types below
+  // it say. Only when the spec was detected, never when it was given.
+  if (uncertain && firstRowIsHeader(sheet, inputHeaders)) {
     headerless = false;
     file = { ...file, header: true };
+    uncertain = false;
+  }
+  if (forceHeader !== undefined) {
+    headerless = !forceHeader;
+    file = { ...file, header: forceHeader };
+    uncertain = false;
   }
   let detection: TableDetection = detectTable(sheet, headerless ? { noHeader: true } : { mode: 'output' });
-  if (!headerless && !detection.ok && detection.issues.some((i) => i.code === 'noHeaderRow')) {
+  if (forceHeader === undefined && !headerless && !detection.ok && detection.issues.some((i) => i.code === 'noHeaderRow')) {
     // A sheet with no header row at all is a headerless output (SPEC 8.13).
     headerless = true;
     file = { ...file, header: false };
     detection = detectTable(sheet, { noHeader: true });
+    uncertain = false;
   }
   const issues: SideIssue[] = detection.issues.map((i) => ({ ...i, side: 'output' as const }));
   if (!detection.ok) return { ok: false, issues };
@@ -218,6 +248,7 @@ export function readOutput(
       },
       all,
       cols,
+      headerUncertain: uncertain,
     },
   };
 }

@@ -92,3 +92,29 @@ export const FLAG_MESSAGE_KEYS = [
 ] as const;
 
 export type FlagMessageKey = (typeof FLAG_MESSAGE_KEYS)[number];
+
+// ---------- API error codes (SPEC 9.5, 11, 15) ----------
+// Stable machine codes the API returns as `{ error: <code>, limit?: <LimitCode> }`; the web maps each
+// to UI text (see `apiErrorMessages` / `limitMessages` in i18n/messages.ts). The API never sends prose.
+export const API_ERROR_CODES = [
+  // 400: the request body is malformed (never says what was wrong - SPEC 15).
+  'invalidPayload',
+  'invalidPreviousRules',
+  'invalidProblems',
+  'invalidLearnId',
+  // 403: Turnstile token missing or rejected (anonymous learns, SPEC 9.5).
+  'turnstileFailed',
+  // 429: a per-tier limit was hit; `limit` says which one (see LIMIT_CODES).
+  'limitHit',
+  // 429: the daily anonymous budget is spent - the UI says "Sign in to keep going".
+  'anonBudgetExhausted',
+  // 503: the daily overall budget is spent - the kill switch.
+  'budgetExhausted',
+  // 429: too many requests from one IP in a minute.
+  'rateLimited',
+] as const;
+export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
+
+/** The `limit` that accompanies `limitHit` (also the `limit_hit { limit }` event prop, SPEC 11). */
+export const LIMIT_CODES = ['learnsPerDay', 'learnsPerMonth', 'repairsPerLearn'] as const;
+export type LimitCode = (typeof LIMIT_CODES)[number];

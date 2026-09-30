@@ -9,7 +9,8 @@
     "build": "pnpm -r --if-present build",
     "eval": "pnpm --filter @formatai/eval run eval",
     "learn": "pnpm --filter @formatai/eval run learn",
-    "convert": "pnpm --filter @formatai/eval run convert"
+    "convert": "pnpm --filter @formatai/eval run convert",
+    "dev": "pnpm --parallel --filter @formatai/api --filter @formatai/web run dev"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

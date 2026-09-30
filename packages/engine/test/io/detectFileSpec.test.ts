@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectFileSpec, sniffDelimitedText } from '../../src/io/detectFileSpec';
+import { detectFileSpec, detectFileSpecWithConfidence, sniffDelimitedText } from '../../src/io/detectFileSpec';
 import { readWorkbook } from '../../src/io/read';
 import type { RawWorkbook } from '../../src/types';
 
@@ -34,6 +34,25 @@ describe('detectFileSpec', () => {
     expect(spec.type).toBe('txt');
     expect(spec.delimiter).toBe('\t');
     expect(spec.header).toBe(false);
+  });
+
+  it('a csv where every column is text gives no type evidence: header defaults to true, reported as ambiguous', async () => {
+    const text = 'Full name,Email,City\nDana Levi,dana@example.com,Haifa\nOmer Katz,omer@example.com,Eilat\nNoa Tal,noa@example.com,Acre\n';
+    const wb = await readWorkbook(new TextEncoder().encode(text), 'out.csv');
+
+    expect(detectFileSpec(wb).header).toBe(true);
+    expect(detectFileSpecWithConfidence(wb)).toMatchObject({
+      headerConfidence: 'ambiguous',
+      spec: { type: 'csv', delimiter: ',', header: true },
+    });
+  });
+
+  it('a header decided by types is reported as evidence, in both directions', async () => {
+    const headered = await readWorkbook(new TextEncoder().encode('Name,Amount\nDana,100\nYossi,200\n'), 'out.csv');
+    expect(detectFileSpecWithConfidence(headered)).toMatchObject({ headerConfidence: 'evidence', spec: { header: true } });
+
+    const headerless = await readWorkbook(new TextEncoder().encode('1001\tDana\t100.00\r\n1002\tYossi\t200.00\r\n'), 'load.txt');
+    expect(detectFileSpecWithConfidence(headerless)).toMatchObject({ headerConfidence: 'evidence', spec: { header: false } });
   });
 
   it('a semicolon-delimited csv with a header', async () => {

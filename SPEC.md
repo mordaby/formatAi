@@ -634,7 +634,7 @@ Code enforces this after every learn and every edit (9.2). A conversion that bre
 ```
 
 - The default is `{ "type": "xlsx" }`. Many system load files (ERP import screens) are delimited text with no header row and a fixed column order, which is why csv and txt are first-class outputs and not an export option.
-- Code detects `file` from the example output: extension, delimiter, whether the first row is a header (compared with the data types below it), and encoding. The LLM copies it.
+- Code detects `file` from the example output: extension, delimiter, whether the first row is a header (compared with the data types below it; when the types give no evidence, e.g. an all-text file, the pair decides: row 0 is the header if it is not explained as a data row while the rows below are), and encoding. The LLM copies it.
 - `header: false`: output columns still have a `header`, used in the UI and for matching; it is written nowhere in the file. Pair analysis aligns such output columns by position.
 - csv and txt ignore styles, widths, bold and direction. Title rows, blank rows and subtotals are allowed but show a warning in the rules map, since load files rarely have them.
 - Encoding: by default the writer reproduces the example's encoding (DECISION 8).
@@ -809,9 +809,10 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
 - **`events`:** ts, anonId, userId?, type, props. Props hold counts, ids and codes only, never cell values or file names.
 - **`llm_calls`:** ts, userId?, anonId?, learnId, purpose (learn | repair | escalation), model, promptVersion, masking, tokensIn, tokensOut, tokensCached, costUsd, latencyMs, outcome, cacheHit.
 - **`usage_counters`:**
-  - keys look like `user:<id>:<yyyy-mm>`, `anon:<id>:<yyyy-mm-dd>` or `ip:<hash>:<yyyy-mm-dd>`;
+  - keys look like `user:<id>:<yyyy-mm>`, `anon:<id>:<yyyy-mm-dd>`, `ip:<hash>:<yyyy-mm-dd>` (HMAC of the IP; IPv6 by /64) or `repair:<learnId>` (one browser repair per learn);
   - updates use atomic `$inc`, and anon/ip keys expire through a TTL index.
-- **`budgets`:** spend totals per day.
+- **`budgets`:** spend totals per day (overall and anonymous: `spendUsd`, `anonSpendUsd`).
+- **`learn_cache`:** owner (`anon:<id>` / `user:<id>`), key (hash of the structure only), rules, promptVersion, createdAt; unique (owner, key), TTL in config. A cache entry is only ever returned to the same owner — never across users — and with masking on only rules without text constants are cached (their fake words belong to an earlier session key).
 - **`leads`:** name, email, company, role, message, language, ts.
 - **`waitlist`:** userId, email, trigger, message, ts.
 - **`feedback`:** formatId?, userId?, rating, text, ts.

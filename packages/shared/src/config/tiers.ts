@@ -9,6 +9,8 @@ export type Tier = 'anonymous' | 'registered' | 'paid';
 export type LearnPeriod = 'day' | 'month';
 
 export interface TierLimits {
+  /** SPEC 6.1/15: maximum upload size in bytes (placeholder, tune from limit_hit data). */
+  maxFileBytes: number;
   maxRowsPerFile: number;
   maxColumns: number;
   /** SPEC 11 "Files per run": 1 for free/registered; paid can batch up to this many. */
@@ -37,6 +39,7 @@ export interface TierLimits {
 
 export const tiers: Record<Tier, TierLimits> = {
   anonymous: {
+    maxFileBytes: 5 * 1024 * 1024,
     maxRowsPerFile: 300,
     maxColumns: 20,
     filesPerRun: 1,
@@ -50,6 +53,7 @@ export const tiers: Record<Tier, TierLimits> = {
     editRules: false,
   },
   registered: {
+    maxFileBytes: 25 * 1024 * 1024,
     maxRowsPerFile: 5_000,
     maxColumns: 50,
     filesPerRun: 1,
@@ -63,6 +67,7 @@ export const tiers: Record<Tier, TierLimits> = {
     editRules: true,
   },
   paid: {
+    maxFileBytes: 100 * 1024 * 1024,
     maxRowsPerFile: 100_000,
     maxColumns: 150,
     // SPEC 11 "Files per run": "batch, up to 50".

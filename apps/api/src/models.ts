@@ -2,6 +2,8 @@
  * Document interfaces for every MongoDB collection listed in SPEC.md section 13.
  * No file contents or cell values are ever stored here - only metadata, rules
  * (real constants only, after unmasking) and event props (counts/ids/codes).
+ * `learn_cache` (SPEC 9.5) also holds rules: with masking off they can carry real constants
+ * from one owner's data, so it is owner-scoped and TTL-expired - see `LearnCacheDoc`.
  */
 import type { ObjectId } from 'mongodb';
 import type { RepairProblem } from '@formatai/shared';
@@ -147,11 +149,30 @@ export interface UsageCounterDoc {
   expiresAt?: Date;
 }
 
-/** Spend totals per day; one document per day. */
+/** Spend totals per UTC day; one document per day. `anonSpendUsd` is the part spent on
+ * anonymous (not signed in) learns - what the daily anonymous budget (SPEC 9.5) is checked against. */
 export interface BudgetDoc {
   _id?: ObjectId;
   day: string;
   spendUsd: number;
+  anonSpendUsd?: number;
+}
+
+/**
+ * SPEC 9.5 `learn_cache`: saved rules per (owner, structure hash). The owner is `anon:<anonId>` now,
+ * `user:<id>` from M3. DECISION: a cached entry is only ever returned to the SAME owner - rules can hold
+ * constants derived from one user's data (value-map entries, filter values, labels), see
+ * `protection/cache.ts`. TTL-expired through `createdAt` (config `limits.cache.ttlDays`).
+ */
+export interface LearnCacheDoc {
+  _id?: ObjectId;
+  owner: string;
+  key: string;
+  /** The rules as a JSON string: opaque to the database, and free of BSON field-name limits (value-map
+   * keys are user text and may contain dots or a leading dollar sign). */
+  rules: string;
+  promptVersion: string;
+  createdAt: Date;
 }
 
 export interface LeadDoc {

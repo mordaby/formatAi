@@ -1,3 +1,4 @@
+import { limits } from '@formatai/shared';
 import { MongoClient, type Collection, type Db, type UpdateFilter } from 'mongodb';
 import type { Env } from './env.js';
 import type {
@@ -7,6 +8,7 @@ import type {
   ConversionDoc,
   FormatDoc,
   LeadDoc,
+  LearnCacheDoc,
   LlmCallDoc,
   UsageCounterDoc,
   UserDoc,
@@ -23,6 +25,7 @@ export interface AppDb {
   llmCalls: Collection<LlmCallDoc>;
   usageCounters: Collection<UsageCounterDoc>;
   budgets: Collection<BudgetDoc>;
+  learnCache: Collection<LearnCacheDoc>;
   leads: Collection<LeadDoc>;
   waitlist: Collection<WaitlistDoc>;
   feedback: Collection<FeedbackDoc>;
@@ -52,6 +55,7 @@ export async function connectDb(env: Env): Promise<AppDb | null> {
     llmCalls: db.collection<LlmCallDoc>('llm_calls'),
     usageCounters: db.collection<UsageCounterDoc>('usage_counters'),
     budgets: db.collection<BudgetDoc>('budgets'),
+    learnCache: db.collection<LearnCacheDoc>('learn_cache'),
     leads: db.collection<LeadDoc>('leads'),
     waitlist: db.collection<WaitlistDoc>('waitlist'),
     feedback: db.collection<FeedbackDoc>('feedback'),
@@ -80,6 +84,12 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
       { expireAfterSeconds: 0, name: 'usage_counters_expiresAt_ttl' },
     ),
     appDb.budgets.createIndex({ day: 1 }, { unique: true, name: 'budgets_day_unique' }),
+    // SPEC 9.5: one saved result per (owner, structure hash); TTL-expired by age (config limits.cache.ttlDays).
+    appDb.learnCache.createIndex({ owner: 1, key: 1 }, { unique: true, name: 'learn_cache_owner_key_unique' }),
+    appDb.learnCache.createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: limits.cache.ttlDays * 24 * 60 * 60, name: 'learn_cache_createdAt_ttl' },
+    ),
     appDb.leads.createIndex({ ts: 1 }, { name: 'leads_ts' }),
     appDb.waitlist.createIndex({ userId: 1 }, { name: 'waitlist_userId' }),
     appDb.feedback.createIndex({ ts: 1 }, { name: 'feedback_ts' }),

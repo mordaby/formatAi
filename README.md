@@ -44,7 +44,12 @@ Run the API: `pnpm --filter @formatai/api dev` → http://localhost:8787/api/hea
 
 - **M0 — engine without AI (spec v3):** rules schema v1 incl. typed operations, functions and lookup tables; type checker and limits; format lock (formatOf / checkFormatLock); table detection; the 11-step pipeline (decimal math, dedupe, three expand modes, groups, titles, input/output validations); read xlsx/xls/csv/txt; write xlsx (RTL) and csv/txt (delimiter, header on/off, quoting, UTF-8/Windows-1255); golden tests across domains.
 - **M1 — learning:** column profile and pair analysis; pre-flight; strict fast path (no LLM); masking; payload builder; one LLM interface (`LLM_PROVIDER`: anthropic | openai | claude-cli | fake); LLM writes formulas parsed into the whitelisted AST; layered checks + repair + escalation; full verification; eval harness with 17 cases across domains and next-month hold-outs — see [eval/RESULTS.md](eval/RESULTS.md).
-- Next: **M2 — web tool** (design plan first).
+- **M2 — web tool:** approved design (docs/design-plan.md); Hebrew/English + RTL/LTR; the engine runs in a Web Worker; upload → pre-flight → learn → rules map, editor with live match counter and one-off exceptions, preview with differences; masking switch and "See what we send"; anonymous limits, Turnstile, budgets and an owner-scoped cache.
+- Next: **M3 — accounts** (sign-in, the registry of formats and sources, convert with matching, batch).
+
+### Run the app locally
+
+`pnpm dev` starts the API (8787) and the web app (http://localhost:5173). Tests: `pnpm test` (hermetic — it never reads your .env). API database tests: set `MONGODB_URI=mongodb://127.0.0.1:27017 MONGODB_DB=formatai_test` for that run.
 
 ### Dev LLM without an API key
 
