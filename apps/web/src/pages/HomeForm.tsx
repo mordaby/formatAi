@@ -72,7 +72,7 @@ export function HomeForm({ busy }: HomeFormProps) {
       </div>
 
       <div className="learn-row">
-        <Button variant="primary" iconEnd="arrow" disabled={!ready} loading={busy} aria-describedby={ready ? undefined : hintId} onClick={session.begin}>
+        <Button variant="primary" iconEnd="arrow" disabled={!ready} loading={busy} aria-describedby={ready ? undefined : hintId} onClick={() => session.begin()}>
           {t('home.learn')}
         </Button>
         {!ready && (

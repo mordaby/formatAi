@@ -10,10 +10,16 @@
 //
 // Tone (SPEC 16.3): plain words, say exactly what happened and what to do.
 
+import { convertEn, convertHe } from './convert';
+import { accountEn, accountHe } from './account';
+import { formatsEn, formatsHe } from './formats';
 import { resultEn, resultHe } from './result';
 
 export const en = {
   ...resultEn,
+  ...accountEn,
+  ...formatsEn,
+  ...convertEn,
   'app.name': 'formatAI',
   'app.tagline': 'Teach a format once. Use it every month.',
 
@@ -93,8 +99,6 @@ export const en = {
   'signIn.kept': 'What you have learned survives signing in, so nothing has to be redone.',
   'signIn.google': 'Continue with Google',
   'signIn.microsoft': 'Continue with Microsoft',
-  'signIn.soon': 'Coming soon',
-  'signIn.soonNote': 'Signing in opens soon. Until then you can try the tool without an account.',
 
   'steps.label': 'Steps',
   'steps.upload': 'Upload',
@@ -187,6 +191,9 @@ export type MessageKey = keyof typeof en;
 
 export const he: Record<MessageKey, string> = {
   ...resultHe,
+  ...accountHe,
+  ...formatsHe,
+  ...convertHe,
   'app.name': 'formatAI',
   'app.tagline': 'מלמדים פורמט פעם אחת. משתמשים בו כל חודש.',
 
@@ -262,8 +269,6 @@ export const he: Record<MessageKey, string> = {
   'signIn.kept': 'מה שכבר נלמד נשמר גם אחרי ההתחברות, כך שלא צריך לעשות שוב כלום.',
   'signIn.google': 'המשך עם Google',
   'signIn.microsoft': 'המשך עם Microsoft',
-  'signIn.soon': 'בקרוב',
-  'signIn.soonNote': 'ההתחברות תיפתח בקרוב. בינתיים אפשר לנסות את הכלי גם בלי חשבון.',
 
   'steps.label': 'שלבים',
   'steps.upload': 'העלאה',

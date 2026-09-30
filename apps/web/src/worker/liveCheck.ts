@@ -157,6 +157,8 @@ export interface CheckExampleOptions {
   exceptions?: number[];
   /** Allow the subset above `fullCheckAboveRows` rows (default true). `false` checks every row. */
   subset?: boolean;
+  /** SPEC 21 v5 item 1: the local partial result compares only the columns code built (0-based positions in `rules.output.columns`). */
+  onlyColumns?: number[];
 }
 
 export function checkExample(analysis: PairAnalysis, rules: LearnResult | Rules, opts: CheckExampleOptions = {}): LiveCheckResult {
@@ -166,7 +168,7 @@ export function checkExample(analysis: PairAnalysis, rules: LearnResult | Rules,
   const partial = opts.subset !== false && rowsInExample > editorConfig.fullCheckAboveRows;
   const target = partial ? subsetAnalysis(analysis, editorConfig.subsetRows) : analysis;
 
-  const v = verifyAgainstExample(rules, target, { exceptions });
+  const v = verifyAgainstExample(rules, target, { exceptions, ...(opts.onlyColumns ? { onlyColumns: opts.onlyColumns } : {}) });
 
   // Per column: every aligned row is compared on every example column, so a column's misses are its mismatches.
   const missesByHeader = new Map<string, number>();

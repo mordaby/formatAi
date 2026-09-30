@@ -1,6 +1,7 @@
 import { errorView } from '../app/messages';
 import type { FlowError } from '../flow/errors';
 import { useI18n } from '../i18n';
+import { UpgradeButton } from '../app/Upgrade';
 import { Button, InlineMessage } from '../ui';
 
 export interface LearningErrorProps {
@@ -25,7 +26,7 @@ export function LearningError({ error, onRetry, onChangeFiles, onSignIn }: Learn
       <header className="tool__head">
         <h1>{t('learning.title')}</h1>
       </header>
-      <InlineMessage tone={view.tone} {...(view.todo ? { todo: view.todo } : {})}>
+      <InlineMessage tone={view.tone} {...(view.title ? { title: view.title } : {})} {...(view.todo ? { todo: view.todo } : {})}>
         {view.text}
       </InlineMessage>
       <div className="preflight__actions">
@@ -34,6 +35,7 @@ export function LearningError({ error, onRetry, onChangeFiles, onSignIn }: Learn
             {t('header.signIn')}
           </Button>
         )}
+        {view.action === 'upgrade' && <UpgradeButton variant="primary" />}
         {view.action === 'tryAgain' && (
           <Button variant="primary" onClick={onRetry}>
             {t('error.tryAgain')}

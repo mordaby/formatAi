@@ -14,6 +14,16 @@ import type {
   VerifyResult,
 } from '@formatai/engine';
 import type {
+  BatchArgs,
+  BatchOutput,
+  ConvertRunArgs,
+  ConvertRunOutput,
+  HeadersArgs,
+  HeadersOutput,
+  MatchFileArgs,
+  MatchFileOutput,
+} from './convertApi';
+import type {
   LiveCheckArgs,
   LiveCheckResult,
   LoadExampleArgs,
@@ -23,6 +33,7 @@ import type {
 } from './editorApi';
 
 export type * from './editorApi';
+export type * from './convertApi';
 
 export interface FileBytes {
   name: string;
@@ -42,6 +53,8 @@ export interface LearnArgs {
   tier: Tier;
   /** SPEC 8.12/A2: attach mode. */
   target?: Format;
+  /** SPEC 21 v5 item 1: 'notAllowed' (not signed in) never calls the AI step: the local result comes back (`path: 'partial'`). Default 'allowed'. */
+  ai?: 'allowed' | 'notAllowed';
 }
 
 /** Real progress from the worker. `reading` runs until the first analysis event; `learning`/`verifying` only happen on the LLM path. */
@@ -120,5 +133,10 @@ export interface EngineMethodMap {
   /** Like `liveCheck`, but every row (the editor's Apply). */
   fullCheck: { args: Omit<LiveCheckArgs, 'subset'>; result: LiveCheckResult; progress: never };
   staticChecks: { args: StaticChecksArgs; result: StaticProblem[]; progress: never };
+  /** Flow C/D (SPEC 5): the file's headers, matching, a run with row decisions, and the batch's zip. */
+  readHeaders: { args: HeadersArgs; result: HeadersOutput; progress: never };
+  matchFile: { args: MatchFileArgs; result: MatchFileOutput; progress: never };
+  convertWithDecisions: { args: ConvertRunArgs; result: ConvertRunOutput; progress: never };
+  batch: { args: BatchArgs; result: BatchOutput; progress: never };
 }
 export type EngineMethodName = keyof EngineMethodMap;

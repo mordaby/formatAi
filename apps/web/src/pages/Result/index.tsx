@@ -1,240 +1,186 @@
-// The Result screen (SPEC 16.1 screen 4, 8.11): the rules map, its editor, the live check and the preview grid.
-import { tiers, type Tier } from '@formatai/shared';
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+// The Result screen (SPEC 16.1 screen 4, 8.11) for a fresh learn: the working part (`Workbench`) plus what is specific to a learn -
+// the local result before the AI step (SPEC 21 v5), the AI quota, "this looks like your format X" (SPEC 5 A2), and saving.
+import { limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse } from '@formatai/shared';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { aiLeftLabel } from '../../app/aiQuota';
 import { useLearnSession } from '../../app/LearnSession';
+import { useMe } from '../../app/Me';
 import { useSignIn } from '../../app/SignIn';
-import { lineIds, useEditor, useLiveCheck } from '../../editor';
+import type { AiInfo } from '../../flow/learnFlow';
 import type { UseLearnFlow } from '../../flow/useLearnFlow';
 import { useI18n } from '../../i18n';
-import { describeRules, type Line } from '../../rulesText';
 import { useServices } from '../../services';
-import { Button, Stepper } from '../../ui';
+import { Button, InlineMessage } from '../../ui';
 import type { LearnOutput } from '../../worker/engineApi';
-import { EditorEmpty, EditorPanel } from './EditorPanel';
-import type { EditorCtx } from './fields';
-import { FlagsList } from './FlagsList';
-import { assumptionIndexes, planAdd, type AddKind } from './helpers';
-import { LiveCheckStrip } from './LiveCheckStrip';
-import { PreviewGrid } from './PreviewGrid';
-import { ResultHeader, StatusBadge } from './ResultHeader';
-import { RulesMap } from './RulesMap';
+import { PartialBanner, PartialSignInDialog } from './PartialResult';
+import { SaveFailureMessage } from './SaveMessages';
 import { defaultFormatName, getResultSession } from './session';
-import { useRunFlags } from './useRunFlags';
+import { useFormatMatch } from './useFormatMatch';
+import { useSave } from './useSave';
+import { Workbench, type WorkbenchInfo } from './Workbench';
 
 /** The props are exactly what `useLearnFlow` returns: `state` (status 'done' here), and the flow's actions. */
 export type ResultPageProps = UseLearnFlow;
 
-/** M2 has no accounts yet (sign-in arrives in M3): every visitor is on the free tier. */
-const TIER: Tier = 'anonymous';
-
-/** How long the map takes to fill in line by line after learning (the screen's one orchestrated motion). */
-const INTRO_MS = 1800;
-
 export function ResultPage({ state }: ResultPageProps) {
   if (state.status !== 'done' || !state.result.rules) return null;
-  return <ResultScreen result={state.result} />;
+  return <ResultScreen result={state.result} ai={state.ai} />;
 }
 
-function ResultScreen({ result }: { result: LearnOutput }) {
-  const { t, lang, dir } = useI18n();
-  const { engine } = useServices();
+function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefined }) {
+  const { t } = useI18n();
+  const { api } = useServices();
   const session = useLearnSession();
   const signIn = useSignIn();
+  const me = useMe();
   const navigate = useNavigate();
-  const limits = tiers[TIER];
+  const tierLimits = tiers[me.tier];
 
   // The edits (and the name) live in the session, not in this component: they survive leaving the screen and the sign-in wall.
   const saved = getResultSession(result, defaultFormatName(session.output?.name, t('result.untitled')));
   const [name, setName] = useState(saved.name);
-  const editor = useEditor(saved.store);
-  const rules = editor.state.rules;
-  const check = useLiveCheck({ engine, exampleId: result.exampleId, editor: editor.state, tier: TIER });
-  const live = check.state.live;
+  const rules = result.rules!;
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [advanced, setAdvanced] = useState(false);
-  const open = (id: string): void => {
-    setSelectedId(id);
-    setAdvanced(false);
-  };
-  const close = (): void => {
-    setSelectedId(null);
-    setAdvanced(false);
-  };
-
-  // The map fills in line by line, once.
-  const [intro, setIntro] = useState(true);
+  // SPEC 21 v5 item 1: the local result, shown before the AI step.
+  const partial = result.path === 'partial' ? result.partial : undefined;
+  const aiPending = partial?.reason === 'aiNotAllowed';
+  const [popupOpen, setPopupOpen] = useState(false);
+  const popupShown = useRef(false);
   useEffect(() => {
-    const timer = setTimeout(() => setIntro(false), INTRO_MS);
-    return () => clearTimeout(timer);
-  }, []);
+    if (aiPending && me.status === 'ready' && !me.user && !popupShown.current) {
+      popupShown.current = true;
+      setPopupOpen(true);
+    }
+  }, [aiPending, me.status, me.user]);
 
-  // Undo and redo from the keyboard, except inside a field (where the browser's own undo belongs to the text).
-  const { undo, redo } = editor;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      const el = e.target instanceof HTMLElement ? e.target : null;
-      if (el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName))) return;
-      const key = e.key.toLowerCase();
-      if (key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        undo();
-      } else if (key === 'y' || (key === 'z' && e.shiftKey)) {
-        e.preventDefault();
-        redo();
-      }
+  const save = useSave<CreateFormatResponse>();
+  const match = useFormatMatch(me.user !== null && !aiPending, rules);
+
+  const doSave = (info: WorkbenchInfo): void => {
+    const file = session.input;
+    if (!info.metaStatus || !file) return;
+    const learnPath = result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
+    const body: CreateFormatRequest = {
+      name,
+      rules: info.rules,
+      status: info.metaStatus,
+      acceptedDifferences: info.differences ?? 0,
+      exampleExceptions: info.exceptions,
+      learnPath,
+      masking: session.masking,
+      ...(learnPath === 'local' ? {} : { promptVersion }),
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [undo, redo]);
+    void save.run({
+      persist: () => api.registry.createFormat(body),
+      // SPEC 21 v5 item 3: saving with accepted differences is what makes an AI learn that did not verify count.
+      afterSaved: () => {
+        if (info.metaStatus === 'differencesAccepted' && ai?.learnId) {
+          api.registry
+            .learnOutcome(ai.learnId, 'accepted')
+            .then((r) => me.setQuota(r.quota))
+            .catch(() => undefined);
+        }
+      },
+      download: { file, rules: info.rules },
+    });
+  };
 
-  // A column that still has nothing to fill it says so (amber) even after the user touched it: "edited" would hide that.
-  const needsInput = useMemo(() => {
-    const headers = new Set<string>();
-    for (const c of rules.output.columns) if (c.from === null) headers.add(c.header);
-    for (const u of rules.unsupported) if (rules.output.columns.some((c) => c.header === u.outputColumn)) headers.add(u.outputColumn);
-    return headers;
-  }, [rules]);
-  const model = useMemo(() => {
-    const edited = new Set([...editor.state.edited].filter((id) => !(id.startsWith('col:') && needsInput.has(id.slice(4)))));
-    return describeRules(rules, { lang, verification: live ?? result.verification ?? undefined, edited });
-  }, [rules, lang, live, result.verification, editor.state.edited, needsInput]);
+  const actions = (info: WorkbenchInfo) => {
+    if (aiPending) {
+      return (
+        <>
+          {me.user ? (
+            <Button variant="primary" onClick={session.finishWithAi}>
+              {t('partial.finish')}
+            </Button>
+          ) : (
+            <Button variant="primary" onClick={() => setPopupOpen(true)}>
+              {t('partial.banner.signIn')}
+            </Button>
+          )}
+          <p className="muted">{t('partial.saveHint')}</p>
+        </>
+      );
+    }
+    if (save.state.status === 'saved') {
+      return (
+        <Button variant="primary" onClick={() => navigate('/formats')}>
+          {t('save.viewFormats')}
+        </Button>
+      );
+    }
+    const label =
+      info.differences && info.differences > 0 ? t(info.differences === 1 ? 'save.differences.one' : 'save.differences.other', { n: info.differences }) : t('result.save');
+    const saving = save.state.status === 'saving';
+    return (
+      <>
+        <Button
+          variant="primary"
+          loading={saving}
+          // A visitor is asked to sign in (SPEC 5 E); a signed-in user needs rules that can be saved right now.
+          disabled={me.user ? info.metaStatus === null : info.status.kind === 'blocked'}
+          onClick={() => (me.user ? doSave(info) : signIn.open('save'))}
+        >
+          {label}
+        </Button>
+        {!me.user && tierLimits.previewRows !== null ? <p className="muted">{t('result.freeHint', { n: tierLimits.previewRows })}</p> : null}
+      </>
+    );
+  };
 
-  const run = useRunFlags({
-    rules,
-    rev: editor.state.rev,
-    file: session.input,
-    ready: !check.stale && check.state.status === 'ready' && check.problems.length === 0,
-  });
-
-  const ctx = useMemo<EditorCtx>(
-    () => ({ rules, apply: editor.apply, rev: editor.state.rev, currentRev: () => editor.store.getState().rev, language: rules.output.language }),
-    [rules, editor.apply, editor.state.rev, editor.store],
+  const banners = () => (
+    <>
+      {partial && <PartialBanner partial={partial} totalColumns={rules.output.columns.length} readiness={result.readiness} />}
+      {match.format && !match.dismissed && (
+        <InlineMessage
+          tone="info"
+          title={t('match.title', { name: match.format.name })}
+          actions={
+            <>
+              <Button variant="primary" size="sm" onClick={() => navigate(`/formats/${match.format!.id}/add-source`, { state: { fromSession: true } })}>
+                {t('match.add')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={match.dismiss}>
+                {t('match.dismiss')}
+              </Button>
+            </>
+          }
+        >
+          {t('match.text')}
+        </InlineMessage>
+      )}
+      {ai && <AiNote ai={ai} verified={result.verification?.verified === true} />}
+      {save.state.status === 'saved' && (
+        <InlineMessage tone="info" actions={<Link to="/formats">{t('save.viewFormats')}</Link>}>
+          {t('save.done', { name })}
+        </InlineMessage>
+      )}
+      {save.state.status === 'error' && <SaveFailureMessage failure={save.state.error} onSignIn={() => signIn.open('save')} />}
+    </>
   );
 
-  // ----- actions -----
-
-  const add = (kind: AddKind): void => {
-    const plan = planAdd(rules, kind, { column: t('map.newColumn'), title: t('map.newTitle'), total: t('map.newTotal') });
-    if (plan && editor.apply(plan.action).ok) open(plan.lineId);
-  };
-  const keep = (line: Line): void => {
-    // From the last to the first, so the indexes still mean what they meant.
-    for (const index of assumptionIndexes(rules, line).reverse()) editor.apply({ type: 'dismissAssumption', index });
-  };
-  const reorder = (from: number, to: number): void => void editor.apply({ type: 'reorderColumns', from, to });
-
-  // ----- the badge -----
-
-  const status = check.saveStatus;
-  let badge: { tone: 'verified' | 'check' | 'neutral'; text: string; busy?: boolean };
-  // Rules that can't be saved come first; then columns that need the user; then how well the rows match.
-  if (status.kind === 'blocked') badge = { tone: 'check', text: t(status.problems.length === 1 ? 'result.badge.blocked.one' : 'result.badge.blocked.other', { n: status.problems.length }) };
-  else if (needsInput.size > 0) badge = { tone: 'check', text: t(needsInput.size === 1 ? 'result.badge.needsInput.one' : 'result.badge.needsInput.other', { n: needsInput.size }) };
-  else if (status.kind === 'verified') badge = { tone: 'verified', text: t('result.badge.verified') };
-  else if (status.kind === 'differences') badge = { tone: 'check', text: t(status.differences === 1 ? 'result.badge.differences.one' : 'result.badge.differences.other', { n: status.differences }) };
-  else if (status.kind === 'checkFailed') badge = { tone: 'check', text: t('result.badge.checkFailed') };
-  else if (status.kind === 'noExample') badge = { tone: 'neutral', text: t('result.badge.noExample') };
-  else badge = { tone: 'neutral', text: t('result.badge.checking'), busy: true };
-
-  const panelOpen = advanced || selectedId !== null;
-
   return (
-    <main id="main" className="page page--result" tabIndex={-1}>
-      <section className="tool result">
-        <Stepper current={3} />
-        <div className="view result__view">
-          <ResultHeader
-            name={name}
-            onRename={(next) => {
-              setName(next);
-              saved.name = next;
-            }}
-            badge={<StatusBadge tone={badge.tone} text={badge.text} {...(badge.busy ? { busy: true } : {})} />}
-            learnedNote={t(result.path === 'local' ? 'flow.path.local' : 'flow.path.llm')}
-            canUndo={editor.canUndo}
-            canRedo={editor.canRedo}
-            onUndo={editor.undo}
-            onRedo={editor.redo}
-            // Saving and downloading need an account (SPEC 11, 5 E); the rules stay in this session while the wall is open.
-            onSave={() => signIn.open('save')}
-            saveDisabled={status.kind === 'blocked'}
-            hint={limits.fullDownload ? undefined : t('result.freeHint', { n: limits.previewRows ?? 0 })}
-          />
-
-          <LiveCheckStrip check={check} />
-
-          <div className="workbench">
-            <div className="workbench__map">
-              <RulesMap
-                model={model}
-                rules={rules}
-                selectedId={selectedId}
-                columnChecks={live?.perColumn}
-                intro={intro}
-                onSelect={(line) => open(line.id)}
-                onKeep={keep}
-                onReorder={reorder}
-                onAdd={add}
-              />
-              <p className="workbench__advanced">
-                <Button
-                  variant="link"
-                  onClick={() => {
-                    setSelectedId(null);
-                    setAdvanced(true);
-                  }}
-                >
-                  {t('editor.advanced.open')}
-                </Button>
-              </p>
-            </div>
-            <div className="workbench__panel" data-open={panelOpen || undefined}>
-              {panelOpen ? (
-                <EditorPanel
-                  ctx={ctx}
-                  model={model}
-                  selectedId={selectedId}
-                  advanced={advanced}
-                  live={live}
-                  formatChange={editor.state.formatChange}
-                  sourceCount={editor.state.format?.sourceCount ?? 1}
-                  onClose={close}
-                  onOpen={open}
-                  onAdvanced={(on) => {
-                    setAdvanced(on);
-                    if (on) setSelectedId(null);
-                  }}
-                  onRenamed={(header) => setSelectedId(lineIds.col(header))}
-                  onMoveColumn={reorder}
-                />
-              ) : (
-                <EditorEmpty
-                  onAdvanced={() => {
-                    setSelectedId(null);
-                    setAdvanced(true);
-                  }}
-                />
-              )}
-            </div>
-          </div>
-
-          <PreviewGrid
-            live={live}
-            rules={rules}
-            flags={run.flags}
-            limit={limits.previewRows}
-            exceptions={editor.state.exceptions}
-            uiDir={dir}
-            onException={(row) => void editor.apply({ type: 'markException', row })}
-            onUnexception={(row) => void editor.apply({ type: 'unmarkException', row })}
-            onSignIn={() => signIn.open('save')}
-          />
-
-          <FlagsList flags={run.flags} summary={run.summary} rules={rules} limit={limits.previewRows} onSignIn={() => signIn.open('save')} />
-
+    <>
+      <Workbench
+        stepper
+        store={saved.store}
+        exampleId={result.exampleId}
+        inputFile={session.input}
+        tier={me.tier}
+        partial={partial}
+        verification={result.verification}
+        name={name}
+        onRename={(next) => {
+          setName(next);
+          saved.name = next;
+        }}
+        learnedNote={t(partial ? (aiPending ? 'partial.note' : 'flow.path.local') : result.path === 'local' ? 'flow.path.local' : 'flow.path.llm')}
+        previewLimit={tierLimits.previewRows}
+        onSignIn={() => signIn.open('save')}
+        actions={actions}
+        banners={banners}
+        footer={
           <div>
             <Button
               variant="ghost"
@@ -247,9 +193,32 @@ function ResultScreen({ result }: { result: LearnOutput }) {
               {t('result.startOver')}
             </Button>
           </div>
-        </div>
-      </section>
-    </main>
+        }
+      />
+      {partial && aiPending && !me.user && (
+        <PartialSignInDialog open={popupOpen} partial={partial} totalColumns={rules.output.columns.length} onClose={() => setPopupOpen(false)} />
+      )}
+    </>
+  );
+}
+
+/** What the AI step reported: how many AI formats are left, and - when the result did not match every row - which try this was. */
+function AiNote({ ai, verified }: { ai: AiInfo; verified: boolean }) {
+  const { t, code } = useI18n();
+  const max = limits.learn.maxFailedAiAttempts;
+  const tried = ai.failedAttempts ?? 0;
+  if (!ai.quota && (verified || tried === 0)) return null;
+  return (
+    <div className="ai-note" data-testid="ai-note">
+      {ai.exhausted ? (
+        <InlineMessage tone="warn" title={t('aiExhausted.title', { n: max })} todo={t('aiExhausted.todo')}>
+          {code({ kind: 'apiError', code: 'aiAttemptsExhausted', counted: ai.counted === true })}
+        </InlineMessage>
+      ) : !verified && tried > 0 ? (
+        <InlineMessage tone="info">{t('ai.attempt', { n: tried, max })}</InlineMessage>
+      ) : null}
+      {ai.quota ? <p className="muted tabular">{aiLeftLabel(t, ai.quota)}</p> : null}
+    </div>
   );
 }
 

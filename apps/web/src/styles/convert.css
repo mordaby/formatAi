@@ -1,0 +1,367 @@
+/* Convert a file and Batch (SPEC 5 C/D, 16.1 screen 6, 21 v5 item 5). Logical properties only. Amber is for flagged rows
+   and differences; teal marks what the user decided; nothing here is decoration. */
+
+.convert {
+  max-inline-size: 860px;
+}
+.conv__step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.conv__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.conv__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+.conv__wait {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.conv__file,
+.conv__target {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.conv__name {
+  overflow-wrap: anywhere;
+}
+.conv__foot {
+  font-size: var(--fs-small);
+}
+.conv__progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* ---------- which source is this file? ---------- */
+.srcs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.src {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-4);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.src__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-inline-size: min(100%, 26ch);
+}
+.src__name {
+  font-weight: 500;
+}
+.src__arrow {
+  display: inline-block;
+  color: var(--ink-2);
+  font-weight: 400;
+  white-space: pre;
+}
+[dir='rtl'] .src__arrow {
+  transform: scaleX(-1);
+}
+.src__missing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-block-start: var(--s-1);
+}
+
+/* ---------- renamed columns ---------- */
+.mapping {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  max-inline-size: 460px;
+}
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  max-inline-size: 60ch;
+  cursor: pointer;
+}
+.check .field__hint {
+  display: block;
+}
+.check input {
+  inline-size: 18px;
+  block-size: 18px;
+  margin-block-start: 3px;
+  accent-color: var(--brand);
+}
+
+/* ---------- the review before the file is written ---------- */
+.review__bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+.review__tally {
+  margin-inline-start: auto;
+}
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.rv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-inline-start: 3px solid var(--diff);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition:
+    background-color var(--dur-2) var(--ease),
+    border-color var(--dur-2) var(--ease);
+}
+.rv[data-choice='keep'],
+.rv[data-choice='override'] {
+  border-inline-start-color: var(--brand);
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+}
+.rv[data-choice='skip'] {
+  border-inline-start-color: var(--line-strong);
+  color: var(--ink-2);
+}
+.rv__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+.rv__icon {
+  color: var(--diff-icon);
+}
+.rv[data-choice] .rv__icon {
+  color: inherit;
+}
+.rv__row {
+  font-size: var(--fs-body);
+}
+.rv__decided {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-inline-start: auto;
+}
+.rv__flags {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.rv__flag {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rv__where {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.rv[data-choice='keep'] .rv__where,
+.rv[data-choice='override'] .rv__where {
+  color: inherit;
+}
+.rv__suggestion {
+  font-size: var(--fs-small);
+  font-weight: 500;
+}
+.rv__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.rv__actions .btn[aria-pressed='true'] {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.rv__fix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+}
+.rv__fix-title {
+  font-weight: 500;
+}
+.rv__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-inline-size: 520px;
+}
+.rv__field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.rv__field-row .input {
+  flex: 1 1 200px;
+}
+
+/* ---------- the run result ---------- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: var(--s-3);
+  margin: 0;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.stat dt {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.stat dd {
+  margin: 0;
+  font-size: var(--fs-section);
+  font-weight: 500;
+}
+.stat[data-stat='skipped'],
+.stat[data-stat='edited'],
+.stat[data-stat='accepted'] {
+  border-color: transparent;
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+}
+.stat[data-stat='skipped'] dt,
+.stat[data-stat='edited'] dt,
+.stat[data-stat='accepted'] dt {
+  color: inherit;
+}
+.stat[data-stat='flagged'] {
+  border-color: transparent;
+  background: var(--diff-tint);
+  color: var(--on-diff-tint);
+}
+.stat[data-stat='flagged'] dt {
+  color: inherit;
+}
+.pv__row--meta > * {
+  color: var(--ink-2);
+}
+
+/* ---------- batch ---------- */
+.what {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  max-inline-size: 64ch;
+}
+.what li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+.what .icon {
+  margin-block-start: 3px;
+  color: var(--brand);
+}
+.batch__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.bfiles {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.bfile {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-block-end: 1px solid var(--line);
+}
+.bfile:last-child {
+  border-block-end: 0;
+}
+.bfile__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-inline-size: 0;
+}
+.bfile__name {
+  overflow-wrap: anywhere;
+}
+.bfile[data-status='convertedFlags'] {
+  background: var(--diff-tint);
+  color: var(--on-diff-tint);
+}
+.bfile[data-status='convertedFlags'] .muted {
+  color: inherit;
+}
+.bfile__flags {
+  margin-block-start: var(--s-1);
+  font-size: var(--fs-small);
+}
+.bfile__flags summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.bfile__flags ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-block-start: var(--s-2);
+}
+.bgroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.dz--batch .dz__target {
+  min-block-size: 140px;
+}
+
+@media (max-width: 640px) {
+  .review__tally {
+    margin-inline-start: 0;
+    inline-size: 100%;
+  }
+  .rv__decided {
+    margin-inline-start: 0;
+  }
+}

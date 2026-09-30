@@ -62,6 +62,7 @@ export function formatSummary(doc: FormatDoc, stats: SourceStats = NO_SOURCES): 
     version: doc.version,
     fileType: output.file?.type ?? 'xlsx',
     outputColumns: output.columns.length,
+    outputHeaders: output.columns.map((c) => c.header),
     sources: stats.sources,
     statuses: stats.statuses,
     runCount: stats.runCount,

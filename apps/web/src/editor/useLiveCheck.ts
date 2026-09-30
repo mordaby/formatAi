@@ -16,6 +16,8 @@ export interface UseLiveCheckOptions {
   tier: Tier;
   /** Set when the conversion belongs to a format: turns on the format lock (SPEC 8.12). */
   format?: Format;
+  /** SPEC 21 v5 item 1: the local partial result checks only these output columns (positions in the CURRENT rules). Pass a stable array. */
+  onlyColumns?: number[];
   debounceMs?: number;
 }
 
@@ -32,7 +34,7 @@ export interface UseLiveCheck {
 }
 
 export function useLiveCheck(options: UseLiveCheckOptions): UseLiveCheck {
-  const { engine, exampleId, editor, tier, debounceMs } = options;
+  const { engine, exampleId, editor, tier, debounceMs, onlyColumns } = options;
   const format = useStableFormat(options.format);
   const scheduler = useMemo(
     () => new LiveCheckScheduler({ engine, exampleId, tier, format, ...(debounceMs === undefined ? {} : { debounceMs }) }),
@@ -48,8 +50,11 @@ export function useLiveCheck(options: UseLiveCheckOptions): UseLiveCheck {
 
   // Every revision of the rules or exceptions is one update; the first one runs at once.
   useEffect(() => {
-    scheduler.update({ rules: editor.rules, exceptions: editor.exceptions, rev: editor.rev }, { immediate: scheduler.getState().latestRev === null });
-  }, [scheduler, editor.rev, editor.rules, editor.exceptions]);
+    scheduler.update(
+      { rules: editor.rules, exceptions: editor.exceptions, rev: editor.rev, ...(onlyColumns ? { onlyColumns } : {}) },
+      { immediate: scheduler.getState().latestRev === null },
+    );
+  }, [scheduler, editor.rev, editor.rules, editor.exceptions, onlyColumns]);
 
   return useMemo(() => {
     const staticCurrent = state.staticRev === editor.rev ? state.staticProblems : null;

@@ -4,8 +4,10 @@ import { useServices } from '../services';
 import { LearnFlow, type LearnFlowDeps, type LearnFlowState, type StartParams } from './learnFlow';
 
 export interface UseLearnFlowOptions {
-  /** Default 'anonymous' (sign-in arrives in M3). */
+  /** Default 'anonymous'. */
   tier?: Tier;
+  /** Read at the start of every learn (so a sign-in does not replace the flow and lose its result). Pass a stable function. Wins over `tier`. */
+  getTier?: () => Tier;
   getTurnstileToken?: () => Promise<string | undefined>;
   /** See `LearnFlowDeps.beforeSend`. Pass a stable function (it is a dependency of the flow instance). */
   beforeSend?: LearnFlowDeps['beforeSend'];
@@ -28,12 +30,13 @@ export interface UseLearnFlow {
 export function useLearnFlow(options: UseLearnFlowOptions = {}): UseLearnFlow {
   const { engine, api } = useServices();
   const tier = options.tier ?? 'anonymous';
+  const getTier = options.getTier;
   const getTurnstileToken = options.getTurnstileToken;
   const beforeSend = options.beforeSend;
 
   const flow = useMemo(
-    () => new LearnFlow({ engine, api, tier, ...(getTurnstileToken ? { getTurnstileToken } : {}), ...(beforeSend ? { beforeSend } : {}) }),
-    [engine, api, tier, getTurnstileToken, beforeSend],
+    () => new LearnFlow({ engine, api, tier, ...(getTier ? { getTier } : {}), ...(getTurnstileToken ? { getTurnstileToken } : {}), ...(beforeSend ? { beforeSend } : {}) }),
+    [engine, api, tier, getTier, getTurnstileToken, beforeSend],
   );
   // Leaving the screen stops a run in progress (and restarts the worker, dropping its memory).
   useEffect(() => () => flow.cancel(), [flow]);

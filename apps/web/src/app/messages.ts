@@ -2,7 +2,7 @@
 // (SPEC 6.3, 6.4, 16.3). The reasons themselves come from the shared he/en dictionary
 // (`useI18n().code`); this file only picks the more specific wording where one exists and adds
 // the "what to do" line. Nothing here is typed by the LLM.
-import type { PreflightBlockReason } from '@formatai/shared';
+import { limits, type PreflightBlockReason } from '@formatai/shared';
 import type { PreflightIssue } from '@formatai/engine';
 import type { FlowError } from '../flow/errors';
 import { flowErrorText } from '../flow/errors';
@@ -53,10 +53,11 @@ export function blockView(i18n: I18n, issue: PreflightIssue): BlockView {
   return { text: code({ kind: 'preflight', code: issue.code, ...(issue.params ? { params: issue.params } : {}) }), ...(todoKey ? { todo: t(todoKey) } : {}) };
 }
 
-export type ErrorAction = 'tryAgain' | 'signIn' | 'reload' | 'none';
+export type ErrorAction = 'tryAgain' | 'signIn' | 'reload' | 'upgrade' | 'none';
 
 export interface ErrorView {
   tone: InlineMessageTone;
+  title?: string;
   text: string;
   todo?: string;
   /** The one main thing to offer next. */
@@ -80,9 +81,17 @@ export function errorView(i18n: I18n, error: FlowError): ErrorView {
       return { tone: 'error', text, action: 'tryAgain' };
     case 'api':
       switch (error.code) {
+        // SPEC 11, 21 v5 item 2: the AI quota is used up - say for how long, and offer the upgrade (paid plans are set up by the team).
         case 'limitHit':
-        case 'anonBudgetExhausted':
+          if (error.limit === 'aiLearns') return { tone: 'block', text, todo: i18n.t('aiLimit.local'), action: 'upgrade' };
           return { tone: 'info', text, action: 'signIn' };
+        case 'anonBudgetExhausted':
+        // The session ended (or the AI step was called signed out): the local result stays, sign in to finish.
+        case 'signInForAi':
+          return { tone: 'info', text, action: 'signIn' };
+        // SPEC 21 v5 item 3: the failed-attempt stop - what was tried, whether it counted, and what to change.
+        case 'aiAttemptsExhausted':
+          return { tone: 'block', title: i18n.t('aiExhausted.title', { n: limits.learn.maxFailedAiAttempts }), text, todo: i18n.t('aiExhausted.todo'), action: 'none' };
         case 'budgetExhausted':
           return { tone: 'block', text, action: 'none' };
         case 'rateLimited':

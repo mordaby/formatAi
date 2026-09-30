@@ -65,6 +65,11 @@ export interface AiLearnQuotaState {
   period: AiLearnPeriod;
 }
 
+/** GET /api/learn/quota (signed-in only): what is left of the caller's AI learns, before any learn was made. */
+export interface LearnQuotaResponse {
+  quota: AiLearnQuotaState;
+}
+
 /** POST /api/learn/repair body: at most one repair per `learnId`. */
 export interface RepairRequest {
   payload: LearnPayload;
@@ -214,6 +219,8 @@ export interface FormatSummary {
   version: number;
   fileType: string;
   outputColumns: number;
+  /** The output headers, in order (the browser compares them with an example output, SPEC 5 A2). */
+  outputHeaders: string[];
   /** How many sources (conversions) it has. */
   sources: number;
   /** Sources per status. */

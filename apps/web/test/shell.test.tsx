@@ -58,16 +58,15 @@ describe('app shell', () => {
     expect(screen.getByRole('link', { name: 'לעסקים' })).toBeTruthy();
   });
 
-  it('opens the sign-in wall from the header, with the SPEC 5 E copy and both providers "coming soon"', () => {
+  it('opens the sign-in wall from the header, with the SPEC 5 E copy and the providers the server offers, Google first', async () => {
     renderApp();
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     const dialog = screen.getByRole('dialog', { name: 'Sign in' });
     expect(within(dialog).getByText("Sign in to save this format and reuse it on next month's file.")).toBeTruthy();
-    const google = within(dialog).getByRole('button', { name: /Continue with Google/ }) as HTMLButtonElement;
+    const google = (await within(dialog).findByRole('button', { name: /Continue with Google/ })) as HTMLButtonElement;
     const microsoft = within(dialog).getByRole('button', { name: /Continue with Microsoft/ }) as HTMLButtonElement;
-    expect(google.disabled).toBe(true);
-    expect(microsoft.disabled).toBe(true);
-    expect(google.textContent).toContain('Coming soon');
+    expect(google.disabled).toBe(false);
+    expect(microsoft.disabled).toBe(false);
     // Google first.
     expect(google.compareDocumentPosition(microsoft) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
@@ -75,12 +74,13 @@ describe('app shell', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('routes the placeholder pages, and sends unknown addresses and a bare /result home', () => {
+  it('routes the placeholder pages, and sends unknown addresses and a bare /result home', async () => {
     const { unmount } = renderApp({ route: '/privacy' });
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Privacy');
     unmount();
     renderApp({ route: '/result' });
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Show us one example');
+    // (a moment is spent finding out whether a learn was kept across a sign-in; there was none)
+    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('Show us one example');
   });
 });
 

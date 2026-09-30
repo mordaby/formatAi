@@ -1,0 +1,411 @@
+/* Account, sign-in and the registry screens (My formats, one format, editing a source, adding a source). Logical properties only. */
+
+/* ---------- Header: My formats link, account menu ---------- */
+.app-header__link {
+  padding-inline: var(--s-2);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  text-decoration: none;
+}
+.app-header__link:hover {
+  color: var(--brand);
+}
+@media (max-width: 640px) {
+  .app-header__link {
+    display: none;
+  }
+}
+
+.account {
+  position: relative;
+}
+.account__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-block-size: 34px;
+  padding-block: 0;
+  padding-inline: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  transition: border-color var(--dur-1) var(--ease);
+}
+.account__button:hover,
+.account__button[aria-expanded='true'] {
+  border-color: var(--brand);
+}
+.account__name {
+  max-inline-size: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .account__name {
+    display: none;
+  }
+}
+.avatar {
+  flex: none;
+  inline-size: 24px;
+  block-size: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.avatar--letter {
+  display: inline-grid;
+  place-items: center;
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+  font-size: 12px;
+  font-weight: 500;
+}
+.account__panel {
+  position: absolute;
+  inset-block-start: calc(100% + var(--s-2));
+  inset-inline-end: 0;
+  z-index: 40;
+  inline-size: min(320px, calc(100vw - 2 * var(--s-4)));
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: view-in var(--dur-2) var(--ease) both;
+}
+.account__who {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.account__title {
+  font-weight: 500;
+}
+.account__email {
+  direction: ltr;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.account__quota {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.account__list {
+  display: flex;
+  flex-direction: column;
+  padding-block-start: var(--s-2);
+  border-block-start: 1px solid var(--line);
+}
+.account__item {
+  display: block;
+  inline-size: 100%;
+  padding: var(--s-2) var(--s-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  text-align: start;
+  text-decoration: none;
+}
+.account__item:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
+.auth-notice {
+  max-inline-size: var(--page);
+  margin-inline: auto;
+  inline-size: 100%;
+  padding: var(--s-4) var(--s-5) 0;
+}
+@media (max-width: 640px) {
+  .auth-notice {
+    padding-inline: var(--s-4);
+  }
+}
+
+/* ---------- Sign-in wall ---------- */
+.signin__status {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.signin__button {
+  justify-content: center;
+}
+.dialog__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+
+/* ---------- The local result before the AI step ---------- */
+.map-section--ai {
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius-sm);
+  background: var(--diff-tint);
+  color: var(--on-diff-tint);
+}
+.map-section--ai .map-section__title,
+.map-section--ai .muted {
+  color: inherit;
+}
+.ai-parts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-block-start: var(--s-2);
+}
+.ai-parts li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+.ai-parts .icon {
+  margin-block-start: 3px;
+  color: var(--diff-icon);
+}
+.map-line[data-ai-step] {
+  background: var(--diff-tint);
+}
+.ai-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.problem-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding-inline-start: var(--s-4);
+  list-style: disc;
+}
+.saved-notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.upgrade {
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  align-items: flex-start;
+}
+.upgrade .panel {
+  inline-size: min(420px, 100%);
+}
+
+/* ---------- Home for a signed-in user with formats ---------- */
+.home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+
+/* ---------- My formats ---------- */
+.formats__head {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+.formats__empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-6) var(--s-5);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.format-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.format-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.format-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-2) var(--s-4);
+}
+.format-card__name {
+  font-size: var(--fs-section);
+  font-weight: 500;
+}
+.format-card__sources {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 2px var(--s-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+}
+.format-card__sources:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+.src-arrow {
+  display: inline-block;
+}
+[dir='rtl'] .src-arrow {
+  transform: scaleX(-1);
+}
+.format-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.format-card__meta {
+  margin: 0;
+}
+.format-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.format-card__rename {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  inline-size: min(360px, 100%);
+}
+.format-card__renameActions {
+  display: flex;
+  gap: var(--s-2);
+}
+.format-card__list {
+  padding-block-start: var(--s-2);
+  border-block-start: 1px solid var(--line);
+}
+.source-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.source-list__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+/* ---------- One format: its sources ---------- */
+.format-sources {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.source-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.source-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.source-row__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+.source-row__name {
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+/* ---------- Editing a saved source ---------- */
+.example-drop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-5);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.example-drop h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-section);
+  font-weight: 500;
+}
+.example-drop h2 .icon {
+  color: var(--brand);
+}
+.versions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.version-list__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.version-list__item[data-current] {
+  border-color: var(--brand);
+}
+.version-list__n {
+  min-inline-size: 7ch;
+  font-weight: 500;
+}
+
+/* ---------- Adding a source ---------- */
+.add-format {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.add-format .chips li {
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+}
+.add-name {
+  max-inline-size: 420px;
+}
+.edit-back {
+  margin: 0;
+  font-size: var(--fs-small);
+}

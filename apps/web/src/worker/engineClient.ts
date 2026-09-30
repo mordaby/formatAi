@@ -3,6 +3,14 @@
 import type { LearnResult, Rules } from '@formatai/shared';
 import { webConfig } from '../config';
 import type {
+  BatchArgs,
+  BatchOutput,
+  ConvertRunArgs,
+  ConvertRunOutput,
+  HeadersArgs,
+  HeadersOutput,
+  MatchFileArgs,
+  MatchFileOutput,
   ConvertArgs,
   ConvertOutput,
   EngineMethodMap,
@@ -27,6 +35,8 @@ import { handleFromWorker, RpcClient, type HostFunctions, type WorkerHandle } fr
 export interface LiveCheckOptions {
   exceptions?: number[];
   subset?: boolean;
+  /** SPEC 21 v5 item 1: compare only these output columns (the local partial result). */
+  onlyColumns?: number[];
 }
 
 export interface EngineCallOptions<P = never> {
@@ -50,9 +60,17 @@ export interface EngineClient {
   /** Runs the rules on the example: the live check (a subset above 5,000 rows unless `options.subset` is false). */
   liveCheck(exampleId: string, rules: LearnResult | Rules, options?: LiveCheckOptions, opts?: EngineCallOptions): Promise<LiveCheckResult>;
   /** The same check on every row (the editor's Apply). */
-  fullCheck(exampleId: string, rules: LearnResult | Rules, options?: { exceptions?: number[] }, opts?: EngineCallOptions): Promise<LiveCheckResult>;
+  fullCheck(exampleId: string, rules: LearnResult | Rules, options?: { exceptions?: number[]; onlyColumns?: number[] }, opts?: EngineCallOptions): Promise<LiveCheckResult>;
   /** SPEC 9.2 layers 1-5 on the rules: structure, references, types, limits and (inside a format) the format lock. */
   staticChecks(rules: LearnResult | Rules, options: StaticCheckOptions, opts?: EngineCallOptions): Promise<StaticProblem[]>;
+  /** Flow C (SPEC 5): the headers of a file's table. */
+  readHeaders(args: HeadersArgs, opts?: EngineCallOptions): Promise<HeadersOutput>;
+  /** Matches a file to the saved conversions (headers against signatures) and says whether one clearly wins. */
+  matchFile(args: MatchFileArgs, opts?: EngineCallOptions): Promise<MatchFileOutput>;
+  /** Runs a conversion with per-run row decisions; in `review` mode stops before writing when rows need a look. */
+  convertWithDecisions(args: ConvertRunArgs, opts?: EngineCallOptions): Promise<ConvertRunOutput>;
+  /** Flow D (SPEC 5): packs converted files into a zip with the summary workbook. */
+  batch(args: BatchArgs, opts?: EngineCallOptions): Promise<BatchOutput>;
   /** Kill the worker (e.g. on leaving the page). The next call starts a fresh one. */
   terminate(): void;
 }
@@ -105,10 +123,14 @@ export function createEngineClient(options: CreateEngineClientOptions = {}): Eng
     inspect: (args, opts) => call('inspect', args, transfersOf(args.file), opts),
     loadExample: (args, opts) => call('loadExample', args, transfersOf(args.input, args.output), opts),
     liveCheck: (exampleId, rules, options, opts) =>
-      call('liveCheck', { exampleId, rules, ...(options?.exceptions ? { exceptions: options.exceptions } : {}), ...(options?.subset === undefined ? {} : { subset: options.subset }) }, [], opts),
+      call('liveCheck', { exampleId, rules, ...(options?.exceptions ? { exceptions: options.exceptions } : {}), ...(options?.onlyColumns ? { onlyColumns: options.onlyColumns } : {}), ...(options?.subset === undefined ? {} : { subset: options.subset }) }, [], opts),
     fullCheck: (exampleId, rules, options, opts) =>
-      call('fullCheck', { exampleId, rules, ...(options?.exceptions ? { exceptions: options.exceptions } : {}) }, [], opts),
+      call('fullCheck', { exampleId, rules, ...(options?.exceptions ? { exceptions: options.exceptions } : {}), ...(options?.onlyColumns ? { onlyColumns: options.onlyColumns } : {}) }, [], opts),
     staticChecks: (rules, options, opts) => call('staticChecks', { rules, ...options }, [], opts),
+    readHeaders: (args, opts) => call('readHeaders', args, transfersOf(args.file), opts),
+    matchFile: (args, opts) => call('matchFile', args, transfersOf(args.file), opts),
+    convertWithDecisions: (args, opts) => call('convertWithDecisions', args, transfersOf(args.file), opts),
+    batch: (args, opts) => call('batch', args, args.outputs.map((o) => o.bytes), opts),
     terminate: () => rpc.terminate(),
   };
 }

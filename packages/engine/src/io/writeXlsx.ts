@@ -32,14 +32,7 @@ function applyCellValue(cell: ExcelJS.Cell, v: OutCell['v']): void {
   cell.value = v;
 }
 
-/** Writes an OutputSheet to a deterministic .xlsx file using ExcelJS. */
-export async function writeXlsx(sheet: OutputSheet): Promise<Uint8Array> {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'formatAI';
-  workbook.created = FIXED_DATE;
-  workbook.modified = FIXED_DATE;
-  workbook.lastPrinted = FIXED_DATE;
-
+function addSheet(workbook: ExcelJS.Workbook, sheet: OutputSheet): void {
   const worksheet = workbook.addWorksheet(sanitizeSheetName(sheet.name), {
     views: [{ rightToLeft: sheet.direction === 'rtl' }],
   });
@@ -65,6 +58,35 @@ export async function writeXlsx(sheet: OutputSheet): Promise<Uint8Array> {
   sheet.merges.forEach((m) => {
     worksheet.mergeCells(m.s.r + 1, m.s.c + 1, m.e.r + 1, m.e.c + 1);
   });
+}
+
+/** Writes an OutputSheet to a deterministic .xlsx file using ExcelJS. */
+export async function writeXlsx(sheet: OutputSheet): Promise<Uint8Array> {
+  return writeXlsxWorkbook([sheet]);
+}
+
+/**
+ * Writes several OutputSheets as the sheets of one deterministic .xlsx file, in order (e.g. the batch's summary
+ * workbook: one sheet of files, one of flags). Two sheets can't share a name in Excel, so a repeated name gets " (2)".
+ */
+export async function writeXlsxWorkbook(sheets: readonly OutputSheet[]): Promise<Uint8Array> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'formatAI';
+  workbook.created = FIXED_DATE;
+  workbook.modified = FIXED_DATE;
+  workbook.lastPrinted = FIXED_DATE;
+
+  const used = new Set<string>();
+  for (const sheet of sheets) {
+    const base = sanitizeSheetName(sheet.name);
+    let name = base;
+    for (let n = 2; used.has(name.toLowerCase()); n++) {
+      const suffix = ` (${n})`;
+      name = base.slice(0, MAX_SHEET_NAME_LENGTH - suffix.length) + suffix;
+    }
+    used.add(name.toLowerCase());
+    addSheet(workbook, { ...sheet, name });
+  }
 
   // NOTE (see final report): ExcelJS's own StreamBuf implementation calls
   // `Buffer.from(...)` unconditionally while assembling the zip, regardless of

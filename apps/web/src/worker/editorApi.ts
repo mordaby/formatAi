@@ -28,6 +28,8 @@ export interface LiveCheckArgs {
   exceptions?: number[];
   /** Allow a subset above 5,000 example rows (default true). `false` checks every row. */
   subset?: boolean;
+  /** SPEC 21 v5 item 1 (the local partial result): compare only these output columns (0-based positions in `rules.output.columns`). */
+  onlyColumns?: number[];
 }
 
 /** One row of the preview table: row number, source values, "your example", "this rule". */

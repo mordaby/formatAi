@@ -16,7 +16,7 @@ const LAYOUT_TEXT: Record<LayoutProblemCode, MessageKey> = {
   summaryRow: 'check.layout.summaryRow',
 };
 
-export function LiveCheckStrip({ check }: { check: UseLiveCheck }) {
+export function LiveCheckStrip({ check, noExampleText }: { check: UseLiveCheck; /** What to say when there is no example (default: it is not in memory any more). */ noExampleText?: string | undefined }) {
   const { t, lang } = useI18n();
   const s = check.state;
   const live = s.live;
@@ -27,7 +27,7 @@ export function LiveCheckStrip({ check }: { check: UseLiveCheck }) {
   let action = false;
   if (s.status === 'noExample') {
     tone = 'quiet';
-    text = t('check.noExample');
+    text = noExampleText ?? t('check.noExample');
   } else if (!live && s.status === 'error') {
     tone = 'diff';
     text = t('check.failed');

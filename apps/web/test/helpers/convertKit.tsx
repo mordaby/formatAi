@@ -1,0 +1,143 @@
+// Shared pieces of the Convert and Batch tests: a small saved source (rules + signature), a fake ConvertApi that records
+// every call, a fake or real engine, and one `renderConvert` that puts a screen inside the providers it needs.
+import type { ConversionMatch } from '@formatai/engine';
+import { tiers, type ConversionDetail, type MeUser, type Rules, type SignatureEntry } from '@formatai/shared';
+import { render } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { vi, type Mock } from 'vitest';
+import { ConvertApiProvider, type ConvertApi } from '../../src/api/convert';
+import { MeProvider } from '../../src/app/Me';
+import { I18nProvider, type Lang } from '../../src/i18n';
+import { fakeApi } from './renderApp';
+import { ServicesProvider } from '../../src/services';
+import type { EngineClient } from '../../src/worker/engineClient';
+
+/** Supplier A's price list -> a CSV load file. "Item Code" and "Qty" are required; "Price" is optional. */
+export const RULES: Rules = {
+  schemaVersion: 1,
+  input: {
+    sheet: { pick: 'first' },
+    headerRow: 'auto',
+    columns: [
+      { id: 'c_code', header: 'Item Code', type: 'idLike', required: true },
+      { id: 'c_qty', header: 'Qty', type: 'integer', required: true },
+      { id: 'c_price', header: 'Price', type: 'decimal' },
+    ],
+  },
+  transform: { computed: [], valueMaps: [], sort: [] },
+  output: {
+    sheetName: 'Load',
+    direction: 'ltr',
+    language: 'en',
+    titleRows: [],
+    columns: [
+      { header: 'Code', from: 'c_code' },
+      { header: 'Quantity', from: 'c_qty' },
+      { header: 'Unit price', from: 'c_price' },
+    ],
+    file: { type: 'csv' },
+  },
+  validations: [{ column: 'c_code', rule: 'lengthEquals', length: 5, severity: 'flag' }],
+  unsupported: [],
+  assumptions: [],
+  name: 'Supplier A',
+  meta: { source: 'examplePair', status: 'verified' },
+};
+
+export const csvFile = (name: string, body: string): File => new File([body], name, { type: 'text/csv' });
+
+/** A price list as Supplier A sends it. Row 3 has a code that is too short and a quantity that isn't a number. */
+export const SUPPLIER_A_CSV = 'Item Code,Qty,Price,Extra\n00001,5,10.5,x\n123,abc,3,y\n00003,7,4,z\n';
+/** The same list, clean. */
+export const SUPPLIER_A_CLEAN_CSV = 'Item Code,Qty,Price,Extra\n00001,5,10.5,x\n00002,6,3,y\n00003,7,4,z\n';
+
+export function entry(over: Partial<SignatureEntry> & { conversionId: string }): SignatureEntry {
+  return {
+    formatId: 'F1',
+    formatName: 'Load file',
+    sourceName: 'Supplier A',
+    status: 'verified',
+    columns: [
+      { header: 'Item Code', aliases: [], type: 'idLike', required: true },
+      { header: 'Qty', aliases: [], type: 'integer', required: true },
+      { header: 'Price', aliases: [], type: 'decimal', required: false },
+    ],
+    ...over,
+  };
+}
+
+export function detail(over: Partial<ConversionDetail> & { id: string }, rules: Rules = RULES): ConversionDetail {
+  return {
+    formatId: 'F1',
+    sourceName: 'Supplier A',
+    status: 'verified',
+    acceptedDifferences: 0,
+    learnPath: 'local',
+    version: 1,
+    runCount: 0,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    rules,
+    exampleExceptions: [],
+    masking: true,
+    inputSignature: { columns: [] },
+    ...over,
+  };
+}
+
+export function match(over: Partial<ConversionMatch> & { id: string }): ConversionMatch {
+  return { name: 'Supplier A', score: 1, missingRequired: [], extra: [], renamedCandidates: [], ...over };
+}
+
+export const REGISTERED: MeUser = { id: 'u1', name: 'Dana', avatarUrl: null, tier: 'registered', providers: ['google'], isAdmin: false, uiLanguage: null };
+export const PAID: MeUser = { ...REGISTERED, tier: 'paid' };
+
+/** Every call is recorded (and can be given another answer). `user` is who is signed in: the app's `useMe()` reads it (see `renderConvert`). */
+export type FakeConvertApi = { [K in keyof ConvertApi]: Mock<ConvertApi[K]> } & { user: MeUser | null };
+
+export function fakeConvertApi(opts: { user?: MeUser | null; entries?: SignatureEntry[]; rules?: Rules } = {}): FakeConvertApi {
+  const user = opts.user === undefined ? REGISTERED : opts.user;
+  const entries = opts.entries ?? [entry({ conversionId: 'c1' })];
+  return {
+    user,
+    signatures: vi.fn(async () => entries),
+    conversion: vi.fn(async (id: string) => detail({ id, sourceName: entries.find((e) => e.conversionId === id)?.sourceName ?? 'Supplier A' }, opts.rules ?? RULES)),
+    recordRun: vi.fn(async () => undefined),
+    addAlias: vi.fn(async () => undefined),
+  };
+}
+
+/** Prints where the router is, so a test can see a navigation. */
+export function LocationProbe() {
+  const loc = useLocation();
+  return <p data-testid="location">{loc.pathname + loc.search}</p>;
+}
+
+export interface RenderConvertOptions {
+  api: ConvertApi;
+  engine: EngineClient;
+  lang?: Lang;
+  route?: string;
+}
+
+/** One screen inside i18n, the services, `MeProvider` (fed by `api.user`), the convert API and a memory router (with a location probe). */
+export function renderConvert(ui: ReactElement, { api, engine, lang = 'en', route = '/convert' }: RenderConvertOptions) {
+  const user = (api as Partial<FakeConvertApi>).user ?? null;
+  return render(
+    <I18nProvider initial={lang}>
+      <ServicesProvider engine={engine} api={fakeApi({ user })}>
+        <ConvertApiProvider api={api}>
+          <MemoryRouter initialEntries={[route]}>
+            <MeProvider>
+              {ui}
+              <LocationProbe />
+            </MeProvider>
+          </MemoryRouter>
+        </ConvertApiProvider>
+      </ServicesProvider>
+    </I18nProvider>,
+  );
+}
+
+export const FILES_PER_RUN = { registered: tiers.registered.filesPerRun, paid: tiers.paid.filesPerRun };

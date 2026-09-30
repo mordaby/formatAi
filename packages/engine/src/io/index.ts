@@ -10,8 +10,10 @@ export type { ExtractTableInput, ExtractTableResult, SheetSelector } from './ext
 export { detectFileSpec, detectFileSpecWithConfidence, sniffDelimitedText } from './detectFileSpec';
 export type { DelimitedSniffResult, DetectedFileSpec, HeaderConfidence } from './detectFileSpec';
 
-export { writeXlsx } from './writeXlsx';
+export { writeXlsx, writeXlsxWorkbook } from './writeXlsx';
 export { writeCsv } from './writeCsv';
 export { writeDelimited, DelimitedWriteError } from './writeDelimited';
 export type { DelimitedWriteErrorCode, DelimitedWriteErrorDetails } from './writeDelimited';
 export { writeOutput } from './writeOutput';
+export { writeZip, readZip } from './zip';
+export type { ZipEntry } from './zip';

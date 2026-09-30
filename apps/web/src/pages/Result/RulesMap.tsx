@@ -1,6 +1,7 @@
+import { aiStepPartMessages, type AiStepPartCode } from '@formatai/shared';
 import { useId, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import type { EditableRules } from '../../editor';
-import { useI18n, type MessageKey } from '../../i18n';
+import { localize, useI18n, type MessageKey } from '../../i18n';
 import type { Line, LineStatus, RulesMapModel, Section, SectionId } from '../../rulesText';
 import { Button, Icon, type IconName } from '../../ui';
 import type { ColumnCheck } from '../../worker/editorApi';
@@ -19,6 +20,13 @@ export interface RulesMapProps {
   onKeep(line: Line): void;
   onReorder(from: number, to: number): void;
   onAdd(kind: AddKind): void;
+  /**
+   * SPEC 21 v5 item 1 (the local result before the AI step): the output columns (headers) and the layout parts code could
+   * not work out. The columns are marked "Needs the AI step" in the map; the parts are listed in a section of their own.
+   */
+  aiStep?: { columns: ReadonlySet<string>; parts: readonly AiStepPartCode[] } | undefined;
+  /** No example is in memory (a saved source opened for editing): a tick says "no problem found", not "matches your example". */
+  noExample?: boolean | undefined;
 }
 
 const STATUS_ICON: Record<LineStatus, IconName> = { matches: 'check', check: 'alert', needsInput: 'alert', edited: 'pencil' };
@@ -29,11 +37,11 @@ const STATUS_TEXT: Record<LineStatus, MessageKey> = {
   edited: 'map.status.edited',
 };
 
-function StatusIcon({ status }: { status: LineStatus }) {
+function StatusIcon({ status, label }: { status: LineStatus; label?: string }) {
   const { t } = useI18n();
   return (
     <span className={`status status--${status}`}>
-      <Icon name={STATUS_ICON[status]} size={16} title={t(STATUS_TEXT[status])} />
+      <Icon name={STATUS_ICON[status]} size={16} title={label ?? t(STATUS_TEXT[status])} />
     </span>
   );
 }
@@ -68,8 +76,8 @@ interface DragState {
   edge: 'before' | 'after';
 }
 
-export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSelect, onKeep, onReorder, onAdd }: RulesMapProps) {
-  const { t } = useI18n();
+export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSelect, onKeep, onReorder, onAdd, aiStep, noExample }: RulesMapProps) {
+  const { t, lang } = useI18n();
   const [drag, setDrag] = useState<DragState | null>(null);
   const [announce, setAnnounce] = useState('');
   let lineNumber = 0;
@@ -90,13 +98,16 @@ export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSele
           {section.lines.map((line) => {
             const n = lineNumber++;
             const isColumn = line.target.kind === 'column' && line.target.index !== undefined;
+            const needsAi = isColumn && aiStep?.columns.has(line.target.header ?? '') === true;
             return (
               <MapLine
                 key={line.id}
                 line={line}
                 keepable={canKeep(rules, line)}
                 selected={selectedId === line.id}
-                check={isColumn ? columnChecks?.[line.target.index!] : undefined}
+                check={isColumn && !needsAi ? columnChecks?.[line.target.index!] : undefined}
+                needsAi={needsAi}
+                noExample={noExample === true}
                 intro={intro}
                 order={n}
                 draggable={isColumn}
@@ -121,6 +132,20 @@ export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSele
           })}
         </MapSection>
       ))}
+      {aiStep && aiStep.parts.length > 0 && (
+        <section className="map-section map-section--ai" data-section="aiStep" data-testid="ai-step-parts">
+          <h2 className="map-section__title">{t('partial.section')}</h2>
+          <p className="muted">{t('partial.section.lead')}</p>
+          <ul className="ai-parts">
+            {aiStep.parts.map((code) => (
+              <li key={code} data-part={code}>
+                <Icon name="alert" size={16} />
+                <span>{localize(lang, aiStepPartMessages[code])}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {model.notes.length > 0 && (
         <ul className="map-notes">
           {model.notes.map((note, i) => (
@@ -176,6 +201,9 @@ interface MapLineProps {
   keepable: boolean;
   selected: boolean;
   check: ColumnCheck | undefined;
+  /** The AI step still has to work this column out (SPEC 21 v5). */
+  needsAi: boolean;
+  noExample: boolean;
   intro: boolean;
   order: number;
   draggable: boolean;
@@ -190,13 +218,15 @@ interface MapLineProps {
   onMove(delta: number): void;
 }
 
-function MapLine({ line, keepable, selected, check, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
+function MapLine({ line, keepable, selected, check, needsAi, noExample, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
   const { t } = useI18n();
   const index = line.target.index ?? 0;
   const name = line.target.header ?? '';
   const differs = check !== undefined && check.inExample && check.matched < check.total;
   const showCount = check !== undefined && check.inExample && check.total > 0;
-  const attention = line.status === 'check' || line.status === 'needsInput';
+  const attention = line.status === 'check' || line.status === 'needsInput' || needsAi;
+  const statusLabel = needsAi ? t('partial.section') : noExample && line.status === 'matches' ? t('map.status.unchecked') : t(STATUS_TEXT[line.status]);
+  const reason = needsAi ? t('partial.line.reason') : line.statusReason;
 
   const edgeOf = (e: DragEvent<HTMLElement>): 'before' | 'after' => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -215,6 +245,7 @@ function MapLine({ line, keepable, selected, check, intro, order, draggable, dra
       style={{ '--i': Math.min(order, 28) } as CSSProperties}
       data-line-id={line.id}
       data-status={line.status}
+      data-ai-step={needsAi || undefined}
       data-selected={selected || undefined}
       data-dragging={dragging || undefined}
       data-drop={drag}
@@ -257,7 +288,7 @@ function MapLine({ line, keepable, selected, check, intro, order, draggable, dra
           </button>
         )}
         <button type="button" className="map-line__main" aria-current={selected ? 'true' : undefined} onClick={() => onSelect(line)}>
-          <StatusIcon status={line.status} />
+          <StatusIcon status={line.status} {...(needsAi ? { label: t('partial.section') } : noExample && line.status === 'matches' ? { label: t('map.status.unchecked') } : {})} />
           <span className="map-line__text">
             <Sentence parts={line.parts} />
           </span>
@@ -268,10 +299,10 @@ function MapLine({ line, keepable, selected, check, intro, order, draggable, dra
           )}
         </button>
       </div>
-      {attention && line.statusReason && (
+      {attention && reason && (
         <div className="map-line__note">
           <p>
-            <span className="map-line__notelabel">{t(STATUS_TEXT[line.status])}</span> {line.statusReason}
+            <span className="map-line__notelabel">{statusLabel}</span> {reason}
           </p>
           <div className="map-line__actions">
             {keepable && (
@@ -280,7 +311,7 @@ function MapLine({ line, keepable, selected, check, intro, order, draggable, dra
               </Button>
             )}
             <Button variant="secondary" size="sm" onClick={() => onSelect(line)}>
-              {t(line.status === 'needsInput' ? 'map.fill' : 'map.change')}
+              {t(line.status === 'needsInput' || needsAi ? 'map.fill' : 'map.change')}
             </Button>
           </div>
         </div>

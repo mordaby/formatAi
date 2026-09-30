@@ -425,7 +425,7 @@ describe('the free tier', () => {
     fireEvent.click(more);
     const dialog = await screen.findByRole('dialog', { name: 'Sign in' });
     expect(dialog.textContent).toContain("Sign in to save this format and reuse it on next month's file.");
-    expect(within(dialog).getByText('Continue with Google')).toBeTruthy();
+    expect(await within(dialog).findByText('Continue with Google')).toBeTruthy();
     expect(within(dialog).getByText('Continue with Microsoft')).toBeTruthy();
   });
 

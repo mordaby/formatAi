@@ -5,6 +5,7 @@ import type { AppDb } from '../db.js';
 import type { Env } from '../env.js';
 import type { LearnCacheDoc } from '../models.js';
 import { loadAdminConfig } from './admin.js';
+import { registerDevSessionRoute } from './dev.js';
 import { createOpenIdClient, type OidcClient } from './oidc.js';
 import { loadProviders, type ProviderConfig } from './providers.js';
 import { registerAuthRoutes } from './routes.js';
@@ -96,4 +97,15 @@ export function registerAuth(app: FastifyInstance, opts: RegisterAuthOptions): v
     secure: production,
     now,
   });
+
+  // DEVELOPMENT ONLY: a throw-away signed-in session, so the signed-in screens can be tried without a real provider.
+  // The route does not exist in a production process.
+  if (!production) {
+    registerDevSessionRoute(app, {
+      store,
+      sessions,
+      now,
+      allowedOrigins: new Set([new URL(env.WEB_ORIGIN).origin, new URL(apiBase).origin]),
+    });
+  }
 }

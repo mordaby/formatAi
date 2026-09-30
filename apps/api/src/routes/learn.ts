@@ -18,6 +18,7 @@ import {
   promptVersion,
   type ApiErrorBody,
   type LearnOutcomeResponse,
+  type LearnQuotaResponse,
   type LearnPayload,
   type LearnResponse,
   type LearnResult,
@@ -399,4 +400,12 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     return reply.send(res);
   });
 
+  // SPEC 21 v5 item 2: what is left of the user's AI learns, so the account menu can say so without a learn.
+  app.get('/api/learn/quota', async (req, reply) => {
+    void reply.header('cache-control', 'no-store');
+    const identity = identify(req);
+    if (identity.kind !== 'user') return fail(reply, 403, { error: 'signInForAi' });
+    const res: LearnQuotaResponse = { quota: await quotaState(store, aiQuotaOf(identity, protection.now())) };
+    return reply.send(res);
+  });
 }
