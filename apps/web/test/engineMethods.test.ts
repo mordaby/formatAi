@@ -2,7 +2,8 @@
 // RPC runtime and client, in-process. This is not a substitute for the browser check (the
 // bundling of ExcelJS/SheetJS for a real Worker), but it pins the behaviour of the methods:
 // progress, the masking key, host calls, and the transfer of bytes.
-import type { LearnPayload, LearnResult } from '@formatai/shared';
+import { completionPlan, formulaRulesFromWire } from '@formatai/engine';
+import { fromWire, LearnResultSchema, type LearnPayload, type LearnResult } from '@formatai/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConvertOutput, LearnOutput, LearnProgress, LoadExampleOutput, VerifyOutput } from '../src/worker/engineApi';
 import { engineMethods } from '../src/worker/engineMethods';
@@ -165,6 +166,48 @@ describe('engine methods, through the worker RPC', () => {
     const again = learnArgs(llmPair(), true);
     await client.call('learn', again.args, { transfer: again.transfer, host: { callLearn } });
     expect(JSON.stringify(payloads[1])).toBe(sent);
+  });
+
+  it('learn in completion mode: the rules to keep go out as complete.fixed, the example of the screen is kept under its id, and the answer comes back with the lock and what it produced', async () => {
+    const client = loopback(engineMethods);
+    // The local result first (what a visitor gets): Item is built, Size needs the AI step.
+    const local = learnArgs(llmPair(), false);
+    const first = await client.call<LearnOutput>('learn', { ...local.args, ai: 'notAllowed' as const }, { transfer: local.transfer });
+    expect(first.path).toBe('partial');
+    expect(first.exampleOutputColumns).toBe(2);
+    const plan = completionPlan(first.rules!, { parts: first.partial!.needsAiParts, skipColumns: first.preflight.skipColumns });
+    expect(plan.columns).toEqual([1]);
+
+    // Then the AI step, for that column only. The fake server answers with the fixed rules plus a rule for Size.
+    const payloads: LearnPayload[] = [];
+    const callLearn = vi.fn(async (payload: LearnPayload) => {
+      payloads.push(payload);
+      const fixed = LearnResultSchema.parse(formulaRulesFromWire(fromWire(payload.complete!.fixed)).rules);
+      const answer: LearnResult = {
+        ...fixed,
+        input: { ...fixed.input, columns: [...fixed.input.columns, { id: 'qty', header: 'Qty', type: 'integer' }] },
+        transform: {
+          ...fixed.transform,
+          computed: [...fixed.transform.computed, { id: 'size', type: 'text', expr: { op: 'if', cond: { op: 'gte', args: [{ col: 'qty' }, { const: 10 }] }, then: { const: 'bulk' }, else: { const: 'single' } } }],
+        },
+        output: { ...fixed.output, columns: fixed.output.columns.map((c) => (c.header === 'Size' ? { ...c, from: 'size' } : c)) },
+      };
+      return { rules: answer, problems: [], calls: [] };
+    });
+    const again = learnArgs(llmPair(), false);
+    const res = await client.call<LearnOutput>(
+      'learn',
+      { ...again.args, ai: 'allowed' as const, complete: { fixedRules: first.rules!, columns: plan.columns, parts: plan.parts }, keepExampleId: first.exampleId },
+      { transfer: again.transfer, host: { callLearn } },
+    );
+
+    expect(callLearn).toHaveBeenCalledTimes(1);
+    expect(payloads[0]!.complete).toMatchObject({ columns: [1], parts: [] });
+    expect(res.path).toBe('llm');
+    expect(res.completion).toEqual({ columns: [1], parts: [], fixedProblems: [], matches: true, produced: { columns: 1, parts: 0 } });
+    expect(res.verification?.verified).toBe(true);
+    // The Result screen's live check goes on with the example it already holds.
+    expect(res.exampleId).toBe(first.exampleId);
   });
 
   it('learn: masking off sends the sample rows as they are', async () => {

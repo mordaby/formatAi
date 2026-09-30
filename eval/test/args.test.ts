@@ -4,7 +4,7 @@ import { EvalArgsError, parseArgs } from '../lib/args.js';
 describe('parseArgs', () => {
   it('applies the documented defaults with no flags', () => {
     const args = parseArgs([]);
-    expect(args).toEqual({ masking: ['on', 'off'], runs: 1, noEscalation: false });
+    expect(args).toEqual({ masking: ['on', 'off'], runs: 1, noEscalation: false, modes: ['full'] });
   });
 
   it('parses --models as a comma-separated list', () => {
@@ -41,6 +41,23 @@ describe('parseArgs', () => {
     expect(args.out).toBe('/tmp/x');
   });
 
+  it('parses --mode: full (default), complete, both, or a comma list', () => {
+    expect(parseArgs([]).modes).toEqual(['full']);
+    expect(parseArgs(['--mode', 'full']).modes).toEqual(['full']);
+    expect(parseArgs(['--mode', 'complete']).modes).toEqual(['complete']);
+    expect(parseArgs(['--mode', 'both']).modes).toEqual(['full', 'complete']);
+    expect(parseArgs(['--mode', 'complete,full']).modes).toEqual(['complete', 'full']);
+    expect(parseArgs(['--mode=complete']).modes).toEqual(['complete']);
+    expect(parseArgs(['--mode', 'full,full']).modes).toEqual(['full']);
+  });
+
+  it('rejects an unknown --mode, an empty one, and a missing value', () => {
+    expect(() => parseArgs(['--mode', 'partial'])).toThrow(EvalArgsError);
+    expect(() => parseArgs(['--mode', 'full,bogus'])).toThrow(/expected "full", "complete" or "both"/);
+    expect(() => parseArgs(['--mode', ','])).toThrow(EvalArgsError);
+    expect(() => parseArgs(['--mode'])).toThrow(EvalArgsError);
+  });
+
   it('parses --no-escalation as a bare boolean flag', () => {
     expect(parseArgs(['--no-escalation']).noEscalation).toBe(true);
   });
@@ -52,7 +69,7 @@ describe('parseArgs', () => {
   });
 
   it('combines several flags in one call', () => {
-    const args = parseArgs(['--models', 'haiku,sonnet', '--masking', 'on', '--runs', '3', '--provider', 'fake', '--cases', 'crm', '--no-escalation']);
+    const args = parseArgs(['--models', 'haiku,sonnet', '--masking', 'on', '--runs', '3', '--provider', 'fake', '--cases', 'crm', '--no-escalation', '--mode', 'full']);
     expect(args).toEqual({
       models: ['haiku', 'sonnet'],
       masking: ['on'],
@@ -60,6 +77,7 @@ describe('parseArgs', () => {
       provider: 'fake',
       cases: 'crm',
       noEscalation: true,
+      modes: ['full'],
     });
   });
 

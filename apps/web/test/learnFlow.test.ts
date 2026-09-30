@@ -378,3 +378,107 @@ describe('LearnFlow', () => {
     });
   });
 });
+
+describe('LearnFlow: who is signed in is known before a learn is decided (the owner\'s bug)', () => {
+  it('waits for `ready`, THEN reads the tier and the AI choice - a learn started early is not run as a visitor\'s', async () => {
+    let signedIn = false;
+    let open!: () => void;
+    const ready = () => new Promise<void>((resolve) => (open = resolve));
+    const { engine, learn } = fakeEngine(async () => result({ path: 'local' }));
+    const { start } = makeFlow(engine, fakeApi(), {
+      ready,
+      getTier: () => (signedIn ? 'registered' : 'anonymous'),
+      getAi: () => (signedIn ? 'allowed' : 'notAllowed'),
+    });
+    const running = start();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(learn).not.toHaveBeenCalled(); // still waiting
+    signedIn = true; // /api/me answered
+    open();
+    await running;
+    expect(learn.mock.calls[0]![0]).toMatchObject({ tier: 'registered', ai: 'allowed' });
+  });
+
+  it('an explicit `ai` wins over getAi; with neither the field is left out (the engine\'s default is allowed)', async () => {
+    const { engine, learn } = fakeEngine(async () => result({ path: 'local' }));
+    const a = makeFlow(engine, fakeApi(), { getAi: () => 'allowed' });
+    await a.flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'notAllowed' });
+    expect(learn.mock.calls[0]![0].ai).toBe('notAllowed');
+    const b = makeFlow(engine, fakeApi());
+    await b.start();
+    expect('ai' in learn.mock.calls[1]![0]).toBe(false);
+  });
+
+  it('`ready` that rejects does not stop the learn (not knowing is the same as nobody signed in)', async () => {
+    const { engine, learn } = fakeEngine(async () => result({ path: 'local' }));
+    const { start } = makeFlow(engine, fakeApi(), { ready: () => Promise.reject(new Error('no answer')) });
+    await start();
+    expect(learn).toHaveBeenCalledTimes(1);
+  });
+
+  it('a run cancelled while it waits for `ready` never starts the worker', async () => {
+    let open!: () => void;
+    const { engine, learn } = fakeEngine(async () => result({ path: 'local' }));
+    const { flow, start } = makeFlow(engine, fakeApi(), { ready: () => new Promise<void>((resolve) => (open = resolve)) });
+    const running = start();
+    await new Promise((r) => setTimeout(r, 5));
+    flow.cancel();
+    open();
+    await running;
+    expect(learn).not.toHaveBeenCalled();
+    expect(state(flow).status).toBe('idle');
+  });
+});
+
+describe('LearnFlow: completion mode (complete)', () => {
+  const COMPLETE = { fixedRules: RULES, columns: [1, 2], parts: ['sort' as const], exampleId: 'ex-7' };
+  const GOOD = { columns: [1, 2], parts: ['sort'], fixedProblems: [], matches: true, produced: { columns: 2, parts: 1 } };
+
+  it('passes complete to the worker with the example id to keep, allows the AI step, and does not stop to ask about empty columns', async () => {
+    const { engine, learn } = fakeEngine(async (_a, host) => {
+      await host.callLearn(PAYLOAD_SKIP); // a payload with skipColumns would normally stop at "unknown output columns"
+      return result({ path: 'llm', completion: GOOD });
+    });
+    const { flow, statuses } = makeFlow(engine, fakeApi());
+    await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'allowed', complete: COMPLETE });
+    expect(statuses).not.toContain('warn');
+    const args = learn.mock.calls[0]![0];
+    expect(args).toMatchObject({ ai: 'allowed', complete: { fixedRules: RULES, columns: [1, 2], parts: ['sort'] }, keepExampleId: 'ex-7' });
+    expect('exampleId' in (args.complete as object)).toBe(false);
+    expect(state(flow).status).toBe('done');
+  });
+
+  it('reports the learn as verified only when the lock held, the answer matched and something was produced', async () => {
+    const cases: [string, Record<string, unknown>, string][] = [
+      ['all good', GOOD, 'verified'],
+      ['a fixed element changed', { ...GOOD, fixedProblems: [{ kind: 'fixedMismatch', path: 'x', message: 'y' }] }, 'failed'],
+      ['it did not match', { ...GOOD, matches: false }, 'failed'],
+      ['it produced nothing', { ...GOOD, produced: { columns: 0, parts: 0 } }, 'failed'],
+    ];
+    for (const [, completion, outcome] of cases) {
+      const { engine } = fakeEngine(async (_a, host) => {
+        await host.callLearn(PAYLOAD);
+        return result({ path: 'llm', completion });
+      });
+      const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
+      const api = fakeApi({ registry: { learnOutcome } } as unknown as Partial<Api>);
+      const { flow } = makeFlow(engine, api);
+      await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'allowed', complete: COMPLETE });
+      await vi.waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', outcome));
+    }
+  });
+
+  it('tryAnyway: passes it on, and the done state remembers that the learn was continued past the warning', async () => {
+    const { engine, learn } = fakeEngine(async () => result({ path: 'local' }));
+    const { flow } = makeFlow(engine, fakeApi());
+    await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, tryAnyway: true });
+    expect(learn.mock.calls[0]![0].tryAnyway).toBe(true);
+    const s = state(flow);
+    expect(s.status === 'done' && s.tryAnyway).toBe(true);
+    // a plain learn does not claim it
+    const plain = makeFlow(fakeEngine(async () => result({ path: 'local' })).engine, fakeApi());
+    await plain.start();
+    const p = state(plain.flow);
+    expect(p.status === 'done' && p.tryAnyway).toBeUndefined();
+  });
+});

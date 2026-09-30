@@ -4,6 +4,7 @@
 import type { Format, LearnPayload, LearnResult, RepairProblem, Rules, Tier } from '@formatai/shared';
 import type {
   AnalysisStage,
+  CompleteOptions,
   ConvertResult,
   Flag,
   LearnCallResult,
@@ -56,6 +57,13 @@ export interface LearnArgs {
   target?: Format;
   /** SPEC 21 v5 item 1: 'notAllowed' (not signed in) never calls the AI step: the local result comes back (`path: 'partial'`). Default 'allowed'. */
   ai?: 'allowed' | 'notAllowed';
+  /**
+   * Completion mode (LEARN_PROMPT "Completing a partial rules file"): the rules to keep and what is missing; the AI step is allowed.
+   * The result has `completion` (the fixed lock's findings). The rules editor's example stays the one the screen already holds (`keepExampleId`).
+   */
+  complete?: CompleteOptions;
+  /** Completion mode: the id of the example the Result screen's live check already uses; the worker keeps the example under it instead of a new id. */
+  keepExampleId?: string;
 }
 
 /** Real progress from the worker. `reading` runs until the first analysis event; `learning`/`verifying` only happen on the LLM path. */
@@ -68,8 +76,9 @@ export type LearnProgress =
 /**
  * `exampleId`: set when the worker kept the example (the rules editor's live check reads it, SPEC 8.11).
  * `exampleInput`: the example input's columns (headers and profile facts, no values), so the editor can offer the ones no rule uses yet.
+ * `exampleOutputColumns`: how many columns the example OUTPUT has - completion mode needs the rules' output columns to line up with them.
  */
-export type LearnOutput = LearnFromExamplesResult & { exampleId?: string; exampleInput?: ExampleInputColumn[] };
+export type LearnOutput = LearnFromExamplesResult & { exampleId?: string; exampleInput?: ExampleInputColumn[]; exampleOutputColumns?: number };
 
 /** What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). */
 export interface LearnHost {

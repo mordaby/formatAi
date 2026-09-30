@@ -24,6 +24,7 @@ import type { RawCell } from '../types';
 import { toPayloadColumn } from './analyze';
 import type { Family, PairAnalysis, SummaryRowAnalysis, TitleRowAnalysis } from './analyze';
 import { isoOfSerial } from './analyze/cells';
+import { completePayloadOf, fixedLabelTexts, type CompleteOptions } from './complete';
 import { relationsToHints, type HintCandidate } from './hints';
 import { splitWords, type Masker } from './mask';
 import type { PreflightResult } from './preflight';
@@ -39,6 +40,8 @@ export interface BuildPayloadOptions {
   masker?: Masker;
   /** SPEC 8.12/A2: attach mode. The existing format this input must produce. */
   target?: Format;
+  /** Completion mode: the rules to keep and what is missing; `payload.complete` carries them (constants masked like the samples). */
+  complete?: CompleteOptions;
   caps?: PayloadCaps;
 }
 
@@ -264,8 +267,9 @@ function extractWords(texts: readonly string[]): Set<string> {
   return words;
 }
 
-function collectLabelTexts(analysis: PairAnalysis, target?: Format): string[] {
+function collectLabelTexts(analysis: PairAnalysis, target?: Format, complete?: CompleteOptions): string[] {
   const texts: string[] = [];
+  if (complete) texts.push(...fixedLabelTexts(complete.fixedRules));
   for (const t of analysis.layout.titleRows) if (t.text) texts.push(t.text);
   for (const s of analysis.layout.summaryRows) if (s.label) texts.push(s.label);
   if (analysis.layout.groupBy?.summaryRows) {
@@ -500,7 +504,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
   if (masker) {
     const dataWords = collectDataWords(analysis, pairPriority, familyPriority, droppedPriority);
     const labelWords = new Set<string>();
-    for (const w of extractWords(collectLabelTexts(analysis, opts.target))) if (!dataWords.has(w)) labelWords.add(w);
+    for (const w of extractWords(collectLabelTexts(analysis, opts.target, opts.complete))) if (!dataWords.has(w)) labelWords.add(w);
     masker.addLabelWords(labelWords);
   }
 
@@ -567,6 +571,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
     if (droppedBuilt.length > 0) payload.dropped = droppedBuilt;
     if (preflight.skipColumns.length > 0) payload.skipColumns = preflight.skipColumns;
     if (opts.target) payload.target = buildTargetPayload(opts.target, masker);
+    if (opts.complete) payload.complete = completePayloadOf(opts.complete, masker);
 
     return { payload, sampleRows: samplesBuilt.sampleRows };
   };

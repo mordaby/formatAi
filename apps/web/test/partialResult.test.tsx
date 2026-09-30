@@ -176,8 +176,16 @@ describe('a signed-in user', () => {
     expect(learnMock.mock.calls[0]![0]).toMatchObject({ ai: 'allowed', tier: 'registered' });
   });
 
-  it('sees no popup on a local result: "Finish with the AI step" runs the same learn with the AI step allowed', async () => {
-    const results: LearnOutput[] = [partialOutput(), learnResult({ path: 'llm' })];
+  it('sees no popup on a local result: "Finish with the AI step" asks the AI step for only what is missing, keeping the rules on screen', async () => {
+    const full = ordersRules();
+    const results: LearnOutput[] = [
+      partialOutput(),
+      learnResult({
+        path: 'llm',
+        rules: full,
+        completion: { columns: [3, 4], parts: ['summaryRows'], fixedProblems: [], matches: true, produced: { columns: 2, parts: 1 } },
+      }),
+    ];
     const { engine, learn: learnMock } = fakeEngine(async () => results.shift()!);
     await learn(engine, fakeApi({ user: USER }));
     await screen.findByTestId('rules-map');
@@ -185,10 +193,9 @@ describe('a signed-in user', () => {
     // (this fake hands a partial result even to a signed-in user: what matters is what the button then does)
     fireEvent.click(await screen.findByRole('button', { name: 'Finish with the AI step' }));
     await waitFor(() => expect(learnMock).toHaveBeenCalledTimes(2));
-    expect(learnMock.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', tier: 'registered' });
-    // ... and the result screen comes back with the finished rules.
-    await screen.findByTestId('rules-map');
-    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(learnMock.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', tier: 'registered', complete: { columns: [3, 4], parts: ['summaryRows'] } });
+    // ... and the result screen comes back with the finished rules (details of the completion: completion.test.tsx).
+    expect(await screen.findByRole('button', { name: 'Save format and download' })).toBeTruthy();
   });
 
   it('is told how many AI formats are left, next to the button', async () => {

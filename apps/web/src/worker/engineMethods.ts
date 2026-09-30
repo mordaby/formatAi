@@ -52,6 +52,7 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     ...(args.target ? { target: args.target } : {}),
     ...(args.tryAnyway ? { tryAnyway: true } : {}),
     ...(args.ai ? { ai: args.ai } : {}),
+    ...(args.complete ? { complete: args.complete } : {}),
     onProgress: (p: AnalysisProgress) => emit({ phase: 'checking', stage: p.stage, fraction: p.fraction }),
     onAnalysis: (a) => {
       analysis = a;
@@ -71,7 +72,9 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
   });
   // The rules editor's live check (SPEC 8.11) re-runs rules on this example; it stays in the worker.
   // Its input's columns come with it: the editor offers the ones no rule uses yet (headers only; the file stays here).
-  return analysis && result.rules ? { ...result, exampleId: rememberExample(analysis), exampleInput: exampleInputOf(analysis) } : result;
+  return analysis && result.rules
+    ? { ...result, exampleId: rememberExample(analysis, args.keepExampleId), exampleInput: exampleInputOf(analysis), exampleOutputColumns: analysis.output.columnCount }
+    : result;
 }
 
 async function convert(args: ConvertArgs): Promise<Transfer<ConvertOutput> | ConvertOutput> {

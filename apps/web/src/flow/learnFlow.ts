@@ -10,7 +10,7 @@
 // simply never visited (the local fast path goes checking -> done, with no learning or
 // verifying). The HTTP calls are made HERE, on the main thread, on the worker's behalf.
 import type { AiLearnQuotaState, Format, LearnPayload, LearnResponse, LearnResult, RepairProblem, Tier } from '@formatai/shared';
-import type { AnalysisStage, LearnCallResult, PreflightIssue } from '@formatai/engine';
+import type { AnalysisStage, CompleteOptions, LearnCallResult, PreflightIssue } from '@formatai/engine';
 import type { Api } from '../api';
 import { webConfig } from '../config';
 import type { EngineClient } from '../worker/engineClient';
@@ -70,7 +70,7 @@ export type LearnFlowState =
    * `result.exampleId` is the example the worker kept for the rules editor's live check (SPEC 8.11). `result.path`
    * 'partial' is the local result shown before the AI step (`result.partial`); `ai` is set when the AI step ran.
    */
-  | ({ status: 'done'; result: LearnOutput; ai?: AiInfo } & Common)
+  | ({ status: 'done'; result: LearnOutput; ai?: AiInfo; /** The user went on past "rows couldn't be aligned" (SPEC 6.4): the same learn has to be run the same way again (after signing in). */ tryAnyway?: boolean } & Common)
   | ({ status: 'error'; error: FlowError } & Common);
 
 export type LearnFlowStatus = LearnFlowState['status'];
@@ -90,6 +90,14 @@ export interface StartParams {
   ai?: 'allowed' | 'notAllowed';
   /** SPEC 5 A2 attach mode: the format this source must produce. */
   target?: Format;
+  /** Continue past "rows couldn't be aligned" (SPEC 6.4) without asking: the same learn, run again after a sign-in. */
+  tryAnyway?: boolean;
+  /**
+   * Completion mode (LEARN_PROMPT "Completing a partial rules file"): the AI step only produces what is missing from the rules the user has
+   * (`fixedRules`), which it must leave unchanged. `exampleId`: the example the screen's live check already uses, kept by the worker.
+   * The result carries `completion`; nothing is replaced here - the caller decides what to do with a result that passes (or fails) the lock.
+   */
+  complete?: CompleteOptions & { exampleId?: string | undefined };
 }
 
 export interface LearnFlowDeps {
@@ -98,6 +106,14 @@ export interface LearnFlowDeps {
   tier: Tier;
   /** Read at the start of every learn, so a sign-in that happens while the screen is open does not replace the flow. Wins over `tier`. */
   getTier?: () => Tier;
+  /**
+   * Resolves once it is known who is using the app (`/api/me` has answered). Awaited at the start of every learn, BEFORE `getTier` and
+   * `getAi` are read: a learn started while the answer is still on its way must not run as a visitor's (no AI step, the anonymous limits)
+   * when the person is signed in.
+   */
+  ready?: () => Promise<void>;
+  /** Whether the AI step is allowed, for a learn that did not say (`StartParams.ai`): read after `ready`. Default: allowed. */
+  getAi?: () => 'allowed' | 'notAllowed';
   /** A fresh Cloudflare Turnstile token per learn call, when Turnstile is on (SPEC 9.5). */
   getTurnstileToken?: () => Promise<string | undefined>;
   maxFileBytes?: number;
@@ -142,7 +158,7 @@ export class LearnFlow {
   /** Start (or restart) a learn from an example input/output pair. */
   start(params: StartParams): Promise<void> {
     this.lastParams = params;
-    return this.run(params, false);
+    return this.run(params, params.tryAnyway === true);
   }
 
   /** Go ahead past a warning: leave unknown columns empty, or "Try anyway" on unaligned rows. */
@@ -188,7 +204,8 @@ export class LearnFlow {
     let ai: AiInfo | undefined;
     let lastProblems: RepairProblem[] = [];
     let hostError: unknown;
-    let skipConfirmed = false;
+    // (Completion: the user has already seen the columns that stay empty on the map, and chose to go on.)
+    let skipConfirmed = params.complete !== undefined;
 
     const setPhase = (next: LearnFlowState): void => {
       if (!stale()) this.set(next);
@@ -211,6 +228,14 @@ export class LearnFlow {
     }
 
     const token = (): Promise<string | undefined> => this.deps.getTurnstileToken?.() ?? Promise.resolve(undefined);
+
+    // Who is using the app has to be known before the tier and the AI step are decided (see `LearnFlowDeps.ready`).
+    try {
+      await this.deps.ready?.();
+    } catch {
+      // Not knowing is the same as nobody signed in: the learn goes on with what `getTier`/`getAi` say.
+    }
+    if (stale()) return;
 
     const host: LearnHost = {
       callLearn: async (payload) => {
@@ -267,7 +292,7 @@ export class LearnFlow {
     };
 
     try {
-      const args = await readArgs(params, this.deps.getTier?.() ?? this.deps.tier, tryAnyway);
+      const args = await readArgs(params, this.deps.getTier?.() ?? this.deps.tier, tryAnyway, params.ai ?? this.deps.getAi?.());
       if (stale()) return; // cancelled or superseded while the files were being read
       const result = await this.deps.engine.learn(args, host, {
         signal: abort.signal,
@@ -289,10 +314,14 @@ export class LearnFlow {
       } else if (!result.rules) {
         this.set({ status: 'error', error: { kind: 'learnFailed', problems: lastProblems }, sent });
       } else {
-        this.set({ status: 'done', result, sent, ...(ai ? { ai } : {}) });
+        this.set({ status: 'done', result, sent, ...(ai ? { ai } : {}), ...(tryAnyway ? { tryAnyway: true } : {}) });
         // SPEC 21 v5 item 3: the browser reports its own full verification, and the answer says what counted.
         if (result.path === 'llm' && ai?.learnId && result.verification) {
-          void this.reportOutcome(runId, ai.learnId, result.verification.verified ? 'verified' : 'failed');
+          // A completion answer counts as good only when it kept every fixed element, matches the example (leaving out columns that have no rule)
+          // and produced something of what was asked.
+          const c = result.completion;
+          const good = c ? c.fixedProblems.length === 0 && c.matches && c.produced.columns + c.produced.parts > 0 : result.verification.verified;
+          void this.reportOutcome(runId, ai.learnId, good ? 'verified' : 'failed');
         }
       }
     } catch (e) {
@@ -341,7 +370,7 @@ function stateForProgress(p: LearnProgress, sent: readonly SentRecord[]): LearnF
   }
 }
 
-async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean): Promise<LearnArgs> {
+async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai: 'allowed' | 'notAllowed' | undefined): Promise<LearnArgs> {
   const [input, output] = await Promise.all([params.input.arrayBuffer(), params.output.arrayBuffer()]);
   return {
     input: { name: params.input.name, bytes: input },
@@ -349,7 +378,8 @@ async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean): Pr
     masking: params.masking,
     tier,
     ...(tryAnyway ? { tryAnyway: true } : {}),
-    ...(params.ai ? { ai: params.ai } : {}),
+    ...(ai ? { ai } : {}),
     ...(params.target ? { target: params.target } : {}),
+    ...(params.complete ? { complete: { fixedRules: params.complete.fixedRules, columns: params.complete.columns, parts: params.complete.parts }, ...(params.complete.exampleId ? { keepExampleId: params.complete.exampleId } : {}) } : {}),
   };
 }

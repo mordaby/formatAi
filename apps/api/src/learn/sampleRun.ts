@@ -148,8 +148,10 @@ function compareRow(
   actualRow: OutRow | undefined,
   sample: number,
   familyRow: number | undefined,
+  ignore: ReadonlySet<number>,
 ): boolean {
   for (let out = 0; out < expectedRow.length; out++) {
+    if (ignore.has(out)) continue;
     const expected = expectedRow[out] ?? null;
     const actualCell = actualRow?.cells[out];
     if (cellsEqual(expected, actualCell)) continue;
@@ -167,6 +169,24 @@ function compareRow(
 }
 
 /**
+ * Completion mode only: the output columns that are not compared with the samples. The AI step is answerable for the columns it was asked
+ * to produce (`complete.columns`) and nothing else: the other columns are the user's own rules (checked against the whole example in the
+ * browser, and kept by the fixed lock - they may depart from the example on purpose), external data is left empty on purpose
+ * (`skipColumns`), and a listed column the answer reports as unsupported is left empty on purpose (that the answer produced anything at
+ * all is the fixed lock's business). A plain learn compares every column, as it always did.
+ *
+ * DECISION: this narrowing is completion-only. A plain learn with `skipColumns` (external data) still compares the skipped columns, so such a
+ * learn does not pass the server checks; changing that is a separate change.
+ */
+function columnsNotCompared(rules: LearnResult | Rules, payload: LearnPayload): ReadonlySet<number> {
+  const ignore = new Set<number>();
+  if (!payload.complete) return ignore;
+  const produced = new Set(payload.complete.columns.filter((i) => rules.output.columns[i]?.from != null));
+  for (let i = 0; i < payload.output.columns.length; i++) if (!produced.has(i)) ignore.add(i);
+  return ignore;
+}
+
+/**
  * SPEC 9.2 layer 7: runs `rules` on the payload's samples and dropped rows, and diffs
  * the result. Each sample's expected output row(s) - a family: all rows, in order -
  * must appear for its input row; a dropped row must produce none. At most
@@ -175,6 +195,7 @@ function compareRow(
  * problem, in addition to (not instead of) any `diff` problems.
  */
 export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload): RepairProblem[] {
+  const ignore = columnsNotCompared(rules, payload);
   const table = buildSampleInputTable(payload);
   const result = runRules(rules, table, {});
   const ctx: DiffCtx = { problems: [], diffCount: 0 };
@@ -215,7 +236,7 @@ export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload):
     expectedTotal += expectedRows.length;
 
     for (let r = 0; r < expectedRows.length; r++) {
-      if (!compareRow(ctx, expectedRows[r]!, actualRows[r], i, family ? r : undefined)) {
+      if (!compareRow(ctx, expectedRows[r]!, actualRows[r], i, family ? r : undefined, ignore)) {
         stop = true;
         return;
       }

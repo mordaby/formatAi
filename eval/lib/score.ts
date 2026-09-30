@@ -20,6 +20,8 @@ export function classify(result: LearnFromExamplesResult): Classification {
   }
   if (!result.rules) return { kind: 'failed' };
   if (result.unsupported.length > 0) return { kind: 'unsupported', codes: result.unsupported.map((u) => u.reasonCode) };
+  // Completion mode: an answer that changed the rules it had to keep is not a success, however well it matches the example.
+  if (result.completion && result.completion.fixedProblems.length > 0) return { kind: 'notVerified' };
   if (result.verification?.verified) return { kind: 'verified' };
   return { kind: 'notVerified' };
 }

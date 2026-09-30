@@ -6,6 +6,10 @@
 //   switch) -> the user's AI-learn quota (reserved) -> the LLM -> ledger, spend, cache write -> what the
 //   learn counted as (see `protection/aiLearns.ts`).
 //
+// DECISION: completion mode (LEARN_PROMPT "Completing a partial rules file"): a payload with `complete` is a learn like any other (same quota, same
+// failed-attempt cap on its example pair, same outcome report), except that it never touches the structure cache - its answer contains
+// the user's own rules, so it is neither served from nor stored in it.
+//
 // Every refusal is a stable code (`{ error, limit?, period?, counted? }`, see shared `API_ERROR_CODES`); the web maps it to
 // UI text. SPEC 15: this file never logs a payload, a cell value, a token, or `previousRules`/`problems`
 // content - only counts, ids and error names.
@@ -26,7 +30,7 @@ import {
   type RepairResponse,
 } from '@formatai/shared';
 import type { Env } from '../env.js';
-import { countProblems, learn, repairFromBrowser, type CompleteFn, type LearnOutcome, type LlmCallRecord } from '../learn/index.js';
+import { countProblems, learn, readCompleteFixed, repairFromBrowser, type CompleteFn, type LearnOutcome, type LlmCallRecord } from '../learn/index.js';
 import type { LlmCallDoc } from '../models.js';
 import { BUDGET_STATUS, checkBudgets, totalCostUsd } from '../protection/budget.js';
 import { isCacheable, learnCacheKey } from '../protection/cache.js';
@@ -190,6 +194,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     outcome: LearnOutcome,
     now: Date,
   ): Promise<void> => {
+    if (payload.complete !== undefined) return; // completion: the answer holds the user's own rules (see the file header)
     if (!outcome.verified || !outcome.rules || !isCacheable(outcome.rules, payload.masking)) return;
     try {
       await store.putCachedRules({ owner, key, rules: outcome.rules, promptVersion, createdAt: now });
@@ -225,14 +230,16 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const parsedPayload = LearnPayloadSchema.safeParse(body?.payload);
     if (!parsedPayload.success) return fail(reply, 400, { error: 'invalidPayload' });
     const payload = parsedPayload.data as unknown as LearnPayload;
+    if (payload.complete && !readCompleteFixed(payload.complete)) return fail(reply, 400, { error: 'invalidPayload' });
 
     const owner = ownerOf(identity);
     const now = protection.now();
 
     // SPEC 9.5 cache: a hit costs no learn and no LLM call - so it is served even when limits or budgets
     // are spent. `noCache` lets the browser insist on a fresh learn (e.g. its verification rejected a hit).
+    // (Never in completion mode: see the file header.)
     const cacheKey = learnCacheKey(payload);
-    if (body?.noCache !== true) {
+    if (body?.noCache !== true && payload.complete === undefined) {
       const started = Date.now();
       const notBefore = new Date(now.getTime() - limits.cache.ttlDays * DAY_MS);
       const saved = LearnResultSchema.safeParse(await store.getCachedRules(owner, cacheKey, notBefore));
@@ -313,6 +320,9 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const body = req.body as RepairRequestBody | undefined;
     const parsedPayload = LearnPayloadSchema.safeParse(body?.payload);
     if (!parsedPayload.success) return fail(reply, 400, { error: 'invalidPayload' });
+    if ((parsedPayload.data as unknown as LearnPayload).complete && !readCompleteFixed((parsedPayload.data as unknown as LearnPayload).complete!)) {
+      return fail(reply, 400, { error: 'invalidPayload' });
+    }
     const parsedRules = LearnResultSchema.safeParse(body?.previousRules);
     if (!parsedRules.success) return fail(reply, 400, { error: 'invalidPreviousRules' });
     if (!isRepairProblemArray(body?.problems)) return fail(reply, 400, { error: 'invalidProblems' });

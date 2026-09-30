@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V5, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT_V6, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
@@ -138,8 +138,8 @@ describe('learn()', () => {
 
     // Every call uses the identical, unchanging system prompt (SPEC 9.1) - no
     // conversation history is ever built up.
-    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT_V5);
-    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT_V5);
+    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT_V6);
+    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT_V6);
 
     // The learn call: exactly one content block, the cached payload.
     expect(learnCall!.content).toHaveLength(1);

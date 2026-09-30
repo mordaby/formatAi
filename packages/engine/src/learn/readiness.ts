@@ -16,6 +16,7 @@
 import type { AiReadinessIssueCode, Format, LearnPayload } from '@formatai/shared';
 import { limits } from '@formatai/shared';
 import type { PairAnalysis } from './analyze';
+import type { CompleteOptions } from './complete';
 import type { Masker } from './mask';
 import { partialRules, type PartialRulesResult } from './partial';
 import { buildPayload, type BuildPayloadResult, type PayloadCaps } from './payload';
@@ -41,6 +42,9 @@ export interface AiReadinessOptions {
   /** SPEC 8.12/A2: attach mode. The output must equal the format's, which the AI step is told to copy, so
    * the local finish for "only external columns" doesn't apply. */
   target?: Format;
+  /** Completion mode (LEARN_PROMPT "Completing a partial rules file"): the rules to keep and what is missing. The local finish
+   * for "only external columns" doesn't apply (the caller already decided the AI step is wanted), and `built.payload.complete` carries them. */
+  complete?: CompleteOptions;
   caps?: PayloadCaps;
   /** An already-built `partialRules` result for this analysis (saves building it twice); `null` when there is
    * none to be had (then "only external columns left" can't be told, and the AI step runs). */
@@ -67,7 +71,7 @@ export function aiReadiness(analysis: PairAnalysis, preflight: PreflightResult, 
   if (analysis.alignment.rows.length === 0) return { ready: false, issues: [issue('noRowsMatched')] };
 
   // ---- NO CALL: only external columns are left ----
-  if (opts.target === undefined) {
+  if (opts.target === undefined && opts.complete === undefined) {
     const partial = opts.partial === undefined ? partialRules(analysis, preflight) : opts.partial;
     if (partial !== null && !('reason' in partial) && partial.external.length > 0 && partial.needsAi.length === 0 && partial.needsAiParts.length === 0) {
       return { ready: false, issues: [issue('onlyExternalColumns', { count: partial.external.length, columns: partial.external.join(', ') })] };
@@ -83,6 +87,7 @@ export function aiReadiness(analysis: PairAnalysis, preflight: PreflightResult, 
   const built = buildPayload(analysis, preflight, {
     ...(opts.masker ? { masker: opts.masker } : {}),
     ...(opts.target ? { target: opts.target } : {}),
+    ...(opts.complete ? { complete: opts.complete } : {}),
     caps,
   });
   const bytes = payloadBytes(built.payload);

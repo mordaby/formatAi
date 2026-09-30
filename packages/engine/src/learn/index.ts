@@ -11,4 +11,5 @@ export * from './payload';
 export * from './verify';
 export * from './flow';
 export * from './partial';
+export * from './complete';
 export * from './readiness';

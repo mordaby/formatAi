@@ -3,6 +3,7 @@
 // Once the learn is saved (a format and its first source) the SAME screen becomes the editor of that source: its address is the
 // source's own, the example files stay in the worker for the live check, and every further save is a new version of the source.
 import { limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
+import { completionPlan, isCompletable } from '@formatai/shared';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { aiLeftLabel } from '../../app/aiQuota';
@@ -16,13 +17,15 @@ import type { AiInfo } from '../../flow/learnFlow';
 import type { UseLearnFlow } from '../../flow/useLearnFlow';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
-import { Button, InlineMessage } from '../../ui';
+import { Button, Dialog, InlineMessage } from '../../ui';
 import type { LearnOutput } from '../../worker/engineApi';
 import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
 import { Versions } from '../Format/Versions';
+import { CompletionNotice } from './CompletionNotice';
 import { PartialBanner, PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
 import { defaultFormatName, getResultSession, sourcePath, type SavedSource } from './session';
+import { useCompletion } from './useCompletion';
 import { useFormatMatch } from './useFormatMatch';
 import { convertAndDownload, useSave } from './useSave';
 import { Workbench, type WorkbenchInfo } from './Workbench';
@@ -98,8 +101,21 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // Starting over throws the edits away: ask first when there are unsaved ones.
   const startOver = (): void => (kept.store.getState().dirty ? setConfirmStartOver(true) : goHome());
 
-  // SPEC 21 v5 item 1: the local result, shown before the AI step.
-  const partial = result.path === 'partial' ? result.partial : undefined;
+  // "Finish with the AI step" (completion mode): the AI step produces only what is missing and the rules on screen stay as they are; an
+  // answer that passes the fixed lock and the verification replaces them (see useCompletion).
+  const completion = useCompletion(kept.store, result.exampleId);
+  const completed = completion.completed;
+  const [confirmRerun, setConfirmRerun] = useState(false);
+  // What the AI step reported for the answer on screen (the completion's, once one has been applied).
+  const aiInfo = completed ? completed.ai : ai;
+  const { setQuota } = me;
+  const quotaNow = completed?.ai?.quota;
+  useEffect(() => {
+    if (quotaNow) setQuota(quotaNow);
+  }, [quotaNow, setQuota]);
+
+  // SPEC 21 v5 item 1: the local result, shown before the AI step. Once the AI step has completed it, it is an ordinary result.
+  const partial = result.path === 'partial' && !completed ? result.partial : undefined;
   const aiPending = partial?.reason === 'aiNotAllowed';
   const [popupOpen, setPopupOpen] = useState(false);
   const [confirmStartOver, setConfirmStartOver] = useState(false);
@@ -117,7 +133,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   const doSave = (info: WorkbenchInfo): void => {
     const file = session.input;
     if (!info.metaStatus || !file) return;
-    const learnPath = result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
+    const learnPath = completed ? 'llm' : result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
     // SPEC 8.15 "Saving": the server looks for one of the caller's sources this example input matches and reuses it, or creates one - silently,
     // there is no source UI in the MVP. What it matches on is the example input's HEADERS (structure only - the file and its values never
     // leave the computer); the rules alone would give a subset.
@@ -147,9 +163,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         saver.setVersion(next.version);
         kept.source = next;
         setSource(next);
-        if (info.metaStatus === 'differencesAccepted' && ai?.learnId) {
+        if (info.metaStatus === 'differencesAccepted' && aiInfo?.learnId) {
           api.registry
-            .learnOutcome(ai.learnId, 'accepted')
+            .learnOutcome(aiInfo.learnId, 'accepted')
             .then((r) => me.setQuota(r.quota))
             .catch(() => undefined);
         }
@@ -177,14 +193,51 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     }
   };
 
+  // What the AI step would be asked for, from the rules as they are on screen right now: the output columns with no rule (not data the input
+  // does not hold) and the layout parts the local result could not build and the rules still lack. `usable` is false when there is nothing
+  // to ask for, or the rules no longer line up with the example (columns added or removed) - then only a whole learn makes sense.
+  const planFor = (rules: WorkbenchInfo['rules']) => {
+    const plan = completionPlan(rules, { parts: partial?.needsAiParts ?? [], skipColumns: result.preflight.skipColumns });
+    const aligned = result.exampleOutputColumns === undefined || rules.output.columns.length === result.exampleOutputColumns;
+    return { ...plan, usable: aligned && isCompletable(rules) && (plan.columns.length > 0 || plan.parts.length > 0) };
+  };
+  const rerunAll = (): void => {
+    // The user has said the rules may go: leaving this screen for the new learn is not "leaving with unsaved changes".
+    kept.store.markSaved();
+    session.finishWithAi();
+  };
+  const hasEdits = (info: WorkbenchInfo): boolean => info.dirty || info.editor.state.edited.size > 0;
+  /**
+   * "Finish with the AI step" / "Try these columns with AI": completion mode when it can be, the whole learn when not (after asking, when there
+   * are edits). DECISION: nothing missing (the local rules cover every column and part, yet the strict fast path would not accept them - rows
+   * that change shape go to the AI step) or rules that no longer line up with the example's output columns (columns added or removed) leave
+   * nothing to complete, so the button runs the whole learn instead.
+   */
+  const finish = (info: WorkbenchInfo): void => {
+    const plan = planFor(info.rules);
+    if (plan.usable) completion.start({ fixedRules: info.rules, columns: plan.columns, parts: plan.parts });
+    else if (hasEdits(info)) setConfirmRerun(true);
+    else rerunAll();
+  };
+  const aiBusy = completion.running || completion.exhausted;
+
   const actions = (info: WorkbenchInfo) => {
     if (aiPending) {
       return (
         <>
-          {me.user ? (
-            <Button variant="primary" onClick={session.finishWithAi}>
-              {t('partial.finish')}
+          {me.status === 'loading' ? (
+            <Button variant="primary" loading disabled>
+              {t('partial.checking')}
             </Button>
+          ) : me.user ? (
+            <>
+              <Button variant="primary" loading={completion.running} disabled={aiBusy} onClick={() => finish(info)}>
+                {t('partial.finish')}
+              </Button>
+              <Button variant="secondary" disabled={aiBusy} onClick={() => setConfirmRerun(true)}>
+                {t('partial.rerun')}
+              </Button>
+            </>
           ) : (
             <Button variant="primary" onClick={() => setPopupOpen(true)}>
               {t('partial.banner.signIn')}
@@ -213,6 +266,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     const label =
       info.differences && info.differences > 0 ? t(info.differences === 1 ? 'save.differences.one' : 'save.differences.other', { n: info.differences }) : t('result.save');
     const saving = save.state.status === 'saving';
+    // A signed-in user whose result still has columns with no rule: the AI step can try just those (completion mode).
+    const tryColumns = me.user !== null && planFor(info.rules).columns.length > 0 && planFor(info.rules).usable;
     return (
       <>
         <Button
@@ -224,6 +279,14 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         >
           {label}
         </Button>
+        {tryColumns && (
+          <>
+            <Button variant="secondary" loading={completion.running} disabled={aiBusy || saving} onClick={() => finish(info)}>
+              {t('complete.try')}
+            </Button>
+            <p className="muted">{t('complete.tryNote')}</p>
+          </>
+        )}
         {!me.user && tierLimits.previewRows !== null ? <p className="muted">{t('result.freeHint', { n: tierLimits.previewRows })}</p> : null}
       </>
     );
@@ -250,7 +313,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           {t('match.text')}
         </InlineMessage>
       )}
-      {ai && <AiNote ai={ai} verified={result.verification?.verified === true} />}
+      <CompletionNotice completion={completion} />
+      {aiInfo && <AiNote ai={aiInfo} verified={(completed ? completed.verification : result.verification)?.verified === true} />}
       {/* What the first save said, until a later save has something to say. */}
       {!laterSave && save.state.status === 'saved' && (
         <InlineMessage tone="info" actions={<Link to="/formats">{t('save.viewFormats')}</Link>}>
@@ -277,7 +341,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         inputFile={session.input}
         tier={me.tier}
         partial={partial}
-        verification={result.verification}
+        verification={completed ? completed.verification : result.verification}
         name={name}
         // A saved format is renamed from its own page (the name was saved with it).
         onRename={
@@ -291,7 +355,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         learnedNote={
           source
             ? t('edit.note', { format: name })
-            : t(partial ? (aiPending ? 'partial.note' : 'flow.path.local') : result.path === 'local' ? 'flow.path.local' : 'flow.path.llm')
+            : t(partial ? (aiPending ? 'partial.note' : 'flow.path.local') : completed || result.path !== 'local' ? 'flow.path.llm' : 'flow.path.local')
         }
         previewLimit={tierLimits.previewRows}
         onSignIn={() => signIn.open('save')}
@@ -332,6 +396,23 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           }
         }}
       />
+      <Dialog open={confirmRerun} onClose={() => setConfirmRerun(false)} title={t('partial.rerun.title')}>
+        <p>{t('partial.rerun.body')}</p>
+        <div className="dialog__actions">
+          <Button variant="primary" onClick={() => setConfirmRerun(false)}>
+            {t('partial.rerun.keep')}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setConfirmRerun(false);
+              rerunAll();
+            }}
+          >
+            {t('partial.rerun.confirm')}
+          </Button>
+        </div>
+      </Dialog>
       {partial && aiPending && !me.user && (
         <PartialSignInDialog open={popupOpen} partial={partial} totalColumns={rules.output.columns.length} onClose={() => setPopupOpen(false)} />
       )}

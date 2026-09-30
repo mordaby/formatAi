@@ -35,6 +35,10 @@ export const webConfig = {
   convertReviewRows: 200,
   /** Flags listed on the run result screen. */
   convertFlagRows: 100,
+  /** How long a learn waits for "who is signed in" (`/api/me`) before it goes on as if nobody were (a server that does not answer must not hold it back). */
+  meReadyTimeoutMs: 5000,
+  /** Coming back to the tab (or the window) reads who is signed in again, at most this often: signing in (or out) in another tab is noticed without a reload. */
+  meRefreshMinGapMs: 10_000,
   /**
    * SPEC 5 E "The learned rules survive sign-in": what is learned so far (the two example files and the edits) is kept in
    * this browser's IndexedDB - never sent anywhere - while the browser goes to the provider and back, and dropped

@@ -103,6 +103,7 @@ describe('POST /api/learn', () => {
       type: 0,
       limit: 0,
       formatMismatch: 0,
+      fixedMismatch: 0,
       diff: 0,
       rowCount: 0,
       layout: 0,

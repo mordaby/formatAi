@@ -64,6 +64,7 @@ export function PartialBanner({ partial, totalColumns, readiness }: { partial: P
   return (
     <InlineMessage tone="info" title={t('partial.section')} todo={t('partial.finishNote')}>
       <p>{me.user ? t('partial.banner.signedIn') : t('partial.banner.anon', { solved: c.solved, total: c.total })}</p>
+      {me.user ? <p className="muted">{t('complete.finishNote')}</p> : null}
       {me.user && me.quota ? <p className="tabular">{aiLeftLabel(t, me.quota)}</p> : null}
     </InlineMessage>
   );

@@ -2,6 +2,7 @@ import type { AiLearnQuotaState, AuthProviderId, AuthRedirectError, MeUser, Tier
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { readAuthReturn, withoutAuthReturn } from '../api/auth';
+import { webConfig } from '../config';
 import { readLangCookie, useI18n } from '../i18n';
 import { useServices } from '../services';
 import { redirectTo } from './redirect';
@@ -80,7 +81,8 @@ export function MeProvider({ children }: { children: ReactNode }) {
     }
     try {
       const next = await auth.me();
-      if (alive.current) setUser(next);
+      // (the same person again is not a change: nothing that reads `user` needs to run for it)
+      if (alive.current) setUser((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
     } catch {
       // The server is unreachable: keep what we know (anonymous, at the start).
     } finally {
@@ -103,6 +105,26 @@ export function MeProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         if (alive.current) setProviders([]);
       });
+  }, [auth, refresh]);
+
+  // DECISION: signing in (or out) in another tab - or a session that ran out - is noticed when the person comes back to this one, so a screen that
+  // was waiting for a sign-in (the local result with "Sign in to finish") does not stay that way until a reload, which would lose it.
+  const lastLook = useRef(Date.now());
+  useEffect(() => {
+    if (!auth) return;
+    const look = (): void => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - lastLook.current < webConfig.meRefreshMinGapMs) return;
+      lastLook.current = now;
+      void refresh();
+    };
+    document.addEventListener('visibilitychange', look);
+    window.addEventListener('focus', look);
+    return () => {
+      document.removeEventListener('visibilitychange', look);
+      window.removeEventListener('focus', look);
+    };
   }, [auth, refresh]);
 
   // Coming back from the provider: read the answer once, say it, and clean the address bar.

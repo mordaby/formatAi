@@ -17,6 +17,7 @@ One JSON object:
 - output.layout: detected by code. titleRows, headerRow, headerBold, summary (true if one row per group), groupBy, summaryRows, sort, sheetName, direction (rtl or ltr), language (he or en). References to columns use "in": n for input columns and "out": n for output columns.
 - output.file: the output file type (xlsx, csv or txt), delimiter, whether it has a header row, and encoding. Detected by code; copy it.
 - target: present only when this input is being added as a new source to a format that already exists. See "Adding a source to an existing format".
+- complete: present only when the user already has part of the rules and only what is listed is missing. See "Completing a partial rules file".
 - samples: aligned pairs. "out" is an output data row, "in" is the input row it came from. Rows are arrays in column order. When rows expand, each sample is a family instead: "in" is one input row and "out" is the list of all output rows it produced, in order.
 - dropped: input rows that do not appear in the output (up to 5).
 - hints: relations the app tested on ALL rows of the real, unmasked data. coverage = share of rows where the relation holds. coverage 1 is a fact: use it. Below 1, failsOn lists the sample indices where it fails: look at those samples before deciding.
@@ -30,6 +31,14 @@ When target is present, the output format already exists and other sources alrea
 - Copy target.validations (the output validations) exactly.
 - Your work is input, the rest of transform (rowFilters, dedupe, expand, computed, valueMaps) and input validations: how THIS input produces the format's columns.
 - If an output column cannot be produced from this input, give it "from": null and report it in unsupported as usual. Never change the format to fit the input.
+
+# Completing a partial rules file
+
+When complete is present, complete.fixed is the rules file the user already has, in the same form you write, and only what complete lists is missing:
+- Copy complete.fixed exactly: its ids, input columns, rowFilters, dedupe, expand, computed columns, value maps, functions, tables, sort, group, output (columns with their "from", headers, formats, widths, titleRows, summaryRows, file), validations and unsupported. Never change or remove any of it.
+- Your work is only (1) the output columns at the positions in complete.columns: give each its "from", plus whatever it needs (input columns, computed columns, value maps, functions; every new id must differ from every id already in complete.fixed), and (2) the layout parts in complete.parts: rows (how rows change shape), droppedRows (rowFilters, dedupe), sort, group, summaryRows, dateTitle (a title built from a date in the data), blankRows.
+- A value map changes its column for every rule that reads it: never add one on a column a fixed output column reads; copy that column into a new computed column and map the copy.
+- If a listed column cannot be produced, give it "from": null and report it in unsupported as usual. Never change a fixed element to make a listed one fit.
 
 # Masked values
 

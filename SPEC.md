@@ -317,7 +317,8 @@ The full field list and an example are in `LEARN_PROMPT.md`. In short:
 - hints;
 - `skipColumns`;
 - `output.file`, detected by code from the example output (8.13);
-- `target`, only when adding a source to an existing format (8.12).
+- `target`, only when adding a source to an existing format (8.12);
+- `complete`, only when the AI step is asked to finish a partial rules file (21, v6 item 8): the user's current rules in wire form (constants masked like the samples) and what is missing.
 
 Hard caps (config): 60 columns, 12 pairs, 5 dropped rows, 40 characters per cell, 48 KB per payload.
 
@@ -697,7 +698,7 @@ A rules file is accepted only after it passes these layers, in order. Every fail
 2. **References:** every column id, table, function and param exists; ids created by expand and by computed columns don't collide; every input header exists in the input profile; `from` is null exactly for `skipColumns` plus `unsupported`; output validations name existing output headers.
 3. **Types:** a static type check of every expression, filter and function body against the declared column types and the operation signatures (8.3). Each output column's result type must fit its output type.
 4. **Limits and safety:** depth and node budgets, function and table counts, an acyclic call graph, unique table keys, and a rule count within the user's tier (11).
-5. **Format lock,** when the conversion belongs to a format (8.12).
+5. **Format lock,** when the conversion belongs to a format (8.12); in completion mode (21, v6 item 8) the **fixed lock** instead: every element of the rules the user already had must come back unchanged.
 6. **Overfitting lint.** Never a rejection; each finding becomes a "Please check" line with assumption code `overfitSuspected`:
    - a constant equal to a value that appears in only one input row;
    - a condition that is true for exactly one sample row;
@@ -1149,6 +1150,7 @@ What changed:
 5. **Data** (13): a `sources` collection; every conversion carries a required `sourceId`, and the source's own name is the only name (no copy on the conversion).
 6. **After the MVP** (3): learn a new format from a known source; run all formats of a source in one click; a Sources tab; choosing a saved source as the input.
 7. **MVP: no source UI** (8.15): sources are created or reused automatically and silently when a format is saved.
+8. **Completion mode** (`LEARN_PROMPT.md` learn-v6, 2026-09-30): "Finish with the AI step" asks the AI step for ONLY what is missing - the output columns with no rule and the layout parts the local result could not build - and keeps the rules on screen (code-solved columns and the user's edits) as a fixed part. The payload carries `complete: { fixed, columns, parts }`; code checks the answer with a **fixed lock** (`checkFixedLock`, problem kind `fixedMismatch`, fed to the repair call), and the browser replaces the rules only when the lock and the full verification both pass and something listed was produced. "Re-run all with AI" is the whole learn again, after "This replaces your current rules". Both count as one AI learn on success (v5 item 3); a completion answer is never taken from or put in the structure cache. A signed-in user's learn waits for `/api/me` and always runs with the AI step allowed; a result with columns still without a rule offers "Try these columns with AI" (completion mode for those columns).
 
 **Code amendments** (implemented; no change to the rules schema, `schemaVersion`, the engine's run-time behaviour, `LEARN_PROMPT.md` or the tiers):
 - **Shared:** `Source` / `SourceStructure` and zod schemas (`source.ts`); wire types (`api.ts`): `SignatureEntry` is now **per source**, `SourceSummary/Detail`, `UpdateSourceRequest`, `SourceChoice` (`sourceId` | `newSource` + `inputHeaders`), `sourceReused`; `ConversionSummary.sourceId` is required, `ConversionDetail.sourceFormats` and `source.formats` in the save answers say how many formats a source feeds; error codes `sourceMismatch`, `sourceInUse`.

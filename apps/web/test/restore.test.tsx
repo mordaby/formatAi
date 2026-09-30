@@ -95,18 +95,20 @@ describe('coming back after signing in', () => {
     expect(await store.load()).toBeNull();
   });
 
-  it('"Finish with the AI step" then runs the learn with the AI step allowed, on the kept files', async () => {
+  it('"Finish with the AI step" then asks the AI step (allowed) for what is missing, on the kept files', async () => {
     await store.save(await kept());
-    const results = [partialOutput(), learnResult({ path: 'llm' })];
+    const results = [
+      partialOutput(),
+      learnResult({ path: 'llm', rules: ordersRules(), completion: { columns: [3, 4], parts: ['sort'], fixedProblems: [], matches: true, produced: { columns: 2, parts: 1 } } }),
+    ];
     const { engine, learn } = fakeEngine(async () => results.shift()!);
     renderApp({ api: fakeApi({ user: USER }), engine, route: '/result' });
     fireEvent.click(await screen.findByRole('button', { name: 'Finish with the AI step' }));
     await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
-    const second = learn.mock.calls[1]![0] as { input: { name: string }; ai: string; masking: boolean };
-    expect(second).toMatchObject({ ai: 'allowed', masking: false });
+    const second = learn.mock.calls[1]![0] as { input: { name: string }; ai: string; masking: boolean; complete?: { columns: number[] } };
+    expect(second).toMatchObject({ ai: 'allowed', masking: false, complete: { columns: [3, 4] } });
     expect(second.input.name).toBe('orders.csv');
-    await screen.findByTestId('rules-map');
-    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Save format and download' })).toBeTruthy();
   });
 
   it('after a sign-in that was declined the visitor gets the same screen back, and the popup again', async () => {

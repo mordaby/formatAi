@@ -6,10 +6,10 @@
 // (add/sub/mul/div/eq/ne/gt/gte/lt/lte) or as its function-call form `name(` (everything
 // else) - so the LLM is never asked to use an operation it hasn't been told about.
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V5 } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT_V6 } from '@formatai/shared';
 import { OP_SIGNATURES, type SigOp } from '../../src/check/signatures';
 
-/** The "# Operations" section of LEARN_PROMPT §2 (learn-v5): from "# Operations" to the
+/** The "# Operations" section of LEARN_PROMPT §2 (learn-v6): from "# Operations" to the
  * "# Example" heading that follows it. Also documents functions/tables/rowFilters/
  * dedupe/expand/valueMaps/sort/group/titleRows/validations/output.file - this test only
  * checks that every OP_SIGNATURES op is mentioned somewhere in it. */
@@ -19,8 +19,8 @@ function extractOperationsSection(prompt: string): string {
   return match[1] as string;
 }
 
-describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3, learn-v5 formulas)', () => {
-  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT_V5);
+describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3, learn-v6 formulas)', () => {
+  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT_V6);
   const ops = Object.keys(OP_SIGNATURES) as SigOp[];
 
   it('every OP_SIGNATURES op appears in the prompt formula list', () => {

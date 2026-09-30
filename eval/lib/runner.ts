@@ -2,12 +2,13 @@
 // combination: `learnFromExamples` (packages/engine) with `callLearn` = the API's
 // `learn()` and `callRepair` = `repairFromBrowser`, called in-process (no HTTP), plus
 // the hold-out check and scoring. This is the one place that actually spends tokens.
-import { formatOf, learnFromExamples, type LearnFromExamplesResult } from '@formatai/engine';
+import { completionPlan, formatOf, learnFromExamples, type LearnFromExamplesResult } from '@formatai/engine';
 import { learn, repairFromBrowser, type LearnOptions, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
 import type { Format, LearnResult, LlmProviderName, Rules, Tier } from '@formatai/shared';
 import type { CaseDef } from './caseLoader.js';
+import type { EvalMode } from './args.js';
 import { checkHoldOut } from './holdout.js';
 import { classify, classificationLabel, expectationMet } from './score.js';
 
@@ -23,6 +24,8 @@ export interface RunRecord {
   model: string;
   masking: boolean;
   run: number;
+  /** Which way the AI step was asked to work (only set by a run that may use `complete`; absent = `full`). */
+  mode?: EvalMode;
   path: LearnFromExamplesResult['path'];
   classification: string;
   expectationMet: boolean;
@@ -52,6 +55,15 @@ export interface RunRecord {
   /** True when the first call had >=1 formula error and a LATER call (repair or
    * escalation) had zero - i.e. the model corrected its own invalid formula. */
   formulaFixedByRepair: boolean;
+  /** Size of the learn payload the AI step was sent (the first call's; 0 when no call was made) - the input-size proxy
+   * that does not need a real model. */
+  payloadBytes?: number;
+  /** `complete` mode: output columns the local step solved (kept fixed) / left for the AI step, and layout parts left. */
+  fixedColumns?: number;
+  missingColumns?: number;
+  missingParts?: number;
+  /** `complete` mode: why no completion call was made (the local step finished, or the AI cannot help). */
+  completionSkipped?: string;
   error?: string;
 }
 
@@ -113,10 +125,18 @@ export interface RunOneOptions {
   env: Env;
   noEscalation: boolean;
   target?: Format;
+  /** Default 'full'. An attach case (`target`) always runs full: the local step knows nothing of the format lock. */
+  mode?: EvalMode;
 }
 
 export interface RunLearnResult {
   result: LearnFromExamplesResult<LlmCallRecord>;
+  /** The mode that was asked for (an attach case asked for 'complete' runs full, and says so in `completion.skipped`). */
+  mode: EvalMode;
+  /** Size of the first payload sent to the AI step. */
+  payloadBytes: number;
+  /** `complete` mode facts. */
+  completion?: { fixedColumns: number; missingColumns: number; missingParts: number; skipped?: string };
   /**
    * Every `formula`-kind `RepairProblem` MESSAGE seen across every LLM call this run
    * made (learn, repair rounds, escalation) - via `LearnOptions.onAttempt`, the one
@@ -131,6 +151,7 @@ export interface RunLearnResult {
 /** Runs `learnFromExamples` for one case, under one model/masking/run combination. */
 export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
   const formulaErrorMessages: string[] = [];
+  let payloadBytes = 0;
   const learnOpts: LearnOptions = {
     tier: EVAL_TIER,
     env: opts.env,
@@ -140,17 +161,62 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     },
     ...(opts.noEscalation ? { noEscalation: true } : {}),
   };
-  const result = await learnFromExamples<LlmCallRecord>({
+  const common = {
     input: { bytes: opts.caseDef.input.bytes, name: opts.caseDef.input.fileName },
     output: { bytes: opts.caseDef.output.bytes, name: opts.caseDef.output.fileName },
     masking: opts.masking,
     ...(opts.masking ? { key: evalMaskingKey(opts.caseDef.name, opts.model, opts.run) } : {}),
     tier: EVAL_TIER,
-    ...(opts.target ? { target: opts.target } : {}),
-    callLearn: (payload) => learn(payload, learnOpts),
-    callRepair: (payload, previousRules, problems) => repairFromBrowser(payload, previousRules, problems, learnOpts),
+  };
+  const callLearn = (payload: Parameters<typeof learn>[0]) => {
+    if (payloadBytes === 0) payloadBytes = new TextEncoder().encode(JSON.stringify(payload)).length;
+    return learn(payload, learnOpts);
+  };
+  const callRepair: Parameters<typeof learnFromExamples<LlmCallRecord>>[0]['callRepair'] = (payload, previousRules, problems) => repairFromBrowser(payload, previousRules, problems, learnOpts);
+
+  const wantsComplete = opts.mode === 'complete' && !opts.target;
+  if (!wantsComplete) {
+    const result = await learnFromExamples<LlmCallRecord>({ ...common, ...(opts.target ? { target: opts.target } : {}), callLearn, callRepair });
+    // (an attach case asked to run in complete mode is still counted under it, with the note that it ran full)
+    return {
+      result,
+      mode: opts.mode ?? 'full',
+      payloadBytes,
+      formulaErrorMessages,
+      ...(opts.mode === 'complete' ? { completion: { fixedColumns: 0, missingColumns: 0, missingParts: 0, skipped: 'attach case (ran full)' } } : {}),
+    };
+  }
+
+  // complete: the local step first (what a visitor gets, no LLM) ...
+  const local = await learnFromExamples<LlmCallRecord>({
+    ...common,
+    ai: 'notAllowed',
+    callLearn: async () => {
+      throw new Error('the local step never calls the AI step');
+    },
   });
-  return { result, formulaErrorMessages };
+  const solvedPartial = local.path === 'partial' && local.partial?.reason === 'aiNotAllowed' && local.rules !== null;
+  if (!solvedPartial) {
+    // The local step finished it (fast path), blocked it, or found only external columns: nothing to complete.
+    return { result: local, mode: 'complete', payloadBytes, formulaErrorMessages, completion: { fixedColumns: local.partial?.solved.length ?? local.rules?.output.columns.length ?? 0, missingColumns: 0, missingParts: 0, skipped: local.path === 'partial' ? 'onlyExternalColumns' : local.path } };
+  }
+  // ... then the AI step on what is missing only, the local rules kept as the fixed part.
+  const rules = local.rules!;
+  const plan = completionPlan(rules, { parts: local.partial!.needsAiParts, skipColumns: local.preflight.skipColumns });
+  const fixedColumns = rules.output.columns.length - plan.columns.length;
+  if (plan.columns.length === 0 && plan.parts.length === 0) {
+    // The local rules cover every column and part, yet the strict fast path would not accept them (rows that change shape go to the AI
+    // step, SPEC 6.5): there is nothing to complete, so - exactly as on the Result screen - the AI step runs as a full learn.
+    const result = await learnFromExamples<LlmCallRecord>({ ...common, callLearn, callRepair });
+    return { result, mode: 'complete', payloadBytes, formulaErrorMessages, completion: { fixedColumns, missingColumns: 0, missingParts: 0, skipped: 'nothingMissing (ran full)' } };
+  }
+  const result = await learnFromExamples<LlmCallRecord>({
+    ...common,
+    complete: { fixedRules: rules, columns: plan.columns, parts: plan.parts },
+    callLearn,
+    callRepair,
+  });
+  return { result, mode: 'complete', payloadBytes, formulaErrorMessages, completion: { fixedColumns, missingColumns: plan.columns.length, missingParts: plan.parts.length } };
 }
 
 async function toRunRecord(
@@ -158,9 +224,11 @@ async function toRunRecord(
   model: string,
   masking: boolean,
   run: number,
-  result: LearnFromExamplesResult<LlmCallRecord>,
-  formulaErrorMessages: readonly string[],
+  ran: RunLearnResult,
+  /** Set when the matrix ran more than one mode: every record then says which one it was. */
+  tagMode: boolean,
 ): Promise<RunRecord> {
+  const { result, formulaErrorMessages } = ran;
   const classification = classify(result);
   const totals = result.path === 'llm' ? sumCalls(result.calls) : emptyTotals();
   const formula = result.path === 'llm' ? formulaStats(result.calls) : formulaStats([]);
@@ -179,6 +247,7 @@ async function toRunRecord(
     model,
     masking,
     run,
+    ...(tagMode ? { mode: ran.mode } : {}),
     path: result.path,
     classification: classificationLabel(classification),
     expectationMet: expectationMet(caseDef.meta, masking, result, classification),
@@ -189,6 +258,19 @@ async function toRunRecord(
     verifiedAfterRepair: result.stages.verifiedAfterRepair,
     ...totals,
     ...formula,
+    ...(tagMode
+      ? {
+          payloadBytes: ran.payloadBytes,
+          ...(ran.completion
+            ? {
+                fixedColumns: ran.completion.fixedColumns,
+                missingColumns: ran.completion.missingColumns,
+                missingParts: ran.completion.missingParts,
+                ...(ran.completion.skipped ? { completionSkipped: ran.completion.skipped } : {}),
+              }
+            : {}),
+        }
+      : {}),
   };
   if (formulaErrorMessages.length > 0) formulaErrorMessagesByRecord.set(record, formulaErrorMessages);
   return record;
@@ -225,6 +307,8 @@ export interface RunMatrixOptions {
   runs: number;
   provider: LlmProviderName;
   noEscalation: boolean;
+  /** Which modes to run (default `['full']`); see `EvalMode`. */
+  modes?: EvalMode[];
   onProgress?: (line: string) => void;
 }
 
@@ -244,34 +328,42 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
   const attachedCases = opts.cases.filter((c) => c.meta.attachTo);
   const byName = new Map(opts.cases.map((c) => [c.name, c] as const));
 
+  const modes: EvalMode[] = opts.modes && opts.modes.length > 0 ? opts.modes : ['full'];
+  // Every record says which mode it ran only when the matrix ran a mode other than plain 'full' (a full-only report stays as it always was).
+  const tagMode = modes.some((m) => m !== 'full');
+
   for (const model of opts.models) {
     for (const masking of opts.maskingModes) {
       for (let run = 1; run <= opts.runs; run++) {
-        const label = `${model} masking=${masking ? 'on' : 'off'} run=${run}`;
-        const baseResults = new Map<string, LearnFromExamplesResult<LlmCallRecord>>();
+        for (const mode of modes) {
+          const label = `${model} masking=${masking ? 'on' : 'off'} run=${run}${tagMode ? ` mode=${mode}` : ''}`;
+          const baseResults = new Map<string, LearnFromExamplesResult<LlmCallRecord>>();
 
-        for (const caseDef of baseCases) {
-          opts.onProgress?.(`${label}: ${caseDef.name}`);
-          const { result, formulaErrorMessages } = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation });
-          baseResults.set(caseDef.name, result);
-          records.push(await toRunRecord(caseDef, model, masking, run, result, formulaErrorMessages));
-        }
-
-        for (const caseDef of attachedCases) {
-          opts.onProgress?.(`${label}: ${caseDef.name} (attach -> ${caseDef.meta.attachTo})`);
-          const baseName = caseDef.meta.attachTo!;
-          const baseResult = baseResults.get(baseName);
-          // DECISION: fall back to the base case's own reference.rules.json when this
-          // combination's base attempt didn't produce usable rules, so a single bad
-          // base run doesn't cascade into failing every source attached to it.
-          const baseRules: LearnResult | Rules | undefined = baseResult?.rules ?? byName.get(baseName)?.referenceRules;
-          if (!baseRules) {
-            records.push(errorRecord(caseDef, model, masking, run, `base case "${baseName}" produced no rules to attach to (and has no reference.rules.json)`));
-            continue;
+          for (const caseDef of baseCases) {
+            opts.onProgress?.(`${label}: ${caseDef.name}`);
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode });
+            baseResults.set(caseDef.name, ran.result);
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode));
           }
-          const target: Format = formatOf(baseRules);
-          const { result, formulaErrorMessages } = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target });
-          records.push(await toRunRecord(caseDef, model, masking, run, result, formulaErrorMessages));
+
+          for (const caseDef of attachedCases) {
+            opts.onProgress?.(`${label}: ${caseDef.name} (attach -> ${caseDef.meta.attachTo})`);
+            const baseName = caseDef.meta.attachTo!;
+            const baseResult = baseResults.get(baseName);
+            // DECISION: fall back to the base case's own reference.rules.json when this
+            // combination's base attempt didn't produce usable rules, so a single bad
+            // base run doesn't cascade into failing every source attached to it. (In complete mode a local PARTIAL
+            // result is not usable rules for a format either: only a finished one is.)
+            const usable = mode === 'complete' && baseResult?.path === 'partial' ? null : baseResult?.rules;
+            const baseRules: LearnResult | Rules | undefined = usable ?? byName.get(baseName)?.referenceRules;
+            if (!baseRules) {
+              records.push(errorRecord(caseDef, model, masking, run, `base case "${baseName}" produced no rules to attach to (and has no reference.rules.json)`));
+              continue;
+            }
+            const target: Format = formatOf(baseRules);
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode });
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode));
+          }
         }
       }
     }

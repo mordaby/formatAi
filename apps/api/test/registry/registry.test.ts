@@ -214,7 +214,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
           { header: 'Amount', aliases: [], type: 'decimal', required: false },
         ],
       });
-      expect(doc).toMatchObject({ model: 'fake-model', promptVersion: 'learn-v5', masking: false, exampleExceptions: [] });
+      expect(doc).toMatchObject({ model: 'fake-model', promptVersion: 'learn-v6', masking: false, exampleExceptions: [] });
     });
 
     it('takes a source name, a saved-with-differences status and example exceptions', async () => {

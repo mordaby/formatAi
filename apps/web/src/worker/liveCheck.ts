@@ -40,8 +40,9 @@ let current: { id: string; analysis: PairAnalysis } | undefined;
  * Keeps this example (only the last one) and returns its id. The id is random, so an id from before a worker
  * restart can never be mistaken for a newer example.
  */
-export function rememberExample(analysis: PairAnalysis): string {
-  const id = crypto.randomUUID();
+export function rememberExample(analysis: PairAnalysis, keepId?: string): string {
+  // `keepId`: a completion run re-reads the same two files, so the example it holds is the one the screen already checks against.
+  const id = keepId ?? crypto.randomUUID();
   current = { id, analysis };
   return id;
 }

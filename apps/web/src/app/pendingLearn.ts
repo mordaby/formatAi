@@ -34,6 +34,8 @@ export interface PendingLearn {
   input: StoredFile | null;
   output: StoredFile | null;
   masking: boolean;
+  /** The learn was continued past "rows couldn't be aligned" (SPEC 6.4); the local analysis is re-run the same way. */
+  tryAnyway?: boolean;
   /** Set when a result was on screen; the local analysis is re-run on the files and these edits are put back on top. */
   result: PendingResult | null;
 }

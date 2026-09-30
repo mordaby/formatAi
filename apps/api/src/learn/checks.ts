@@ -9,11 +9,12 @@
 // collected. Layer 6 (the overfitting lint) is never a gate: it always runs and always
 // appends its findings to the returned rules' `assumptions`, regardless of what else
 // failed, since it costs nothing and the caller may still show this attempt to a human.
-import { checkFormatLock, checkLimits, formulaRulesFromWire, printFormula, typeCheck } from '@formatai/engine';
+import { checkFixedLock, checkFormatLock, checkLimits, completionProduced, formulaRulesFromWire, printFormula, typeCheck } from '@formatai/engine';
 import {
   checkRules,
   fromWire,
   LearnResultSchema,
+  type CompletePayload,
   type Expr,
   type Format,
   type LearnResult,
@@ -85,6 +86,18 @@ export interface ChecksResult {
   rules: LearnResult | null;
 }
 
+/**
+ * Completion mode: `payload.complete.fixed` (wire form, constants masked when masking is on) read back into a real
+ * `LearnResult` - the same steps an answer goes through (pairs -> records, formula text -> trees, zod). `null` when it
+ * cannot be read: the route refuses such a payload (`invalidPayload`) before any call is made.
+ */
+export function readCompleteFixed(complete: Pick<CompletePayload, 'fixed'>): LearnResult | null {
+  const { rules, problems } = formulaRulesFromWire(fromWire(complete.fixed));
+  if (problems.length > 0) return null;
+  const parsed = LearnResultSchema.safeParse(rules);
+  return parsed.success ? parsed.data : null;
+}
+
 function ruleProblemToRepairProblem(p: RuleProblem): RepairProblem {
   // RuleProblem's sub-kinds (reference/depth/duplicateId/arity) are all SPEC 9.2
   // layer 2 "References" - RepairProblem has one `reference` kind for the whole
@@ -118,6 +131,12 @@ function extraReferenceProblems(rules: LearnResult, payload: LearnPayload): Repa
     if (header !== undefined) mustBeNull.add(header);
   }
   for (const u of rules.unsupported) mustBeNull.add(u.outputColumn);
+  // Completion mode: a listed column with no `from` and no `unsupported` entry is reported, more precisely, by the fixed lock.
+  const listed = new Set<string>();
+  for (const i of payload.complete?.columns ?? []) {
+    const header = outputHeaderAt.get(i);
+    if (header !== undefined) listed.add(header);
+  }
 
   for (const col of rules.output.columns) {
     const shouldBeNull = mustBeNull.has(col.header);
@@ -127,7 +146,7 @@ function extraReferenceProblems(rules: LearnResult, payload: LearnPayload): Repa
         kind: 'reference',
         message: `output column "${col.header}" is in skipColumns or unsupported, so "from" must be null`,
       });
-    } else if (!shouldBeNull && isNull) {
+    } else if (!shouldBeNull && isNull && !listed.has(col.header)) {
       problems.push({
         kind: 'reference',
         message: `output column "${col.header}" has "from": null but is not in skipColumns or unsupported`,
@@ -197,7 +216,7 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
     ),
   );
 
-  // ----- Layer 5: format lock (attach mode only) -----
+  // ----- Layer 5: format lock (attach mode only; completion mode has its own, 5b below) -----
   if (payload.target) {
     const format: Format = {
       output: payload.target.output,
@@ -209,6 +228,27 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
         (p): RepairProblem => ({ kind: 'formatMismatch', path: p.path, message: p.message }),
       ),
     );
+  }
+
+  // ----- Layer 5b: fixed lock (completion mode only) -----
+  // Both sides are still in the vocabulary of this payload (masked when masking is on), so they compare as they are.
+  if (payload.complete) {
+    const fixed = readCompleteFixed(payload.complete);
+    if (fixed) {
+      const asked = { columns: payload.complete.columns, parts: payload.complete.parts };
+      problems.push(
+        ...checkFixedLock(rules, fixed, asked).map((p): RepairProblem => ({ kind: 'fixedMismatch', path: p.path, message: p.message })),
+      );
+      // Reporting every listed column as unsupported and building no listed part is clean for the lock, but it is no completion.
+      const produced = completionProduced(rules, fixed, asked);
+      if ((asked.columns.length > 0 || asked.parts.length > 0) && produced.columns === 0 && produced.parts === 0) {
+        problems.push({
+          kind: 'fixedMismatch',
+          path: 'output.columns',
+          message: 'nothing that complete lists was produced: give at least one column of complete.columns a "from" (or build one of complete.parts), and report only what really cannot be produced as unsupported',
+        });
+      }
+    }
   }
 
   // ----- Layer 6: overfitting lint (never a rejection) -----

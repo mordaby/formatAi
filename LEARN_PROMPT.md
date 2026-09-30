@@ -1,6 +1,8 @@
-# LEARN_PROMPT: the learn call (promptVersion: learn-v5)
+# LEARN_PROMPT: the learn call (promptVersion: learn-v6)
 
-This file defines exactly what is sent to the LLM when a format is learned from two files. The code keeps the system prompt in `packages/shared/prompts/learn-v5.txt`, copied verbatim from section 2. Any change to it means a new `promptVersion` and a new eval run.
+This file defines exactly what is sent to the LLM when a format is learned from two files. The code keeps the system prompt in `packages/shared/prompts/learn-v6.txt`, copied verbatim from section 2. Any change to it means a new `promptVersion` and a new eval run.
+
+**learn-v6 changes from learn-v5:** completion mode. A new optional payload field `complete` (`fixed` = the user's current rules in wire form, `columns` = output positions to produce, `parts` = layout parts to produce) and a short system-prompt section "Completing a partial rules file" (modelled on "Adding a source to an existing format"): the AI step copies `complete.fixed` unchanged and produces only what is listed. Code checks the answer with a fixed lock (`checkFixedLock`; problem kind `fixedMismatch`, sections 3-4). Nothing else in the prompt changed; a learn without `complete` reads exactly as in learn-v5.
 
 **learn-v5 changes from learn-v4:** expressions are written as formula text. The LLM no longer writes `expr` as a JSON tree; it writes a formula string (e.g. `round(amount * 0.17, 2)`, `if(status = "VIP", price * 0.9, price)`, `lookup("rates", code, "rate")`). A strict parser (`packages/engine/src/formula`) turns that text into the exact same whitelisted AST the engine has always run and checked - nothing is ever executed as code, and an unknown function/identifier is always an error. This applies to `transform.computed[].expr`, `input.rowFilters[].expr`, `transform.expand` (fixedFanOut)'s `rows[].set` values, and `transform.functions[].body`. Stored rules files, the engine, the type checker and every golden/eval fixture are unchanged (still JSON trees) - only the LLM/editor's TEXT form changed. This is also what shrank the wire JSON Schema from ~92,700 to a few thousand characters (Anthropic structured outputs can't express a recursive schema, so the old format spelled `Expr` out at each of 8 nesting levels; a formula is just a `string` on the wire) and let it be passed to the dev CLI directly on Windows (which caps a command line at ~32k chars).
 
@@ -45,6 +47,7 @@ One JSON object:
 - output.layout: detected by code. titleRows, headerRow, headerBold, summary (true if one row per group), groupBy, summaryRows, sort, sheetName, direction (rtl or ltr), language (he or en). References to columns use "in": n for input columns and "out": n for output columns.
 - output.file: the output file type (xlsx, csv or txt), delimiter, whether it has a header row, and encoding. Detected by code; copy it.
 - target: present only when this input is being added as a new source to a format that already exists. See "Adding a source to an existing format".
+- complete: present only when the user already has part of the rules and only what is listed is missing. See "Completing a partial rules file".
 - samples: aligned pairs. "out" is an output data row, "in" is the input row it came from. Rows are arrays in column order. When rows expand, each sample is a family instead: "in" is one input row and "out" is the list of all output rows it produced, in order.
 - dropped: input rows that do not appear in the output (up to 5).
 - hints: relations the app tested on ALL rows of the real, unmasked data. coverage = share of rows where the relation holds. coverage 1 is a fact: use it. Below 1, failsOn lists the sample indices where it fails: look at those samples before deciding.
@@ -58,6 +61,14 @@ When target is present, the output format already exists and other sources alrea
 - Copy target.validations (the output validations) exactly.
 - Your work is input, the rest of transform (rowFilters, dedupe, expand, computed, valueMaps) and input validations: how THIS input produces the format's columns.
 - If an output column cannot be produced from this input, give it "from": null and report it in unsupported as usual. Never change the format to fit the input.
+
+# Completing a partial rules file
+
+When complete is present, complete.fixed is the rules file the user already has, in the same form you write, and only what complete lists is missing:
+- Copy complete.fixed exactly: its ids, input columns, rowFilters, dedupe, expand, computed columns, value maps, functions, tables, sort, group, output (columns with their "from", headers, formats, widths, titleRows, summaryRows, file), validations and unsupported. Never change or remove any of it.
+- Your work is only (1) the output columns at the positions in complete.columns: give each its "from", plus whatever it needs (input columns, computed columns, value maps, functions; every new id must differ from every id already in complete.fixed), and (2) the layout parts in complete.parts: rows (how rows change shape), droppedRows (rowFilters, dedupe), sort, group, summaryRows, dateTitle (a title built from a date in the data), blankRows.
+- A value map changes its column for every rule that reads it: never add one on a column a fixed output column reads; copy that column into a new computed column and map the copy.
+- If a listed column cannot be produced, give it "from": null and report it in unsupported as usual. Never change a fixed element to make a listed one fit.
 
 # Masked values
 
@@ -208,6 +219,7 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
 | `input.columns[]` | `{ i, header, type, shape, stats }` |
 | `output.layout` | `{ sheetName, direction, language, titleRows[], headerRow, headerBold, summary, groupBy, summaryRows, sort }` |
 | `output.columns[]` | `{ i, header, type, shape, format, width, stats }` |
+| `complete` | completion mode only: `{ fixed, columns, parts }`. `fixed` is the user's current rules in WIRE form (expressions as formula text, open dictionaries as `{ key, value }` pairs, the same form the LLM writes; `name`/`meta` left out), exactly as they are on screen, including the user's edits. `columns` = output positions (`i`) the AI step must produce (their `from` is null in `fixed`). `parts` = layout parts it must produce: `rows`, `droppedRows`, `sort`, `group`, `summaryRows`, `dateTitle`, `blankRows`. With masking on, constants inside `fixed` are masked with the same map as the samples (label words, headers and ids stay real); the answer is unmasked afterwards like any other |
 | `samples[]` | up to 12 `{ in: [...], out: [...] }`, or up to 6 families `{ in: [...], out: [[...], [...]] }` when rows expand; values masked when masking is on |
 | `dropped[]` | up to 5 input rows |
 | `hints[]` | see below |
@@ -268,6 +280,7 @@ The second content block of a repair call:
     { "kind": "rowCount", "expected": 1790, "actual": 1843 },
     { "kind": "layout", "message": "expected 1 blank row after each group, found 0" },
     { "kind": "formatMismatch", "path": "output.columns[3].format", "message": "must equal the format" },
+    { "kind": "fixedMismatch", "path": "transform.computed[1]", "message": "computed column \"total\" is part of complete.fixed and must stay unchanged" },
     { "kind": "type", "path": "transform.computed[1].expr", "message": "expected decimal, got text; use toNumber (in: toNumber(amount))" },
     { "kind": "limit", "message": "output column 4 uses 260 nodes after expanding calls; the limit is 200" }
   ]
@@ -275,6 +288,7 @@ The second content block of a repair call:
 ```
 
 - `formula` is a formula-text parse error: `offset` is the character offset INTO that one formula string (not the payload). Fix only the formula named by `path`.
+- `fixedMismatch` (completion mode only): an element of `complete.fixed` is missing or changed in the answer, something outside `complete.columns`/`complete.parts` was changed, or a listed column has neither a `from` nor an `unsupported` entry. `path` points into the answer.
 - `sample` refers to a sample in the payload. `familyRow` points to a row inside a family sample (0-based).
 - `row` carries a failing row from the browser's full verification (masked when masking is on). At most 10 `diff` problems are sent.
 - A `type`/`limit` problem's message may quote the offending formula text in parentheses ("in: ...") - read it, it's the exact sub-expression that's wrong.
@@ -294,7 +308,9 @@ This is the rules object from SPEC section 8, without `name` and `meta`. The JSO
 
 Stored rules (what the engine actually runs, what golden/eval fixtures contain, what the editor's tree view shows) keep every expression as the real JSON tree, unchanged since v1 - only the wire format the LLM reads and writes is formula text. `apps/api/src/learn` parses formula text into that tree (`packages/engine/src/formula`'s `formulaRulesFromWire`) right after the `{key,value}`-pairs conversion (`fromWire`), and prints it back to formula text (`formulaRulesToWire`) right before that same conversion (`toWire`) when building a repair call's `previousRules`.
 
-After the call, code checks follow the layers in SPEC 9.2 (structure, references, static types, limits, the format lock in attach mode, overfitting lint, sample run), then the browser unmasks constants (SPEC 7.2).
+After the call, code checks follow the layers in SPEC 9.2 (structure, references, static types, limits, the format lock in attach mode, the fixed lock in completion mode, overfitting lint, sample run), then the browser unmasks constants (SPEC 7.2).
+
+**The fixed lock (completion mode).** Code (`checkFixedLock`, engine) compares the answer with `complete.fixed` after both are canonicalized (formulas parsed and printed again, so spacing or ordering of a formula never counts): every fixed input column (same id, header, aliases, type, required, padLeft, inputFormats), computed column, value map, function, table, output validation and `unsupported` entry must be present and unchanged; `input.sheet`, `headerRow`, `stopAt`, `output.file`, `sheetName`, `direction`, `language`, `headerStyle` must be equal; `output.columns` must keep their count, order, headers, formats, widths and aggs, and the `from` of every column not in `complete.columns`. Each layout part not listed in `complete.parts` (`rows` = transform.expand, `droppedRows` = rowFilters and dedupe, `sort`, `group`, `summaryRows` = output and group summary rows, `dateTitle` = output.titleRows, `blankRows` = group.blankRowsAfter) must equal the fixed one; a listed part may differ but must still contain whatever fixed element it had. New ids, input columns and computed columns are allowed. Every listed column must end up with a non-null `from` or an `unsupported` entry.
 
 ## 6. Changing the prompt
 
