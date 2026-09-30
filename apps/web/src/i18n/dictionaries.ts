@@ -10,7 +10,10 @@
 //
 // Tone (SPEC 16.3): plain words, say exactly what happened and what to do.
 
+import { resultEn, resultHe } from './result';
+
 export const en = {
+  ...resultEn,
   'app.name': 'formatAI',
   'app.tagline': 'Teach a format once. Use it every month.',
 
@@ -177,13 +180,13 @@ export const en = {
   'error.reload': 'Refresh the page',
   'error.retryAfter': 'You can try again in {seconds} seconds.',
 
-  'result.placeholder': 'The result screen goes here.',
   'result.startOver': 'Start over',
 } as const satisfies Record<string, string>;
 
 export type MessageKey = keyof typeof en;
 
 export const he: Record<MessageKey, string> = {
+  ...resultHe,
   'app.name': 'formatAI',
   'app.tagline': 'מלמדים פורמט פעם אחת. משתמשים בו כל חודש.',
 
@@ -342,6 +345,5 @@ export const he: Record<MessageKey, string> = {
   'error.reload': 'רענון הדף',
   'error.retryAfter': 'אפשר לנסות שוב בעוד {seconds} שניות.',
 
-  'result.placeholder': 'מסך התוצאה יופיע כאן.',
   'result.startOver': 'להתחיל מחדש',
 };

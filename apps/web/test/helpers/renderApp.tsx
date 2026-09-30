@@ -8,9 +8,33 @@ import type { Api } from '../../src/api';
 import { I18nProvider, type Lang } from '../../src/i18n';
 import { ServicesProvider } from '../../src/services';
 import type { LearnHost, LearnOutput } from '../../src/worker/engineApi';
+import type { LiveCheckResult } from '../../src/worker/editorApi';
 import type { EngineClient } from '../../src/worker/engineClient';
+import { rules as fixtureRules } from '../../src/rulesText/fixtures';
 
-export const RULES = { schemaVersion: 1, output: { columns: [] } } as unknown as LearnResult;
+/** A small valid rules file (one plain column): the Result screen reads real rules. */
+export const RULES: LearnResult = fixtureRules();
+
+/** A live check that matched every row. */
+export function liveResult(over: Partial<LiveCheckResult> = {}): LiveCheckResult {
+  return {
+    verified: true,
+    matched: 3,
+    total: 3,
+    differences: 0,
+    perColumn: [{ header: 'Name', inExample: true, matched: 3, total: 3 }],
+    mismatches: [],
+    mismatchCount: 0,
+    preview: [],
+    layoutProblems: [],
+    layoutIssues: [],
+    partial: false,
+    checkedInputRows: 3,
+    totalInputRows: 3,
+    ms: 1,
+    ...over,
+  };
+}
 
 export const PAYLOAD_SKIP = {
   masking: true,
@@ -24,11 +48,12 @@ export function learnResult(over: Record<string, unknown> = {}): LearnOutput {
     path: 'local',
     preflight: { status: 'ok', issues: [], skipColumns: [] },
     rules: RULES,
-    verification: { verified: true, matched: 3, total: 3, mismatches: [], layoutProblems: [], repairProblems: [] },
+    verification: { verified: true, matched: 3, total: 3, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] },
     assumptions: [],
     unsupported: [],
     calls: [],
     stages: {},
+    exampleId: 'ex1',
     ...over,
   } as unknown as LearnOutput;
 }
@@ -41,10 +66,21 @@ export interface FakeEngine {
   inspect: ReturnType<typeof vi.fn>;
 }
 
-export function fakeEngine(impl: LearnImpl = async () => learnResult(), inspect?: () => unknown): FakeEngine {
+export function fakeEngine(impl: LearnImpl = async () => learnResult(), inspect?: () => unknown, extra: Partial<Record<'liveCheck' | 'fullCheck' | 'staticChecks' | 'convert', unknown>> = {}): FakeEngine {
   const learn = vi.fn(async (_args: unknown, host: LearnHost) => impl(host));
   const inspectFn = vi.fn(async () => (inspect ? inspect() : { readable: true, rows: 1204, columns: 8, direction: 'ltr' }));
-  const engine = { learn, inspect: inspectFn, convert: vi.fn(), verify: vi.fn(), terminate: vi.fn() } as unknown as EngineClient;
+  const engine = {
+    learn,
+    inspect: inspectFn,
+    convert: vi.fn(),
+    verify: vi.fn(),
+    // The rules editor's checks: every row matches, nothing is wrong.
+    liveCheck: vi.fn(async () => liveResult()),
+    fullCheck: vi.fn(async () => liveResult()),
+    staticChecks: vi.fn(async () => []),
+    terminate: vi.fn(),
+    ...extra,
+  } as unknown as EngineClient;
   return { engine, learn, inspect: inspectFn };
 }
 

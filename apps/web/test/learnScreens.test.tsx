@@ -74,7 +74,8 @@ describe('Home', () => {
     await act(async () => {
       fireEvent.click(learnButton());
     });
-    await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('The result screen goes here.'));
+    // The Result screen: the title is the format's name, which starts as the example output's file name.
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('crm-out'));
     expect(learn).toHaveBeenCalledTimes(1);
     const args = learn.mock.calls[0]![0] as { masking: boolean; input: { name: string }; output: { name: string }; tier: string };
     expect(args).toMatchObject({ masking: false, tier: 'anonymous', input: { name: 'crm.csv' }, output: { name: 'crm-out.csv' } });

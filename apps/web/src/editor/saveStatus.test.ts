@@ -15,6 +15,7 @@ const check = (over: Partial<LiveCheckResult> = {}): LiveCheckResult => ({
   mismatchCount: 0,
   preview: [],
   layoutProblems: [],
+  layoutIssues: [],
   partial: false,
   checkedInputRows: 10,
   totalInputRows: 10,

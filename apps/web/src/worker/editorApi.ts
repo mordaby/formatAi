@@ -1,5 +1,6 @@
 // The worker methods the rules editor uses (SPEC 8.11 "Live check", 9.2 "layers 1-6 run in the browser on
 // every save"): types only, re-exported from engineApi.ts so the rest of the app sees one worker surface.
+import type { LayoutProblem } from '@formatai/engine';
 import type { Format, LearnResult, PayloadCell, Rules, Tier } from '@formatai/shared';
 import type { FileBytes } from './engineApi';
 
@@ -80,6 +81,8 @@ export interface LiveCheckResult {
   preview: PreviewRow[];
   /** Titles, header, summary rows, blank rows, row count, file type, or a run that failed outright. */
   layoutProblems: string[];
+  /** The same problems, each with a `code` (which part of the layout it is about): the rules map reads these. */
+  layoutIssues: LayoutProblem[];
   /** Only a subset of the rows was checked (big example): press Apply for all of them. */
   partial: boolean;
   checkedInputRows: number;

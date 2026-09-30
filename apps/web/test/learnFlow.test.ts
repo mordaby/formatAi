@@ -20,7 +20,7 @@ const PAYLOAD_SKIP = {
 } as unknown as LearnPayload;
 
 const OK_PREFLIGHT = { status: 'ok', issues: [], skipColumns: [] };
-const VERIFIED = { verified: true, matched: 3, total: 3, mismatches: [], layoutProblems: [], repairProblems: [] };
+const VERIFIED = { verified: true, matched: 3, total: 3, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] };
 
 function result(over: Record<string, unknown>): LearnOutput {
   return {

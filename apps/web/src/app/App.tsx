@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import Home from '../pages/Home';
 import { PlaceholderPage } from '../pages/PlaceholderPage';
-import { ResultPlaceholder } from '../pages/ResultPlaceholder';
+import { ResultPage } from '../pages/Result';
 import { LearnSessionProvider, useLearnSession } from './LearnSession';
 import { Shell } from './Shell';
 import { SignInProvider } from './SignIn';
@@ -18,7 +18,7 @@ const DevPage = showDevPage ? lazy(() => import('../pages/DevPage')) : null;
 function ResultRoute() {
   const { flow } = useLearnSession();
   if (flow.state.status !== 'done') return <Navigate to="/" replace />;
-  return <ResultPlaceholder {...flow} />;
+  return <ResultPage {...flow} />;
 }
 
 export function App() {

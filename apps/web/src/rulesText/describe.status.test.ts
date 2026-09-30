@@ -34,7 +34,7 @@ const verification = (patch: Partial<VerificationLike> = {}): VerificationLike =
   matched: 8,
   total: 10,
   mismatches: [],
-  layoutProblems: [],
+  layoutIssues: [],
   ...patch,
 });
 
@@ -157,7 +157,7 @@ describe('line status', () => {
   it('flags the row-related lines when the row count differs', () => {
     const model = describeRules(base(), {
       lang: 'en',
-      verification: verification({ layoutProblems: ['expected 10 data row(s) in the example output, the rules produce 9'] }),
+      verification: verification({ layoutIssues: [{ code: 'rowCount' }] }),
     });
     expect(find(model, 'filter:0')).toMatchObject({ status: 'check', statusReason: "The number of rows doesn't match your example." });
     expect(find(model, 'col:Name').status).toBe('matches');
@@ -166,13 +166,13 @@ describe('line status', () => {
   it('flags the layout lines a layout problem is about', () => {
     const model = describeRules(base(), {
       lang: 'en',
-      verification: verification({ layoutProblems: ["the rules produce an extra title row the example output doesn't have"] }),
+      verification: verification({ layoutIssues: [{ code: 'titleRow' }] }),
     });
     expect(find(model, 'title:0')).toMatchObject({ status: 'check', statusReason: "This part doesn't fully match your example." });
     expect(find(model, 'sort').status).toBe('matches');
     const file = describeRules(base(), {
       lang: 'en',
-      verification: verification({ layoutProblems: ['output file settings do not match the example (expected {}, rules declare {})'] }),
+      verification: verification({ layoutIssues: [{ code: 'fileSettings' }] }),
     });
     expect(find(file, 'file').status).toBe('check');
   });
@@ -187,7 +187,7 @@ describe('line status', () => {
   });
 
   it('accepts the engine\'s VerifyResult as it is', () => {
-    const result: VerifyResult = { verified: false, matched: 1, total: 2, mismatches: [{ exampleRow: 2, column: 'Price', expected: 1, actual: 2 }], layoutProblems: [], repairProblems: [] };
+    const result: VerifyResult = { verified: false, matched: 1, total: 2, mismatches: [{ exampleRow: 2, column: 'Price', expected: 1, actual: 2 }], layoutProblems: [], layoutIssues: [], repairProblems: [] };
     const model = describeRules(base(), { lang: 'en', verification: result });
     expect(find(model, 'col:Price').status).toBe('check');
   });

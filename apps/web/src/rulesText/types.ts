@@ -1,5 +1,6 @@
 // The rules map as data (SPEC 8.11): the UI renders this, it never reads the rules JSON
 // itself. Pure types, no runtime code.
+import type { LayoutProblemCode } from '@formatai/engine';
 import type { Assumption, Unsupported } from '@formatai/shared';
 
 export type RulesTextLang = 'he' | 'en';
@@ -94,7 +95,8 @@ export interface VerificationLike {
   matched: number;
   total: number;
   mismatches: readonly { exampleRow: number; column: string }[];
-  layoutProblems: readonly string[];
+  /** What each layout difference is about (a code, never the English sentence). */
+  layoutIssues: readonly { code: LayoutProblemCode }[];
 }
 
 export interface DescribeOptions {

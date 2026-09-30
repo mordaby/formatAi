@@ -20,9 +20,12 @@ export interface UseEditor {
   store: EditorStore;
 }
 
-/** The store is created once from `rules`/`options`; use `reset` to load other rules. */
-export function useEditor(rules: EditableRules, options: EditorOptions = {}): UseEditor {
-  const [store] = useState(() => new EditorStore(rules, options));
+/**
+ * The store is created once from `rules`/`options`; use `reset` to load other rules. Pass a ready-made `EditorStore`
+ * instead to keep the edits alive somewhere that outlives the component (the Result screen keeps them in the session).
+ */
+export function useEditor(source: EditableRules | EditorStore, options: EditorOptions = {}): UseEditor {
+  const [store] = useState(() => (source instanceof EditorStore ? source : new EditorStore(source, options)));
   const state = useSyncExternalStore(store.subscribe, store.getState, store.getState);
   return useMemo(
     () => ({

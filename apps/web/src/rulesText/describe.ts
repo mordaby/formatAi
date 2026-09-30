@@ -297,18 +297,15 @@ function describeValidation(v: Validation, ctx: Ctx): Part[] {
 
 type LayoutArea = 'rows' | 'file' | 'title' | 'summary' | 'blank';
 
-/**
- * The engine describes layout differences in English sentences (`VerifyResult.layoutProblems`);
- * this only reads which part of the layout each one is about.
- */
-function layoutAreas(problems: readonly string[]): Set<LayoutArea> {
+/** Which part of the layout each layout difference (`VerifyResult.layoutIssues`) is about, read from its code. */
+function layoutAreas(issues: VerificationLike['layoutIssues']): Set<LayoutArea> {
   const areas = new Set<LayoutArea>();
-  for (const p of problems) {
-    if (/data row\(s\)|could not be matched to an input row/.test(p)) areas.add('rows');
-    if (/output file settings/.test(p)) areas.add('file');
-    if (/\btitle row\b/.test(p)) areas.add('title');
-    if (/\bsummary row\b/.test(p)) areas.add('summary');
-    if (/\bblank row\b/.test(p)) areas.add('blank');
+  for (const { code } of issues) {
+    if (code === 'rowCount' || code === 'unalignedRows') areas.add('rows');
+    else if (code === 'fileSettings') areas.add('file');
+    else if (code === 'titleRow') areas.add('title');
+    else if (code === 'summaryRow') areas.add('summary');
+    else if (code === 'blankRow') areas.add('blank');
   }
   return areas;
 }
@@ -573,7 +570,7 @@ export function describeRules(rules: LearnResult | Rules, opts: DescribeOptions)
         d.reasons.push(partsText(tn('reason.mismatch', verification.total, { n: String(n), total: String(verification.total) })));
       }
     }
-    const areas = layoutAreas(verification.layoutProblems);
+    const areas = layoutAreas(verification.layoutIssues);
     const flag = (targets: readonly Draft[], key: PhraseKey): void => {
       for (const d of targets) d.reasons.push(plain(key));
     };

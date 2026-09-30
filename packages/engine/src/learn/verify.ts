@@ -57,6 +57,20 @@ export interface Mismatch {
   actual: PayloadCell;
 }
 
+/**
+ * What a layout problem is about, as a code (SPEC 8.11 line status): the rules map reads these instead of the
+ * English `message`. `rowCount` and `unalignedRows` are about the data rows; `fileSettings` is the output file's
+ * type and text options; `titleRow`, `headerRow`, `blankRow` and `summaryRow` name the kind of layout row that
+ * differs (the row the example has, or the extra row the rules make); `runFailed` means the rules could not run.
+ */
+export type LayoutProblemCode = 'runFailed' | 'unalignedRows' | 'rowCount' | 'fileSettings' | 'titleRow' | 'headerRow' | 'blankRow' | 'summaryRow';
+
+export interface LayoutProblem {
+  code: LayoutProblemCode;
+  /** The same English sentence as the matching `layoutProblems` entry. */
+  message: string;
+}
+
 export interface VerifyResult {
   /** Every output data row matches (not counting exceptions) and every layout row
    * (titles, header, summary rows, blank rows, file type) matches too. */
@@ -69,6 +83,8 @@ export interface VerifyResult {
   /** Human-readable layout problems (titles, header, summary rows, blank rows, file
    * type). Always empty when `verified` is true. */
   layoutProblems: string[];
+  /** The same problems as `layoutProblems` (same order), each with a `code`, so a UI never has to parse the English. */
+  layoutIssues: LayoutProblem[];
   /** SPEC 9.3/LEARN_PROMPT §4: at most 10 `diff` problems (each carrying the real
    * failing row, masked when a masker is given) plus any `rowCount`/`layout`
    * problems - ready to send as the browser-triggered repair call's problem list. */
@@ -212,8 +228,11 @@ function actualCategory(kind: OutRowKind): LayoutCategory | 'data' {
 }
 
 interface LayoutIssue {
+  code: LayoutProblemCode;
   message: string;
 }
+
+const LAYOUT_CODE: Record<LayoutCategory, LayoutProblemCode> = { title: 'titleRow', header: 'headerRow', blank: 'blankRow', summary: 'summaryRow' };
 
 function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]): LayoutIssue[] {
   // SPEC 8.13: a headerless output has no header row in the real file (rowKinds never
@@ -235,15 +254,15 @@ function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]
     const exp = expected[i];
     const act = actual[i];
     if (!exp) {
-      issues.push({ message: `the rules produce an extra ${act!.category} row the example output doesn't have` });
+      issues.push({ code: LAYOUT_CODE[act!.category], message: `the rules produce an extra ${act!.category} row the example output doesn't have` });
       continue;
     }
     if (!act) {
-      issues.push({ message: `the example output has a ${exp.category} row (row ${exp.sheetRow + 1}) the rules don't produce` });
+      issues.push({ code: LAYOUT_CODE[exp.category], message: `the example output has a ${exp.category} row (row ${exp.sheetRow + 1}) the rules don't produce` });
       continue;
     }
     if (exp.category !== act.category) {
-      issues.push({ message: `row ${exp.sheetRow + 1}: expected a ${exp.category} row, the rules produce a ${act.category} row` });
+      issues.push({ code: LAYOUT_CODE[exp.category], message: `row ${exp.sheetRow + 1}: expected a ${exp.category} row, the rules produce a ${act.category} row` });
       continue;
     }
     if (exp.category === 'blank') continue;
@@ -254,6 +273,7 @@ function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]
       const actualVal = actualCellValue(act.row.cells[c]);
       if (!cellsMatch(expectedVal, actualVal, analysis.output.profile[c]?.type)) {
         issues.push({
+          code: LAYOUT_CODE[exp.category],
           message: `${exp.category} row (row ${exp.sheetRow + 1}), column ${c + 1}: expected ${JSON.stringify(expectedVal)}, the rules produce ${JSON.stringify(actualVal)}`,
         });
       }
@@ -304,7 +324,7 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
         : `rules could not run on the input (${result.error.code})`;
     const repairProblems: RepairProblem[] =
       result.error.code === 'missingRequiredColumns' ? [{ kind: 'reference', message }] : [{ kind: 'schema', path: 'input', message }];
-    return { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [message], repairProblems };
+    return { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [message], layoutIssues: [{ code: 'runFailed', message }], repairProblems };
   }
 
   const repairProblems: RepairProblem[] = [];
@@ -399,19 +419,20 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
     }
   }
 
-  const layoutProblems: string[] = [];
+  const layoutIssues: LayoutProblem[] = [];
 
   if (analysis.alignment.unalignedOut.length > 0) {
-    layoutProblems.push(
-      `${analysis.alignment.unalignedOut.length} row(s) in the example output could not be matched to an input row and were not verified`,
-    );
+    layoutIssues.push({
+      code: 'unalignedRows',
+      message: `${analysis.alignment.unalignedOut.length} row(s) in the example output could not be matched to an input row and were not verified`,
+    });
   }
 
   const expectedDataTotal = analysis.output.dataRows.length;
   const actualDataTotal = dataRowsActual.length;
   if (expectedDataTotal !== actualDataTotal) {
     repairProblems.push({ kind: 'rowCount', expected: expectedDataTotal, actual: actualDataTotal });
-    layoutProblems.push(`expected ${expectedDataTotal} data row(s) in the example output, the rules produce ${actualDataTotal}`);
+    layoutIssues.push({ code: 'rowCount', message: `expected ${expectedDataTotal} data row(s) in the example output, the rules produce ${actualDataTotal}` });
   }
 
   // ---- layout: file type ----
@@ -419,17 +440,18 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   const declaredFile = rules.output.file ?? DEFAULT_OUTPUT_FILE;
   if (!fileSpecEqual(normalizeFileSpec(declaredFile), normalizeFileSpec(expectedFile))) {
     const message = `output file settings do not match the example (expected ${JSON.stringify(expectedFile)}, rules declare ${JSON.stringify(declaredFile)})`;
-    layoutProblems.push(message);
+    layoutIssues.push({ code: 'fileSettings', message });
     repairProblems.push({ kind: 'layout', message });
   }
 
   // ---- layout: titles, header, summary rows, blank rows ----
   for (const issue of compareLayoutRows(analysis, result.sheet.rows)) {
-    layoutProblems.push(issue.message);
+    layoutIssues.push({ code: issue.code, message: issue.message });
     repairProblems.push({ kind: 'layout', message: issue.message });
   }
 
+  const layoutProblems = layoutIssues.map((i) => i.message);
   const verified = layoutProblems.length === 0 && repairProblems.length === 0 && matched === total;
 
-  return { verified, matched, total, mismatches, layoutProblems, repairProblems };
+  return { verified, matched, total, mismatches, layoutProblems, layoutIssues, repairProblems };
 }

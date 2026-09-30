@@ -14,6 +14,8 @@ export const repoRoot = path.resolve(__dirname, '../../..');
  * Guarded: does nothing if the file is missing, and never throws.
  */
 function loadDotEnvFile(): void {
+  // Tests must not depend on a developer's local .env (keys there would change behaviour).
+  if (process.env.VITEST) return;
   const envPath = path.join(repoRoot, '.env');
   if (!existsSync(envPath)) return;
   if (typeof process.loadEnvFile !== 'function') return;

@@ -170,6 +170,9 @@ describe('verifyAgainstExample: layout', () => {
     const v = verifyAgainstExample(withWrongTitle, a);
     expect(v.verified).toBe(false);
     expect(v.layoutProblems.length).toBeGreaterThan(0);
+    // Every layout problem has a code beside its message, in the same order (a UI reads the code, never the English).
+    expect(v.layoutIssues.map((i) => i.message)).toEqual(v.layoutProblems);
+    expect(v.layoutIssues.length).toBe(v.layoutProblems.length);
     expect(v.repairProblems.some((p) => p.kind === 'layout')).toBe(true);
     // Data rows are unaffected by the title mismatch.
     expect(v.matched).toBe(v.total);
@@ -192,6 +195,7 @@ describe('verifyAgainstExample: layout', () => {
     const v = verifyAgainstExample(withCsv, a);
     expect(v.verified).toBe(false);
     expect(v.layoutProblems.some((m) => m.includes('file'))).toBe(true);
+    expect(v.layoutIssues.map((i) => i.code)).toContain('fileSettings');
   });
 });
 

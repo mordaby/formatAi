@@ -179,11 +179,9 @@ export function checkExample(analysis: PairAnalysis, rules: LearnResult | Rules,
     perColumn.push({ header, inExample, matched: inExample ? v.total - (missesByHeader.get(header) ?? 0) : 0, total: inExample ? v.total : 0 });
   }
 
-  const layoutProblems = partial
-    ? runFailed(v)
-      ? v.layoutProblems
-      : v.layoutProblems.filter((m) => m.startsWith('output file settings'))
-    : v.layoutProblems;
+  // A subset can't tell whether titles, summary rows or the row count match: only the file settings (and a failed run) count.
+  const layoutIssues = partial ? (runFailed(v) ? v.layoutIssues : v.layoutIssues.filter((i) => i.code === 'fileSettings')) : v.layoutIssues;
+  const layoutProblems = layoutIssues.map((i) => i.message);
 
   const verified = !partial && v.verified;
   let differences = v.total - v.matched + layoutProblems.length;
@@ -200,6 +198,7 @@ export function checkExample(analysis: PairAnalysis, rules: LearnResult | Rules,
     mismatchCount: v.mismatches.length,
     preview,
     layoutProblems,
+    layoutIssues,
     partial,
     checkedInputRows: target.input.rows.length,
     totalInputRows: analysis.input.rows.length,

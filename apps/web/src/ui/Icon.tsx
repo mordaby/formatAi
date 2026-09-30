@@ -12,7 +12,13 @@ export type IconName =
   | 'file'
   | 'upload'
   | 'lock'
-  | 'copy';
+  | 'copy'
+  | 'undo'
+  | 'redo'
+  | 'plus'
+  | 'trash'
+  | 'grip'
+  | 'chevronUp';
 
 // Line icons on a 20px grid, drawn with currentColor. Directional ones (arrow, chevron) point
 // toward the inline end; they mirror in right-to-left (SPEC 16.2) unless told otherwise.
@@ -50,6 +56,12 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M7 8.8V6.6a3 3 0 0 1 6 0v2.2" />
     </>
   ),
+  undo: <path d="M7.2 4.8L3.6 8.4l3.6 3.6M3.9 8.4h7.4a4.2 4.2 0 0 1 0 8.4H7.6" />,
+  redo: <path d="M12.8 4.8l3.6 3.6-3.6 3.6M16.1 8.4H8.7a4.2 4.2 0 0 0 0 8.4h3.7" />,
+  plus: <path d="M10 4.2v11.6M4.2 10h11.6" />,
+  trash: <path d="M4.4 6h11.2M8 6V4.2h4V6M5.8 6l.7 10.2h7l.7-10.2M8.4 9v4.6M11.6 9v4.6" />,
+  grip: <path d="M7.6 5h.01M12.4 5h.01M7.6 10h.01M12.4 10h.01M7.6 15h.01M12.4 15h.01" strokeWidth="2.4" />,
+  chevronUp: <path d="M4.5 12.5L10 7l5.5 5.5" />,
   copy: (
     <>
       <rect x="7.2" y="7.2" width="9" height="9" rx="1.6" />
@@ -59,7 +71,7 @@ const PATHS: Record<IconName, ReactNode> = {
 };
 
 /** Icons that point somewhere and should mirror in right-to-left. */
-const DIRECTIONAL: ReadonlySet<IconName> = new Set<IconName>(['arrow', 'chevron']);
+const DIRECTIONAL: ReadonlySet<IconName> = new Set<IconName>(['arrow', 'chevron', 'undo', 'redo']);
 
 export interface IconProps {
   name: IconName;
