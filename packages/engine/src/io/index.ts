@@ -7,8 +7,8 @@ export type { DetectTableOptions } from './detectTable';
 export { extractTable } from './extractTable';
 export type { ExtractTableInput, ExtractTableResult, SheetSelector } from './extractTable';
 
-export { detectFileSpec, sniffDelimitedText } from './detectFileSpec';
-export type { DelimitedSniffResult } from './detectFileSpec';
+export { detectFileSpec, detectFileSpecWithConfidence, sniffDelimitedText } from './detectFileSpec';
+export type { DelimitedSniffResult, DetectedFileSpec, HeaderConfidence } from './detectFileSpec';
 
 export { writeXlsx } from './writeXlsx';
 export { writeCsv } from './writeCsv';

@@ -634,7 +634,7 @@ Code enforces this after every learn and every edit (9.2). A conversion that bre
 ```
 
 - The default is `{ "type": "xlsx" }`. Many system load files (ERP import screens) are delimited text with no header row and a fixed column order, which is why csv and txt are first-class outputs and not an export option.
-- Code detects `file` from the example output: extension, delimiter, whether the first row is a header (compared with the data types below it), and encoding. The LLM copies it.
+- Code detects `file` from the example output: extension, delimiter, whether the first row is a header (compared with the data types below it; when the types give no evidence, e.g. an all-text file, the pair decides: row 0 is the header if it is not explained as a data row while the rows below are), and encoding. The LLM copies it.
 - `header: false`: output columns still have a `header`, used in the UI and for matching; it is written nowhere in the file. Pair analysis aligns such output columns by position.
 - csv and txt ignore styles, widths, bold and direction. Title rows, blank rows and subtotals are allowed but show a warning in the rules map, since load files rarely have them.
 - Encoding: by default the writer reproduces the example's encoding (DECISION 8).

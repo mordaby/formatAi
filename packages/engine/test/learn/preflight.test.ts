@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyzePair } from '../../src/learn/analyze';
 import { preflight } from '../../src/learn/preflight';
-import { analyzeOk, rng, xlsx, type V } from './analyze/helpers';
+import { analyzeOk, delimited, rng, xlsx, type V } from './analyze/helpers';
 
 describe('preflight: SPEC 6.3 blocks', () => {
   it('tableRejected: a 6.1 rejection on either file blocks, with no further analysis', () => {
@@ -98,6 +98,22 @@ describe('preflight: SPEC 6.3 blocks', () => {
     // The same data is fine on a tier with room.
     const pfPaid = preflight(a, 'paid');
     expect(pfPaid.issues.some((i) => i.code === 'overTierLimits')).toBe(false);
+  });
+
+  it('overTierLimits counts data rows only: 300 rows plus a header row fit the free tier, in every file type', () => {
+    // All-text columns, so the csv's header row can't be told from data by types (SPEC 8.13).
+    const letters = (i: number): string => String.fromCharCode(97 + (i % 26)) + String.fromCharCode(97 + (Math.floor(i / 26) % 26)) + String.fromCharCode(97 + Math.floor(i / 676));
+    const input: V[][] = [['Ident', 'Label']];
+    const outCsv: string[][] = [['Key', 'Caption']];
+    for (let i = 0; i < 300; i++) {
+      input.push([`k${letters(i)}`, `label ${letters(i * 3)}`]);
+      outCsv.push([`k${letters(i)}`, `label ${letters(i * 3)}`]);
+    }
+    const asCsv = analyzeOk(xlsx(input), delimited(outCsv, 'csv'));
+    expect(asCsv.output.dataRows).toHaveLength(300);
+    expect(preflight(asCsv, 'anonymous').issues.some((i) => i.code === 'overTierLimits')).toBe(false);
+    const asXlsx = analyzeOk(xlsx(input), xlsx(outCsv));
+    expect(preflight(asXlsx, 'anonymous').issues.some((i) => i.code === 'overTierLimits')).toBe(false);
   });
 });
 

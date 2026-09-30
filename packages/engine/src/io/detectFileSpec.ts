@@ -119,33 +119,65 @@ function classifyToken(cell: RawCell | null | undefined): Token {
 }
 
 /**
+ * How sure detectFileSpec is about `header`:
+ *  - 'evidence': decided from the types of the first row and of the rows below
+ *    it (a number or date in the first row, a consistently numeric or date
+ *    column below a text first row, a header word above a column of codes);
+ *  - 'ambiguous': the first row is distinct text and nothing below it has a
+ *    type that tells a header from an ordinary first data row (e.g. every
+ *    column is text). `header` then only holds the default; pair analysis
+ *    resolves it against the input (see learn/analyze/headerCheck.ts).
+ */
+export type HeaderConfidence = 'evidence' | 'ambiguous';
+
+export interface DetectedFileSpec {
+  spec: OutputFileSpec;
+  /** How `spec.header` was decided. Always 'evidence' for xlsx/xls (no header notion). */
+  headerConfidence: HeaderConfidence;
+}
+
+interface HeaderDetection {
+  header: boolean;
+  confidence: HeaderConfidence;
+}
+
+/**
  * DECISION (SPEC 8.13 "header"): true when the first row is all non-empty,
  * distinct text AND either (a) at least one column below it is consistently
  * non-text (numbers/dates), catching the ordinary "Name, Amount, Date"
  * case, or (b) a column's data shape doesn't fit its header even though our
  * coarse number/date regex still calls it "text" -- e.g. a header word with
  * no digits sitting above a column of alphanumeric codes that all contain a
- * digit (order numbers, SKUs). Without either signal we can't tell a real
- * header from an ordinary all-text first data row, so we default to false:
- * a headerless system load file is the more surprising case to get wrong
- * silently (SPEC 8.13's whole point is that those are first-class outputs).
+ * digit (order numbers, SKUs). Those are 'evidence' answers, and so is a
+ * first row that is not all distinct text (empty, numeric or repeated cells:
+ * it reads as data).
+ *
+ * DECISION: when the first row is distinct text and NOTHING below it gives
+ * type evidence either way (typically a csv where every column is text, e.g.
+ * a CRM import with renamed headers), the answer is 'ambiguous' and the
+ * default is header: true. Most exports have a header row; counting it as data
+ * inflates the row count (and can hit a tier's row limit) and feeds a header
+ * to pair analysis as if it were a record. A headerless all-text load file is
+ * still first-class (SPEC 8.13): pair analysis tells them apart by testing
+ * whether the first row is explained as a data row of the example pair.
  */
-function detectHeaderPresence(sheet: RawSheet): boolean {
+function detectHeaderPresence(sheet: RawSheet): HeaderDetection {
+  const evidence = (header: boolean): HeaderDetection => ({ header, confidence: 'evidence' });
   const rows = sheet.rows;
-  if (rows.length < 2) return false;
+  if (rows.length < 2) return evidence(false);
 
   const first = rows[0] ?? [];
   const dataRows = rows.slice(1);
   const colCount = Math.max(first.length, ...dataRows.map((r) => r.length));
-  if (colCount === 0) return false;
+  if (colCount === 0) return evidence(false);
 
   const headerTexts: string[] = [];
   for (let c = 0; c < colCount; c++) {
     const cell = first[c] ?? null;
-    if (classifyToken(cell) !== 'text') return false; // must be non-empty, non-numeric-looking text
+    if (classifyToken(cell) !== 'text') return evidence(false); // must be non-empty, non-numeric-looking text
     headerTexts.push(cellText(cell).toLowerCase());
   }
-  if (new Set(headerTexts).size !== headerTexts.length) return false; // must be distinct
+  if (new Set(headerTexts).size !== headerTexts.length) return evidence(false); // must be distinct
 
   let hasNonTextColumn = false;
   let shapeMismatch = false;
@@ -165,7 +197,9 @@ function detectHeaderPresence(sheet: RawSheet): boolean {
     const headerHasDigit = /\d/.test(headerTexts[c] ?? '');
     if (sawData && !headerHasDigit && allDataHaveDigit) shapeMismatch = true;
   }
-  return hasNonTextColumn || shapeMismatch;
+  if (hasNonTextColumn || shapeMismatch) return evidence(true);
+  // DECISION: no type evidence either way -> ambiguous, default header: true.
+  return { header: true, confidence: 'ambiguous' };
 }
 
 /**
@@ -175,10 +209,23 @@ function detectHeaderPresence(sheet: RawSheet): boolean {
  * defaults to 'minimal'. xlsx/xls always map to `{ type: 'xlsx' }` -- csv/txt
  * ignore styles, widths, bold and direction (SPEC 8.13), so nothing else is
  * detected for those file types.
+ *
+ * For a csv/txt whose columns are all text, `header` is only the default
+ * (true); use detectFileSpecWithConfidence to tell that apart from a header
+ * decided by type evidence.
  */
 export function detectFileSpec(wb: RawWorkbook, sheetIndex = 0, sniff?: DelimitedSniffResult): OutputFileSpec {
+  return detectFileSpecWithConfidence(wb, sheetIndex, sniff).spec;
+}
+
+/**
+ * Same as detectFileSpec, plus how sure the `header` answer is
+ * ('ambiguous' = all-text columns, default header: true). Kept separate so the
+ * public OutputFileSpec shape doesn't change.
+ */
+export function detectFileSpecWithConfidence(wb: RawWorkbook, sheetIndex = 0, sniff?: DelimitedSniffResult): DetectedFileSpec {
   if (wb.fileType === 'xlsx' || wb.fileType === 'xls') {
-    return { type: 'xlsx' };
+    return { spec: { type: 'xlsx' }, headerConfidence: 'evidence' };
   }
 
   const fileType = wb.fileType; // 'csv' | 'txt'
@@ -186,13 +233,16 @@ export function detectFileSpec(wb: RawWorkbook, sheetIndex = 0, sniff?: Delimite
   const delimiter = wb.delimiter ?? sniff?.delimiter ?? ',';
   const encodingKey = wb.encoding ?? sniff?.encoding ?? 'utf-8';
   const quote: NonNullable<OutputFileSpec['quote']> = sniff?.allQuoted ? 'all' : 'minimal';
-  const header = sheet ? detectHeaderPresence(sheet) : true;
+  const detection: HeaderDetection = sheet ? detectHeaderPresence(sheet) : { header: true, confidence: 'evidence' };
 
   return {
-    type: fileType,
-    delimiter,
-    encoding: mapEncoding(encodingKey),
-    quote,
-    header,
+    spec: {
+      type: fileType,
+      delimiter,
+      encoding: mapEncoding(encodingKey),
+      quote,
+      header: detection.header,
+    },
+    headerConfidence: detection.confidence,
   };
 }

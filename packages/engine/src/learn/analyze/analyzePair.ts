@@ -12,7 +12,8 @@ import { analyzeLayout } from './layout';
 import { sampleIndices } from './prng';
 import { profileColumn } from './profile';
 import { findRelations, summaryRelations, type RelationEnv } from './relations';
-import { identicalSheets, readInput, readOutput } from './tables';
+import { decideHeader, explainedRate, firstRowExplained, HEADER_MIN_EXPLAINED, headerRowMayBeData } from './headerCheck';
+import { identicalSheets, readInput, readOutput, type InputData, type OutputData } from './tables';
 import type {
   AnalysisStage,
   AnalyzeOptions,
@@ -23,6 +24,7 @@ import type {
   PairAnalysisResult,
   PairShape,
   Relation,
+  SideIssue,
 } from './types';
 
 export const DEFAULT_SAMPLE_SIZE = 2000;
@@ -127,22 +129,70 @@ function refineInputProfiles(profile: ColumnProfile[], inCols: ColumnData[], col
  * relations per output column, dropped rows, and output layout (SPEC 6.2).
  * Candidate relations are tested on a seeded random `sampleSize` aligned rows
  * first, then confirmed on all rows.
+ *
+ * For a csv/txt example output whose header row could not be told from data by
+ * types (all-text columns, or a first row that reads as data), the pair itself
+ * decides (headerCheck.ts): the first row is a header when it is NOT explained
+ * as a data row while the rows below it are; otherwise it is data.
  */
 export function analyzePair(inputWb: RawWorkbook, outputWb: RawWorkbook, opts: AnalyzeOptions = {}): PairAnalysisResult {
-  const sampleSize = opts.sampleSize ?? DEFAULT_SAMPLE_SIZE;
-  const seed = opts.seed ?? DEFAULT_SEED;
-  const minCoverage = opts.minCoverage ?? DEFAULT_MIN_COVERAGE;
   const progress = (stage: AnalysisStage, fraction: number): void => opts.onProgress?.({ stage, fraction });
 
   // ---- tables ----
   progress('tables', 0);
   const inRes = readInput(inputWb, opts.inputSheet);
-  const outRes = readOutput(outputWb, opts, inRes.ok ? inRes.data.side.headers : []);
+  const inputHeaders = inRes.ok ? inRes.data.side.headers : [];
+  const outRes = readOutput(outputWb, opts, inputHeaders);
   if (!inRes.ok || !outRes.ok) {
     return { ok: false, issues: [...(inRes.ok ? [] : inRes.issues), ...(outRes.ok ? [] : outRes.issues)] };
   }
   const inp = inRes.data;
-  const outp = outRes.data;
+  const run = (outp: OutputData, outNotices: SideIssue[], report: typeof progress): PairAnalysis =>
+    analyzeSides(inputWb, inp, inRes.notices, outp, outNotices, opts, report);
+  const quiet = (): void => {};
+
+  // The first reading reports progress; a second reading (header check) runs silently.
+  let result = run(outRes.data, outRes.notices, progress);
+  if (outRes.data.headerUncertain) {
+    // DECISION (SPEC 8.13, 6.2): the types gave no evidence either way (or read the first row as
+    // data), so test the first row against the pair. A header is a row that is NOT explained as a
+    // data row while the rows below it are (>= 90%); a row explained like the others is data.
+    if (outRes.data.side.headerless) {
+      // Default reading: every row is data. Confirm row 0 is explained; if not, try it as a header.
+      if (!(firstRowExplained(result) && explainedRate(result) >= HEADER_MIN_EXPLAINED)) {
+        const alt = readOutput(outputWb, opts, inputHeaders, true);
+        if (alt.ok) {
+          const asHeader = run(alt.data, alt.notices, quiet);
+          if (decideHeader(asHeader, result) === 'header') result = asHeader;
+        }
+      }
+    } else if (headerRowMayBeData(result, inp.cols, outRes.data.all)) {
+      // Default reading: row 0 is the header. Row 0 can only be data when it has an input row to
+      // align with (by position or a key that occurs in the input); otherwise the header stays.
+      const alt = readOutput(outputWb, opts, inputHeaders, false);
+      if (alt.ok) {
+        const asData = run(alt.data, alt.notices, quiet);
+        if (decideHeader(result, asData) === 'data') result = asData;
+      }
+    }
+  }
+  progress('done', 1);
+  return result;
+}
+
+/** Everything after reading the two tables (profiles .. layout) for one reading of the output. */
+function analyzeSides(
+  inputWb: RawWorkbook,
+  inp: InputData,
+  inNotices: SideIssue[],
+  outp: OutputData,
+  outNotices: SideIssue[],
+  opts: AnalyzeOptions,
+  progress: (stage: AnalysisStage, fraction: number) => void,
+): PairAnalysis {
+  const sampleSize = opts.sampleSize ?? DEFAULT_SAMPLE_SIZE;
+  const seed = opts.seed ?? DEFAULT_SEED;
+  const minCoverage = opts.minCoverage ?? DEFAULT_MIN_COVERAGE;
   const inSide = inp.side;
   const outSide = outp.side;
   const nIn = inSide.rows.length;
@@ -300,11 +350,10 @@ export function analyzePair(inputWb: RawWorkbook, outputWb: RawWorkbook, opts: A
   });
 
   refineInputProfiles(inProfile, inp.cols, columns);
-  progress('done', 1);
 
   const result: PairAnalysis = {
     ok: true,
-    issues: [...inRes.notices, ...outRes.notices],
+    issues: [...inNotices, ...outNotices],
     identical,
     input: { ...inSide, profile: inProfile },
     output: { ...outSide, profile: outProfile },
