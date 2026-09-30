@@ -256,6 +256,77 @@ describe('typeCheck: opts.inputProfile / opts.outputTypes', () => {
   });
 });
 
+describe('typeCheck: summary rows (SPEC 8.12 v4)', () => {
+  function summaryRules(cells: Record<string, 'sum' | 'count' | 'min' | 'max' | 'average' | 'first' | 'last'>): LearnResult {
+    return baseRules({
+      input: {
+        sheet: { pick: 'first' },
+        headerRow: 'auto',
+        columns: [
+          { id: 'name', header: 'Name', type: 'text' },
+          { id: 'qty', header: 'Qty', type: 'decimal' },
+          { id: 'd', header: 'Date', type: 'date' },
+        ],
+      },
+      output: {
+        sheetName: 'Out',
+        direction: 'ltr',
+        language: 'en',
+        titleRows: [],
+        columns: [
+          { header: 'Name', from: 'name' },
+          { header: 'Qty', from: 'qty' },
+          { header: 'Date', from: 'd' },
+        ],
+        summaryRows: [{ cells }],
+      },
+    });
+  }
+
+  it('sum/average on a numeric column: no problem', () => {
+    expect(typeCheck(summaryRules({ Qty: 'sum' }))).toEqual([]);
+    expect(typeCheck(summaryRules({ Qty: 'average' }))).toEqual([]);
+  });
+
+  it('sum/average on a text or date column: a type problem', () => {
+    for (const [header, agg] of [
+      ['Name', 'sum'],
+      ['Name', 'average'],
+      ['Date', 'sum'],
+    ] as const) {
+      const problems = typeCheck(summaryRules({ [header]: agg }));
+      const p = findProblem(problems, `output.summaryRows[0].cells.${header}`);
+      expect(p, `${agg} on ${header}`).toBeDefined();
+    }
+  });
+
+  it('min/max on a numeric or date column: no problem', () => {
+    expect(typeCheck(summaryRules({ Qty: 'min' }))).toEqual([]);
+    expect(typeCheck(summaryRules({ Qty: 'max' }))).toEqual([]);
+    expect(typeCheck(summaryRules({ Date: 'min' }))).toEqual([]);
+    expect(typeCheck(summaryRules({ Date: 'max' }))).toEqual([]);
+  });
+
+  it('min/max on a text column: a type problem', () => {
+    const problems = typeCheck(summaryRules({ Name: 'max' }));
+    expect(findProblem(problems, 'output.summaryRows[0].cells.Name')).toBeDefined();
+  });
+
+  it('count/first/last accept any type', () => {
+    expect(typeCheck(summaryRules({ Name: 'count' }))).toEqual([]);
+    expect(typeCheck(summaryRules({ Name: 'first' }))).toEqual([]);
+    expect(typeCheck(summaryRules({ Name: 'last' }))).toEqual([]);
+  });
+
+  it('the same checks apply to transform.group.summaryRows', () => {
+    const rules = summaryRules({});
+    rules.output.summaryRows = [];
+    rules.transform.group = { by: 'name', showDetailRows: true, summaryRows: [{ cells: { Name: 'max' } }] };
+    const problems = typeCheck(rules);
+    expect(findProblem(problems, 'transform.group.summaryRows[0].cells.Name')).toBeDefined();
+  });
+});
+
 describe('typeCheck: golden rules files', () => {
   const caseNames = fs.readdirSync(goldenCasesDir).filter((name) => fs.statSync(path.join(goldenCasesDir, name)).isDirectory());
 

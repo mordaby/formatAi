@@ -81,11 +81,16 @@ function bigRules() {
       ],
       valueMaps: [{ column: 'item', map: { אלקטרוניקה: 'ELECTRONICS', ריהוט: 'FURNITURE', ביגוד: 'CLOTHING' }, onMissing: 'flag' }],
       sort: [{ column: 'supplier', dir: 'asc' }, { column: 'start', dir: 'asc' }],
-      group: { by: 'supplier', showDetailRows: true, subtotal: { labelColumn: 'order', label: 'סה"כ', sum: ['amount', 'total'] }, blankRowsAfter: 1 },
+      group: {
+        by: 'supplier',
+        showDetailRows: true,
+        summaryRows: [{ labelColumn: 'order', label: 'סה"כ', cells: { amount: 'sum', total: 'sum' } }],
+        blankRowsAfter: 1,
+      },
     },
     output: {
       titleRows: [{ parts: [{ text: 'דוח ' }, { agg: 'max', column: 'start', format: 'MMMM YYYY' }], bold: true }],
-      grandTotal: { labelColumn: 'order', label: 'סה"כ כללי', sum: ['amount', 'total', 'withTax'] },
+      summaryRows: [{ labelColumn: 'order', label: 'סה"כ כללי', cells: { amount: 'sum', total: 'sum', withTax: 'sum' } }],
     },
     out: [
       'supplier',

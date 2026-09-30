@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "stopAt": {
+      "when": "firstCellMatches",
+      "values": [
+        "סה\"כ"
+      ]
+    },
+    "columns": [
+      {
+        "id": "warehouse",
+        "header": "מחסן",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "sku",
+        "header": "מקט",
+        "type": "idLike",
+        "padLeft": 6,
+        "required": true
+      },
+      {
+        "id": "item",
+        "header": "פריט",
+        "type": "text"
+      },
+      {
+        "id": "qty",
+        "header": "כמות",
+        "type": "integer",
+        "required": true
+      },
+      {
+        "id": "unitCost",
+        "header": "עלות יחידה",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "totalCost",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "digits": 2,
+          "arg": {
+            "op": "mul",
+            "args": [
+              {
+                "col": "qty"
+              },
+              {
+                "col": "unitCost"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "warehouse",
+        "dir": "asc"
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "דוח מחסנים",
+    "direction": "rtl",
+    "language": "he",
+    "headerStyle": {
+      "bold": true
+    },
+    "titleRows": [
+      {
+        "text": "דוח מלאי מחסנים",
+        "bold": true
+      },
+      {
+        "blank": true
+      }
+    ],
+    "columns": [
+      {
+        "header": "מחסן",
+        "from": "warehouse"
+      },
+      {
+        "header": "מקט",
+        "from": "sku"
+      },
+      {
+        "header": "פריט",
+        "from": "item"
+      },
+      {
+        "header": "כמות",
+        "from": "qty"
+      },
+      {
+        "header": "עלות יחידה",
+        "from": "unitCost",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "עלות כוללת",
+        "from": "totalCost",
+        "format": "#,##0.00"
+      }
+    ],
+    "summaryRows": [
+      {
+        "label": "סה\"כ",
+        "labelColumn": "פריט",
+        "bold": true,
+        "cells": {
+          "כמות": "sum",
+          "עלות כוללת": "sum"
+        }
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "ספירת מלאי → דוח מחסנים",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

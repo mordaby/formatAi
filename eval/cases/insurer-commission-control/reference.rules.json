@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "agentId",
+        "header": "מספר סוכן",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "policyId",
+        "header": "מספר פוליסה",
+        "type": "idLike",
+        "padLeft": 8,
+        "required": true
+      },
+      {
+        "id": "insuredId",
+        "header": "ת.ז. מבוטח",
+        "type": "idLike",
+        "padLeft": 9
+      },
+      {
+        "id": "insuredName",
+        "header": "שם מבוטח",
+        "type": "text"
+      },
+      {
+        "id": "product",
+        "header": "מוצר",
+        "type": "text"
+      },
+      {
+        "id": "status",
+        "header": "סטטוס",
+        "type": "text"
+      },
+      {
+        "id": "premium",
+        "header": "פרמיה",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "startDate",
+        "header": "תאריך תחילה",
+        "type": "date",
+        "required": true
+      }
+    ],
+    "rowFilters": [
+      {
+        "column": "status",
+        "op": "ne",
+        "value": "מבוטל"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "commission",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "digits": 2,
+          "arg": {
+            "op": "mul",
+            "args": [
+              {
+                "col": "premium"
+              },
+              {
+                "const": 0.15
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "valueMaps": [
+      {
+        "column": "product",
+        "map": {
+          "חיים": "LIFE",
+          "בריאות": "HEALTH",
+          "רכב": "AUTO"
+        },
+        "onMissing": "flag"
+      }
+    ],
+    "sort": [
+      {
+        "column": "agentId",
+        "dir": "asc"
+      },
+      {
+        "column": "startDate",
+        "dir": "asc"
+      }
+    ],
+    "group": {
+      "by": "agentId",
+      "showDetailRows": true,
+      "blankRowsAfter": 1,
+      "summaryRows": [
+        {
+          "label": "סה\"כ לסוכן",
+          "labelColumn": "פוליסה",
+          "bold": true,
+          "cells": {
+            "פוליסה": "count",
+            "פרמיה": "sum",
+            "עמלה": "average"
+          }
+        }
+      ]
+    }
+  },
+  "output": {
+    "sheetName": "דוח בקרת עמלות",
+    "direction": "rtl",
+    "language": "he",
+    "headerStyle": {
+      "bold": true
+    },
+    "titleRows": [
+      {
+        "parts": [
+          {
+            "text": "דוח בקרת עמלות - "
+          },
+          {
+            "agg": "max",
+            "column": "startDate",
+            "format": "MMMM YYYY"
+          }
+        ],
+        "bold": true
+      },
+      {
+        "blank": true
+      }
+    ],
+    "columns": [
+      {
+        "header": "סוכן",
+        "from": "agentId"
+      },
+      {
+        "header": "פוליסה",
+        "from": "policyId"
+      },
+      {
+        "header": "ת.ז. מבוטח",
+        "from": "insuredId"
+      },
+      {
+        "header": "מבוטח",
+        "from": "insuredName"
+      },
+      {
+        "header": "מוצר",
+        "from": "product"
+      },
+      {
+        "header": "תאריך תחילה",
+        "from": "startDate",
+        "format": "DD/MM/YYYY"
+      },
+      {
+        "header": "פרמיה",
+        "from": "premium",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "עמלה",
+        "from": "commission",
+        "format": "#,##0.00"
+      }
+    ],
+    "summaryRows": [
+      {
+        "label": "סה\"כ כללי",
+        "labelColumn": "פוליסה",
+        "bold": true,
+        "cells": {
+          "פרמיה": "sum",
+          "עמלה": "sum"
+        }
+      }
+    ]
+  },
+  "validations": [
+    {
+      "column": "insuredId",
+      "rule": "israeliIdChecksum",
+      "severity": "flag"
+    },
+    {
+      "column": "premium",
+      "rule": "range",
+      "min": 0,
+      "severity": "flag"
+    }
+  ],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "דוחות עמלות → דוח בקרה",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "difficulty": "medium",
+  "domain": "purchaseOrders",
+  "features": [
+    "externalData",
+    "unsupportedColumn"
+  ],
+  "expect": "unsupported:externalData"
+}

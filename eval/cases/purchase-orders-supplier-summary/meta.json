@@ -1,0 +1,10 @@
+{
+  "difficulty": "hard",
+  "domain": "purchaseOrders",
+  "features": [
+    "summaryOutput",
+    "groupAgg",
+    "grandTotal"
+  ],
+  "expect": "verified"
+}

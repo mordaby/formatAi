@@ -9,6 +9,13 @@ import {
   type AssumptionReasonCode,
   type UnsupportedReasonCode,
 } from '../codes';
+// `SummaryAgg` is canonically declared in payload.ts (LEARN_PROMPT §3's
+// `output.layout.summaryRows`/`groupBy.summaryRows`, keyed by output *position*);
+// the rules-language `SummaryRow.cells` below uses the same aggregate names, keyed
+// by output *header* instead (SPEC 8.12). Imported as a type only (erased at compile
+// time), so re-using it here creates no runtime dependency on payload.ts, only a
+// type-level one - and avoids two independently-declared literal unions drifting apart.
+import type { SummaryAgg } from '../payload';
 
 // ---------- Column type (SPEC 8.1) ----------
 
@@ -125,7 +132,10 @@ export type Condition = Extract<ExprNode, { op: ConditionOp }>;
 
 const ExprConstValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
-const ExprLeafSchema = z.union([
+/** Exported for `./wire.ts`: a leaf has depth 1 by definition (SPEC 8.3/`checkRules`'s
+ * `exprDepth`), so this is the base case of the depth-bounded Expr chain it builds -
+ * and also the leaf alternative inside every level of `buildExprSchema` below. */
+export const ExprLeafSchema = z.union([
   z.strictObject({ col: z.string() }),
   z.strictObject({ const: ExprConstValueSchema }),
   z.strictObject({ param: z.string().min(1) }),
@@ -135,123 +145,143 @@ const ExprLeafSchema = z.union([
 // z.discriminatedUnion('op', ...) branch can't express (all three shapes share the
 // literal op "dateAdd"). Modeled as its own z.union of three strict shapes and joined
 // into the outer union alongside the op-discriminated union below, rather than inside it.
-// Wrapped in z.lazy (like ExprSchema itself) since it references ExprSchema before that
-// const finishes initializing.
-const DateAddSchema: z.ZodType<Extract<ExprNode, { op: 'dateAdd' }>> = z.lazy(() =>
-  z.union([
-    z.strictObject({ op: z.literal('dateAdd'), arg: ExprSchema, days: z.number().int() }),
-    z.strictObject({ op: z.literal('dateAdd'), arg: ExprSchema, months: z.number().int() }),
-    z.strictObject({ op: z.literal('dateAdd'), arg: ExprSchema, years: z.number().int() }),
-  ]),
-);
+// Parameterized by `child` (see `buildExprSchema` below) instead of self-referencing
+// `ExprSchema` directly, so `./wire.ts` can build the same shape at a bounded depth.
+function buildDateAddSchema(child: z.ZodType<Expr>): z.ZodType<Extract<ExprNode, { op: 'dateAdd' }>> {
+  return z.union([
+    z.strictObject({ op: z.literal('dateAdd'), arg: child, days: z.number().int() }),
+    z.strictObject({ op: z.literal('dateAdd'), arg: child, months: z.number().int() }),
+    z.strictObject({ op: z.literal('dateAdd'), arg: child, years: z.number().int() }),
+  ]);
+}
 
 const nonZeroInt = z
   .number()
   .int()
   .refine((v) => v !== 0, 'index must be non-zero (1-based; negative counts from the end)');
 
-export const ExprSchema: z.ZodType<Expr> = z.lazy(() =>
-  z.union([
+/**
+ * Builds one "level" of the Expr node union - SPEC 8.3's whole "Operations" list, with
+ * every Expr-shaped child field (`arg`, `args`, `cond`/`then`/`else`, `cases[].when`/
+ * `.then`, `key`, ...) typed as `child` instead of self-referencing `Expr`. The real,
+ * unbounded `ExprSchema` below is just this function applied to itself through `z.lazy`.
+ *
+ * `./wire.ts` calls this repeatedly, without self-reference, to build a strictly
+ * decreasing (non-recursive) chain of JSON Schema `$defs` for the LLM-facing wire
+ * schema: level 0 is `ExprLeafSchema` alone (depth budget exhausted - only a leaf
+ * fits), level N is `buildExprSchema(level N-1)` (one more level of nesting allowed).
+ * SPEC 8.3: "If the provider's structured output doesn't support recursive schemas,
+ * spell expressions out to a fixed depth in the schema." Confirmed (via the
+ * `claude-api` skill, against the current Anthropic structured-outputs docs) that
+ * every model in the registry (`claude-haiku-4-5`, `claude-sonnet-5`) supports
+ * `$ref`/`$def` but NOT a genuinely recursive (self-referencing/cyclic) schema; a
+ * strictly-decreasing `$ref` chain (level N -> level N-1 -> ... -> level 0, never
+ * back up) is not "recursive" in that sense, so it is unaffected.
+ */
+export function buildExprSchema(child: z.ZodType<Expr>): z.ZodType<Expr> {
+  return z.union([
     ExprLeafSchema,
-    DateAddSchema,
+    buildDateAddSchema(child),
     z.discriminatedUnion('op', [
-      z.strictObject({ op: z.literal('add'), args: z.array(ExprSchema).min(1) }),
-      z.strictObject({ op: z.literal('sub'), args: z.array(ExprSchema).min(1) }),
-      z.strictObject({ op: z.literal('mul'), args: z.array(ExprSchema).min(1) }),
-      z.strictObject({ op: z.literal('div'), args: z.array(ExprSchema).min(1) }),
-      z.strictObject({ op: z.literal('neg'), arg: ExprSchema }),
-      z.strictObject({ op: z.literal('abs'), arg: ExprSchema }),
-      z.strictObject({ op: z.literal('floor'), arg: ExprSchema }),
-      z.strictObject({ op: z.literal('ceil'), arg: ExprSchema }),
-      z.strictObject({ op: z.literal('mod'), args: z.tuple([ExprSchema, ExprSchema]) }),
-      z.strictObject({ op: z.literal('min'), args: z.array(ExprSchema).min(1) }),
-      z.strictObject({ op: z.literal('max'), args: z.array(ExprSchema).min(1) }),
-      z.strictObject({ op: z.literal('round'), arg: ExprSchema, digits: z.number().int() }),
-      z.strictObject({ op: z.literal('concat'), args: z.array(ExprSchema).min(1) }),
+      z.strictObject({ op: z.literal('add'), args: z.array(child).min(1) }),
+      z.strictObject({ op: z.literal('sub'), args: z.array(child).min(1) }),
+      z.strictObject({ op: z.literal('mul'), args: z.array(child).min(1) }),
+      z.strictObject({ op: z.literal('div'), args: z.array(child).min(1) }),
+      z.strictObject({ op: z.literal('neg'), arg: child }),
+      z.strictObject({ op: z.literal('abs'), arg: child }),
+      z.strictObject({ op: z.literal('floor'), arg: child }),
+      z.strictObject({ op: z.literal('ceil'), arg: child }),
+      z.strictObject({ op: z.literal('mod'), args: z.tuple([child, child]) }),
+      z.strictObject({ op: z.literal('min'), args: z.array(child).min(1) }),
+      z.strictObject({ op: z.literal('max'), args: z.array(child).min(1) }),
+      z.strictObject({ op: z.literal('round'), arg: child, digits: z.number().int() }),
+      z.strictObject({ op: z.literal('concat'), args: z.array(child).min(1) }),
       z.strictObject({
         op: z.literal('substr'),
-        arg: ExprSchema,
+        arg: child,
         start: z.number().int(),
         length: z.number().int(),
       }),
-      z.strictObject({ op: z.literal('trim'), arg: ExprSchema }),
-      z.strictObject({ op: z.literal('upper'), arg: ExprSchema }),
-      z.strictObject({ op: z.literal('lower'), arg: ExprSchema }),
-      z.strictObject({ op: z.literal('length'), arg: ExprSchema }),
+      z.strictObject({ op: z.literal('trim'), arg: child }),
+      z.strictObject({ op: z.literal('upper'), arg: child }),
+      z.strictObject({ op: z.literal('lower'), arg: child }),
+      z.strictObject({ op: z.literal('length'), arg: child }),
       z.strictObject({
         op: z.literal('replaceText'),
-        arg: ExprSchema,
+        arg: child,
         find: z.string(),
         with: z.string(),
       }),
       z.strictObject({
         op: z.literal('padLeft'),
-        arg: ExprSchema,
+        arg: child,
         length: z.number().int().positive(),
         char: z.string().min(1).max(1),
       }),
       z.strictObject({
         op: z.literal('split'),
-        arg: ExprSchema,
+        arg: child,
         separator: z.string().min(1),
         index: nonZeroInt,
       }),
-      z.strictObject({ op: z.literal('toNumber'), arg: ExprSchema }),
-      z.strictObject({ op: z.literal('toText'), arg: ExprSchema, format: z.string().optional() }),
+      z.strictObject({ op: z.literal('toNumber'), arg: child }),
+      z.strictObject({ op: z.literal('toText'), arg: child, format: z.string().optional() }),
       z.strictObject({
         op: z.literal('datePart'),
-        arg: ExprSchema,
+        arg: child,
         part: z.enum(['year', 'month', 'day']),
       }),
-      z.strictObject({ op: z.literal('dateFormat'), arg: ExprSchema, format: z.string() }),
+      z.strictObject({ op: z.literal('dateFormat'), arg: child, format: z.string() }),
       z.strictObject({
         op: z.literal('dateDiff'),
-        args: z.tuple([ExprSchema, ExprSchema]),
+        args: z.tuple([child, child]),
         unit: z.enum(['days', 'months', 'years']),
       }),
-      z.strictObject({ op: z.literal('endOfMonth'), arg: ExprSchema }),
+      z.strictObject({ op: z.literal('endOfMonth'), arg: child }),
       z.strictObject({
         op: z.literal('if'),
-        cond: ExprSchema,
-        then: ExprSchema,
-        else: ExprSchema,
+        cond: child,
+        then: child,
+        else: child,
       }),
       z.strictObject({
         op: z.literal('switch'),
-        cases: z.array(z.strictObject({ when: ExprSchema, then: ExprSchema })).min(1),
-        else: ExprSchema,
+        cases: z.array(z.strictObject({ when: child, then: child })).min(1),
+        else: child,
       }),
-      z.strictObject({ op: z.literal('coalesce'), args: z.array(ExprSchema).min(1) }),
+      z.strictObject({ op: z.literal('coalesce'), args: z.array(child).min(1) }),
       z.strictObject({
         op: z.literal('lookup'),
         table: z.string().min(1),
-        key: ExprSchema,
+        key: child,
         return: z.string().min(1),
         onMissing: z.enum(['flag', 'empty', 'keep']),
       }),
-      z.strictObject({ op: z.literal('call'), fn: z.string().min(1), args: z.array(ExprSchema) }),
-      z.strictObject({ op: z.literal('eq'), args: z.tuple([ExprSchema, ExprSchema]) }),
-      z.strictObject({ op: z.literal('ne'), args: z.tuple([ExprSchema, ExprSchema]) }),
-      z.strictObject({ op: z.literal('gt'), args: z.tuple([ExprSchema, ExprSchema]) }),
-      z.strictObject({ op: z.literal('gte'), args: z.tuple([ExprSchema, ExprSchema]) }),
-      z.strictObject({ op: z.literal('lt'), args: z.tuple([ExprSchema, ExprSchema]) }),
-      z.strictObject({ op: z.literal('lte'), args: z.tuple([ExprSchema, ExprSchema]) }),
-      z.strictObject({ op: z.literal('isEmpty'), arg: ExprSchema }),
-      z.strictObject({ op: z.literal('notEmpty'), arg: ExprSchema }),
+      z.strictObject({ op: z.literal('call'), fn: z.string().min(1), args: z.array(child) }),
+      z.strictObject({ op: z.literal('eq'), args: z.tuple([child, child]) }),
+      z.strictObject({ op: z.literal('ne'), args: z.tuple([child, child]) }),
+      z.strictObject({ op: z.literal('gt'), args: z.tuple([child, child]) }),
+      z.strictObject({ op: z.literal('gte'), args: z.tuple([child, child]) }),
+      z.strictObject({ op: z.literal('lt'), args: z.tuple([child, child]) }),
+      z.strictObject({ op: z.literal('lte'), args: z.tuple([child, child]) }),
+      z.strictObject({ op: z.literal('isEmpty'), arg: child }),
+      z.strictObject({ op: z.literal('notEmpty'), arg: child }),
       z.strictObject({
         op: z.literal('oneOf'),
-        arg: ExprSchema,
+        arg: child,
         values: z.array(ExprConstValueSchema).min(1),
       }),
-      z.strictObject({ op: z.literal('startsWith'), arg: ExprSchema, text: z.string() }),
-      z.strictObject({ op: z.literal('endsWith'), arg: ExprSchema, text: z.string() }),
-      z.strictObject({ op: z.literal('contains'), arg: ExprSchema, text: z.string() }),
-      z.strictObject({ op: z.literal('and'), args: z.array(ExprSchema).min(1) }),
-      z.strictObject({ op: z.literal('or'), args: z.array(ExprSchema).min(1) }),
-      z.strictObject({ op: z.literal('not'), arg: ExprSchema }),
+      z.strictObject({ op: z.literal('startsWith'), arg: child, text: z.string() }),
+      z.strictObject({ op: z.literal('endsWith'), arg: child, text: z.string() }),
+      z.strictObject({ op: z.literal('contains'), arg: child, text: z.string() }),
+      z.strictObject({ op: z.literal('and'), args: z.array(child).min(1) }),
+      z.strictObject({ op: z.literal('or'), args: z.array(child).min(1) }),
+      z.strictObject({ op: z.literal('not'), arg: child }),
     ]),
-  ]),
-);
+  ]) as z.ZodType<Expr>;
+}
+
+export const ExprSchema: z.ZodType<Expr> = z.lazy(() => buildExprSchema(ExprSchema));
 
 // ---------- input.sheet / headerRow / stopAt (SPEC 8.1) ----------
 
@@ -349,10 +379,12 @@ const SimpleRowFilterSchema = z.discriminatedUnion('op', [
   }),
 ]);
 
-export const RowFilterSchema = z.union([
-  SimpleRowFilterSchema,
-  z.strictObject({ expr: ExprSchema }),
-]);
+/** Parameterized by `exprSchema` so `./wire.ts` can build the same shape with a
+ * depth-bounded Expr instead of the real, self-referencing `ExprSchema`. */
+export function buildRowFilterSchema(exprSchema: z.ZodType<Expr>): z.ZodType<RowFilter> {
+  return z.union([SimpleRowFilterSchema, z.strictObject({ expr: exprSchema })]) as z.ZodType<RowFilter>;
+}
+export const RowFilterSchema = buildRowFilterSchema(ExprSchema);
 
 // ---------- input (SPEC 8.1) ----------
 
@@ -363,13 +395,17 @@ export interface RulesInput {
   columns: InputColumn[];
   rowFilters?: RowFilter[];
 }
-export const RulesInputSchema = z.strictObject({
-  sheet: InputSheetSelectorSchema,
-  headerRow: HeaderRowSchema,
-  stopAt: StopAtSchema.optional(),
-  columns: z.array(InputColumnSchema).min(1),
-  rowFilters: z.array(RowFilterSchema).optional(),
-});
+/** Parameterized by `exprSchema` (see `buildRowFilterSchema`) for `./wire.ts`. */
+export function buildRulesInputSchema(exprSchema: z.ZodType<Expr>): z.ZodType<RulesInput> {
+  return z.strictObject({
+    sheet: InputSheetSelectorSchema,
+    headerRow: HeaderRowSchema,
+    stopAt: StopAtSchema.optional(),
+    columns: z.array(InputColumnSchema).min(1),
+    rowFilters: z.array(buildRowFilterSchema(exprSchema)).optional(),
+  });
+}
+export const RulesInputSchema = buildRulesInputSchema(ExprSchema);
 
 // ---------- transform.dedupe (SPEC 8.4) ----------
 
@@ -411,33 +447,48 @@ export type Expand =
       rows: { set: Record<string, Expr> }[];
     };
 
-export const ExpandSchema = z.discriminatedUnion('mode', [
-  z.strictObject({
-    mode: z.literal('columnsToRows'),
-    columns: z.array(z.string()).min(1),
-    labelId: z.string().min(1),
-    labels: z.record(z.string(), z.string()).optional(),
-    valueId: z.string().min(1),
-    valueType: ColumnTypeSchema,
-    skipEmpty: z.boolean(),
-  }),
-  z.strictObject({
-    mode: z.literal('splitCell'),
-    column: z.string(),
-    separator: z.string().min(1),
-    trim: z.boolean(),
-    partId: z.string().min(1),
-    indexId: z.string().min(1).optional(),
-    countId: z.string().min(1).optional(),
-    skipEmpty: z.boolean(),
-  }),
-  z.strictObject({
-    mode: z.literal('fixedFanOut'),
-    rows: z
-      .array(z.strictObject({ set: z.record(z.string(), ExprSchema) }))
-      .min(1),
-  }),
-]);
+/**
+ * Parameterized by two pre-built schemas for the operation's two genuine open
+ * dictionaries: `labelsSchema` for `columnsToRows.labels` (`Record<string,string>` by
+ * default) and `setSchema` for `fixedFanOut.rows[].set` (`Record<string,Expr>` by
+ * default). `./wire.ts` passes wire-array (`{key,value}[]`) shapes instead, so the
+ * LLM-facing JSON Schema has no open dictionaries at all (OpenAI strict mode and
+ * Anthropic structured outputs both reject `additionalProperties` other than `false`).
+ */
+export function buildExpandSchema(opts: {
+  labelsSchema: z.ZodType;
+  setSchema: z.ZodType;
+}): z.ZodType<Expand> {
+  return z.discriminatedUnion('mode', [
+    z.strictObject({
+      mode: z.literal('columnsToRows'),
+      columns: z.array(z.string()).min(1),
+      labelId: z.string().min(1),
+      labels: opts.labelsSchema.optional(),
+      valueId: z.string().min(1),
+      valueType: ColumnTypeSchema,
+      skipEmpty: z.boolean(),
+    }),
+    z.strictObject({
+      mode: z.literal('splitCell'),
+      column: z.string(),
+      separator: z.string().min(1),
+      trim: z.boolean(),
+      partId: z.string().min(1),
+      indexId: z.string().min(1).optional(),
+      countId: z.string().min(1).optional(),
+      skipEmpty: z.boolean(),
+    }),
+    z.strictObject({
+      mode: z.literal('fixedFanOut'),
+      rows: z.array(z.strictObject({ set: opts.setSchema })).min(1),
+    }),
+  ]) as unknown as z.ZodType<Expand>;
+}
+export const ExpandSchema = buildExpandSchema({
+  labelsSchema: z.record(z.string(), z.string()),
+  setSchema: z.record(z.string(), ExprSchema),
+});
 
 // ---------- transform.computed (SPEC 8.2 step 6) ----------
 
@@ -446,11 +497,15 @@ export interface Computed {
   type: ColumnType;
   expr: Expr;
 }
-export const ComputedSchema = z.strictObject({
-  id: z.string().min(1),
-  type: ColumnTypeSchema,
-  expr: ExprSchema,
-});
+/** Parameterized by `exprSchema` (see `buildExprSchema`) for `./wire.ts`. */
+export function buildComputedSchema(exprSchema: z.ZodType<Expr>): z.ZodType<Computed> {
+  return z.strictObject({
+    id: z.string().min(1),
+    type: ColumnTypeSchema,
+    expr: exprSchema,
+  });
+}
+export const ComputedSchema = buildComputedSchema(ExprSchema);
 
 // ---------- transform.valueMaps ----------
 
@@ -459,11 +514,15 @@ export interface ValueMap {
   map: Record<string, string>;
   onMissing: 'flag' | 'keep';
 }
-export const ValueMapSchema = z.strictObject({
-  column: z.string(),
-  map: z.record(z.string(), z.string()),
-  onMissing: z.enum(['flag', 'keep']),
-});
+/** Parameterized by `mapSchema` (the open dictionary) for `./wire.ts`. */
+export function buildValueMapSchema(mapSchema: z.ZodType): z.ZodType<ValueMap> {
+  return z.strictObject({
+    column: z.string(),
+    map: mapSchema,
+    onMissing: z.enum(['flag', 'keep']),
+  }) as unknown as z.ZodType<ValueMap>;
+}
+export const ValueMapSchema = buildValueMapSchema(z.record(z.string(), z.string()));
 
 // ---------- transform.sort ----------
 
@@ -476,8 +535,49 @@ export const SortKeySchema = z.strictObject({
   dir: z.enum(['asc', 'desc']),
 });
 
+// ---------- summaryRows (SPEC 8.12 v4: generic summary rows) ----------
+// v4 DECISION (replaces the v1-v3 sum-only `output.grandTotal` / `group.subtotal`):
+// a summary row names its cells by OUTPUT HEADER, not by id, so - like the rest of
+// `output` - it belongs to the format and is identical across every source of that
+// format (SPEC 8.12), with no id-to-header translation needed. `count` counts
+// non-empty cells (blocked rows never count, same as today); `min`/`max` work on
+// numbers and dates; `sum`/`average` need a numeric column (checked by the engine's
+// typeCheck, since this schema has no type information); `first`/`last` are the
+// first/last non-empty value of the rows the row summarizes (the group, or - for
+// `output.summaryRows` - all rows).
+
+export const SUMMARY_AGGS = ['sum', 'count', 'min', 'max', 'average', 'first', 'last'] as const;
+export const SummaryAggSchema = z.enum(SUMMARY_AGGS);
+
+export interface SummaryRow {
+  /** Label text, as written (omit for a summary row with no label). */
+  label?: string;
+  /** Output header of the column that shows `label`. When omitted, the engine uses
+   * the first output column with no entry in `cells` (falling back to column 0). */
+  labelColumn?: string;
+  bold?: boolean;
+  /** Output header -> the aggregate that fills that column's cell. */
+  cells: Record<string, SummaryAgg>;
+}
+/** Parameterized by `cellsSchema` (the open dictionary) for `./wire.ts`. Not one of
+ * the three open dictionaries LEARN_PROMPT §5 names explicitly, but structurally the
+ * same problem (`Record<output header, SummaryAgg>`), so it gets the same treatment -
+ * confirmed by the "no open-dictionary objects" test in `wire.test.ts`. */
+export function buildSummaryRowSchema(cellsSchema: z.ZodType): z.ZodType<SummaryRow> {
+  return z.strictObject({
+    label: z.string().optional(),
+    labelColumn: z.string().optional(),
+    bold: z.boolean().optional(),
+    cells: cellsSchema,
+  }) as unknown as z.ZodType<SummaryRow>;
+}
+export const SummaryRowSchema = buildSummaryRowSchema(z.record(z.string(), SummaryAggSchema));
+
 // ---------- transform.group ----------
 
+/** @deprecated SPEC 21 v4: replaced by `Group.summaryRows`. Stored rules files
+ * (`RulesSchema`) may still carry it; the LLM (`LearnResultSchema`) never writes it -
+ * the engine translates it into a `summaryRows` entry at run time (SPEC 21 v4). */
 export interface GroupSubtotal {
   labelColumn: string;
   label: string;
@@ -492,14 +592,31 @@ export const GroupSubtotalSchema = z.strictObject({
 export interface Group {
   by: string;
   showDetailRows: boolean;
+  /** @deprecated SPEC 21 v4: replaced by `summaryRows`. */
   subtotal?: GroupSubtotal;
   blankRowsAfter?: number;
+  /** SPEC 8.12 v4: summary rows after this group, in order, before `blankRowsAfter`. */
+  summaryRows?: SummaryRow[];
 }
-export const GroupSchema = z.strictObject({
-  by: z.string(),
-  showDetailRows: z.boolean(),
+/** Parameterized by `summaryRowSchema` (see `buildSummaryRowSchema`) for `./wire.ts`.
+ * No `z.ZodType<Group>` return annotation (unlike the other `buildX` factories above) -
+ * `StoredGroupSchema` below needs `.extend()`, which a `z.ZodType`-erased return type
+ * would lose; the plain object-literal type this infers is close enough to `Group` for
+ * every call site (`.safeParse().data` flowing into a `Group`/`RulesTransform`-typed
+ * variable) to still typecheck structurally. */
+export function buildGroupSchema(summaryRowSchema: z.ZodType<SummaryRow>) {
+  return z.strictObject({
+    by: z.string(),
+    showDetailRows: z.boolean(),
+    blankRowsAfter: z.number().int().min(0).optional(),
+    summaryRows: z.array(summaryRowSchema).optional(),
+  });
+}
+export const GroupSchema = buildGroupSchema(SummaryRowSchema);
+/** SPEC 21 v4 backward compatibility: accepts the deprecated `subtotal` too, for
+ * stored rules files (`RulesSchema`) only - never for `LearnResultSchema`. */
+export const StoredGroupSchema = GroupSchema.extend({
   subtotal: GroupSubtotalSchema.optional(),
-  blankRowsAfter: z.number().int().min(0).optional(),
 });
 
 // ---------- transform.functions / transform.tables (SPEC 8.14) ----------
@@ -519,12 +636,16 @@ export interface RulesFunction {
   returns: ValueType;
   body: Expr;
 }
-export const RulesFunctionSchema = z.strictObject({
-  name: z.string().min(1),
-  params: z.array(FunctionParamSchema),
-  returns: ValueTypeSchema,
-  body: ExprSchema,
-});
+/** Parameterized by `exprSchema` (see `buildExprSchema`) for `./wire.ts`. */
+export function buildRulesFunctionSchema(exprSchema: z.ZodType<Expr>): z.ZodType<RulesFunction> {
+  return z.strictObject({
+    name: z.string().min(1),
+    params: z.array(FunctionParamSchema),
+    returns: ValueTypeSchema,
+    body: exprSchema,
+  }) as unknown as z.ZodType<RulesFunction>;
+}
+export const RulesFunctionSchema = buildRulesFunctionSchema(ExprSchema);
 
 export type TableCellValue = string | number | boolean | null;
 const TableCellValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
@@ -553,15 +674,43 @@ export interface RulesTransform {
   functions?: RulesFunction[];
   tables?: RulesTable[];
 }
-export const RulesTransformSchema = z.strictObject({
-  dedupe: DedupeSchema.optional(),
-  expand: ExpandSchema.optional(),
-  functions: z.array(RulesFunctionSchema).optional(),
-  tables: z.array(RulesTableSchema).optional(),
-  computed: z.array(ComputedSchema),
-  valueMaps: z.array(ValueMapSchema),
-  sort: z.array(SortKeySchema),
-  group: GroupSchema.optional(),
+/**
+ * Parameterized by the same Expr/open-dictionary building blocks as its parts, for
+ * `./wire.ts`: `exprSchema` (see `buildExprSchema`), `stringMapSchema` (the open
+ * dictionary behind `valueMaps[].map` and `expand.columnsToRows.labels` -
+ * `Record<string,string>` by default), `exprMapSchema` (behind
+ * `expand.fixedFanOut.rows[].set` - `Record<string,Expr>` by default) and
+ * `summaryRowSchema` (see `buildSummaryRowSchema`, behind `group.summaryRows`).
+ */
+// No `z.ZodType<RulesTransform>` return annotation - see `buildGroupSchema`'s comment;
+// `StoredRulesTransformSchema` below needs `.extend()`.
+export function buildRulesTransformSchema(opts: {
+  exprSchema: z.ZodType<Expr>;
+  stringMapSchema: z.ZodType;
+  exprMapSchema: z.ZodType;
+  summaryRowSchema: z.ZodType<SummaryRow>;
+}) {
+  return z.strictObject({
+    dedupe: DedupeSchema.optional(),
+    expand: buildExpandSchema({ labelsSchema: opts.stringMapSchema, setSchema: opts.exprMapSchema }).optional(),
+    functions: z.array(buildRulesFunctionSchema(opts.exprSchema)).optional(),
+    tables: z.array(RulesTableSchema).optional(),
+    computed: z.array(buildComputedSchema(opts.exprSchema)),
+    valueMaps: z.array(buildValueMapSchema(opts.stringMapSchema)),
+    sort: z.array(SortKeySchema),
+    group: buildGroupSchema(opts.summaryRowSchema).optional(),
+  });
+}
+export const RulesTransformSchema = buildRulesTransformSchema({
+  exprSchema: ExprSchema,
+  stringMapSchema: z.record(z.string(), z.string()),
+  exprMapSchema: z.record(z.string(), ExprSchema),
+  summaryRowSchema: SummaryRowSchema,
+});
+/** SPEC 21 v4 backward compatibility: `group` accepts the deprecated `subtotal`
+ * (`StoredGroupSchema`), for stored rules files (`RulesSchema`) only. */
+export const StoredRulesTransformSchema = RulesTransformSchema.extend({
+  group: StoredGroupSchema.optional(),
 });
 
 // ---------- output.titleRows (SPEC 8.7) ----------
@@ -585,7 +734,10 @@ export const TitleRowSchema = z.union([
 
 // ---------- output.columns / headerStyle / grandTotal (SPEC 8.1, 8.6) ----------
 
-export const OUTPUT_COLUMN_AGGS = ['sum', 'count', 'min', 'max', 'first'] as const;
+/** SPEC 8.6/21 v4: the same aggregate set as `SummaryAgg` (extended with `average`
+ * and `last` in v4, for consistency between a summary output's per-column `agg` and
+ * a generic summary row's `cells` aggregate). */
+export const OUTPUT_COLUMN_AGGS = SUMMARY_AGGS;
 export type OutputColumnAgg = (typeof OUTPUT_COLUMN_AGGS)[number];
 
 export interface OutputColumnRule {
@@ -608,6 +760,9 @@ export interface HeaderStyle {
 }
 export const HeaderStyleSchema = z.strictObject({ bold: z.boolean().optional() });
 
+/** @deprecated SPEC 21 v4: replaced by `RulesOutput.summaryRows`. Stored rules files
+ * (`RulesSchema`) may still carry it; the LLM (`LearnResultSchema`) never writes it -
+ * the engine translates it into a `summaryRows` entry at run time (SPEC 21 v4). */
 export interface GrandTotal {
   labelColumn: string;
   label: string;
@@ -661,16 +816,29 @@ export interface RulesOutput {
   titleRows: TitleRow[];
   columns: OutputColumnRule[];
   headerStyle?: HeaderStyle;
+  /** @deprecated SPEC 21 v4: replaced by `summaryRows`. */
   grandTotal?: GrandTotal;
+  /** SPEC 8.12 v4: summary rows after all data rows, in order. */
+  summaryRows?: SummaryRow[];
 }
-export const RulesOutputSchema = z.strictObject({
-  file: OutputFileSchema.optional(),
-  sheetName: z.string(),
-  direction: z.enum(['rtl', 'ltr']),
-  language: z.enum(['he', 'en']),
-  titleRows: z.array(TitleRowSchema),
-  columns: z.array(OutputColumnRuleSchema).min(1),
-  headerStyle: HeaderStyleSchema.optional(),
+// No `z.ZodType<RulesOutput>` return annotation - see `buildGroupSchema`'s comment;
+// `StoredRulesOutputSchema` below needs `.extend()`.
+export function buildRulesOutputSchema(summaryRowSchema: z.ZodType<SummaryRow>) {
+  return z.strictObject({
+    file: OutputFileSchema.optional(),
+    sheetName: z.string(),
+    direction: z.enum(['rtl', 'ltr']),
+    language: z.enum(['he', 'en']),
+    titleRows: z.array(TitleRowSchema),
+    columns: z.array(OutputColumnRuleSchema).min(1),
+    headerStyle: HeaderStyleSchema.optional(),
+    summaryRows: z.array(summaryRowSchema).optional(),
+  });
+}
+export const RulesOutputSchema = buildRulesOutputSchema(SummaryRowSchema);
+/** SPEC 21 v4 backward compatibility: accepts the deprecated `grandTotal` too, for
+ * stored rules files (`RulesSchema`) only - never for `LearnResultSchema`. */
+export const StoredRulesOutputSchema = RulesOutputSchema.extend({
   grandTotal: GrandTotalSchema.optional(),
 });
 
@@ -864,8 +1032,15 @@ export interface Rules extends LearnResult {
   name: string;
   meta: RulesMeta;
 }
+/** SPEC 21 v4 backward compatibility: unlike `LearnResultSchema`, a stored rules file
+ * may still carry the deprecated `transform.group.subtotal` / `output.grandTotal`
+ * (`StoredRulesTransformSchema` / `StoredRulesOutputSchema`) - a format learned before
+ * v4 keeps loading and running exactly as before. The LLM never writes them; see
+ * `LearnResultSchema` below. */
 export const RulesSchema = z.strictObject({
   ...learnResultShape,
+  transform: StoredRulesTransformSchema,
+  output: StoredRulesOutputSchema,
   name: z.string().min(1),
   meta: RulesMetaSchema,
 });

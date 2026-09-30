@@ -12,7 +12,7 @@
 // Engine pipeline order (SPEC 8.2 / LEARN_PROMPT "Operations"):
 //   read -> rowFilters -> dedupe -> expand -> computed -> valueMaps -> sort -> group -> output -> validations
 import { limits } from '../config/limits';
-import type { Expr, ExprNode, LearnResult, Rules, TableCellValue } from './schema';
+import type { Expr, ExprNode, LearnResult, Rules, SummaryRow, TableCellValue } from './schema';
 
 export type RuleProblemKind = 'reference' | 'depth' | 'duplicateId' | 'arity';
 
@@ -109,6 +109,28 @@ function checkRef(
 ): void {
   if (!available.has(id)) {
     problems.push({ kind: 'reference', path, message: `unknown column id "${id}"` });
+  }
+}
+
+/** SPEC 8.12 v4: a `SummaryRow`'s `labelColumn`/`cells` name OUTPUT HEADERS, not ids
+ * (unlike the deprecated, id-based `grandTotal`/`subtotal` checked alongside it). */
+function checkSummaryRowRefs(
+  row: SummaryRow,
+  outputHeaders: ReadonlySet<string>,
+  path: string,
+  problems: RuleProblem[],
+): void {
+  if (row.labelColumn !== undefined && !outputHeaders.has(row.labelColumn)) {
+    problems.push({
+      kind: 'reference',
+      path: `${path}.labelColumn`,
+      message: `unknown output header "${row.labelColumn}"`,
+    });
+  }
+  for (const header of Object.keys(row.cells)) {
+    if (!outputHeaders.has(header)) {
+      problems.push({ kind: 'reference', path: `${path}.cells`, message: `unknown output header "${header}"` });
+    }
   }
 }
 
@@ -479,6 +501,10 @@ export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
     checkRef(s.column, finalIds, `transform.sort[${i}].column`, problems);
   });
 
+  // Output headers, needed below by group/output summaryRows (SPEC 8.12 v4, headers
+  // not ids) and by "on: output" validations (SPEC 8.8).
+  const outputHeaders = new Set(rules.output.columns.map((c) => c.header));
+
   // ----- Step 7: group -----
   if (rules.transform.group) {
     const g = rules.transform.group;
@@ -489,6 +515,9 @@ export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
         checkRef(id, finalIds, `transform.group.subtotal.sum[${i}]`, problems),
       );
     }
+    g.summaryRows?.forEach((row, i) =>
+      checkSummaryRowRefs(row, outputHeaders, `transform.group.summaryRows[${i}]`, problems),
+    );
   }
 
   // ----- Step 8: output -----
@@ -512,9 +541,11 @@ export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
       checkRef(id, finalIds, `output.grandTotal.sum[${i}]`, problems),
     );
   }
+  rules.output.summaryRows?.forEach((row, i) =>
+    checkSummaryRowRefs(row, outputHeaders, `output.summaryRows[${i}]`, problems),
+  );
 
   // ----- Step 9: validations (SPEC 8.8: "on" input columns/computed ids, or "output" headers) -----
-  const outputHeaders = new Set(rules.output.columns.map((c) => c.header));
   rules.validations.forEach((v, i) => {
     const on = v.on ?? 'input';
     if (on === 'output') {

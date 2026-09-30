@@ -14,7 +14,7 @@ One JSON object:
 - masking: true if text values are masked (see "Masked values").
 - input.columns, output.columns: one entry per column. i = position (0-based). header, type, shape (character pattern: D = digit, A = Latin letter, H = Hebrew letter, other characters literal; "|" separates alternative shapes), stats, and for output columns the Excel number format (format) and width.
 - input.layout: headerRow, rowsAbove (rows above the header to skip), footerFirstCell (values that start footer rows to stop at).
-- output.layout: detected by code. titleRows, headerRow, headerBold, summary (true if one row per group), groupBy, grandTotal, sort, sheetName, direction (rtl or ltr), language (he or en). References to columns use "in": n for input columns and "out": n for output columns.
+- output.layout: detected by code. titleRows, headerRow, headerBold, summary (true if one row per group), groupBy, summaryRows, sort, sheetName, direction (rtl or ltr), language (he or en). References to columns use "in": n for input columns and "out": n for output columns.
 - output.file: the output file type (xlsx, csv or txt), delimiter, whether it has a header row, and encoding. Detected by code; copy it.
 - target: present only when this input is being added as a new source to a format that already exists. See "Adding a source to an existing format".
 - samples: aligned pairs. "out" is an output data row, "in" is the input row it came from. Rows are arrays in column order. When rows expand, each sample is a family instead: "in" is one input row and "out" is the list of all output rows it produced, in order.
@@ -25,7 +25,7 @@ One JSON object:
 # Adding a source to an existing format
 
 When target is present, the output format already exists and other sources already feed it. The format is fixed:
-- Copy target.output into output exactly, character for character, including file, titleRows, grandTotal, headers, formats and widths. The only field you choose in output.columns is from.
+- Copy target.output into output exactly, character for character, including file, titleRows, summaryRows, headers, formats and widths. The only field you choose in output.columns is from.
 - Build transform.sort and transform.group so that they sort and group by the same output columns, with the same labels, sums and blank rows, as target.layout.
 - Copy target.validations (the output validations) exactly.
 - Your work is input, the rest of transform (rowFilters, dedupe, expand, computed, valueMaps) and input validations: how THIS input produces the format's columns.
@@ -66,7 +66,7 @@ Headers, values and labels may be Hebrew, English or mixed. Copy them exactly. N
    - For fixedFanOut, write one entry in rows per position, in order, with a set expression for every column that differs by position.
    - Never add expand without a hint. If the samples are families but no hint explains them, report the affected columns as unsupported with rowExpansion.
 7. Sort: copy output.layout.sort when present. Otherwise add no sort.
-8. Groups and totals: build transform.group and output.grandTotal from output.layout. If output.layout.summary is true, set group.showDetailRows to false and give every output column an agg (sum, count, min, max, or first for the group key).
+8. Groups and summary rows: build transform.group from output.layout.groupBy (by, blankRowsAfter). Copy output.layout.groupBy.summaryRows into transform.group.summaryRows, and output.layout.summaryRows into output.summaryRows: each is a list of rows in order; a row's labelOut and cells[].out are output positions, so use the output header at that position for the copy's labelColumn and cells keys (summaryRows are keyed by output header, SPEC 8.12). If output.layout.summary is true, set group.showDetailRows to false and give every output column an agg (sum, count, min, max, average, first, or last for the group key).
 9. Formats: copy output.file, and each output column's format and width. For input date columns, list inputFormats; use "excelSerial" when the input stats say the dates are serial numbers.
 10. Types: declare ID-like columns as idLike (text; leading zeros matter). When stats.leadingZerosLost is true and the output has the zeros, set padLeft on the input column.
 11. Validations: add only checks that follow from the data and that no sample contradicts:
@@ -102,40 +102,50 @@ When the data allows more than one reading, choose as described above and add an
 
 The engine runs in this fixed order: read → normalize types → rowFilters → dedupe → expand → computed → valueMaps → sort → group → output layout → validations.
 
-Expressions (expr) are trees.
-Leaves: {"col": id}, {"const": value}, and inside a function body {"param": name}.
-Nodes: {"op": name, ...}:
-- add, sub, mul, div, min, max: "args": [expr, expr, ...]. Exact decimal arithmetic. Division by zero flags the row.
-- neg, abs, floor, ceil: "arg". mod: "args": two. round: "arg", "digits". Rounds half away from zero, like Excel ROUND.
-- concat: "args". substr: "arg", "start", "length". trim, upper, lower, length: "arg". replaceText: "arg", "find", "with" (literal text). padLeft: "arg", "length", "char". split: "arg", "separator", "index" (1-based; negative counts from the end).
-- toNumber: "arg". toText: "arg", "format" (optional number or date format).
-- datePart: "arg", "part" (year | month | day). dateFormat: "arg", "format". dateAdd: "arg", "days" | "months" | "years". dateDiff: "args": two dates, "unit" (days | months | years). endOfMonth: "arg".
-- if: "cond", "then", "else". switch: "cases": [{"when": cond, "then": expr}], "else". coalesce: "args".
-- lookup: "table", "key": expr, "return": column name, "onMissing": flag | empty | keep.
-- call: "fn", "args".
-- conditions: eq, ne, gt, gte, lt, lte ("args": two), isEmpty, notEmpty ("arg"), oneOf ("arg", "values"), startsWith, endsWith, contains ("arg", "text"), and, or ("args"), not ("arg").
-Types: text, idLike, integer, decimal, date, boolean. Results: arithmetic → decimal (integer when all args are integer and the op is add, sub, mul, mod, min or max); text ops → text; length, datePart, dateDiff → integer; dateAdd, endOfMonth → date; conditions → boolean.
-Limits: depth 8 per expression, 200 nodes per output column after expanding calls, 20 functions, 20 tables of up to 500 rows.
+Write every expression (expr) as FORMULA TEXT, not a JSON tree, e.g. "round(amount * 0.17, 2)". A strict parser turns your text into the engine's own typed operation tree - nothing you write is ever executed as code, and an unknown function or identifier is always an error.
 
-functions: [{"name": camelCase, "params": [{"name", "type"}], "returns": type, "body": expr}]. A body uses params, constants and other functions defined above it, never col.
+Numbers: decimal, e.g. 12, 3.14, -2 (a leading "-" negates a number or any expression, e.g. -amount). Strings: double-quoted, e.g. "VIP", with \" and \\ as the only escapes - any Unicode, Hebrew included, is fine inside them. true, false, null are literals. An identifier is a column id, e.g. amount, status - or, inside a function's own body only, one of that function's params.
+
+The only infix operators are + - * / (usual precedence: * / before + -, left to right) and the six comparisons = <> < > <= >= (lower precedence than + -, and not chainable: write one comparison at a time). Parentheses group as usual. Every other operation is a function call name(arg1, arg2, ...), in this exact, fixed argument order - never invent an operation, an argument, or reorder one:
+- round(x, digits): rounds half away from zero, like Excel ROUND. floor(x). ceil(x). abs(x). neg(x) (same as -x).
+- mod(a, b). min(a, b, ...) and max(a, b, ...): 1 or more.
+- concat(a, b, ...): 1 or more, joined as text. substr(x, start, length) (1-based; a negative start counts from the end). trim(x). upper(x). lower(x). length(x).
+- replaceText(x, "find", "with") (literal text, never a pattern). padLeft(x, length, "c") ("c" is exactly one character). split(x, "separator", index) (1-based; a negative index counts from the end).
+- toNumber(x): a value that doesn't parse flags the row. toText(x) or toText(x, "format") (a number or date format).
+- datePart(x, "year" | "month" | "day"). dateFormat(x, "format"). dateAdd(x, amount, "days" | "months" | "years") (amount may be negative). dateDiff(a, b, "days" | "months" | "years"). endOfMonth(x).
+- if(cond, then, else). switch(cond1, value1, cond2, value2, ..., elseValue): 1 or more cases, then a final else value. coalesce(a, b, ...): 1 or more, the first non-empty.
+- lookup("table", key, "returnColumn") or lookup("table", key, "returnColumn", "onMissing") against a constant table in tables (below); onMissing is "flag" | "empty" | "keep", default "flag" when you omit it.
+- a call to any name that is NOT one of these built-ins, e.g. netOf(gross, rate), calls a function you defined in functions (below).
+- isEmpty(x). notEmpty(x). oneOf(x, "a", "b", ...): 1 or more literal values. startsWith(x, "t"), endsWith(x, "t"), contains(x, "t") (literal text). and(a, b, ...) and or(a, b, ...): 1 or more. not(x).
+
+"table"/"returnColumn" names, digits, formats, units, single characters and onMissing are always a fixed literal, never an expression - write the exact value directly, e.g. round(x, 2) not round(x, digits).
+
+Types: text, idLike, integer, decimal, date, boolean. Results: arithmetic → decimal (integer when every argument is integer and the operation is +, -, *, mod, min or max); text operations → text; length, datePart, dateDiff → integer; dateAdd, endOfMonth → date; conditions → boolean.
+Limits: 8 levels of nesting per expression, 200 nodes per output column after expanding calls, 20 functions, 20 tables of up to 500 rows, 4000 characters per formula.
+
+More examples: round(amount * 0.17, 2)   if(status = "VIP", price * 0.9, price)   lookup("rates", code, "rate")   concat(firstName, " ", lastName)   and(amount > 0, status <> "cancelled")
+
+functions: [{"name": camelCase, "params": [{"name", "type"}], "returns": type, "body": formula text}]. A body's formula may use its own params, constants and other functions defined above it - never a column.
 
 tables: [{"name", "columns": [names], "rows": [[values]]}]. The first column is the key and must be unique.
 
-rowFilters: [{"column": id, "op": eq | ne | gt | gte | lt | lte | isEmpty | notEmpty | oneOf | notOneOf, "value": ...} or {"expr": condition}]. All filters must pass.
+rowFilters: [{"column": id, "op": eq | ne | gt | gte | lt | lte | isEmpty | notEmpty | oneOf | notOneOf, "value": ...} or {"expr": formula text}]. All filters must pass.
 
 dedupe: {"keys": [ids] | "all", "keep": "first" | "last", "action": "remove" | "flag"}. Values are compared after type normalization.
 
 expand, one of:
 - {"mode": "columnsToRows", "columns": [ids], "labelId": id, "labels": {id: text}, "valueId": id, "valueType": type, "skipEmpty": bool}. One new row per listed column. labelId holds the label (from labels, else the column's header). valueId holds the cell. The listed columns are gone after expand.
 - {"mode": "splitCell", "column": id, "separator": text, "trim": bool, "partId": id, "indexId": id, "countId": id, "skipEmpty": bool}. One new row per part. indexId (1-based part number) and countId (number of parts) are optional.
-- {"mode": "fixedFanOut", "rows": [{"set": {id: expr}}, ...]}. Each input row becomes one row per entry, in order. set creates or overwrites columns for that row.
+- {"mode": "fixedFanOut", "rows": [{"set": {id: formula text}}, ...]}. Each input row becomes one row per entry, in order. set creates or overwrites columns for that row.
 Every other column is copied to each new row.
 
 valueMaps: [{"column": id, "map": {from: to}, "onMissing": "flag" | "keep"}].
 
 sort: [{"column": id, "dir": "asc" | "desc"}].
 
-group: {"by": id, "showDetailRows": bool, "subtotal": {"labelColumn": id, "label": text, "sum": [ids]}, "blankRowsAfter": n}.
+group: {"by": id, "showDetailRows": bool, "blankRowsAfter": n, "summaryRows": [summaryRow, ...]}.
+
+summaryRow: {"label": text, "labelColumn": output header, "bold": bool, "cells": {output header: "sum" | "count" | "min" | "max" | "average" | "first" | "last"}}. output.summaryRows: [summaryRow, ...], after all data rows, in order. group.summaryRows: [summaryRow, ...], after each group, in order, before blankRowsAfter. label and labelColumn are both optional; cells and labelColumn name OUTPUT headers, never ids.
 
 titleRows: {"text": ..., "bold": bool} | {"blank": true} | {"parts": [{"text": ...} | {"agg": "min" | "max", "column": id, "format": ...}], "bold": bool}.
 
@@ -148,11 +158,11 @@ Date format tokens: D, DD, M, MM, MMMM (month name in output.language), YY, YYYY
 # Example
 
 <example_payload>
-{"masking":true,"input":{"sheetName":"גיליון1","direction":"rtl","layout":{"headerRow":0,"rowsAbove":0,"footerFirstCell":[]},"columns":[{"i":0,"header":"שם לקוח","type":"text","shape":"HHH HHH","stats":{"empty":0,"distinct":0.4}},{"i":1,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDD|DDDDDDDDD","stats":{"empty":0,"distinct":1,"key":true,"leadingZerosLost":true,"israeliId":true}},{"i":2,"header":"סטטוס","type":"text","shape":"HHHH|HHHHH","stats":{"empty":0,"values":2}},{"i":3,"header":"סכום","type":"decimal","stats":{"empty":0,"range":[150,9800]}}]},"output":{"file":{"type":"xlsx"},"layout":{"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"headerRow":0,"headerBold":true,"summary":false,"groupBy":null,"grandTotal":null,"sort":null},"columns":[{"i":0,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDDD","format":"@","width":12},{"i":1,"header":"שם","type":"text","format":"General","width":18},{"i":2,"header":"סכום כולל מע\"מ","type":"decimal","format":"#,##0.00","width":14}]},"samples":[{"in":["זקמ עגש","40217763","נברט",1000],"out":["040217763","זקמ עגש",1180]},{"in":["פלר חינ","203948576","נברט",342.05],"out":["203948576","פלר חינ",403.62]}],"dropped":[["שכט מצב","55120934","צחלדפ",780]],"hints":[{"out":0,"rel":"padLeft","in":[1],"length":9,"coverage":1},{"out":1,"rel":"copy","in":[0],"coverage":1},{"out":2,"rel":"mulConst","in":[3],"const":1.18,"round":2,"coverage":1},{"rel":"filter","in":[2],"keptValues":["נברט"],"droppedValues":["צחלדפ"],"coverage":1}],"skipColumns":[]}
+{"masking":true,"input":{"sheetName":"גיליון1","direction":"rtl","layout":{"headerRow":0,"rowsAbove":0,"footerFirstCell":[]},"columns":[{"i":0,"header":"שם לקוח","type":"text","shape":"HHH HHH","stats":{"empty":0,"distinct":0.4}},{"i":1,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDD|DDDDDDDDD","stats":{"empty":0,"distinct":1,"key":true,"leadingZerosLost":true,"israeliId":true}},{"i":2,"header":"סטטוס","type":"text","shape":"HHHH|HHHHH","stats":{"empty":0,"values":2}},{"i":3,"header":"סכום","type":"decimal","stats":{"empty":0,"range":[150,9800]}}]},"output":{"file":{"type":"xlsx"},"layout":{"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"headerRow":0,"headerBold":true,"summary":false,"groupBy":null,"summaryRows":[],"sort":null},"columns":[{"i":0,"header":"ת.ז.","type":"idLike","shape":"DDDDDDDDD","format":"@","width":12},{"i":1,"header":"שם","type":"text","format":"General","width":18},{"i":2,"header":"סכום כולל מע\"מ","type":"decimal","format":"#,##0.00","width":14}]},"samples":[{"in":["זקמ עגש","40217763","נברט",1000],"out":["040217763","זקמ עגש",1180]},{"in":["פלר חינ","203948576","נברט",342.05],"out":["203948576","פלר חינ",403.62]}],"dropped":[["שכט מצב","55120934","צחלדפ",780]],"hints":[{"out":0,"rel":"padLeft","in":[1],"length":9,"coverage":1},{"out":1,"rel":"copy","in":[0],"coverage":1},{"out":2,"rel":"mulConst","in":[3],"const":1.18,"round":2,"coverage":1},{"rel":"filter","in":[2],"keptValues":["נברט"],"droppedValues":["צחלדפ"],"coverage":1}],"skipColumns":[]}
 </example_payload>
 
 <example_result>
-{"schemaVersion":1,"input":{"sheet":{"pick":"first"},"headerRow":"auto","columns":[{"id":"customerName","header":"שם לקוח","type":"text","required":true},{"id":"idNumber","header":"ת.ז.","type":"idLike","padLeft":9,"required":true},{"id":"status","header":"סטטוס","type":"text"},{"id":"amount","header":"סכום","type":"decimal","required":true}],"rowFilters":[{"column":"status","op":"ne","value":"צחלדפ"}]},"transform":{"computed":[{"id":"amountWithVat","type":"decimal","expr":{"op":"round","digits":2,"arg":{"op":"mul","args":[{"col":"amount"},{"const":1.18}]}}}],"valueMaps":[],"sort":[]},"output":{"file":{"type":"xlsx"},"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"columns":[{"header":"ת.ז.","from":"idNumber","format":"@","width":12},{"header":"שם","from":"customerName","format":"General","width":18},{"header":"סכום כולל מע\"מ","from":"amountWithVat","format":"#,##0.00","width":14}],"headerStyle":{"bold":true}},"validations":[{"column":"idNumber","rule":"israeliIdChecksum","severity":"flag"},{"column":"idNumber","rule":"unique","severity":"flag"},{"column":"amount","rule":"range","min":0,"severity":"flag"}],"unsupported":[],"assumptions":[{"reasonCode":"filterGuessed"}]}
+{"schemaVersion":1,"input":{"sheet":{"pick":"first"},"headerRow":"auto","columns":[{"id":"customerName","header":"שם לקוח","type":"text","required":true},{"id":"idNumber","header":"ת.ז.","type":"idLike","padLeft":9,"required":true},{"id":"status","header":"סטטוס","type":"text"},{"id":"amount","header":"סכום","type":"decimal","required":true}],"rowFilters":[{"column":"status","op":"ne","value":"צחלדפ"}]},"transform":{"computed":[{"id":"amountWithVat","type":"decimal","expr":"round(amount * 1.18, 2)"}],"valueMaps":[],"sort":[]},"output":{"file":{"type":"xlsx"},"sheetName":"פעילים","direction":"rtl","language":"he","titleRows":[],"columns":[{"header":"ת.ז.","from":"idNumber","format":"@","width":12},{"header":"שם","from":"customerName","format":"General","width":18},{"header":"סכום כולל מע\"מ","from":"amountWithVat","format":"#,##0.00","width":14}],"headerStyle":{"bold":true}},"validations":[{"column":"idNumber","rule":"israeliIdChecksum","severity":"flag"},{"column":"idNumber","rule":"unique","severity":"flag"},{"column":"amount","rule":"range","min":0,"severity":"flag"}],"unsupported":[],"assumptions":[{"reasonCode":"filterGuessed"}]}
 </example_result>
 
 In the example, the filter keeps every status except the one seen only in dropped rows ("ne"), so a new status would stay visible, and filterGuessed is recorded because "eq" would also have fit.

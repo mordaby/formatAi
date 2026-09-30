@@ -54,6 +54,15 @@ export const PREFLIGHT_BLOCK_REASONS = [
 ] as const;
 export type PreflightBlockReason = (typeof PREFLIGHT_BLOCK_REASONS)[number];
 
+// ---------- SPEC 6.4: pre-flight warn reasons ----------
+// DECISION: same rationale as PREFLIGHT_BLOCK_REASONS above - SPEC 6.4 lists these
+// as prose ("Some output columns are unknown", "Rows couldn't be aligned"), coded
+// here as a closed enum so preflight results and i18n share one vocabulary. Unlike
+// a block, the user can continue past a warn (skipColumns confirmation, or "try
+// anyway"), and doing so still counts as a learn.
+export const PREFLIGHT_WARN_REASONS = ['unknownOutputColumns', 'rowsNotAligned'] as const;
+export type PreflightWarnReason = (typeof PREFLIGHT_WARN_REASONS)[number];
+
 // Every Flag.messageKey the engine can emit (SPEC 8.9). Params per key are listed next to it.
 export const FLAG_MESSAGE_KEYS = [
   // rule "type": a value kept as-is because it doesn't fit the declared type. params: { type }

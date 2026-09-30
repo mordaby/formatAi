@@ -329,3 +329,43 @@ describe('checkRules: validations "on" (SPEC 8.8)', () => {
     );
   });
 });
+
+// SPEC 8.12 v4: a summaryRow's `labelColumn`/`cells` name output headers, not ids.
+describe('checkRules: output.summaryRows / group.summaryRows (SPEC 8.12 v4)', () => {
+  it('accepts summaryRows naming existing output headers', () => {
+    const rules = baseRules();
+    rules.output.summaryRows = [{ label: 'Total', labelColumn: 'A', cells: { B: 'sum' } }];
+    rules.transform.group = { by: 'a', showDetailRows: true, summaryRows: [{ cells: { B: 'sum' } }] };
+    expect(checkRules(rules)).toEqual([]);
+  });
+
+  it('rejects an output.summaryRows labelColumn that is not an output header', () => {
+    const rules = baseRules();
+    rules.output.summaryRows = [{ labelColumn: 'NotAHeader', cells: {} }];
+    const problems = checkRules(rules);
+    expect(problems).toContainEqual(
+      expect.objectContaining({ kind: 'reference', path: 'output.summaryRows[0].labelColumn' }),
+    );
+  });
+
+  it('rejects an output.summaryRows cells key that is not an output header', () => {
+    const rules = baseRules();
+    rules.output.summaryRows = [{ cells: { NotAHeader: 'sum' } }];
+    const problems = checkRules(rules);
+    expect(problems).toContainEqual(
+      expect.objectContaining({ kind: 'reference', path: 'output.summaryRows[0].cells' }),
+    );
+  });
+
+  it('rejects a group.summaryRows entry naming an unknown output header', () => {
+    const rules = baseRules();
+    rules.transform.group = { by: 'a', showDetailRows: true, summaryRows: [{ labelColumn: 'NotAHeader', cells: { NotEither: 'count' } }] };
+    const problems = checkRules(rules);
+    expect(problems).toContainEqual(
+      expect.objectContaining({ kind: 'reference', path: 'transform.group.summaryRows[0].labelColumn' }),
+    );
+    expect(problems).toContainEqual(
+      expect.objectContaining({ kind: 'reference', path: 'transform.group.summaryRows[0].cells' }),
+    );
+  });
+});

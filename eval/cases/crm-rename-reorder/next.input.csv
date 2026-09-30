@@ -1,0 +1,26 @@
+﻿Customer ID,First Name,Last Name,Email,Phone,City,Status
+C-2000,Yossi,Brown,yossi.brown@example.com,555-0148,Chicago,Lead
+C-2001,Dana,Azoulay,dana.azoulay@example.com,555-0135,Phoenix,Lead
+C-2002,Daniel,Johnson,daniel.johnson@example.com,555-0140,Atlanta,Churned
+C-2003,Omer,Smith,omer.smith@example.com,555-0193,Denver,Active
+C-2004,Maria,Cohen,maria.cohen@example.com,555-0139,Atlanta,Active
+C-2005,Lior,Taylor,lior.taylor@example.com,555-0122,Chicago,Lead
+C-2006,Daniel,Smith,daniel.smith@example.com,555-0138,Denver,Lead
+C-2007,Yossi,Wilson,yossi.wilson@example.com,555-0184,Denver,Active
+C-2008,Shani,Cohen,shani.cohen@example.com,555-0160,Boston,Churned
+C-2009,Maria,Smith,maria.smith@example.com,555-0159,Miami,Churned
+C-2010,Yuval,Levi,yuval.levi@example.com,555-0126,Phoenix,Inactive
+C-2011,Laura,Levi,laura.levi@example.com,555-0184,Denver,Lead
+C-2012,Yuval,Clark,yuval.clark@example.com,555-0130,Phoenix,Inactive
+C-2013,Avi,Azoulay,avi.azoulay@example.com,555-0107,Denver,Churned
+C-2014,Hila,Taylor,hila.taylor@example.com,555-0183,Chicago,Active
+C-2015,Ron,Cohen,ron.cohen@example.com,555-0131,Phoenix,Lead
+C-2016,Shani,Dahan,shani.dahan@example.com,555-0106,Phoenix,Churned
+C-2017,Anna,Brown,anna.brown@example.com,555-0150,Phoenix,Active
+C-2018,Ron,Miller,ron.miller@example.com,555-0125,Boston,Inactive
+C-2019,Avi,Bitton,avi.bitton@example.com,555-0108,Seattle,Active
+C-2020,Daniel,Clark,daniel.clark@example.com,555-0132,Miami,Inactive
+C-2021,Ori,Dahan,ori.dahan@example.com,555-0182,Chicago,Active
+C-2022,Michelle,Young,michelle.young@example.com,555-0153,Atlanta,Inactive
+C-2023,Omer,Cohen,omer.cohen@example.com,555-0128,Austin,Active
+C-2024,Sara,Wilson,sara.wilson@example.com,555-0116,Phoenix,VIP

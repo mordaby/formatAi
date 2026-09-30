@@ -47,6 +47,24 @@ export const limits = {
     maxFunctions: 20,
     maxTables: 20,
     maxTableRows: 500,
+    /**
+     * learn-v5: the LLM writes expressions as formula TEXT (`packages/engine/src/
+     * formula`), which is untrusted input. A hard length cap, checked before any
+     * tokenizing/parsing work, rejects pathological input (e.g. a 1 MB string, or
+     * 100,000 nested parens) in O(1) instead of doing any parse work on it at all.
+     * 4,000 chars is generous for any real expression this language can produce
+     * (200-node budget per output column) while still being a trivially cheap check.
+     */
+    maxFormulaChars: 4000,
+  },
+  /**
+   * SPEC 6.5: the local fast path.
+   * DECISION: 'wide' (a looser fast path that would also cover some cases that
+   * currently need the LLM) is reserved for later, once eval data shows the
+   * strict path is too narrow to matter; only 'strict' is implemented in M1.
+   */
+  learn: {
+    fastPathMode: 'strict',
   },
 } as const;
 

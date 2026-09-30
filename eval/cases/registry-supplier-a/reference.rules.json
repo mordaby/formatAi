@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "itemCode",
+        "header": "מקט",
+        "type": "idLike",
+        "padLeft": 6,
+        "required": true
+      },
+      {
+        "id": "itemName",
+        "header": "שם פריט",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "unitPrice",
+        "header": "מחיר",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "category",
+        "header": "קטגוריה",
+        "type": "text"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "itemCode",
+        "dir": "asc"
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "ERP Catalog Load",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Item Code",
+        "from": "itemCode",
+        "width": 12
+      },
+      {
+        "header": "Description",
+        "from": "itemName"
+      },
+      {
+        "header": "Unit Price",
+        "from": "unitPrice",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Category",
+        "from": "category"
+      }
+    ]
+  },
+  "validations": [
+    {
+      "on": "output",
+      "column": "Item Code",
+      "rule": "required",
+      "severity": "flag"
+    }
+  ],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Supplier A price list",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified",
+    "formatId": "registry-erp-catalog",
+    "sourceName": "Supplier A"
+  }
+}

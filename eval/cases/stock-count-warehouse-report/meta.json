@@ -1,0 +1,11 @@
+{
+  "difficulty": "hard",
+  "domain": "warehouseStock",
+  "features": [
+    "titleRowsInInput",
+    "totalsFooter",
+    "computedColumn",
+    "summaryRows"
+  ],
+  "expect": "verified"
+}

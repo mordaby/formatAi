@@ -128,7 +128,12 @@ export interface OutCell {
   flagged?: boolean;
 }
 
-export type OutRowKind = 'title' | 'blank' | 'header' | 'data' | 'subtotal' | 'grandTotal';
+// v4 (SPEC 21): 'summaryRow' is a genuine `output.summaryRows`/`group.summaryRows`
+// entry (SPEC 8.12); 'subtotal'/'grandTotal' are kept only for a deprecated
+// `group.subtotal`/`output.grandTotal`, translated internally (see
+// `packages/engine/src/rules/summaryRows.ts`) so old golden fixtures/rules files stay
+// byte-identical.
+export type OutRowKind = 'title' | 'blank' | 'header' | 'data' | 'subtotal' | 'grandTotal' | 'summaryRow';
 
 export interface OutRow {
   kind: OutRowKind;

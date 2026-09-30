@@ -1,0 +1,38 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "Warehouse Report",
+  "direction": "ltr",
+  "columns": [
+    { "header": "Warehouse" },
+    { "header": "SKU" },
+    { "header": "Item" },
+    { "header": "Qty", "format": "0", "numeric": true },
+    { "header": "Cost", "format": "0.00", "numeric": true }
+  ],
+  "merges": [],
+  "rows": [
+    { "kind": "header", "bold": true, "cells": ["Warehouse", "SKU", "Item", "Qty", "Cost"] },
+    { "kind": "data", "sourceRow": 6, "cells": ["East", "SKU301", "Bolt", 100, 0.5] },
+    { "kind": "summaryRow", "bold": true, "cells": [null, 1, "Subtotal", 100, 0.5] },
+    { "kind": "blank", "cells": [null, null, null, null, null] },
+    { "kind": "data", "sourceRow": 2, "cells": ["North", "SKU101", "Widget", 10, 2] },
+    { "kind": "data", "sourceRow": 3, "cells": ["North", "SKU102", "Gadget", 20, 4] },
+    { "kind": "data", "sourceRow": 5, "cells": ["North", "SKU103", "Bolt", 30, 6] },
+    { "kind": "summaryRow", "bold": true, "cells": [null, 3, "Subtotal", 20, 6] },
+    { "kind": "blank", "cells": [null, null, null, null, null] },
+    { "kind": "data", "sourceRow": 4, "cells": ["South", "SKU201", "Widget", 5, 1] },
+    { "kind": "data", "sourceRow": 7, "cells": ["South", "SKU202", "Gadget", 15, 3] },
+    { "kind": "summaryRow", "bold": true, "cells": [null, 2, "Subtotal", 10, 3] },
+    { "kind": "blank", "cells": [null, null, null, null, null] },
+    { "kind": "summaryRow", "bold": true, "cells": [null, 6, "Grand total", 5, 2.75] }
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 6,
+    "rowsOut": 6,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

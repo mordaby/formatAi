@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "employeeId",
+        "header": "מספר עובד",
+        "type": "idLike",
+        "padLeft": 6,
+        "required": true
+      },
+      {
+        "id": "employeeName",
+        "header": "שם עובד",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "baseSalary",
+        "header": "שכר בסיס",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "functions": [
+      {
+        "name": "pensionOf",
+        "params": [
+          {
+            "name": "salary",
+            "type": "decimal"
+          },
+          {
+            "name": "rate",
+            "type": "decimal"
+          }
+        ],
+        "returns": "decimal",
+        "body": {
+          "op": "round",
+          "digits": 2,
+          "arg": {
+            "op": "mul",
+            "args": [
+              {
+                "param": "salary"
+              },
+              {
+                "param": "rate"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "computed": [
+      {
+        "id": "employeeShare",
+        "type": "decimal",
+        "expr": {
+          "op": "call",
+          "fn": "pensionOf",
+          "args": [
+            {
+              "col": "baseSalary"
+            },
+            {
+              "const": 0.06
+            }
+          ]
+        }
+      },
+      {
+        "id": "employerShare",
+        "type": "decimal",
+        "expr": {
+          "op": "call",
+          "fn": "pensionOf",
+          "args": [
+            {
+              "col": "baseSalary"
+            },
+            {
+              "const": 0.145
+            }
+          ]
+        }
+      },
+      {
+        "id": "branchCode",
+        "type": "text",
+        "expr": {
+          "op": "substr",
+          "arg": {
+            "col": "employeeId"
+          },
+          "start": 1,
+          "length": 2
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "הפרשות פנסיה",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "מספר עובד",
+        "from": "employeeId"
+      },
+      {
+        "header": "שם עובד",
+        "from": "employeeName"
+      },
+      {
+        "header": "הפרשת עובד",
+        "from": "employeeShare",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "הפרשת מעביד",
+        "from": "employerShare",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "קוד סניף",
+        "from": "branchCode"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "שכר → הפרשות פנסיה",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

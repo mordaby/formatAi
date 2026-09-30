@@ -1,0 +1,26 @@
+﻿Customer ID,First Name,Last Name,Email,Phone,City,Status
+C-1000,Gal,Young,gal.young@example.com,555-0166,Phoenix,Inactive
+C-1001,Julia,Levi,julia.levi@example.com,555-0125,Phoenix,Active
+C-1002,Julia,Haddad,julia.haddad@example.com,555-0150,Austin,Churned
+C-1003,Anna,Abraham,anna.abraham@example.com,555-0169,Atlanta,Churned
+C-1004,Shani,Walker,shani.walker@example.com,555-0133,Chicago,Lead
+C-1005,Rotem,Bitton,rotem.bitton@example.com,555-0180,Phoenix,Churned
+C-1006,Anna,Clark,anna.clark@example.com,555-0167,Atlanta,Churned
+C-1007,Ron,Taylor,ron.taylor@example.com,555-0129,Chicago,Active
+C-1008,Kevin,Peretz,kevin.peretz@example.com,555-0190,Seattle,Inactive
+C-1009,Daniel,Davis,daniel.davis@example.com,555-0131,Boston,Churned
+C-1010,Maria,Levi,maria.levi@example.com,555-0128,Miami,Lead
+C-1011,Shira,Miller,shira.miller@example.com,555-0116,Phoenix,Churned
+C-1012,Yuval,Young,yuval.young@example.com,555-0144,Boston,Active
+C-1013,Omer,Dahan,omer.dahan@example.com,555-0195,Denver,Inactive
+C-1014,Omer,Brown,omer.brown@example.com,555-0122,Boston,Inactive
+C-1015,Michelle,Mizrahi,michelle.mizrahi@example.com,555-0151,Chicago,Lead
+C-1016,Rotem,Azoulay,rotem.azoulay@example.com,555-0142,Atlanta,Active
+C-1017,Tal,Brown,tal.brown@example.com,555-0100,Miami,Active
+C-1018,Tal,Johnson,tal.johnson@example.com,555-0156,Austin,Lead
+C-1019,Laura,Mizrahi,laura.mizrahi@example.com,555-0159,Boston,Inactive
+C-1020,Naomi,Cohen,naomi.cohen@example.com,555-0133,Seattle,Inactive
+C-1021,Tal,Young,tal.young@example.com,555-0178,Chicago,Churned
+C-1022,Kevin,Miller,kevin.miller@example.com,555-0154,Phoenix,Active
+C-1023,Sara,Davis,sara.davis@example.com,555-0167,Phoenix,Active
+C-1024,Ori,Abraham,ori.abraham@example.com,555-0107,Atlanta,Active

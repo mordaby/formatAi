@@ -3,10 +3,16 @@
 // validations)." SPEC 8.12: "It holds: `output` (... except `columns[].from`); the
 // layout parts that live in `transform`, normalized to output headers: `sort`, and
 // `group` (...); output validations (`on: 'output'`)."
+//
+// v4 change (SPEC 21): `output.grandTotal`/`group.subtotal` (deprecated, id-based) are
+// normalized into `summaryRows` (header-keyed, SPEC 8.12) via
+// `packages/engine/src/rules/summaryRows.ts` - the SAME normalization the engine's
+// runtime layout (pipeline/v1/layout.ts) uses, so an old-style conversion (still
+// written with the deprecated fields) and a new-style one (written with
+// `summaryRows` directly) produce the identical `Format` and compare equal.
 import type {
   Format,
   FormatGroup,
-  FormatGroupSubtotal,
   FormatOutput,
   FormatOutputColumn,
   FormatSortKey,
@@ -15,6 +21,7 @@ import type {
   Rules,
 } from '@formatai/shared';
 import { DEFAULT_OUTPUT_FILE } from '@formatai/shared';
+import { effectiveGroupSummaryRows, effectiveOutputSummaryRows } from '../rules/summaryRows';
 
 /**
  * Maps every id that feeds an output column to that column's header (first match wins
@@ -59,9 +66,11 @@ function normalizeOutput(rules: LearnResult | Rules): FormatOutput {
     language: rules.output.language,
     titleRows: rules.output.titleRows,
     columns,
+    // SPEC 8.12/21 v4: `output.summaryRows` as-is, or the deprecated `grandTotal`
+    // translated (never both - see `effectiveOutputSummaryRows`).
+    summaryRows: effectiveOutputSummaryRows(rules.output, rules.transform.group).rows,
   };
   if (rules.output.headerStyle !== undefined) output.headerStyle = rules.output.headerStyle;
-  if (rules.output.grandTotal !== undefined) output.grandTotal = rules.output.grandTotal;
   return output;
 }
 
@@ -88,15 +97,13 @@ function normalizeGroup(rules: LearnResult | Rules, idToHeader: ReadonlyMap<stri
   const g = rules.transform.group;
   if (!g) return undefined;
 
-  const group: FormatGroup = { by: toHeader(g.by, idToHeader), showDetailRows: g.showDetailRows };
-  if (g.subtotal) {
-    const subtotal: FormatGroupSubtotal = {
-      labelHeader: toHeader(g.subtotal.labelColumn, idToHeader),
-      label: g.subtotal.label,
-      sums: g.subtotal.sum.map((id) => toHeader(id, idToHeader)),
-    };
-    group.subtotal = subtotal;
-  }
+  const group: FormatGroup = {
+    by: toHeader(g.by, idToHeader),
+    showDetailRows: g.showDetailRows,
+    // SPEC 8.12/21 v4: `group.summaryRows` as-is, or the deprecated `subtotal`
+    // translated (never both - see `effectiveGroupSummaryRows`).
+    summaryRows: effectiveGroupSummaryRows(g, rules.output.columns).rows,
+  };
   if (g.blankRowsAfter !== undefined) group.blankRowsAfter = g.blankRowsAfter;
   const agg = buildAggByHeader(rules);
   if (agg) group.agg = agg;

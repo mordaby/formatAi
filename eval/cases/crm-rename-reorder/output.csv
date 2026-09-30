@@ -1,0 +1,26 @@
+Contact ID,Last Name,First Name,Email Address,Phone,Account Status
+C-1000,Young,Gal,gal.young@example.com,555-0166,Inactive
+C-1001,Levi,Julia,julia.levi@example.com,555-0125,Active
+C-1002,Haddad,Julia,julia.haddad@example.com,555-0150,Churned
+C-1003,Abraham,Anna,anna.abraham@example.com,555-0169,Churned
+C-1004,Walker,Shani,shani.walker@example.com,555-0133,Lead
+C-1005,Bitton,Rotem,rotem.bitton@example.com,555-0180,Churned
+C-1006,Clark,Anna,anna.clark@example.com,555-0167,Churned
+C-1007,Taylor,Ron,ron.taylor@example.com,555-0129,Active
+C-1008,Peretz,Kevin,kevin.peretz@example.com,555-0190,Inactive
+C-1009,Davis,Daniel,daniel.davis@example.com,555-0131,Churned
+C-1010,Levi,Maria,maria.levi@example.com,555-0128,Lead
+C-1011,Miller,Shira,shira.miller@example.com,555-0116,Churned
+C-1012,Young,Yuval,yuval.young@example.com,555-0144,Active
+C-1013,Dahan,Omer,omer.dahan@example.com,555-0195,Inactive
+C-1014,Brown,Omer,omer.brown@example.com,555-0122,Inactive
+C-1015,Mizrahi,Michelle,michelle.mizrahi@example.com,555-0151,Lead
+C-1016,Azoulay,Rotem,rotem.azoulay@example.com,555-0142,Active
+C-1017,Brown,Tal,tal.brown@example.com,555-0100,Active
+C-1018,Johnson,Tal,tal.johnson@example.com,555-0156,Lead
+C-1019,Mizrahi,Laura,laura.mizrahi@example.com,555-0159,Inactive
+C-1020,Cohen,Naomi,naomi.cohen@example.com,555-0133,Inactive
+C-1021,Young,Tal,tal.young@example.com,555-0178,Churned
+C-1022,Miller,Kevin,kevin.miller@example.com,555-0154,Active
+C-1023,Davis,Sara,sara.davis@example.com,555-0167,Active
+C-1024,Abraham,Ori,ori.abraham@example.com,555-0107,Active

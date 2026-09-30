@@ -1,0 +1,10 @@
+{
+  "difficulty": "medium",
+  "domain": "supplierPriceList",
+  "features": [
+    "registryBase",
+    "padLeft",
+    "leadingZerosLost"
+  ],
+  "expect": "verified"
+}

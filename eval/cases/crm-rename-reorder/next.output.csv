@@ -1,0 +1,26 @@
+Contact ID,Last Name,First Name,Email Address,Phone,Account Status
+C-2000,Brown,Yossi,yossi.brown@example.com,555-0148,Lead
+C-2001,Azoulay,Dana,dana.azoulay@example.com,555-0135,Lead
+C-2002,Johnson,Daniel,daniel.johnson@example.com,555-0140,Churned
+C-2003,Smith,Omer,omer.smith@example.com,555-0193,Active
+C-2004,Cohen,Maria,maria.cohen@example.com,555-0139,Active
+C-2005,Taylor,Lior,lior.taylor@example.com,555-0122,Lead
+C-2006,Smith,Daniel,daniel.smith@example.com,555-0138,Lead
+C-2007,Wilson,Yossi,yossi.wilson@example.com,555-0184,Active
+C-2008,Cohen,Shani,shani.cohen@example.com,555-0160,Churned
+C-2009,Smith,Maria,maria.smith@example.com,555-0159,Churned
+C-2010,Levi,Yuval,yuval.levi@example.com,555-0126,Inactive
+C-2011,Levi,Laura,laura.levi@example.com,555-0184,Lead
+C-2012,Clark,Yuval,yuval.clark@example.com,555-0130,Inactive
+C-2013,Azoulay,Avi,avi.azoulay@example.com,555-0107,Churned
+C-2014,Taylor,Hila,hila.taylor@example.com,555-0183,Active
+C-2015,Cohen,Ron,ron.cohen@example.com,555-0131,Lead
+C-2016,Dahan,Shani,shani.dahan@example.com,555-0106,Churned
+C-2017,Brown,Anna,anna.brown@example.com,555-0150,Active
+C-2018,Miller,Ron,ron.miller@example.com,555-0125,Inactive
+C-2019,Bitton,Avi,avi.bitton@example.com,555-0108,Active
+C-2020,Clark,Daniel,daniel.clark@example.com,555-0132,Inactive
+C-2021,Dahan,Ori,ori.dahan@example.com,555-0182,Active
+C-2022,Young,Michelle,michelle.young@example.com,555-0153,Inactive
+C-2023,Cohen,Omer,omer.cohen@example.com,555-0128,Active
+C-2024,Wilson,Sara,sara.wilson@example.com,555-0116,VIP

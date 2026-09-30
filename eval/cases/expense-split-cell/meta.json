@@ -1,0 +1,10 @@
+{
+  "difficulty": "medium",
+  "domain": "expenseClaims",
+  "features": [
+    "splitCell",
+    "divisionRounding",
+    "skipEmpty"
+  ],
+  "expect": "verified"
+}

@@ -1,0 +1,10 @@
+{
+  "difficulty": "hard",
+  "domain": "productCatalog",
+  "features": [
+    "rtlMixedLanguage",
+    "concat",
+    "valueMapNormalize"
+  ],
+  "expect": "verified"
+}

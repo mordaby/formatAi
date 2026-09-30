@@ -1,0 +1,9 @@
+{
+  "difficulty": "hard",
+  "domain": "salesTransactions",
+  "features": [
+    "pivot",
+    "blocked"
+  ],
+  "expect": "blocked:pivotDetected"
+}

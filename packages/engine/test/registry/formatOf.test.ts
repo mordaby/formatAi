@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { RulesSchema, type LearnResult } from '@formatai/shared';
+import { RulesSchema, type LearnResult, type Rules } from '@formatai/shared';
+import { checkFormatLock } from '../../src/registry/checkFormatLock';
 import { formatOf } from '../../src/registry/formatOf';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -31,7 +32,11 @@ describe('formatOf: he-commissions-report (sort, group, subtotal, grand total)',
       { header: 'עמלה', format: '#,##0.00' },
     ]);
     expect(format.output.sheetName).toBe(rules.output.sheetName);
-    expect(format.output.grandTotal).toEqual(rules.output.grandTotal); // kept verbatim (still id-based; see registry/formatOf.ts DECISION)
+    // v4: the deprecated, id-based grandTotal is normalized into a header-keyed
+    // summaryRows entry (SPEC 8.12/21 v4).
+    expect(format.output.summaryRows).toEqual([
+      { label: 'סה"כ', labelColumn: 'פוליסה', cells: { פרמיה: 'sum', עמלה: 'sum' } },
+    ]);
   });
 
   it('normalizes sort ids to output headers', () => {
@@ -41,11 +46,11 @@ describe('formatOf: he-commissions-report (sort, group, subtotal, grand total)',
     ]);
   });
 
-  it('normalizes group.by and group.subtotal ids to output headers', () => {
+  it('normalizes group.by and the deprecated group.subtotal to header-keyed summaryRows', () => {
     expect(format.layout.group).toEqual({
       by: 'סוכן',
       showDetailRows: true,
-      subtotal: { labelHeader: 'פוליסה', label: 'סה"כ לסוכן', sums: ['פרמיה', 'עמלה'] },
+      summaryRows: [{ label: 'סה"כ לסוכן', labelColumn: 'פוליסה', cells: { פרמיה: 'sum', עמלה: 'sum' } }],
       blankRowsAfter: 1,
     });
   });
@@ -67,7 +72,7 @@ describe('formatOf: summary-by-agent (per-column agg, no detail rows)', () => {
       'Max Amount': 'max',
     });
     expect(format.layout.group?.showDetailRows).toBe(false);
-    expect(format.layout.group?.subtotal).toBeUndefined();
+    expect(format.layout.group?.summaryRows).toEqual([]);
   });
 
   it('keeps agg on each FormatOutputColumn too', () => {
@@ -104,6 +109,27 @@ describe('formatOf: DECISION fallback when a sort/group id is not shown in any o
   it('falls back to the raw id as the header, rather than throwing', () => {
     const format = formatOf(makeRules());
     expect(format.layout.sort).toEqual([{ header: 'hidden', dir: 'asc' }]);
+  });
+});
+
+describe('formatOf: SPEC 21 v4 - an old-style and a new-style conversion of the same format compare equal', () => {
+  it('replacing group.subtotal/output.grandTotal with equivalent summaryRows produces the identical Format', () => {
+    const oldStyle = readGolden('he-commissions-report');
+    const newStyle: Rules = structuredClone(oldStyle);
+    delete newStyle.output.grandTotal;
+    newStyle.output.summaryRows = [{ label: 'סה"כ', labelColumn: 'פוליסה', cells: { פרמיה: 'sum', עמלה: 'sum' } }];
+    const group = newStyle.transform.group;
+    if (!group) throw new Error('expected he-commissions-report to declare a group');
+    delete group.subtotal;
+    group.summaryRows = [{ label: 'סה"כ לסוכן', labelColumn: 'פוליסה', cells: { פרמיה: 'sum', עמלה: 'sum' } }];
+
+    const oldFormat = formatOf(oldStyle);
+    const newFormat = formatOf(newStyle);
+    expect(newFormat).toEqual(oldFormat);
+
+    // The format lock (SPEC 8.12) sees them as the same format in both directions.
+    expect(checkFormatLock(oldStyle, newFormat)).toEqual([]);
+    expect(checkFormatLock(newStyle, oldFormat)).toEqual([]);
   });
 });
 

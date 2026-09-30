@@ -10,13 +10,21 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
     "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^11.3.0",
     "@formatai/shared": "workspace:*",
     "fastify": "^5.12.5",
-    "mongodb": "^7.7.0"
+    "mongodb": "^7.7.0",
+    "openai": "^7.23.0",
+    "@formatai/engine": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.23.15"
+  },
+  "exports": {
+    "./learn": "./src/learn/index.ts",
+    "./llm": "./src/llm/index.ts",
+    "./env": "./src/env.ts"
   }
 }

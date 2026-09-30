@@ -438,6 +438,37 @@ async function buildBankExportLookup(): Promise<void> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Case 14: inventory-summary-rows (SPEC 21 v4 change: generic group.summaryRows
+// AND output.summaryRows - count/average/max at the group level, count/min/average
+// at the output level, both with a bold label row)
+// ---------------------------------------------------------------------------
+async function buildInventorySummaryRows(): Promise<void> {
+  await writeXlsxFile('inventory-summary-rows', 'input.xlsx', (wb) => {
+    const ws = wb.addWorksheet('Stock Count');
+    const header = ws.getRow(1);
+    ['Warehouse', 'SKU', 'Item', 'Qty', 'Cost'].forEach((h, i) => (header.getCell(i + 1).value = h));
+
+    type R = [string, string, string, number, number];
+    const rows: R[] = [
+      ['North', 'SKU101', 'Widget', 10, 2], // row 2
+      ['North', 'SKU102', 'Gadget', 20, 4], // row 3
+      ['South', 'SKU201', 'Widget', 5, 1], // row 4
+      ['North', 'SKU103', 'Bolt', 30, 6], // row 5
+      ['East', 'SKU301', 'Bolt', 100, 0.5], // row 6
+      ['South', 'SKU202', 'Gadget', 15, 3], // row 7
+    ];
+    rows.forEach((r, i) => {
+      const row = ws.getRow(2 + i);
+      row.getCell(1).value = r[0];
+      row.getCell(2).value = r[1];
+      row.getCell(3).value = r[2];
+      row.getCell(4).value = r[3];
+      row.getCell(5).value = r[4];
+    });
+  });
+}
+
 async function main(): Promise<void> {
   await buildHeCommissionsReport();
   buildEnRenameReorder();
@@ -452,6 +483,7 @@ async function main(): Promise<void> {
   await buildFreightCarrierB();
   await buildPayrollToDepositsFunction();
   await buildBankExportLookup();
+  await buildInventorySummaryRows();
   console.log('Golden test inputs written.');
 }
 

@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "txnId",
+        "header": "Txn ID",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "txnDate",
+        "header": "Date",
+        "type": "date",
+        "inputFormats": [
+          "DD/MM/YYYY"
+        ],
+        "required": true
+      },
+      {
+        "id": "description",
+        "header": "Description",
+        "type": "text"
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Reconciliation",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Txn ID",
+        "from": "txnId"
+      },
+      {
+        "header": "Value Date",
+        "from": "txnDate",
+        "format": "YYYY-MM-DD"
+      },
+      {
+        "header": "Description",
+        "from": "description"
+      },
+      {
+        "header": "Amount",
+        "from": "amount",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Bank export → reconciliation",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

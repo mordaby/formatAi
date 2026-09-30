@@ -42,7 +42,10 @@ interface ExpectedColumn {
 }
 
 interface ExpectedRow {
-  kind: 'title' | 'blank' | 'header' | 'data' | 'subtotal' | 'grandTotal';
+  // 'summaryRow' (SPEC 21 v4): a genuine `output.summaryRows`/`group.summaryRows`
+  // entry; 'subtotal'/'grandTotal' only ever appear for a case whose rules.json still
+  // uses the deprecated, id-based `group.subtotal`/`output.grandTotal`.
+  kind: 'title' | 'blank' | 'header' | 'data' | 'subtotal' | 'grandTotal' | 'summaryRow';
   bold?: boolean;
   sourceRow?: number;
   /**
@@ -117,14 +120,14 @@ const CASES = [
 
 /** The numFmt an actual xlsx cell should carry, per writeXlsx.ts's own rule:
  * data rows fall back to the column format when the cell has none; subtotal/
- * grandTotal rows only carry a format on cells that were actually summed
- * (their other cells are never dressed with the column's format); header,
- * title and blank rows never carry a numFmt at all. */
+ * grandTotal/summaryRow rows only carry a format on cells that were actually
+ * aggregated (their other cells are never dressed with the column's format);
+ * header, title and blank rows never carry a numFmt at all. */
 function expectedNumFmt(row: ExpectedRow, colIdx: number, columns: ExpectedColumn[]): string | undefined {
   const fmt = columns[colIdx]?.format;
   if (fmt === undefined) return undefined;
   if (row.kind === 'data') return fmt;
-  if (row.kind === 'subtotal' || row.kind === 'grandTotal') {
+  if (row.kind === 'subtotal' || row.kind === 'grandTotal' || row.kind === 'summaryRow') {
     return row.cells[colIdx] === null ? undefined : fmt;
   }
   return undefined;
@@ -346,6 +349,55 @@ describe.each(V3_XLSX_CASES)('golden case (SPEC 21 v3 amendment): %s', (name) =>
         expect(result.sheet.rows[i]?.sourceRow, `${name}: row ${i} sourceRow`).toBe(r.sourceRow);
       }
     });
+    await assertXlsxOutput(result.bytes, expected, name);
+  });
+
+  it('is deterministic: converting the same input twice is byte-identical', async () => {
+    const { rules, inputFile, bytes } = loadCase(name);
+    const a = await convertFile(structuredClone(rules), bytes, inputFile);
+    const b = await convertFile(structuredClone(rules), bytes, inputFile);
+    if (!a.ok || !b.ok) throw new Error('convertFile failed');
+    expect(a.bytes.length, `${name}: determinism (length)`).toBe(b.bytes.length);
+    expect(Buffer.from(b.bytes), `${name}: determinism (bytes)`).toEqual(Buffer.from(a.bytes));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC 21 v4 change: generic summary rows (8.6, 8.12). `inventory-summary-rows`
+// exercises both `transform.group.summaryRows` and `output.summaryRows` together,
+// with count/average/max at the group level and count/min/average at the output
+// level, and a bold label row at each level - hand-derived exactly like every other
+// case here (see the file header), never produced by running the engine.
+// ---------------------------------------------------------------------------
+
+const V4_XLSX_CASES = ['inventory-summary-rows'] as const;
+
+describe.each(V4_XLSX_CASES)('golden case (SPEC 21 v4 change: generic summary rows): %s', (name) => {
+  it('rules parse with RulesSchema, and type-check/limit-check cleanly', () => {
+    const { rules } = loadCase(name);
+    expect(() => RulesSchema.parse(rules), `${name}: RulesSchema`).not.toThrow();
+    expect(typeCheck(rules), `${name}: typeCheck`).toEqual([]);
+    expect(checkLimits(rules, 'paid'), `${name}: checkLimits`).toEqual([]);
+  });
+
+  it('matches the hand-derived expected output, cell by cell', async () => {
+    const { rules, expected, inputFile, bytes } = loadCase(name);
+    if (expected.outputType !== 'xlsx') throw new Error(`${name}: expected an xlsx case`);
+    const result = await convertFile(rules, bytes, inputFile);
+    if (!result.ok) throw new Error(`convertFile failed: ${JSON.stringify(result.error)}`);
+
+    expect(result.flags, `${name}: flags`).toEqual(expected.flags);
+    expect(result.summary, `${name}: summary`).toEqual(expected.summary);
+    expect(result.sheet.rows.map((r) => r.kind), `${name}: row kinds`).toEqual(
+      expected.rows.map((r) => r.kind),
+    );
+    expected.rows.forEach((r, i) => {
+      if (r.sourceRow !== undefined) {
+        expect(result.sheet.rows[i]?.sourceRow, `${name}: row ${i} sourceRow`).toBe(r.sourceRow);
+      }
+    });
+    // assertXlsxOutput checks every row's cells one by one: value, numFmt, bold
+    // and flagged state (see its own definition above).
     await assertXlsxOutput(result.bytes, expected, name);
   });
 

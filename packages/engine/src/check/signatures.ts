@@ -150,13 +150,68 @@ export type ArgSpec =
    * by `typeCheck.ts` (arity is already checked by `checkRules`). */
   | { shape: 'call' };
 
+// ---------- Formula syntax (learn-v5): the LLM/editor TEXT form of these same ops ----------
+// SPEC 8.3/LEARN_PROMPT learn-v5: the LLM writes every expression as formula text (e.g.
+// "round(amount * 0.17, 2)") instead of a JSON expression tree; `packages/engine/src/
+// formula` parses that text into exactly the Expr AST this file already describes, and
+// prints an Expr back to formula text. Two families are purely infix, parsed/printed by
+// the core expression grammar itself, never as a function call: add/sub/mul/div ("+ - * /")
+// and the six comparisons ("= <> < > <= >="). Every other op is written as a function call
+// `fn(param1, param2, ...)` with a FIXED positional parameter order - defined ONCE here so
+// the parser, the printer and the prompt generator can never drift apart from each other or
+// from `args`/`result` above.
+export type FormulaParamKind =
+  | 'expr' // a full sub-expression
+  | 'exprRest' // all remaining arguments, each a sub-expression (must be last)
+  | 'constRest' // all remaining arguments, each a literal string/number/boolean/null (must be last)
+  | 'int' // an integer literal (may be negative)
+  | 'char' // a one-character string literal
+  | 'string' // a string literal
+  | { enum: readonly string[] }; // a string literal restricted to this fixed set
+
+export interface FormulaParam {
+  name: string;
+  kind: FormulaParamKind;
+  /** 'exprRest'/'constRest' only: the fewest arguments the rest may bind - SPEC 8.3's own
+   * per-op minimum (e.g. and/or/concat/coalesce/min/max all need >= 1). */
+  min?: number;
+  /** A trailing param that may be omitted (e.g. toText's `format`, lookup's `onMissing` -
+   * LEARN_PROMPT: "Set onMissing to flag", so that's its default when omitted). */
+  optional?: boolean;
+  default?: string;
+}
+
+export type FormulaForm =
+  /** add/sub/mul/div and the six comparisons: parsed/printed by the core grammar's
+   * infix operators, never as a function call. */
+  | { form: 'infix'; symbol: string }
+  /** Every other op: `fn(param1, param2, ...)`, in this fixed order. */
+  | { form: 'call'; fn: string; params: FormulaParam[] }
+  /** Irregular shapes the generic call-parameter machinery can't express: `switch`
+   * (variadic cond/value pairs plus a trailing else) and the `call` op itself (not a
+   * fixed keyword - it's the fallback for any OTHER identifier, SPEC 8.14's
+   * `transform.functions`). Both are hand-written, once, in `formula/parseFormula.ts`
+   * and `formula/printFormula.ts`. */
+  | { form: 'special' };
+
 export interface OpSignature {
   op: SigOp;
   args: ArgSpec;
   result: ResultSpec;
   /** A short human-readable signature, for the editor and the prompt (SPEC 8.3/8.14). */
   doc: string;
+  /** The formula-text form of this op (see above). */
+  formula: FormulaForm;
 }
+
+function call(fn: string, params: FormulaParam[]): FormulaForm {
+  return { form: 'call', fn, params };
+}
+function infix(symbol: string): FormulaForm {
+  return { form: 'infix', symbol };
+}
+const special: FormulaForm = { form: 'special' };
+const arg: FormulaParam = { name: 'arg', kind: 'expr' };
 
 const numericPreserve: ResultSpec = { kind: 'numericPreserveInteger' };
 const decimalResult: ResultSpec = { kind: 'fixed', type: 'decimal' };
@@ -188,53 +243,71 @@ export const INTEGER_PRESERVING_OPS: ReadonlySet<SigOp> = new Set([
  */
 export const OP_SIGNATURES: Readonly<Record<SigOp, OpSignature>> = {
   // ---- Arithmetic (SPEC 8.3) ----
-  add: { op: 'add', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer' },
-  sub: { op: 'sub', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer' },
-  mul: { op: 'mul', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer' },
-  div: { op: 'div', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: decimalResult, doc: '(decimal|integer, ...) -> decimal (dividing by zero flags the row)' },
-  neg: { op: 'neg', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal' },
-  abs: { op: 'abs', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal' },
-  floor: { op: 'floor', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal' },
-  ceil: { op: 'ceil', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal' },
-  mod: { op: 'mod', args: { shape: 'fixedSameType', type: 'decimal', count: 2 }, result: numericPreserve, doc: '(decimal|integer, decimal|integer) -> decimal, or integer if both args are integer' },
-  min: { op: 'min', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer' },
-  max: { op: 'max', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer' },
-  round: { op: 'round', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal (rounds half away from zero)' },
+  add: { op: 'add', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer', formula: infix('+') },
+  sub: { op: 'sub', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer', formula: infix('-') },
+  mul: { op: 'mul', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer', formula: infix('*') },
+  div: { op: 'div', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: decimalResult, doc: '(decimal|integer, ...) -> decimal (dividing by zero flags the row)', formula: infix('/') },
+  neg: { op: 'neg', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal', formula: call('neg', [arg]) },
+  abs: { op: 'abs', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal', formula: call('abs', [arg]) },
+  floor: { op: 'floor', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal', formula: call('floor', [arg]) },
+  ceil: { op: 'ceil', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal', formula: call('ceil', [arg]) },
+  mod: { op: 'mod', args: { shape: 'fixedSameType', type: 'decimal', count: 2 }, result: numericPreserve, doc: '(decimal|integer, decimal|integer) -> decimal, or integer if both args are integer', formula: call('mod', [{ name: 'a', kind: 'expr' }, { name: 'b', kind: 'expr' }]) },
+  min: { op: 'min', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer', formula: call('min', [{ name: 'args', kind: 'exprRest', min: 1 }]) },
+  max: { op: 'max', args: { shape: 'variadicSameType', type: 'decimal', min: 1 }, result: numericPreserve, doc: '(decimal|integer, ...) -> decimal, or integer if every arg is integer', formula: call('max', [{ name: 'args', kind: 'exprRest', min: 1 }]) },
+  round: { op: 'round', args: { shape: 'unary', type: 'decimal' }, result: decimalResult, doc: '(decimal|integer) -> decimal (rounds half away from zero)', formula: call('round', [arg, { name: 'digits', kind: 'int' }]) },
 
   // ---- Text (SPEC 8.3: "text ops -> text") ----
-  concat: { op: 'concat', args: { shape: 'variadicSameType', type: 'text', min: 1 }, result: textResult, doc: '(text|idLike, ...) -> text' },
-  substr: { op: 'substr', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text' },
-  trim: { op: 'trim', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text' },
-  upper: { op: 'upper', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text' },
-  lower: { op: 'lower', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text' },
+  concat: { op: 'concat', args: { shape: 'variadicSameType', type: 'text', min: 1 }, result: textResult, doc: '(text|idLike, ...) -> text', formula: call('concat', [{ name: 'args', kind: 'exprRest', min: 1 }]) },
+  substr: { op: 'substr', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text', formula: call('substr', [arg, { name: 'start', kind: 'int' }, { name: 'length', kind: 'int' }]) },
+  trim: { op: 'trim', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text', formula: call('trim', [arg]) },
+  upper: { op: 'upper', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text', formula: call('upper', [arg]) },
+  lower: { op: 'lower', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text', formula: call('lower', [arg]) },
   // SPEC 8.3: "length ... -> integer" (the one text op that isn't text -> text).
-  length: { op: 'length', args: { shape: 'unary', type: 'text' }, result: integerResult, doc: '(text|idLike) -> integer' },
-  replaceText: { op: 'replaceText', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text (literal find/with)' },
-  padLeft: { op: 'padLeft', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text' },
-  split: { op: 'split', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text (one part)' },
+  length: { op: 'length', args: { shape: 'unary', type: 'text' }, result: integerResult, doc: '(text|idLike) -> integer', formula: call('length', [arg]) },
+  replaceText: { op: 'replaceText', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text (literal find/with)', formula: call('replaceText', [arg, { name: 'find', kind: 'string' }, { name: 'with', kind: 'string' }]) },
+  padLeft: { op: 'padLeft', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text', formula: call('padLeft', [arg, { name: 'length', kind: 'int' }, { name: 'char', kind: 'char' }]) },
+  split: { op: 'split', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text (one part)', formula: call('split', [arg, { name: 'separator', kind: 'string' }, { name: 'index', kind: 'int' }]) },
 
   // ---- Conversion (SPEC 8.3) ----
-  toNumber: { op: 'toNumber', args: { shape: 'unary', type: 'text' }, result: decimalResult, doc: '(text|idLike) -> decimal (a value that doesn\'t parse flags the row)' },
+  toNumber: { op: 'toNumber', args: { shape: 'unary', type: 'text' }, result: decimalResult, doc: '(text|idLike) -> decimal (a value that doesn\'t parse flags the row)', formula: call('toNumber', [arg]) },
   // toText's argument is deliberately unconstrained: it exists precisely to turn any
   // value (number, date, boolean, text) into text (SPEC 8.3: "toText{format?} (number
   // or date format)").
-  toText: { op: 'toText', args: { shape: 'unary', type: 'any' }, result: textResult, doc: '(any) -> text' },
+  toText: { op: 'toText', args: { shape: 'unary', type: 'any' }, result: textResult, doc: '(any) -> text', formula: call('toText', [arg, { name: 'format', kind: 'string', optional: true }]) },
 
   // ---- Dates (SPEC 8.3) ----
-  datePart: { op: 'datePart', args: { shape: 'unary', type: 'date' }, result: integerResult, doc: '(date) -> integer' },
-  dateFormat: { op: 'dateFormat', args: { shape: 'unary', type: 'date' }, result: textResult, doc: '(date) -> text' },
-  dateAdd: { op: 'dateAdd', args: { shape: 'unary', type: 'date' }, result: dateResult, doc: '(date) -> date' },
-  dateDiff: { op: 'dateDiff', args: { shape: 'fixedSameType', type: 'date', count: 2 }, result: integerResult, doc: '(date, date) -> integer' },
-  endOfMonth: { op: 'endOfMonth', args: { shape: 'unary', type: 'date' }, result: dateResult, doc: '(date) -> date' },
+  datePart: { op: 'datePart', args: { shape: 'unary', type: 'date' }, result: integerResult, doc: '(date) -> integer', formula: call('datePart', [arg, { name: 'part', kind: { enum: ['year', 'month', 'day'] } }]) },
+  dateFormat: { op: 'dateFormat', args: { shape: 'unary', type: 'date' }, result: textResult, doc: '(date) -> text', formula: call('dateFormat', [arg, { name: 'format', kind: 'string' }]) },
+  dateAdd: { op: 'dateAdd', args: { shape: 'unary', type: 'date' }, result: dateResult, doc: '(date) -> date', formula: call('dateAdd', [arg, { name: 'amount', kind: 'int' }, { name: 'unit', kind: { enum: ['days', 'months', 'years'] } }]) },
+  dateDiff: { op: 'dateDiff', args: { shape: 'fixedSameType', type: 'date', count: 2 }, result: integerResult, doc: '(date, date) -> integer', formula: call('dateDiff', [{ name: 'a', kind: 'expr' }, { name: 'b', kind: 'expr' }, { name: 'unit', kind: { enum: ['days', 'months', 'years'] } }]) },
+  endOfMonth: { op: 'endOfMonth', args: { shape: 'unary', type: 'date' }, result: dateResult, doc: '(date) -> date', formula: call('endOfMonth', [arg]) },
 
   // ---- Logic (SPEC 8.3: "conditions -> boolean"; if/switch/coalesce unify branches) ----
-  if: { op: 'if', args: { shape: 'if' }, result: unifyResult, doc: '(boolean, T, T) -> T' },
-  switch: { op: 'switch', args: { shape: 'switch' }, result: unifyResult, doc: '({boolean: T}[], else: T) -> T' },
-  coalesce: { op: 'coalesce', args: { shape: 'variadicUnify', min: 1 }, result: unifyResult, doc: '(T, T, ...) -> T' },
+  if: { op: 'if', args: { shape: 'if' }, result: unifyResult, doc: '(boolean, T, T) -> T', formula: call('if', [{ name: 'cond', kind: 'expr' }, { name: 'then', kind: 'expr' }, { name: 'else', kind: 'expr' }]) },
+  // switch's shape (variadic cond/value pairs, then a trailing else) doesn't fit the
+  // generic positional-param model; hand-written in formula/parseFormula.ts and
+  // formula/printFormula.ts, both documented there as: switch(cond1, value1, cond2,
+  // value2, ..., elseValue).
+  switch: { op: 'switch', args: { shape: 'switch' }, result: unifyResult, doc: '({boolean: T}[], else: T) -> T', formula: special },
+  coalesce: { op: 'coalesce', args: { shape: 'variadicUnify', min: 1 }, result: unifyResult, doc: '(T, T, ...) -> T', formula: call('coalesce', [{ name: 'args', kind: 'exprRest', min: 1 }]) },
 
   // ---- Lookup / calls (SPEC 8.3, 8.14: resolved against the rules file's own tables/functions) ----
-  lookup: { op: 'lookup', args: { shape: 'lookup' }, result: dynamicResult, doc: '(key) -> the type of table.<return> (from its values)' },
-  call: { op: 'call', args: { shape: 'call' }, result: dynamicResult, doc: '(args matching the function\'s params) -> the function\'s declared `returns`' },
+  lookup: {
+    op: 'lookup',
+    args: { shape: 'lookup' },
+    result: dynamicResult,
+    doc: '(key) -> the type of table.<return> (from its values)',
+    formula: call('lookup', [
+      { name: 'table', kind: 'string' },
+      { name: 'key', kind: 'expr' },
+      { name: 'return', kind: 'string' },
+      { name: 'onMissing', kind: { enum: ['flag', 'empty', 'keep'] }, optional: true, default: 'flag' },
+    ]),
+  },
+  // `call` isn't a fixed keyword: it's the fallback formula form for any identifier
+  // that ISN'T one of these built-in ops (SPEC 8.14's `transform.functions`), so it has
+  // no fixed `fn`/`params` of its own - hand-written in parseFormula.ts/printFormula.ts.
+  call: { op: 'call', args: { shape: 'call' }, result: dynamicResult, doc: '(args matching the function\'s params) -> the function\'s declared `returns`', formula: special },
 
   // ---- Conditions (SPEC 8.3: "conditions -> boolean") ----
   // DECISION: SPEC 8.3 only spells out "eq/ne compare same-kind values" explicitly;
@@ -242,19 +315,19 @@ export const OP_SIGNATURES: Readonly<Record<SigOp, OpSignature>> = {
   // Treated identically to eq/ne here - both operands must `unify` to one type, exactly
   // as `if`/`switch`/`coalesce` do - rather than inventing an "orderable" type family
   // the spec never names.
-  eq: { op: 'eq', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean' },
-  ne: { op: 'ne', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean' },
-  gt: { op: 'gt', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean' },
-  gte: { op: 'gte', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean' },
-  lt: { op: 'lt', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean' },
-  lte: { op: 'lte', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean' },
-  isEmpty: { op: 'isEmpty', args: { shape: 'unary', type: 'any' }, result: booleanFixed, doc: '(any) -> boolean' },
-  notEmpty: { op: 'notEmpty', args: { shape: 'unary', type: 'any' }, result: booleanFixed, doc: '(any) -> boolean' },
-  oneOf: { op: 'oneOf', args: { shape: 'unary', type: 'any' }, result: booleanFixed, doc: '(any) -> boolean (against literal values)' },
-  startsWith: { op: 'startsWith', args: { shape: 'unary', type: 'text' }, result: booleanFixed, doc: '(text|idLike) -> boolean' },
-  endsWith: { op: 'endsWith', args: { shape: 'unary', type: 'text' }, result: booleanFixed, doc: '(text|idLike) -> boolean' },
-  contains: { op: 'contains', args: { shape: 'unary', type: 'text' }, result: booleanFixed, doc: '(text|idLike) -> boolean' },
-  and: { op: 'and', args: { shape: 'variadicSameType', type: 'boolean', min: 1 }, result: booleanFixed, doc: '(boolean, ...) -> boolean' },
-  or: { op: 'or', args: { shape: 'variadicSameType', type: 'boolean', min: 1 }, result: booleanFixed, doc: '(boolean, ...) -> boolean' },
-  not: { op: 'not', args: { shape: 'unary', type: 'boolean' }, result: booleanFixed, doc: '(boolean) -> boolean' },
+  eq: { op: 'eq', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean', formula: infix('=') },
+  ne: { op: 'ne', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean', formula: infix('<>') },
+  gt: { op: 'gt', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean', formula: infix('>') },
+  gte: { op: 'gte', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean', formula: infix('>=') },
+  lt: { op: 'lt', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean', formula: infix('<') },
+  lte: { op: 'lte', args: { shape: 'variadicUnify', min: 2 }, result: compareResult, doc: '(T, T) -> boolean', formula: infix('<=') },
+  isEmpty: { op: 'isEmpty', args: { shape: 'unary', type: 'any' }, result: booleanFixed, doc: '(any) -> boolean', formula: call('isEmpty', [arg]) },
+  notEmpty: { op: 'notEmpty', args: { shape: 'unary', type: 'any' }, result: booleanFixed, doc: '(any) -> boolean', formula: call('notEmpty', [arg]) },
+  oneOf: { op: 'oneOf', args: { shape: 'unary', type: 'any' }, result: booleanFixed, doc: '(any) -> boolean (against literal values)', formula: call('oneOf', [arg, { name: 'values', kind: 'constRest', min: 1 }]) },
+  startsWith: { op: 'startsWith', args: { shape: 'unary', type: 'text' }, result: booleanFixed, doc: '(text|idLike) -> boolean', formula: call('startsWith', [arg, { name: 'text', kind: 'string' }]) },
+  endsWith: { op: 'endsWith', args: { shape: 'unary', type: 'text' }, result: booleanFixed, doc: '(text|idLike) -> boolean', formula: call('endsWith', [arg, { name: 'text', kind: 'string' }]) },
+  contains: { op: 'contains', args: { shape: 'unary', type: 'text' }, result: booleanFixed, doc: '(text|idLike) -> boolean', formula: call('contains', [arg, { name: 'text', kind: 'string' }]) },
+  and: { op: 'and', args: { shape: 'variadicSameType', type: 'boolean', min: 1 }, result: booleanFixed, doc: '(boolean, ...) -> boolean', formula: call('and', [{ name: 'args', kind: 'exprRest', min: 1 }]) },
+  or: { op: 'or', args: { shape: 'variadicSameType', type: 'boolean', min: 1 }, result: booleanFixed, doc: '(boolean, ...) -> boolean', formula: call('or', [{ name: 'args', kind: 'exprRest', min: 1 }]) },
+  not: { op: 'not', args: { shape: 'unary', type: 'boolean' }, result: booleanFixed, doc: '(boolean) -> boolean', formula: call('not', [arg]) },
 };

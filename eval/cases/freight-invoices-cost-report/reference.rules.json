@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "invoiceNo",
+        "header": "Invoice No",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "carrierCode",
+        "header": "Carrier Code",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "shipDate",
+        "header": "Ship Date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "status",
+        "header": "Status",
+        "type": "text",
+        "required": true
+      }
+    ],
+    "rowFilters": [
+      {
+        "column": "status",
+        "op": "ne",
+        "value": "Cancelled"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [
+      {
+        "column": "carrierCode",
+        "map": {
+          "AF": "Atlas Freight",
+          "BOL": "Blue Ocean Logistics",
+          "SC": "Swift Cargo"
+        },
+        "onMissing": "flag"
+      }
+    ],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Cost Report",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Invoice No",
+        "from": "invoiceNo"
+      },
+      {
+        "header": "Carrier",
+        "from": "carrierCode"
+      },
+      {
+        "header": "Ship Date",
+        "from": "shipDate",
+        "format": "DD/MM/YYYY"
+      },
+      {
+        "header": "Amount",
+        "from": "amount",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Freight invoices → cost report",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

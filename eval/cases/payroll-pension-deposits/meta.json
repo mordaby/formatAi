@@ -1,0 +1,12 @@
+{
+  "difficulty": "medium",
+  "domain": "payroll",
+  "features": [
+    "calculation",
+    "rounding",
+    "sharedFunction",
+    "prefixOfId",
+    "maskingGap"
+  ],
+  "expect": "verified"
+}

@@ -5,23 +5,33 @@
 // `packages/engine/src/registry/checkFormatLock.ts` to enforce SPEC 8.12's format lock.
 //
 // SPEC 8.12: "It holds: `output` (columns, headers, number formats, widths, title rows,
-// grand total, direction, language, `file`); the layout parts that live in `transform`,
-// normalized to output headers: `sort`, and `group` (by, subtotal label and sums, blank
-// rows, showDetailRows, per-column agg); output validations (`on: 'output'`)."
+// summary rows, direction, language, `file`); the layout parts that live in `transform`,
+// normalized to output headers: `sort`, and `group` (by, summary rows, blank rows,
+// showDetailRows, per-column agg); output validations (`on: 'output'`)."
+//
+// v4 change (SPEC 21): the sum-only, id-based `grandTotal`/`subtotal` are replaced by
+// generic `summaryRows` (SPEC 8.12). A `SummaryRow`'s `cells`/`labelColumn` already name
+// OUTPUT HEADERS, not ids (SPEC 8.12: "so a summary row belongs to the format"), so -
+// unlike `sort`/`group.by`, which are translated from ids by `formatOf` - a rules file's
+// own `output.summaryRows`/`group.summaryRows` need no translation at all here; only the
+// deprecated, id-based `grandTotal`/`subtotal` still need one (SPEC 21 v4, done by
+// `packages/engine/src/rules/summaryRows.ts`, shared with the engine's runtime layout so
+// an old-style and a new-style conversion of the same format normalize to the same
+// `summaryRows` and compare equal under `checkFormatLock`).
 //
 // DECISION: SPEC 8.12 only calls out `sort` and `group` as "normalized to output
-// headers" - `output` itself (titleRows' `agg.column`, `grandTotal.labelColumn`/`sum`)
-// keeps referencing whatever ids the conversion's `transform`/`input` declared. That is
-// intentional, not an oversight: a second conversion taught in attach mode (SPEC 5 A2)
-// is taught against the existing format/rules, so it is expected to reuse the same
-// computed/input ids the first conversion used for anything `output` still references by
-// id. `checkFormatLock` therefore compares `output` as-is (minus `columns[].from`), and
-// only `sort`/`group` get the id -> output-header translation before comparing.
+// headers" - `output` itself (titleRows' `agg.column`) keeps referencing whatever ids
+// the conversion's `transform`/`input` declared. That is intentional, not an oversight:
+// a second conversion taught in attach mode (SPEC 5 A2) is taught against the existing
+// format/rules, so it is expected to reuse the same computed/input ids the first
+// conversion used for anything `output` still references by id. `checkFormatLock`
+// therefore compares `output` as-is (minus `columns[].from`), and only `sort`/`group`
+// get the id -> output-header translation before comparing.
 import type {
-  GrandTotal,
   HeaderStyle,
   OutputColumnAgg,
   OutputFile,
+  SummaryRow,
   TitleRow,
   Validation,
 } from './rules/schema';
@@ -36,7 +46,9 @@ export interface FormatOutputColumn {
 
 /** SPEC 8.12 "output" side of a format. `file` is always present (defaults made
  * explicit by `formatOf`, so `absent == { type: 'xlsx' }` never has to be special-cased
- * again downstream). */
+ * again downstream). `summaryRows` is always present too (an empty array when the
+ * format has none), so an old-style (translated) and a new-style conversion compare
+ * equal without a presence/absence special case. */
 export interface FormatOutput {
   file: OutputFile;
   sheetName: string;
@@ -45,7 +57,9 @@ export interface FormatOutput {
   titleRows: TitleRow[];
   columns: FormatOutputColumn[];
   headerStyle?: HeaderStyle;
-  grandTotal?: GrandTotal;
+  /** SPEC 8.12 v4: summary rows after all data rows, in order (already header-keyed -
+   * see the file header). */
+  summaryRows: SummaryRow[];
 }
 
 /** `transform.sort`, with `column` (an id) replaced by the output header it feeds
@@ -56,23 +70,17 @@ export interface FormatSortKey {
   dir: 'asc' | 'desc';
 }
 
-/** `transform.group.subtotal`, ids replaced by output headers. */
-export interface FormatGroupSubtotal {
-  labelHeader: string;
-  label: string;
-  sums: string[];
-}
-
 /** `transform.group`, ids replaced by output headers, plus the per-output-column `agg`
  * map (SPEC 8.6 summary outputs: "each output column gets `agg`"). `agg` is keyed by
  * output header directly (an output column's `agg` sits on the column itself, so no id
- * translation is needed for it - unlike `by`/`subtotal`, which come from `transform`). */
+ * translation is needed for it - unlike `by`, which comes from `transform`). */
 export interface FormatGroup {
   by: string;
   showDetailRows: boolean;
-  subtotal?: FormatGroupSubtotal;
   blankRowsAfter?: number;
   agg?: Record<string, OutputColumnAgg>;
+  /** SPEC 8.12 v4: summary rows after this group, in order (see `FormatOutput.summaryRows`). */
+  summaryRows: SummaryRow[];
 }
 
 export interface FormatLayout {

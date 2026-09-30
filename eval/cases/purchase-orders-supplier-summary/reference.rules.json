@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "poNo",
+        "header": "PO No",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "supplier",
+        "header": "Supplier",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "item",
+        "header": "Item",
+        "type": "text"
+      },
+      {
+        "id": "qty",
+        "header": "Qty",
+        "type": "integer",
+        "required": true
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "supplier",
+        "dir": "asc"
+      }
+    ],
+    "group": {
+      "by": "supplier",
+      "showDetailRows": false
+    }
+  },
+  "output": {
+    "sheetName": "Supplier Spend Summary",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Supplier",
+        "from": "supplier",
+        "agg": "first"
+      },
+      {
+        "header": "Orders",
+        "from": "poNo",
+        "agg": "count"
+      },
+      {
+        "header": "Total Qty",
+        "from": "qty",
+        "agg": "sum"
+      },
+      {
+        "header": "Total Amount",
+        "from": "amount",
+        "agg": "sum",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Avg Order Value",
+        "from": "amount",
+        "agg": "average",
+        "format": "#,##0.00"
+      }
+    ],
+    "summaryRows": [
+      {
+        "label": "Total",
+        "labelColumn": "Supplier",
+        "bold": true,
+        "cells": {
+          "Total Qty": "sum",
+          "Total Amount": "sum"
+        }
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Purchase orders → supplier spend summary",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

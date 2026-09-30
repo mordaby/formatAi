@@ -1,0 +1,11 @@
+{
+  "difficulty": "medium",
+  "domain": "bankExport",
+  "features": [
+    "dateFormat",
+    "numberFormat",
+    "ddmmVsMmdd",
+    "parenthesesNegative"
+  ],
+  "expect": "verified"
+}

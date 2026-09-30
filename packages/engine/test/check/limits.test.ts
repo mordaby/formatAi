@@ -148,6 +148,39 @@ describe('checkLimits: rule counting vs tier (SPEC 8.14/11)', () => {
     rules.validations = validations;
     expect(checkLimits(rules, 'registered')).toEqual([]);
   });
+
+  it('each summaryRows entry counts as one rule (SPEC 21 v4)', () => {
+    // 1 (group itself) + 2 output.summaryRows + 1 group.summaryRows = 4 rules besides
+    // the validations; fill the rest with validations right up to the tier limit, then
+    // one more tips it over.
+    const extraRuleCount = 4;
+    const makeRules = (validationCount: number): LearnResult =>
+      baseRules({
+        transform: {
+          computed: [],
+          valueMaps: [],
+          sort: [],
+          group: { by: 'a', showDetailRows: true, summaryRows: [{ cells: { a: 'count' } }] },
+        },
+        output: {
+          sheetName: 'Out',
+          direction: 'ltr',
+          language: 'en',
+          titleRows: [],
+          columns: [],
+          summaryRows: [{ cells: { a: 'count' } }, { cells: { a: 'count' } }],
+        },
+        validations: Array.from({ length: validationCount }, (_, i) => ({
+          column: `c${i}`,
+          rule: 'required' as const,
+          severity: 'flag' as const,
+        })),
+      });
+
+    expect(checkLimits(makeRules(tiers.registered.rulesPerFormat - extraRuleCount), 'registered')).toEqual([]);
+    const problems = checkLimits(makeRules(tiers.registered.rulesPerFormat - extraRuleCount + 1), 'registered');
+    expect(problems.some((p) => p.message.includes('rules per format'))).toBe(true);
+  });
 });
 
 describe('checkLimits: function/table counts, table rows, duplicate keys, cycles', () => {

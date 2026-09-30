@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "department",
+        "header": "Department",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "category",
+        "header": "Category",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "jan",
+        "header": "Jan",
+        "type": "decimal"
+      },
+      {
+        "id": "feb",
+        "header": "Feb",
+        "type": "decimal"
+      },
+      {
+        "id": "mar",
+        "header": "Mar",
+        "type": "decimal"
+      }
+    ]
+  },
+  "transform": {
+    "expand": {
+      "mode": "columnsToRows",
+      "columns": [
+        "jan",
+        "feb",
+        "mar"
+      ],
+      "labelId": "month",
+      "valueId": "amount",
+      "valueType": "decimal",
+      "skipEmpty": true
+    },
+    "computed": [],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "department",
+        "dir": "asc"
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "Budget by Month",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Department",
+        "from": "department"
+      },
+      {
+        "header": "Category",
+        "from": "category"
+      },
+      {
+        "header": "Month",
+        "from": "month"
+      },
+      {
+        "header": "Amount",
+        "from": "amount",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Monthly budget → rows",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

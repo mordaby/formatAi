@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "sku",
+        "header": "מקט",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "name",
+        "header": "שם",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "category",
+        "header": "קטגוריה",
+        "type": "text"
+      },
+      {
+        "id": "price",
+        "header": "מחיר",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "inStock",
+        "header": "במלאי",
+        "type": "text"
+      },
+      {
+        "id": "brand",
+        "header": "יצרן",
+        "type": "text"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "fullLabel",
+        "type": "text",
+        "expr": {
+          "op": "concat",
+          "args": [
+            {
+              "col": "sku"
+            },
+            {
+              "const": " - "
+            },
+            {
+              "col": "name"
+            }
+          ]
+        }
+      }
+    ],
+    "valueMaps": [
+      {
+        "column": "category",
+        "map": {
+          "כלים חשמליים": "כלי חשמל"
+        },
+        "onMissing": "keep"
+      }
+    ],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "קטלוג מוצרים",
+    "direction": "rtl",
+    "language": "he",
+    "headerStyle": {
+      "bold": true
+    },
+    "titleRows": [],
+    "columns": [
+      {
+        "header": "מקט",
+        "from": "sku"
+      },
+      {
+        "header": "תיאור מלא",
+        "from": "fullLabel"
+      },
+      {
+        "header": "קטגוריה",
+        "from": "category"
+      },
+      {
+        "header": "מחיר",
+        "from": "price",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "במלאי",
+        "from": "inStock"
+      },
+      {
+        "header": "יצרן",
+        "from": "brand"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "קטלוג מוצרים RTL",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

@@ -165,7 +165,7 @@ describe('decimal arithmetic and rounding vs Excel', () => {
   it('sums are exact (no float drift)', () => {
     const r = rules({
       columns: [col('x', 'decimal')],
-      output: { grandTotal: { labelColumn: 'x', label: 'T', sum: ['x'] } },
+      output: { summaryRows: [{ labelColumn: 'x', label: 'T', cells: { x: 'sum' } }] },
     });
     const rows = Array.from({ length: 10 }, () => [0.1]);
     const res = runOk(r, table(['x'], rows));
@@ -173,7 +173,7 @@ describe('decimal arithmetic and rounding vs Excel', () => {
     expect(res.sheet.rows.at(-1)!.cells[0]!.v).toBe(1);
     const r2 = rules({
       columns: [col('x', 'decimal'), col('k')],
-      output: { grandTotal: { labelColumn: 'k', label: 'T', sum: ['x'] } },
+      output: { summaryRows: [{ labelColumn: 'k', label: 'T', cells: { x: 'sum' } }] },
     });
     const res2 = runOk(r2, table(['x', 'k'], rows.map((x) => [...x, 'k'])));
     expect(res2.sheet.rows.at(-1)!.cells.map((c) => c.v)).toEqual([1, 'T']);

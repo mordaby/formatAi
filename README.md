@@ -43,4 +43,9 @@ Run the API: `pnpm --filter @formatai/api dev` → http://localhost:8787/api/hea
 ## Status
 
 - **M0 — engine without AI (spec v3):** rules schema v1 incl. typed operations, functions and lookup tables; type checker and limits; format lock (formatOf / checkFormatLock); table detection; the 11-step pipeline (decimal math, dedupe, three expand modes, groups, titles, input/output validations); read xlsx/xls/csv/txt; write xlsx (RTL) and csv/txt (delimiter, header on/off, quoting, UTF-8/Windows-1255); golden tests across domains.
-- Next: **M1 — learning** (pair analysis, pre-flight, fast path, masking, payload, LLM client, eval harness).
+- **M1 — learning:** column profile and pair analysis; pre-flight; strict fast path (no LLM); masking; payload builder; one LLM interface (`LLM_PROVIDER`: anthropic | openai | claude-cli | fake); LLM writes formulas parsed into the whitelisted AST; layered checks + repair + escalation; full verification; eval harness with 17 cases across domains and next-month hold-outs — see [eval/RESULTS.md](eval/RESULTS.md).
+- Next: **M2 — web tool** (design plan first).
+
+### Dev LLM without an API key
+
+Set `LLM_PROVIDER=claude-cli` and log in once: `npm i -g @anthropic-ai/claude-code`, run `claude`, type `/login`. Calls then use your Claude subscription (dev only; refused in production). Run the eval: `pnpm eval --provider claude-cli --models haiku --masking on,off`.
