@@ -809,9 +809,10 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
 - **`events`:** ts, anonId, userId?, type, props. Props hold counts, ids and codes only, never cell values or file names.
 - **`llm_calls`:** ts, userId?, anonId?, learnId, purpose (learn | repair | escalation), model, promptVersion, masking, tokensIn, tokensOut, tokensCached, costUsd, latencyMs, outcome, cacheHit.
 - **`usage_counters`:**
-  - keys look like `user:<id>:<yyyy-mm>`, `anon:<id>:<yyyy-mm-dd>` or `ip:<hash>:<yyyy-mm-dd>`;
+  - keys look like `user:<id>:<yyyy-mm>`, `anon:<id>:<yyyy-mm-dd>`, `ip:<hash>:<yyyy-mm-dd>` (HMAC of the IP; IPv6 by /64) or `repair:<learnId>` (one browser repair per learn);
   - updates use atomic `$inc`, and anon/ip keys expire through a TTL index.
-- **`budgets`:** spend totals per day.
+- **`budgets`:** spend totals per day (overall and anonymous: `spendUsd`, `anonSpendUsd`).
+- **`learn_cache`:** owner (`anon:<id>` / `user:<id>`), key (hash of the structure only), rules, promptVersion, createdAt; unique (owner, key), TTL in config. A cache entry is only ever returned to the same owner — never across users — and with masking on only rules without text constants are cached (their fake words belong to an earlier session key).
 - **`leads`:** name, email, company, role, message, language, ts.
 - **`waitlist`:** userId, email, trigger, message, ts.
 - **`feedback`:** formatId?, userId?, rating, text, ts.

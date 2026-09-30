@@ -36,6 +36,30 @@ export const limits = {
     dailyOverallUsd: 50,
   },
   /**
+   * SPEC 9.5 / 11 / 12 (M2): the API protections in front of the LLM endpoints.
+   * DECISION: placeholder numbers (SPEC 20.4), tuned later from `limit_hit` events.
+   */
+  protection: {
+    /** SPEC 9.5: "limits apply per anonymous id AND per IP" - anonymous learns per IP per UTC day
+     * (the per-anonId limit is `tiers.anonymous.learnsToLlm`). */
+    anonLearnsPerIpPerDay: 2,
+    /** Simple in-memory per-IP request rate limit on POST /api/learn and /api/learn/repair. */
+    learnRequestsPerIpPerMinute: 10,
+    rateLimitWindowMs: 60_000,
+    /** Cloudflare Turnstile siteverify call timeout; a timeout counts as a failed check. */
+    turnstileTimeoutMs: 5_000,
+    /** SPEC 9.3: how long after its learn a browser-triggered repair (at most one) is accepted. */
+    learnIdTtlMinutes: 60,
+    /** Daily `anon:` / `ip:` usage counters are kept this long after their UTC day ends, then TTL-expired. */
+    dailyCounterGraceHours: 24,
+    /** Lifetime of the first-party `anonId` cookie (SPEC 12). */
+    anonCookieMaxAgeDays: 365,
+  },
+  /** SPEC 9.5 "Cache": saved rules for a structure the same owner already learned. */
+  cache: {
+    ttlDays: 30,
+  },
+  /**
    * SPEC 8.3/8.14/21 (v3): limits on the rules language itself, checked by
    * `checkRules` (maxExprDepth only) and by the engine's `checkLimits` (the rest -
    * node budgets after expanding calls, function/table counts, table row counts;

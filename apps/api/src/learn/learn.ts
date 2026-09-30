@@ -64,7 +64,7 @@ export interface LlmCallRecord {
 /** Every `RepairProblem` kind, for `problemCounts` (SPEC 15: counts only, never text). */
 const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'diff', 'rowCount', 'layout'] as const;
 
-function countProblems(problems: readonly RepairProblem[]): Record<RepairProblem['kind'], number> {
+export function countProblems(problems: readonly RepairProblem[]): Record<RepairProblem['kind'], number> {
   const counts = Object.fromEntries(REPAIR_PROBLEM_KINDS.map((k) => [k, 0])) as Record<RepairProblem['kind'], number>;
   for (const p of problems) counts[p.kind] += 1;
   return counts;

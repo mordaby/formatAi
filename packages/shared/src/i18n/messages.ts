@@ -2,8 +2,10 @@
 // tone per SPEC 16.3: no jargon, say exactly what's true and what the user can do).
 // The LLM never writes UI text (SPEC 16.2); this dictionary is the only source of it.
 import type {
+  ApiErrorCode,
   AssumptionReasonCode,
   FlagMessageKey,
+  LimitCode,
   PreflightBlockReason,
   PreflightWarnReason,
   UnsupportedReasonCode,
@@ -194,5 +196,62 @@ export const flagMessages: Record<FlagMessageKey, Localized> = {
   'flag.validation.dateRange': {
     en: 'This date is outside {from} – {to}.',
     he: 'התאריך מחוץ לטווח {from} – {to}.',
+  },
+};
+
+// API error messages (SPEC 9.5, 11). The API returns only codes; the web shows this text.
+// `limitHit` is generic - show the matching `limitMessages` entry for its `limit` instead.
+export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
+  invalidPayload: {
+    en: 'Something went wrong with this request. Please try again.',
+    he: 'משהו השתבש בבקשה הזו. אנא נסו שוב.',
+  },
+  invalidPreviousRules: {
+    en: 'Something went wrong with this request. Please try again.',
+    he: 'משהו השתבש בבקשה הזו. אנא נסו שוב.',
+  },
+  invalidProblems: {
+    en: 'Something went wrong with this request. Please try again.',
+    he: 'משהו השתבש בבקשה הזו. אנא נסו שוב.',
+  },
+  invalidLearnId: {
+    en: 'This learning session has expired. Please start again.',
+    he: 'פג תוקף הלמידה הזו. אנא התחילו מחדש.',
+  },
+  turnstileFailed: {
+    en: "We couldn't confirm you're not a robot. Refresh the page and try again.",
+    he: 'לא הצלחנו לוודא שאתם לא רובוט. רעננו את הדף ונסו שוב.',
+  },
+  limitHit: {
+    en: "You've reached a limit. Sign in or come back later to keep going.",
+    he: 'הגעתם למגבלה. התחברו או חזרו מאוחר יותר כדי להמשיך.',
+  },
+  anonBudgetExhausted: {
+    en: 'Sign in to keep going.',
+    he: 'התחברו כדי להמשיך.',
+  },
+  budgetExhausted: {
+    en: "We've reached our limit for today. Please try again tomorrow.",
+    he: 'הגענו למגבלה להיום. אנא נסו שוב מחר.',
+  },
+  rateLimited: {
+    en: 'Too many requests. Wait a minute and try again.',
+    he: 'יותר מדי בקשות. המתינו דקה ונסו שוב.',
+  },
+};
+
+// Text for each `limitHit { limit }` (SPEC 11).
+export const limitMessages: Record<LimitCode, Localized> = {
+  learnsPerDay: {
+    en: "You've used today's free tries. Come back tomorrow, or sign in to keep going.",
+    he: 'ניצלתם את הניסיונות החינמיים להיום. אפשר לחזור מחר, או להתחבר כדי להמשיך.',
+  },
+  learnsPerMonth: {
+    en: "You've used all your learns for this month.",
+    he: 'ניצלתם את כל הלמידות של החודש.',
+  },
+  repairsPerLearn: {
+    en: 'We already tried an extra fix for this one.',
+    he: 'כבר ניסינו תיקון נוסף עבור הלמידה הזו.',
   },
 };
