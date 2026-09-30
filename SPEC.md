@@ -593,7 +593,7 @@ Every column also has an output number or date format, with a preview.
 - The live check must stay under 300 ms for 5,000 rows. Above that size, run it live on a 2,000-row subset, and on all rows when the user presses Apply.
 - For a column that needs input, the "your example" values show the user exactly what they're aiming for.
 
-**One-off exceptions.** A mismatched row in the preview offers "This row was fixed by hand". Once chosen, the row is left out of the example's match count and stored in `format.exampleExceptions`. Exceptions only affect checking the example; they are never applied to future files.
+**Rows the rules don't reproduce.** Where the rules don't reproduce the example, the map and the preview say so plainly per column — "N rows in your example don't match this rule (rows 12, 57, …)" or, when a column mostly fails, "The rule for <column> doesn't reproduce your example yet" — each with "Fix the rule", and the differing cells are amber. The user fixes the rule (or saves with N differences). (v5 decision: the earlier "This row was fixed by hand" exception was removed from the UI as too confusing; `format.exampleExceptions` stays in the data model and may return later inside the column editor, for outlier rows only.)
 
 **Saving.**
 - **Status:**
