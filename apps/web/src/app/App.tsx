@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import AddSourcePage from '../pages/AddSource';
 import BatchPage from '../pages/Batch';
 import ConvertPage from '../pages/Convert';
@@ -10,6 +10,7 @@ import Home from '../pages/Home';
 import { useI18n } from '../i18n';
 import { PlaceholderPage } from '../pages/PlaceholderPage';
 import { ResultPage } from '../pages/Result';
+import { peekResultSession } from '../pages/Result/session';
 import { Spinner } from '../ui';
 import { LearnSessionProvider, useLearnSession } from './LearnSession';
 import { MeProvider } from './Me';
@@ -26,10 +27,20 @@ const DevPage = showDevPage ? lazy(() => import('../pages/DevPage')) : null;
 /**
  * /result: only meaningful once a learn has finished; a reload (or a typed address) goes home. Coming back from a sign-in it waits for
  * the kept learn to be put back (SPEC 5 E) instead of going home.
+ *
+ * A learn that has been saved keeps this screen at its source's own address, /formats/:id/sources/:conversionId (the example files are
+ * still in the worker, so the live check goes on); any other visit to that address - a reload, a link - is the saved-source editor. Both
+ * routes render this one component, so moving from one to the other after the save does not rebuild the screen.
  */
 function ResultRoute() {
   const { flow, restoring } = useLearnSession();
   const { t } = useI18n();
+  const { id, conversionId } = useParams();
+  if (conversionId !== undefined) {
+    const kept = flow.state.status === 'done' && flow.state.result.rules ? peekResultSession(flow.state.result) : undefined;
+    if (kept?.source?.conversionId === conversionId && kept.source.formatId === id) return <ResultPage {...flow} />;
+    return <EditSourcePage />;
+  }
   // (also when the learn has finished: the kept edits are put on top of it first, so the screen never starts from the wrong ones)
   if (restoring) {
     return (
@@ -57,7 +68,7 @@ export function App() {
                 <Route path="/formats" element={<FormatsPage />} />
                 <Route path="/formats/:id" element={<FormatPage />} />
                 <Route path="/formats/:id/add-source" element={<AddSourcePage />} />
-                <Route path="/formats/:id/sources/:conversionId" element={<EditSourcePage />} />
+                <Route path="/formats/:id/sources/:conversionId" element={<ResultRoute />} />
                 <Route path="/convert" element={<ConvertPage />} />
                 <Route path="/batch" element={<BatchPage />} />
                 <Route path="/business" element={<PlaceholderPage title="footer.business" />} />

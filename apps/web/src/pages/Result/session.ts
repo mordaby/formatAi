@@ -4,10 +4,26 @@
 import { EditorStore, type EditableRules } from '../../editor';
 import type { LearnOutput } from '../../worker/engineApi';
 
+/** Where a learn was saved (SPEC 8.12): from then on the screen is the editor of that source, and its address is the source's own. */
+export interface SavedSource {
+  formatId: string;
+  conversionId: string;
+  sourceName: string;
+  /** The version last saved: the next save says it is based on this one. */
+  version: number;
+}
+
+/** The address of a saved source's editor. */
+export function sourcePath(source: Pick<SavedSource, 'formatId' | 'conversionId'>): string {
+  return `/formats/${encodeURIComponent(source.formatId)}/sources/${encodeURIComponent(source.conversionId)}`;
+}
+
 export interface ResultSession {
   store: EditorStore;
   /** The format's name (SPEC 8: defaults to the example output's file name; the user can rename it). */
   name: string;
+  /** Set once the learn has been saved as a format and its first source: saving again writes a new version of that source. */
+  source?: SavedSource | undefined;
 }
 
 const sessions = new WeakMap<LearnOutput, ResultSession>();

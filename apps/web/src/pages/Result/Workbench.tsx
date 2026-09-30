@@ -280,7 +280,7 @@ export function Workbench(props: WorkbenchProps) {
 
   return (
     <main id="main" className="page page--result" tabIndex={-1}>
-      <LeaveGuard when={unsaved} />
+      <LeaveGuard when={unsaved} check={() => editor.store.getState().dirty} />
       <section className="tool result">
         {props.stepper ? <Stepper current={3} /> : null}
         <div className="view result__view">

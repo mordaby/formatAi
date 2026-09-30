@@ -1,9 +1,9 @@
 // Edit a saved source (SPEC 8.11, 8.12): its rules open in the same map, editor and static checks as a fresh learn, but with no
 // example (files are not stored). The live counter says so and offers an optional drop zone; saving writes a new version, and a
 // change to the output side is said to be a change to the FORMAT, for all its sources, before and after.
-import type { ConversionDetail, Format, FormatDetail, UpdateConversionRequest, UpdateConversionResponse } from '@formatai/shared';
+import type { ConversionDetail, Format, FormatDetail, UpdateConversionResponse } from '@formatai/shared';
 import { tiers } from '@formatai/shared';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { LinkButton } from '../../app/LinkButton';
 import { useMe } from '../../app/Me';
@@ -14,11 +14,10 @@ import { EditorStore, type ExampleInputColumn } from '../../editor';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Button, InlineMessage, Spinner } from '../../ui';
-import { SaveFailureMessage } from '../Result/SaveMessages';
-import { useSave } from '../Result/useSave';
 import { Workbench, type WorkbenchInfo } from '../Result/Workbench';
 import { ExampleDrop } from './ExampleDrop';
 import { safeReturnTo } from './returnTo';
+import { SaveChangesActions, SourceMessages, useSourceSave } from './sourceSave';
 import { Versions } from './Versions';
 
 export default function EditSourcePage() {
@@ -124,39 +123,13 @@ interface EditSourceProps {
 
 function EditSource({ conversion, format, sourceCount, notice, returnTo, onSaved, onRestored, onReload }: EditSourceProps) {
   const { t } = useI18n();
-  const { api } = useServices();
   const me = useMe();
   const [store] = useState(() => new EditorStore(conversion.rules, { format: { sourceCount }, exceptions: conversion.exampleExceptions }));
   // The format as the format lock (SPEC 8.12) compares with.
   const target = useMemo(() => ({ output: format.output, layout: format.layout, outputValidations: format.outputValidations }) as Format, [format]);
 
   const [example, setExample] = useState<{ exampleId: string; exampleInput: ExampleInputColumn[]; input: File } | null>(null);
-  const save = useSave<UpdateConversionResponse>();
-  const version = useRef(conversion.version);
-  const [savedVersion, setSavedVersion] = useState(conversion.version);
-
-  const doSave = (info: WorkbenchInfo): void => {
-    if (!info.metaStatus) return;
-    const body: UpdateConversionRequest = {
-      rules: info.rules,
-      status: info.metaStatus,
-      acceptedDifferences: info.differences ?? 0,
-      exampleExceptions: info.exceptions,
-      baseVersion: version.current,
-    };
-    void save.run({
-      persist: () => api.registry.updateConversion(conversion.id, body),
-      afterSaved: (res) => {
-        version.current = res.conversion.version;
-        setSavedVersion(res.conversion.version);
-        info.editor.markSaved();
-        onSaved(res);
-      },
-    });
-  };
-
-  const failure = save.state.status === 'error' ? save.state.error : undefined;
-  const conflict = failure?.kind === 'api' && failure.code === 'versionConflict';
+  const saver = useSourceSave({ conversionId: conversion.id, version: conversion.version, onSaved });
 
   const actions = (info: WorkbenchInfo) => {
     // Saved, and nothing newer to save: the way on is back to converting (when Convert sent the person here).
@@ -167,14 +140,7 @@ function EditSource({ conversion, format, sourceCount, notice, returnTo, onSaved
         </LinkButton>
       );
     }
-    return (
-      <>
-        <Button variant="primary" loading={save.state.status === 'saving'} disabled={!info.dirty || info.metaStatus === null} onClick={() => doSave(info)}>
-          {t('edit.save')}
-        </Button>
-        {!info.dirty ? <p className="muted">{t('edit.nothingToSave')}</p> : null}
-      </>
-    );
+    return <SaveChangesActions info={info} saver={saver} />;
   };
 
   const banners = (info: WorkbenchInfo) => (
@@ -186,26 +152,7 @@ function EditSource({ conversion, format, sourceCount, notice, returnTo, onSaved
           </Link>
         </p>
       )}
-      {info.formatChange && (
-        <div data-testid="format-change-warning">
-          <InlineMessage tone="warn">{t(info.sourceCount === 1 ? 'edit.formatChange.warn.one' : 'edit.formatChange.warn.other', { n: info.sourceCount })}</InlineMessage>
-        </div>
-      )}
-      {conflict ? (
-        <InlineMessage
-          tone="warn"
-          actions={
-            <Button variant="secondary" size="sm" onClick={onReload}>
-              {t('edit.reload')}
-            </Button>
-          }
-        >
-          {t('edit.conflict')}
-        </InlineMessage>
-      ) : failure ? (
-        <SaveFailureMessage failure={failure} onSignIn={() => undefined} />
-      ) : null}
-      {notice && <SavedNotice notice={notice} formatId={format.id} />}
+      <SourceMessages info={info} saver={saver} notice={notice} formatId={format.id} onReload={onReload} onSignIn={() => undefined} />
     </>
   );
 
@@ -228,7 +175,7 @@ function EditSource({ conversion, format, sourceCount, notice, returnTo, onSaved
       noExampleText={t('edit.noExample.title')}
       footer={
         <>
-          <Versions conversionId={conversion.id} refreshKey={savedVersion} onRestored={onRestored} />
+          <Versions conversionId={conversion.id} refreshKey={saver.savedVersion} onRestored={onRestored} />
           <p>
             <Link to={`/formats/${format.id}`}>
               <Cell value={format.name} />
@@ -237,35 +184,5 @@ function EditSource({ conversion, format, sourceCount, notice, returnTo, onSaved
         </>
       }
     />
-  );
-}
-
-/** After a save: which version it is, and - when it changed the format - who else it reached and which sources now need a look. */
-function SavedNotice({ notice, formatId }: { notice: UpdateConversionResponse; formatId: string }) {
-  const { t } = useI18n();
-  return (
-    <div className="saved-notice" data-testid="saved-notice">
-      <InlineMessage tone="info">{t('edit.saved', { version: notice.conversion.version })}</InlineMessage>
-      {notice.formatChanged && (
-        <InlineMessage tone="info">
-          {notice.affectedSources === 0
-            ? t('edit.formatChange.done.none')
-            : t(notice.affectedSources === 1 ? 'edit.formatChange.done.one' : 'edit.formatChange.done.other', { n: notice.affectedSources })}
-        </InlineMessage>
-      )}
-      {notice.needsReview.length > 0 && (
-        <InlineMessage tone="warn" title={t(notice.needsReview.length === 1 ? 'edit.needsReview.one' : 'edit.needsReview.other', { n: notice.needsReview.length })} todo={t('edit.needsReview.text')}>
-          <ul className="problem-list">
-            {notice.needsReview.map((s) => (
-              <li key={s.id}>
-                <Link to={`/formats/${formatId}/sources/${s.id}`}>
-                  <Cell value={s.sourceName} />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </InlineMessage>
-      )}
-    </div>
   );
 }

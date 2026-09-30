@@ -190,6 +190,11 @@ export function markSaved(state: EditorState, rules: EditableRules = state.rules
   return { ...derive(base, rules, state.exceptions), rev: state.rev };
 }
 
+/** The conversion belongs to a format (or no longer does): the format-change flag follows. Not an edit: `rev` and the history stay. */
+export function withFormat(state: EditorState, format: FormatInfo | null): EditorState {
+  return { ...state, format, formatChange: format !== null && formatFingerprint(state.rules) !== formatFingerprint(state.saved.rules) };
+}
+
 /** Start over from other rules (a different conversion, or rules the server sent back after a save). */
 export function resetEditor(rules: EditableRules, options: EditorOptions = {}): EditorState {
   return createEditorState(rules, options);

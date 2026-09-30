@@ -1,24 +1,30 @@
 // The Result screen (SPEC 16.1 screen 4, 8.11) for a fresh learn: the working part (`Workbench`) plus what is specific to a learn -
 // the local result before the AI step (SPEC 21 v5), the AI quota, "this looks like your format X" (SPEC 5 A2), and saving.
-import { limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse } from '@formatai/shared';
+// Once the learn is saved (a format and its first source) the SAME screen becomes the editor of that source: its address is the
+// source's own, the example files stay in the worker for the live check, and every further save is a new version of the source.
+import { limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { aiLeftLabel } from '../../app/aiQuota';
 import { LeaveDialog } from '../../app/LeaveGuard';
 import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
 import { useSignIn } from '../../app/SignIn';
+import { Cell } from '../../components/Cell';
+import type { EditableRules } from '../../editor';
 import type { AiInfo } from '../../flow/learnFlow';
 import type { UseLearnFlow } from '../../flow/useLearnFlow';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Button, InlineMessage } from '../../ui';
 import type { LearnOutput } from '../../worker/engineApi';
+import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
+import { Versions } from '../Format/Versions';
 import { PartialBanner, PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
-import { defaultFormatName, getResultSession } from './session';
+import { defaultFormatName, getResultSession, sourcePath, type SavedSource } from './session';
 import { useFormatMatch } from './useFormatMatch';
-import { useSave } from './useSave';
+import { convertAndDownload, useSave } from './useSave';
 import { Workbench, type WorkbenchInfo } from './Workbench';
 
 /** The props are exactly what `useLearnFlow` returns: `state` (status 'done' here), and the flow's actions. */
@@ -31,17 +37,66 @@ export function ResultPage({ state }: ResultPageProps) {
 
 function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefined }) {
   const { t } = useI18n();
-  const { api } = useServices();
+  const { api, engine } = useServices();
   const session = useLearnSession();
   const signIn = useSignIn();
   const me = useMe();
   const navigate = useNavigate();
+  const location = useLocation();
   const tierLimits = tiers[me.tier];
 
-  // The edits (and the name) live in the session, not in this component: they survive leaving the screen and the sign-in wall.
-  const saved = getResultSession(result, defaultFormatName(session.output?.name, t('result.untitled')));
-  const [name, setName] = useState(saved.name);
+  // The edits (and the name, and where the learn was saved) live in the session, not in this component: they survive leaving the screen
+  // and the sign-in wall.
+  const kept = getResultSession(result, defaultFormatName(session.output?.name, t('result.untitled')));
+  const [name, setName] = useState(kept.name);
   const rules = result.rules!;
+
+  // Once saved (SPEC 8.12) this screen is the editor of the new source: the address is the source's own (a reload lands in the normal
+  // saved-source editor, which needs no example files), and saving again writes a new version of it.
+  const [source, setSource] = useState<SavedSource | undefined>(kept.source);
+  const [notice, setNotice] = useState<UpdateConversionResponse | null>(null);
+  const saver = useSourceSave({
+    conversionId: source?.conversionId ?? '',
+    version: source?.version ?? 0,
+    onSaved: (res) => {
+      const next = { ...kept.source!, version: res.conversion.version };
+      kept.source = next;
+      setSource(next);
+      setNotice(res);
+    },
+  });
+  useEffect(() => {
+    if (source && location.pathname !== sourcePath(source)) navigate(sourcePath(source), { replace: true });
+  }, [source, location.pathname, navigate]);
+
+  // "Download" after saving: the example input, converted with the rules as they are on screen.
+  const [download, setDownload] = useState<'idle' | 'busy' | 'failed'>('idle');
+  const downloadFile = (file: File, current: EditableRules): void => {
+    setDownload('busy');
+    convertAndDownload(engine, file, current).then(
+      () => setDownload('idle'),
+      () => setDownload('failed'),
+    );
+  };
+
+  // "Start over" from a saved result: the way home is taken first, and the session is forgotten once this screen is gone (forgetting it
+  // first would show the saved source's plain editor for a moment).
+  const startingOver = useRef(false);
+  const forget = useRef(session.startOver);
+  forget.current = session.startOver;
+  useEffect(
+    () => () => {
+      if (startingOver.current) forget.current();
+    },
+    [],
+  );
+  const goHome = (): void => {
+    if (source) startingOver.current = true;
+    else session.startOver();
+    navigate('/');
+  };
+  // Starting over throws the edits away: ask first when there are unsaved ones.
+  const startOver = (): void => (kept.store.getState().dirty ? setConfirmStartOver(true) : goHome());
 
   // SPEC 21 v5 item 1: the local result, shown before the AI step.
   const partial = result.path === 'partial' ? result.partial : undefined;
@@ -57,7 +112,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   }, [aiPending, me.status, me.user]);
 
   const save = useSave<CreateFormatResponse>();
-  const match = useFormatMatch(me.user !== null && !aiPending, rules);
+  const match = useFormatMatch(me.user !== null && !aiPending && !source, rules);
 
   const doSave = (info: WorkbenchInfo): void => {
     const file = session.input;
@@ -76,9 +131,15 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     void save.run({
       persist: () => api.registry.createFormat(body),
       // SPEC 21 v5 item 3: saving with accepted differences is what makes an AI learn that did not verify count.
-      afterSaved: () => {
+      afterSaved: (res) => {
         // What is on screen is what was saved: "Unsaved changes" goes, and leaving no longer asks.
         info.editor.markSaved();
+        // From here on the screen edits that source: an edit of the output side is an edit of the format, and the next save is a new version.
+        info.editor.store.setFormat({ sourceCount: 1 });
+        const next: SavedSource = { formatId: res.format.id, conversionId: res.conversion.id, sourceName: res.conversion.sourceName, version: res.conversion.version };
+        saver.setVersion(next.version);
+        kept.source = next;
+        setSource(next);
         if (info.metaStatus === 'differencesAccepted' && ai?.learnId) {
           api.registry
             .learnOutcome(ai.learnId, 'accepted')
@@ -88,6 +149,25 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       },
       download: { file, rules: info.rules },
     });
+  };
+
+  // A save after the first one (or an attempt at it) has been made: the first save's message has done its job.
+  const laterSave = source !== undefined && (notice !== null || saver.save.state.status !== 'idle');
+
+  // The source as the server has it now (a save that lost to another edit, or an earlier version restored): the editor starts over from it.
+  const reload = async (from: SavedSource): Promise<void> => {
+    try {
+      const [conversion, format] = await Promise.all([api.registry.getConversion(from.conversionId), api.registry.getFormat(from.formatId)]);
+      kept.store.reset(conversion.rules, { format: { sourceCount: format.conversions.length }, exceptions: conversion.exampleExceptions });
+      saver.setVersion(conversion.version);
+      saver.save.reset();
+      setNotice(null);
+      const next = { ...from, version: conversion.version };
+      kept.source = next;
+      setSource(next);
+    } catch {
+      // Nothing changed on screen; the message with "Reload" is still there to try again.
+    }
   };
 
   const actions = (info: WorkbenchInfo) => {
@@ -107,11 +187,20 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         </>
       );
     }
-    if (save.state.status === 'saved') {
+    if (source) {
+      const file = session.input;
       return (
-        <Button variant="primary" onClick={() => navigate('/formats')}>
-          {t('save.viewFormats')}
-        </Button>
+        <SaveChangesActions
+          info={info}
+          saver={saver}
+          extra={
+            file ? (
+              <Button variant="secondary" loading={download === 'busy'} disabled={info.status.kind === 'blocked'} onClick={() => downloadFile(file, info.rules)}>
+                {t('result.download')}
+              </Button>
+            ) : null
+          }
+        />
       );
     }
     const label =
@@ -133,7 +222,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     );
   };
 
-  const banners = () => (
+  const banners = (info: WorkbenchInfo) => (
     <>
       {partial && <PartialBanner partial={partial} totalColumns={rules.output.columns.length} readiness={result.readiness} />}
       {match.format && !match.dismissed && (
@@ -155,12 +244,17 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         </InlineMessage>
       )}
       {ai && <AiNote ai={ai} verified={result.verification?.verified === true} />}
-      {save.state.status === 'saved' && (
+      {/* What the first save said, until a later save has something to say. */}
+      {!laterSave && save.state.status === 'saved' && (
         <InlineMessage tone="info" actions={<Link to="/formats">{t('save.viewFormats')}</Link>}>
           {t('save.done', { name })}
         </InlineMessage>
       )}
-      {save.state.status === 'error' && <SaveFailureMessage failure={save.state.error} onSignIn={() => signIn.open('save')} />}
+      {!laterSave && save.state.status === 'error' && <SaveFailureMessage failure={save.state.error} onSignIn={() => signIn.open('save')} />}
+      {source && (
+        <SourceMessages info={info} saver={saver} notice={notice} formatId={source.formatId} onReload={() => void reload(source)} onSignIn={() => signIn.open('save')} />
+      )}
+      {download === 'failed' && <InlineMessage tone="warn">{t('result.downloadFailed')}</InlineMessage>}
     </>
   );
 
@@ -168,8 +262,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     <>
       <Workbench
         stepper
-        store={saved.store}
-        trackUnsaved={save.state.status !== 'saved'}
+        store={kept.store}
+        // (an edit of the output side of a saved source is an edit of the format: said by the banners, once)
+        formatChangeNote={source ? 'banner' : 'panel'}
         exampleId={result.exampleId}
         exampleInput={result.exampleInput}
         inputFile={session.input}
@@ -177,32 +272,42 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         partial={partial}
         verification={result.verification}
         name={name}
-        onRename={(next) => {
-          setName(next);
-          saved.name = next;
-        }}
-        learnedNote={t(partial ? (aiPending ? 'partial.note' : 'flow.path.local') : result.path === 'local' ? 'flow.path.local' : 'flow.path.llm')}
+        // A saved format is renamed from its own page (the name was saved with it).
+        onRename={
+          source
+            ? undefined
+            : (next) => {
+                setName(next);
+                kept.name = next;
+              }
+        }
+        learnedNote={
+          source
+            ? t('result.savedNote', { source: source.sourceName })
+            : t(partial ? (aiPending ? 'partial.note' : 'flow.path.local') : result.path === 'local' ? 'flow.path.local' : 'flow.path.llm')
+        }
         previewLimit={tierLimits.previewRows}
         onSignIn={() => signIn.open('save')}
         actions={actions}
         banners={banners}
         footer={
-          <div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                // Starting over throws the edits away: ask first when there are unsaved ones.
-                if (saved.store.getState().dirty && save.state.status !== 'saved') setConfirmStartOver(true);
-                else {
-                  session.startOver();
-                  navigate('/');
-                }
-              }}
-            >
-              {t('result.startOver')}
-            </Button>
-          </div>
+          <>
+            {source && (
+              <>
+                <Versions conversionId={source.conversionId} refreshKey={saver.savedVersion} onRestored={() => void reload(source)} />
+                <p>
+                  <Link to={`/formats/${source.formatId}`}>
+                    <Cell value={name} />
+                  </Link>
+                </p>
+              </>
+            )}
+            <div>
+              <Button variant="ghost" size="sm" onClick={startOver}>
+                {t('result.startOver')}
+              </Button>
+            </div>
+          </>
         }
       />
       <LeaveDialog
@@ -210,8 +315,14 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         onStay={() => setConfirmStartOver(false)}
         onLeave={() => {
           setConfirmStartOver(false);
-          // (The screen goes home by itself once there is no result: see ResultRoute.)
-          session.startOver();
+          if (source) {
+            // The edits are being thrown away: they no longer hold the screen back.
+            kept.store.markSaved();
+            goHome();
+          } else {
+            // (The screen goes home by itself once there is no result: see ResultRoute.)
+            session.startOver();
+          }
         }}
       />
       {partial && aiPending && !me.user && (

@@ -16,6 +16,7 @@ import {
   redo,
   sourceOptions,
   undo,
+  withFormat,
   type ColumnMethod,
   type EditAction,
   type EditorState,
@@ -1018,6 +1019,23 @@ describe('formatChange (SPEC 8.12)', () => {
       expect([a.type, s.formatChange]).toEqual([a.type, false]);
       expect(s.dirty).toBe(true);
     }
+  });
+
+  it('a learn that has just been saved as a format joins it: its next edit of the output side is a format change (no re-check, history kept)', () => {
+    let s = ok(start(), { type: 'addFilter', filter: { column: 'status', op: 'notEmpty' } });
+    expect(s.format).toBeNull();
+    // Saved: what is on screen is what the server has, and the source now belongs to a format.
+    s = withFormat(markSaved(s), { sourceCount: 1 });
+    const { rev, history } = s;
+    expect(s.format).toEqual({ sourceCount: 1 });
+    expect([s.dirty, s.formatChange, s.rev]).toEqual([false, false, rev]);
+    expect(s.history).toBe(history);
+    const renamed = ok(s, { type: 'setColumnHeader', index: 0, header: 'SKU' });
+    expect([renamed.dirty, renamed.formatChange]).toEqual([true, true]);
+    expect(ok(s, { type: 'addFilter', filter: { column: 'qty', op: 'notEmpty' } }).formatChange).toBe(false);
+    // (already changed when it joins: the flag follows)
+    expect(withFormat(ok(start(), { type: 'setColumnHeader', index: 0, header: 'SKU' }), { sourceCount: 2 }).formatChange).toBe(true);
+    expect(withFormat(renamed, null).formatChange).toBe(false);
   });
 
   it('a change that changes back is no change; a save writes the change out', () => {

@@ -156,12 +156,15 @@ export function renderApp({ lang = 'en', route = '/', engine = fakeEngine().engi
   return renderWithProviders(<App />, { lang, route, engine, api, dataRouter });
 }
 
+/** What is rendered, and (with `dataRouter`) the router, to read where the app has gone. */
 export function renderWithProviders(ui: ReactElement, { lang = 'en', route = '/', engine = fakeEngine().engine, api = fakeApi(), dataRouter = false }: RenderAppOptions = {}) {
-  return render(
+  const router = dataRouter ? createMemoryRouter([{ path: '*', element: ui }], { initialEntries: [route] }) : undefined;
+  const view = render(
     <I18nProvider initial={lang}>
       <ServicesProvider engine={engine} api={api}>
-        {dataRouter ? <RouterProvider router={createMemoryRouter([{ path: '*', element: ui }], { initialEntries: [route] })} /> : <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>}
+        {router ? <RouterProvider router={router} /> : <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>}
       </ServicesProvider>
     </I18nProvider>,
   );
+  return Object.assign(view, { router });
 }

@@ -81,7 +81,7 @@ export async function openResult(setup: Setup = {}) {
     { liveCheck, fullCheck, staticChecks, convert },
   );
   const api = setup.api ?? fakeApi();
-  renderApp({ engine, api, lang: setup.lang ?? 'en', ...(setup.dataRouter ? { dataRouter: true } : {}) });
+  const { router } = renderApp({ engine, api, lang: setup.lang ?? 'en', ...(setup.dataRouter ? { dataRouter: true } : {}) });
 
   const en = (setup.lang ?? 'en') === 'en';
   fireEvent.change(screen.getByLabelText(en ? 'Example input' : 'דוגמת קלט'), { target: { files: [csv('orders.csv')] } });
@@ -93,7 +93,7 @@ export async function openResult(setup: Setup = {}) {
   });
   await screen.findByTestId('rules-map');
   await waitFor(() => expect(setup.noExample ? staticChecks : liveCheck).toHaveBeenCalled());
-  return { liveCheck, fullCheck, staticChecks, convert, api };
+  return { liveCheck, fullCheck, staticChecks, convert, api, router, engine };
 }
 
 export const line = (id: string): HTMLElement => {

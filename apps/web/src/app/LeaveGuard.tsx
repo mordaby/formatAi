@@ -1,5 +1,6 @@
 // Leaving with unsaved changes asks first (SPEC 8.11 "Saving"): closing or reloading the tab gets the browser's own prompt, and
-// going to another screen of the app - a link, the back button - gets this dialog. Both only while `when` is true.
+// going to another screen of the app - a link, the back button - gets this dialog. Both only while `when` is true (and, for the
+// screen change, `check` - when given - still says so at that moment).
 import { useContext, useEffect } from 'react';
 import { UNSAFE_DataRouterContext, useBlocker } from 'react-router-dom';
 import { useI18n } from '../i18n';
@@ -25,9 +26,10 @@ export function LeaveDialog({ open, onStay, onLeave }: { open: boolean; onStay()
 }
 
 /** Screen changes inside the app. Needs the app's data router; without one (a test that renders a plain router) only the tab prompt applies. */
-function RouteBlocker({ when }: { when: boolean }) {
-  // Only a change of screen is asked about: a sign-in return that just tidies the address (same path) goes through.
-  const blocker = useBlocker(({ currentLocation, nextLocation }) => when && currentLocation.pathname !== nextLocation.pathname);
+function RouteBlocker({ when, check }: { when: boolean; check: (() => boolean) | undefined }) {
+  // Only a change of screen is asked about: a sign-in return that just tidies the address (same path) goes through. `check` is asked at
+  // the moment of the change (the render that follows a save has not happened yet when the screen moves on to the saved source's address).
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => when && currentLocation.pathname !== nextLocation.pathname && (check ? check() : true));
   return (
     <LeaveDialog
       open={blocker.state === 'blocked'}
@@ -37,12 +39,12 @@ function RouteBlocker({ when }: { when: boolean }) {
   );
 }
 
-export function LeaveGuard({ when }: { when: boolean }) {
+export function LeaveGuard({ when, check }: { when: boolean; check?: () => boolean }) {
   const dataRouter = useContext(UNSAFE_DataRouterContext);
   useEffect(() => {
     if (!when) return;
     window.addEventListener('beforeunload', confirmUnload);
     return () => window.removeEventListener('beforeunload', confirmUnload);
   }, [when]);
-  return dataRouter ? <RouteBlocker when={when} /> : null;
+  return dataRouter ? <RouteBlocker when={when} check={check} /> : null;
 }

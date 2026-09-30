@@ -10,8 +10,9 @@ import {
   redo,
   resetEditor,
   undo,
+  withFormat,
 } from './model';
-import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, ExampleInputColumn } from './types';
+import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, ExampleInputColumn, FormatInfo } from './types';
 
 export interface ApplyActionOptions {
   /**
@@ -77,6 +78,14 @@ export class EditorStore {
   markSaved = (rules?: EditableRules): void => {
     this.coalesceKey = undefined;
     this.set(markSaved(this.state, rules));
+  };
+
+  /**
+   * The conversion now belongs to a format (a learn that has just been saved as one): from here on an edit of the output side is a change
+   * to the format (SPEC 8.12). The rules, the undo history and `rev` stay as they are (nothing needs checking again).
+   */
+  setFormat = (format: FormatInfo | null): void => {
+    this.set(withFormat(this.state, format));
   };
 
   /** Start over from other rules. */

@@ -190,9 +190,11 @@ describe('Save format and download (signed in)', () => {
     expect(lastRun).toHaveLength(1);
     expect(downloaded.mock.calls[0]![0]).toBe('orders (converted).xlsx');
     expect(await screen.findByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
-    // The one action is now the way to My formats: no second save.
+    // Saved: the header now saves changes (nothing to save yet) and downloads; the way to My formats is in the message. No second first save.
     expect(screen.queryByRole('button', { name: 'Save format and download' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Open My formats' })).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Download' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open My formats' })).toBeTruthy();
   });
 
   it('uses the name the user gave', async () => {

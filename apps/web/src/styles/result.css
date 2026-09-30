@@ -83,6 +83,13 @@
   max-inline-size: 30ch;
   text-align: end;
 }
+/* Save changes and Download side by side (the primary one first). */
+.result-head__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
 
 .format-name {
   display: inline-flex;
@@ -977,6 +984,9 @@
   }
   .result-head__save {
     align-items: stretch;
+  }
+  .result-head__buttons {
+    justify-content: flex-start;
   }
   .result-head__save .muted {
     max-inline-size: none;
