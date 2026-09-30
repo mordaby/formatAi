@@ -1,11 +1,12 @@
-// POST /api/learn and POST /api/learn/repair (SPEC 5 A steps 5-6), registered in every environment
-// - production included - because they are now protected (SPEC 9.5, 11, 15):
+// POST /api/learn, POST /api/learn/repair and POST /api/learn/:learnId/outcome (SPEC 5 A steps 5-6, 21 v5),
+// registered in every environment - production included - because they are protected (SPEC 9.5, 11, 15):
 //
-//   per-IP request rate limit -> body shape -> Turnstile (anonymous) -> owner's structure cache
-//   -> daily budgets (kill switch / anonymous) -> per-tier learn limits -> the LLM -> ledger, spend,
-//   cache write.
+//   per-IP request rate limit -> signed in? (the AI is for signed-in users only, 403 signInForAi) -> body
+//   shape -> owner's structure cache -> the failed-attempt cap of this example pair -> daily budgets (kill
+//   switch) -> the user's AI-learn quota (reserved) -> the LLM -> ledger, spend, cache write -> what the
+//   learn counted as (see `protection/aiLearns.ts`).
 //
-// Every refusal is a stable code (`{ error, limit? }`, see shared `API_ERROR_CODES`); the web maps it to
+// Every refusal is a stable code (`{ error, limit?, period?, counted? }`, see shared `API_ERROR_CODES`); the web maps it to
 // UI text. SPEC 15: this file never logs a payload, a cell value, a token, or `previousRules`/`problems`
 // content - only counts, ids and error names.
 import { randomUUID } from 'node:crypto';
@@ -16,6 +17,7 @@ import {
   limits,
   promptVersion,
   type ApiErrorBody,
+  type LearnOutcomeResponse,
   type LearnPayload,
   type LearnResponse,
   type LearnResult,
@@ -27,12 +29,25 @@ import { countProblems, learn, repairFromBrowser, type CompleteFn, type LearnOut
 import type { LlmCallDoc } from '../models.js';
 import { BUDGET_STATUS, checkBudgets, totalCostUsd } from '../protection/budget.js';
 import { isCacheable, learnCacheKey } from '../protection/cache.js';
+import {
+  groupOf,
+  markFailed,
+  markSucceeded,
+  pairExhausted,
+  quotaState,
+  releaseReservation,
+  settleLearn,
+  stateOf,
+  type AiLearnCtx,
+  type Settled,
+} from '../protection/aiLearns.js';
 import { identityOf, ownerOf, type Identity } from '../protection/identity.js';
-import { hashIp, normalizeIp } from '../protection/ip.js';
-import { dayKey, learnCounterSpecs, repairKey, tierOf } from '../protection/keys.js';
+import { normalizeIp } from '../protection/ip.js';
+import { aiQuotaOf, dayKey, repairKey, tierOf } from '../protection/keys.js';
 import { issueLearnId, verifyLearnId } from '../protection/learnId.js';
 import type { Protection } from '../protection/index.js';
 import { reserveLearn } from '../protection/reserve.js';
+import { objectIdOf } from '../registry/ids.js';
 
 export interface RegisterLearnRoutesOptions {
   env: Env;
@@ -40,11 +55,12 @@ export interface RegisterLearnRoutesOptions {
   /** Dependency injection for tests - see `learn.ts`'s `LearnOptions.complete`.
    * Defaults to the real `complete()`. */
   complete?: CompleteFn;
+  /** Tests: who is calling (default: `identityOf`, the session / anonId cookie). */
+  identify?: (req: FastifyRequest) => Identity;
 }
 
 interface LearnRequestBody {
   payload?: unknown;
-  turnstileToken?: unknown;
   noCache?: unknown;
 }
 
@@ -68,9 +84,14 @@ function isRepairProblemArray(value: unknown): value is RepairProblem[] {
 
 /** SPEC 13 `llm_calls`: one document per call this learn made. `cacheHit` is the structure cache
  * (SPEC 9.5) - false for a real call, whatever the provider's own prompt cache did (`tokensCached`). */
+function whoOf(identity: Identity): Pick<LlmCallDoc, 'anonId' | 'userId'> {
+  if (identity.kind === 'anon') return { anonId: identity.anonId };
+  const userId = objectIdOf(identity.userId);
+  return { ...(identity.anonId ? { anonId: identity.anonId } : {}), ...(userId ? { userId } : {}) };
+}
+
 function ledgerDocs(learnId: string, identity: Identity, calls: readonly LlmCallRecord[], now: Date): LlmCallDoc[] {
-  // M3: signed-in identities also set `userId` here.
-  const who = identity.kind === 'anon' ? { anonId: identity.anonId } : {};
+  const who = whoOf(identity);
   return calls.map((c) => ({
     ts: now,
     ...who,
@@ -94,7 +115,7 @@ function ledgerDocs(learnId: string, identity: Identity, calls: readonly LlmCall
 function cacheHitLedgerDoc(learnId: string, identity: Identity, payload: LearnPayload, now: Date, latencyMs: number): LlmCallDoc {
   return {
     ts: now,
-    ...(identity.kind === 'anon' ? { anonId: identity.anonId } : {}),
+    ...whoOf(identity),
     learnId,
     purpose: 'learn',
     model: 'cache',
@@ -113,7 +134,8 @@ function cacheHitLedgerDoc(learnId: string, identity: Identity, payload: LearnPa
 
 export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRoutesOptions): void {
   const { env, protection, complete } = opts;
-  const { store, turnstile, secret } = protection;
+  const identify = opts.identify ?? identityOf;
+  const { store, secret } = protection;
 
   const logFailure = (what: string, err: unknown): void => {
     // Names only: an error's message could echo document contents (SPEC 15).
@@ -175,20 +197,36 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     }
   };
 
+  /** At least one model answered: a provider outage (every call an `error:*`) is nobody's failed attempt. */
+  const modelAnswered = (calls: readonly LlmCallRecord[]): boolean => calls.some((c) => !c.outcome.startsWith('error:'));
+
+  const ctxOf = (
+    identity: Extract<Identity, { kind: 'user' }>,
+    now: Date,
+    check: { uuid: string; expiresAt: Date; group: string },
+  ): AiLearnCtx => ({
+    store,
+    owner: ownerOf(identity),
+    quota: aiQuotaOf(identity, now),
+    group: check.group,
+    uuid: check.uuid,
+    learnExpiresAt: check.expiresAt,
+    now,
+  });
+
   app.post('/api/learn', { onRequest: rateLimit }, async (req, reply) => {
+    // SPEC 21 v5: the AI step is for signed-in users only - answered before anything else costs anything.
+    // (Free users get everything that runs locally, and the local result first; the web shows that.)
+    const identity = identify(req);
+    if (identity.kind !== 'user') return fail(reply, 403, { error: 'signInForAi' });
+
     const body = req.body as LearnRequestBody | undefined;
     const parsedPayload = LearnPayloadSchema.safeParse(body?.payload);
     if (!parsedPayload.success) return fail(reply, 400, { error: 'invalidPayload' });
     const payload = parsedPayload.data as unknown as LearnPayload;
 
-    const identity = identityOf(req);
     const owner = ownerOf(identity);
     const now = protection.now();
-
-    // SPEC 9.5: anonymous learns need a valid Turnstile token. (Signed-in users, M3, skip it.)
-    if (identity.kind === 'anon' && !(await turnstile.verify(body?.turnstileToken, req.ip))) {
-      return fail(reply, 403, { error: 'turnstileFailed' });
-    }
 
     // SPEC 9.5 cache: a hit costs no learn and no LLM call - so it is served even when limits or budgets
     // are spent. `noCache` lets the browser insist on a fresh learn (e.g. its verification rejected a hit).
@@ -214,19 +252,45 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       }
     }
 
-    // SPEC 9.5 budgets, then the per-tier learn limits - both BEFORE any LLM call.
+    // SPEC 21 v5 item 3: the same example pair already failed as often as the cap allows - no more AI for it
+    // (the answer that reached the cap already counted it once).
+    const group = groupOf(cacheKey);
+    if (await pairExhausted(store, owner, group)) return fail(reply, 409, { error: 'aiAttemptsExhausted', counted: false });
+
+    // SPEC 9.5 budgets, then the user's AI-learn quota - both BEFORE any LLM call. The quota unit is
+    // reserved now and settled below (kept when the learn counts, put back when it does not).
     const refusal = await budgetRefusal(identity, now);
     if (refusal) return fail(reply, refusal.status, refusal.body);
 
-    const reservation = await reserveLearn(store, learnCounterSpecs(identity, hashIp(req.ip, secret), now));
-    if (!reservation.ok) return fail(reply, 429, { error: 'limitHit', limit: reservation.limitCode });
+    const quota = aiQuotaOf(identity, now);
+    if (quota.spec) {
+      const reservation = await reserveLearn(store, [quota.spec]);
+      if (!reservation.ok) return fail(reply, 429, { error: 'limitHit', limit: reservation.limitCode, period: quota.period });
+    }
 
-    const outcome = await learn(payload, { tier: tierOf(identity), env, complete });
+    const learnId = issueLearnId(secret, owner, now, limits.protection.learnIdTtlMinutes, group);
+    const check = verifyLearnId(secret, owner, learnId, now);
+    if (!check.ok) throw new Error('issued a learnId that does not verify'); // unreachable: signed just above
+    const ctx = ctxOf(identity, now, check);
 
-    const learnId = issueLearnId(secret, owner, now, limits.protection.learnIdTtlMinutes);
-    const ledgerId = learnId.split('.', 1)[0]!;
-    await recordCalls(ledgerId, identity, outcome.calls, now);
+    let outcome: LearnOutcome;
+    try {
+      outcome = await learn(payload, { tier: tierOf(identity), env, complete });
+    } catch (err) {
+      // Something threw past the provider layer: nothing was learned, nothing counts.
+      await releaseReservation(ctx).catch((e: unknown) => logFailure('failed to release an AI learn', e));
+      throw err;
+    }
+
+    await recordCalls(check.uuid, identity, outcome.calls, now);
     await saveToCache(owner, cacheKey, payload, outcome, now);
+
+    const settled = await settleLearn(ctx, { answered: modelAnswered(outcome.calls), verified: outcome.verified });
+    if (settled.exhausted && settled.counted && !outcome.verified) {
+      // This attempt was the one that reached the cap: stop, and say it counted as one learn.
+      return fail(reply, 409, { error: 'aiAttemptsExhausted', counted: true });
+    }
+    if (settled.exhausted && !outcome.verified) return fail(reply, 409, { error: 'aiAttemptsExhausted', counted: false });
 
     const res: LearnResponse = {
       rules: outcome.rules,
@@ -234,11 +298,17 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       problems: outcome.problems,
       learnId,
       cached: false,
+      counted: settled.counted,
+      failedAttempts: settled.failedAttempts,
+      quota: await quotaState(store, ctx.quota),
     };
     return reply.send(res);
   });
 
   app.post('/api/learn/repair', { onRequest: rateLimit }, async (req, reply) => {
+    const identity = identify(req);
+    if (identity.kind !== 'user') return fail(reply, 403, { error: 'signInForAi' });
+
     const body = req.body as RepairRequestBody | undefined;
     const parsedPayload = LearnPayloadSchema.safeParse(body?.payload);
     if (!parsedPayload.success) return fail(reply, 400, { error: 'invalidPayload' });
@@ -246,7 +316,6 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     if (!parsedRules.success) return fail(reply, 400, { error: 'invalidPreviousRules' });
     if (!isRepairProblemArray(body?.problems)) return fail(reply, 400, { error: 'invalidProblems' });
 
-    const identity = identityOf(req);
     const owner = ownerOf(identity);
     const now = protection.now();
 
@@ -254,11 +323,15 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const learnCheck = verifyLearnId(secret, owner, body?.learnId, now);
     if (!learnCheck.ok) return fail(reply, 400, { error: 'invalidLearnId' });
 
+    if (await pairExhausted(store, owner, learnCheck.group)) {
+      return fail(reply, 409, { error: 'aiAttemptsExhausted', counted: false });
+    }
+
     const refusal = await budgetRefusal(identity, now);
     if (refusal) return fail(reply, refusal.status, refusal.body);
 
-    // At most ONE browser-triggered repair per learn, and it is not a new learn: the learn counters
-    // are untouched. The `repair:<uuid>` counter is what makes "once" atomic.
+    // At most ONE browser-triggered repair per learn, and it is not a new learn: the quota is untouched.
+    // The `repair:<uuid>` counter is what makes "once" atomic.
     const uses = await store.incrementCounter(
       repairKey(learnCheck.uuid),
       1,
@@ -279,11 +352,51 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     // the better version rather than the one the browser had to repair.
     await saveToCache(owner, learnCacheKey(payload), payload, outcome, now);
 
+    // A repair that passes the server checks makes the learn a success (a repair never counts on its own);
+    // one that does not changes nothing - the learn's failure was recorded when it failed.
+    const ctx = ctxOf(identity, now, learnCheck);
+    const settled: Settled = outcome.verified ? await markSucceeded(ctx) : await stateOf(ctx);
+
     const res: RepairResponse = {
       rules: outcome.rules,
       verified: outcome.verified,
       problems: outcome.problems,
+      counted: settled.counted,
+      failedAttempts: settled.failedAttempts,
+      quota: await quotaState(store, ctx.quota),
     };
     return reply.send(res);
   });
+
+  // SPEC 21 v5 item 3: the browser reports how the learn ended after its own full verification. Cheap and
+  // idempotent (the learnId is signed and the state moves by compare-and-set), so it is not rate limited.
+  app.post('/api/learn/:learnId/outcome', async (req, reply) => {
+    const identity = identify(req);
+    if (identity.kind !== 'user') return fail(reply, 403, { error: 'signInForAi' });
+
+    const outcome = (req.body as { outcome?: unknown } | undefined)?.outcome;
+    if (outcome !== 'verified' && outcome !== 'accepted' && outcome !== 'failed') {
+      return fail(reply, 400, { error: 'invalidRequest' });
+    }
+
+    const owner = ownerOf(identity);
+    const now = protection.now();
+    const check = verifyLearnId(secret, owner, (req.params as { learnId?: string }).learnId, now);
+    if (!check.ok) return fail(reply, 400, { error: 'invalidLearnId' });
+
+    const ctx = ctxOf(identity, now, check);
+    if (outcome === 'failed') {
+      // The result did not match the example: never serve it again from the structure cache.
+      await store.deleteCachedRules(owner, check.group).catch((err: unknown) => logFailure('failed to evict the learn cache', err));
+    }
+    const settled = outcome === 'failed' ? await markFailed(ctx) : await markSucceeded(ctx);
+    const res: LearnOutcomeResponse = {
+      counted: settled.counted,
+      quota: await quotaState(store, ctx.quota),
+      failedAttempts: settled.failedAttempts,
+      exhausted: settled.exhausted,
+    };
+    return reply.send(res);
+  });
+
 }

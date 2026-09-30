@@ -12,13 +12,20 @@ import {
   type LearnResult,
   type Rules,
 } from '@formatai/shared';
-import type { InputTable, RunResult } from '../types';
+import type { InputTable, RowDecisions, RunResult } from '../types';
 import { InternalRulesError } from './v1/rows';
 import { runV1 } from './v1/run';
 
 export interface RunRulesOptions {
   /** Copied into every Flag (SPEC 8.9). */
   fileName?: string;
+  /**
+   * SPEC 21 v5 item 5 (issue #36): what the user decided for flagged input rows of THIS run, keyed by the
+   * 1-based input row number: skip the row, keep it as it is (its flags are accepted), or override some
+   * of its cell values. Applied without modifying the rules; the run summary lists them
+   * (`skippedByUser`, `editedByUser`, `acceptedByUser`).
+   */
+  rowDecisions?: RowDecisions;
 }
 
 type Runner = (rules: unknown, table: InputTable, opts: RunRulesOptions) => RunResult;

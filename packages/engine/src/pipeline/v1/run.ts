@@ -3,7 +3,7 @@
 // randomness, no locale, all arithmetic in decimal.js.
 
 import type { LearnResult } from '@formatai/shared';
-import type { Flag, InputTable, RawCell, RunResult, RunSummary } from '../../types';
+import type { Flag, InputTable, RawCell, RowDecisions, RunResult, RunSummary } from '../../types';
 import { applyDedupe } from './dedupe';
 import { applyExpand } from './expand';
 import { compileFunctions, compileTables, type CompileEnv } from './expr';
@@ -18,6 +18,44 @@ import type { Val } from './values';
 
 export interface RunOptionsV1 {
   fileName?: string;
+  /** SPEC 21 v5 item 5: per-run decisions about input rows, applied without touching the rules. */
+  rowDecisions?: RowDecisions;
+}
+
+/** A per-run decision, after checking the shape (they come from the UI, so they are untrusted). */
+type Decision = { kind: 'skip' } | { kind: 'keep' } | { kind: 'override'; values: Map<string, string | number | boolean | null> };
+
+function readDecisions(raw: RowDecisions | undefined): Map<number, Decision> {
+  const out = new Map<number, Decision>();
+  if (raw === undefined || raw === null || typeof raw !== 'object') return out;
+  for (const key of Object.keys(raw)) {
+    const rowNumber = Number(key);
+    if (!Number.isInteger(rowNumber) || rowNumber < 1) continue;
+    const d = (raw as Record<string, unknown>)[key];
+    if (typeof d !== 'object' || d === null) continue;
+    const action = (d as { action?: unknown }).action;
+    if (action === 'skip') out.set(rowNumber, { kind: 'skip' });
+    else if (action === 'keep') out.set(rowNumber, { kind: 'keep' });
+    else if (action === 'override') {
+      const vals = (d as { values?: unknown }).values;
+      if (typeof vals !== 'object' || vals === null) continue;
+      const values = new Map<string, string | number | boolean | null>();
+      for (const k of Object.keys(vals)) {
+        const v = (vals as Record<string, unknown>)[k];
+        if (v === null || typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) values.set(k, v);
+      }
+      if (values.size > 0) out.set(rowNumber, { kind: 'override', values });
+    }
+  }
+  return out;
+}
+
+/** The cell an override value becomes: read by the column's type like any file cell. A number given for a
+ * real date cell stays a date serial. */
+function overrideCell(orig: RawCell | null | undefined, v: string | number | boolean | null): RawCell | null {
+  if (v === null) return null;
+  if (typeof v === 'number' && orig?.isDate === true) return { v, isDate: true, ...(orig.z !== undefined ? { z: orig.z } : {}) };
+  return { v };
 }
 
 /**
@@ -89,7 +127,14 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
   // expression in the rules file (row filters, computed columns, fixedFanOut).
   const tables = compileTables(rules.transform.tables);
   const functions = compileFunctions(rules.transform.functions, { language }, tables);
-  const ctx: RunCtx = { fileName: opts.fileName, language, date1904, plan, functions, tables };
+  const decisions = readDecisions(opts.rowDecisions);
+  const keepRows = new Set<number>();
+  const skipRows = new Set<number>();
+  for (const [rowNumber, d] of decisions) {
+    if (d.kind === 'keep') keepRows.add(rowNumber);
+    else if (d.kind === 'skip') skipRows.add(rowNumber);
+  }
+  const ctx: RunCtx = { fileName: opts.fileName, language, date1904, plan, functions, tables, keepRows };
   const inCols = rules.input.columns;
 
   // 1. Read: map headers to ids.
@@ -113,6 +158,25 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
     duplicatesFlagged: 0,
     blockedRows: [],
   };
+  if (opts.rowDecisions !== undefined) {
+    summary.skippedByUser = [];
+    summary.editedByUser = [];
+    summary.acceptedByUser = [];
+  }
+
+  // Row-decision overrides address an input column by id or header (the rules' own, or the file's).
+  const colByKey = new Map<string, number>();
+  if (decisions.size > 0) {
+    inCols.forEach((c, ci) => colByKey.set(c.id, ci));
+    inCols.forEach((c, ci) => {
+      if (c.header !== '' && !colByKey.has(c.header)) colByKey.set(c.header, ci);
+    });
+    inCols.forEach((_, ci) => {
+      const h = mapping.src[ci] as number;
+      const fileHeader = h >= 0 ? table.headers[h] : undefined;
+      if (fileHeader !== undefined && fileHeader !== '' && !colByKey.has(fileHeader)) colByKey.set(fileHeader, ci);
+    });
+  }
 
   // 2. Normalize types. Input column i lives in slot i.
   const norms = inCols.map((c) => colNorm(c, date1904, language));
@@ -132,10 +196,23 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
       flagged: null,
     };
     let any = false;
+    // SPEC 21 v5 item 5: a one-off value edit replaces the cells BEFORE normalization, so the row
+    // is read (and flagged) exactly as if the file had held these values.
+    const decision = decisions.get(row.o.rowNumber);
+    let overrides: Map<number, string | number | boolean | null> | null = null;
+    if (decision?.kind === 'override') {
+      for (const [key, value] of decision.values) {
+        const ci = colByKey.get(key);
+        if (ci === undefined) continue;
+        if (overrides === null) overrides = new Map();
+        overrides.set(ci, value);
+      }
+    }
     for (let ci = 0; ci < inCols.length; ci++) {
       const src = mapping.src[ci] as number;
-      if (src < 0) continue; // missing optional column: stays empty
-      const cell = raw[src];
+      let cell: RawCell | null | undefined = src < 0 ? undefined : raw[src];
+      if (overrides !== null && overrides.has(ci)) cell = overrideCell(cell, overrides.get(ci) ?? null);
+      else if (src < 0) continue; // missing optional column: stays empty
       const memo = memos[ci];
       const val = memo ? memo.normalize(cell, norms[ci]!, issue) : normalizeCell(cell, norms[ci]!, issue);
       if (val === null) continue;
@@ -155,9 +232,24 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
     }
     // DECISION: an input row whose mapped cells are all empty (a spacer row
     // inside the data) is skipped and not counted in rowsIn.
-    if (any) rows.push(row);
+    if (any) {
+      rows.push(row);
+      if (overrides !== null) {
+        summary.editedByUser?.push({ rowNumber: row.o.rowNumber, columns: [...overrides.keys()].sort((a, b) => a - b).map((ci) => inCols[ci]!.id) });
+      }
+    }
   }
   summary.rowsIn = rows.length;
+
+  // Rows the user skipped for this run leave here, as if they weren't in the file (before filters
+  // and duplicates, so a skipped row is never the "kept" copy of a duplicate).
+  if (skipRows.size > 0) {
+    rows = rows.filter((row) => {
+      if (!skipRows.has(row.o.rowNumber)) return true;
+      summary.skippedByUser?.push({ rowNumber: row.o.rowNumber });
+      return false;
+    });
+  }
 
   // 3. Row filters (ANDed). SPEC 8.3: `{ column, op, value? }` for simple cases,
   // or `{ expr }` (any condition) for the rest.
@@ -224,6 +316,21 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
       if (r.o.flags !== null) for (const f of r.o.flags) flags.push(f);
     }
     if (r.flags !== null) for (const f of r.flags) flags.push(f);
+  }
+
+  // SPEC 21 v5 item 5: "keep it as is" accepts the flags of those rows for this run. They stay in the
+  // list (marked `accepted`), but the cells are no longer highlighted.
+  if (keepRows.size > 0) {
+    const perRow = new Map<number, number>();
+    for (const f of flags) {
+      if (!keepRows.has(f.rowNumber)) continue;
+      f.accepted = true;
+      perRow.set(f.rowNumber, (perRow.get(f.rowNumber) ?? 0) + 1);
+    }
+    for (const r of rows) if (keepRows.has(r.o.rowNumber)) r.flagged = null;
+    if (summary.acceptedByUser !== undefined) {
+      for (const rowNumber of [...perRow.keys()].sort((a, b) => a - b)) summary.acceptedByUser.push({ rowNumber, flags: perRow.get(rowNumber) as number });
+    }
   }
 
   // 9-10. Group and output layout.

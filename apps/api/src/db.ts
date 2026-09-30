@@ -10,6 +10,7 @@ import type {
   LeadDoc,
   LearnCacheDoc,
   LlmCallDoc,
+  SessionDoc,
   UsageCounterDoc,
   UserDoc,
   WaitlistDoc,
@@ -19,6 +20,7 @@ export interface AppDb {
   client: MongoClient;
   db: Db;
   users: Collection<UserDoc>;
+  sessions: Collection<SessionDoc>;
   formats: Collection<FormatDoc>;
   conversions: Collection<ConversionDoc>;
   events: Collection<EventDoc>;
@@ -49,6 +51,7 @@ export async function connectDb(env: Env): Promise<AppDb | null> {
     client,
     db,
     users: db.collection<UserDoc>('users'),
+    sessions: db.collection<SessionDoc>('sessions'),
     formats: db.collection<FormatDoc>('formats'),
     conversions: db.collection<ConversionDoc>('conversions'),
     events: db.collection<EventDoc>('events'),
@@ -69,6 +72,9 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
       { 'identities.provider': 1, 'identities.subject': 1 },
       { unique: true, name: 'identities_provider_subject_unique' },
     ),
+    // SPEC 12: sessions expire through their own `expiresAt`.
+    appDb.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'sessions_expiresAt_ttl' }),
+    appDb.sessions.createIndex({ userId: 1 }, { name: 'sessions_userId' }),
     appDb.formats.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'formats_ownerId_createdAt' }),
     appDb.conversions.createIndex({ ownerId: 1, formatId: 1 }, { name: 'conversions_ownerId_formatId' }),
     appDb.conversions.createIndex({ formatId: 1, createdAt: -1 }, { name: 'conversions_formatId_createdAt' }),

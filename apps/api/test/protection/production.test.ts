@@ -1,5 +1,6 @@
 // Production mode (SPEC 9.5, 15): the learn routes exist, but only behind their protections - and the
 // process refuses to start when those protections cannot work.
+import { limits } from '@formatai/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createMemoryStore } from '../../src/protection/store.js';
@@ -15,7 +16,13 @@ afterEach(async () => {
 });
 
 const productionEnv = (overrides: Record<string, string | undefined> = {}) =>
-  makeEnv({ NODE_ENV: 'production', TURNSTILE_SECRET_KEY: 'prod-secret', IP_HASH_SECRET: 'prod-hash-secret', ...overrides });
+  makeEnv({
+    NODE_ENV: 'production',
+    TURNSTILE_SECRET_KEY: 'prod-secret',
+    IP_HASH_SECRET: 'prod-hash-secret',
+    SESSION_SECRET: 'prod-session-secret',
+    ...overrides,
+  });
 
 describe('production mode', () => {
   it('registers /api/learn, /api/learn/repair and /api/session (no dev-only gate any more)', async () => {
@@ -32,11 +39,11 @@ describe('production mode', () => {
     const learn = await app.inject({
       method: 'POST',
       url: '/api/learn',
-      payload: JSON.stringify({ payload: basicPayload() }), // no Turnstile token
+      payload: JSON.stringify({ payload: basicPayload() }), // not signed in
       headers: { 'content-type': 'application/json' },
     });
     expect(learn.statusCode).toBe(403);
-    expect(learn.json()).toEqual({ error: 'turnstileFailed' });
+    expect(learn.json()).toEqual({ error: 'signInForAi' });
 
     const repair = await app.inject({
       method: 'POST',
@@ -44,14 +51,14 @@ describe('production mode', () => {
       payload: JSON.stringify({ payload: basicPayload(), previousRules: {}, problems: [] }),
       headers: { 'content-type': 'application/json' },
     });
-    expect(repair.statusCode).toBe(400); // reached the handler (body validation), not a 404
-    expect(repair.json()).toEqual({ error: 'invalidPreviousRules' });
+    expect(repair.statusCode).toBe(403); // reached the handler (not a 404): the AI is for signed-in users
+    expect(repair.json()).toEqual({ error: 'signInForAi' });
 
     const session = await app.inject({ method: 'GET', url: '/api/session' });
     expect(session.statusCode).toBe(200);
   });
 
-  it('serves a full learn with a valid Turnstile token, and sets a Secure anonId cookie', async () => {
+  it('serves a full learn to a signed-in user, and sets a Secure anonId cookie', async () => {
     const ts = makeTurnstileFetch(['good']);
     const llm = makeComplete();
     app = await buildServer({
@@ -61,12 +68,13 @@ describe('production mode', () => {
       store: createMemoryStore(),
       fetch: ts.fn,
       complete: llm.fn,
+      identify: (req) => ({ kind: 'user', userId: '00000000000000000000000a', tier: 'registered', anonId: req.anonId }),
     });
 
     const res = await app.inject({
       method: 'POST',
       url: '/api/learn',
-      payload: JSON.stringify({ payload: basicPayload(), turnstileToken: 'good' }),
+      payload: JSON.stringify({ payload: basicPayload() }),
       headers: { 'content-type': 'application/json' },
     });
     expect(res.statusCode).toBe(200);
@@ -117,7 +125,12 @@ describe('production startup requirements', () => {
 
   it('refuses to start without a hashing secret (IP_HASH_SECRET or SESSION_SECRET)', async () => {
     await expect(
-      buildServer({ env: productionEnv({ IP_HASH_SECRET: undefined }), db: null, logger: false, store: createMemoryStore() }),
+      buildServer({
+        env: productionEnv({ IP_HASH_SECRET: undefined, SESSION_SECRET: undefined }),
+        db: null,
+        logger: false,
+        store: createMemoryStore(),
+      }),
     ).rejects.toThrow(/IP_HASH_SECRET/);
     // SESSION_SECRET is an accepted stand-in.
     app = await buildServer({
@@ -155,26 +168,38 @@ describe('parseTrustProxy (behind a proxy, req.ip must be the client)', () => {
     expect(() => parseTrustProxy('-1')).toThrow(/TRUST_PROXY/);
   });
 
-  it('uses X-Forwarded-For for the per-IP limits only when trusted', async () => {
-    app = await buildServer({
-      env: makeEnv({ TRUST_PROXY: '1' }),
-      db: null,
-      logger: false,
-      store: createMemoryStore(),
-      complete: makeComplete().fn,
-    });
-    const learn = (xff: string) =>
-      app!.inject({
-        method: 'POST',
-        url: '/api/learn',
-        remoteAddress: '10.0.0.1', // the proxy
-        headers: { 'content-type': 'application/json', 'x-forwarded-for': xff },
-        payload: JSON.stringify({ payload: basicPayload() }),
+  it('uses X-Forwarded-For for the per-IP request limit only when trusted', async () => {
+    const start = async (trust: string | undefined) => {
+      await app?.close();
+      app = await buildServer({
+        env: makeEnv({ TRUST_PROXY: trust }),
+        db: null,
+        logger: false,
+        store: createMemoryStore(),
+        complete: makeComplete().fn,
+        identify: (req) => ({ kind: 'user', userId: '00000000000000000000000a', tier: 'registered', anonId: req.anonId }),
       });
-    // Two different clients behind one proxy do not share a per-IP allowance...
-    expect((await learn('198.51.100.1')).statusCode).toBe(200);
-    expect((await learn('198.51.100.1')).statusCode).toBe(200);
-    expect((await learn('198.51.100.1')).statusCode).toBe(429);
-    expect((await learn('198.51.100.2')).statusCode).toBe(200);
+      // A malformed body: it reaches the handler (400) without costing a learn, so only the rate limit can stop it.
+      return (xff: string) =>
+        app!.inject({
+          method: 'POST',
+          url: '/api/learn',
+          remoteAddress: '10.0.0.1', // the proxy
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': xff },
+          payload: JSON.stringify({ payload: 1 }),
+        });
+    };
+    const max = limits.protection.learnRequestsPerIpPerMinute;
+
+    // Trusted: two different clients behind one proxy do not share a per-IP allowance...
+    const trusted = await start('1');
+    for (let i = 0; i < max; i++) expect((await trusted('198.51.100.1')).statusCode).toBe(400);
+    expect((await trusted('198.51.100.1')).statusCode).toBe(429);
+    expect((await trusted('198.51.100.2')).statusCode).toBe(400);
+
+    // Not trusted: X-Forwarded-For is ignored, so every client is the proxy - one shared allowance.
+    const untrusted = await start(undefined);
+    for (let i = 0; i < max; i++) expect((await untrusted(`198.51.100.${i + 1}`)).statusCode).toBe(400);
+    expect((await untrusted('198.51.100.99')).statusCode).toBe(429);
   });
 });

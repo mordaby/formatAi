@@ -9,15 +9,16 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import type { Format, LearnPayload, LearnResult, RepairProblem, Tier } from '@formatai/shared';
+import type { AiStepPartCode, Format, LearnPayload, LearnResult, RepairProblem, Tier } from '@formatai/shared';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
 import { analyzePair } from './analyze';
 import { fastPath } from './fastPath';
 import { createMasker, unmaskRules, type Masker } from './mask';
-import { buildPayload } from './payload';
+import { partialRules, type PartialRulesResult } from './partial';
 import { preflight, type PreflightResult } from './preflight';
+import { aiReadiness, type AiReadiness } from './readiness';
 import { verifyAgainstExample, type VerifyResult } from './verify';
 
 /** What `callLearn`/`callRepair` return - the shape of `apps/api/src/learn`'s
@@ -51,8 +52,17 @@ export interface LearnFromExamplesOptions<Call = unknown> {
   /** SPEC 8.12/A2: attach mode - the existing format this input must produce. */
   target?: Format;
   /** SPEC 6.4: "Try anyway" past a "rows couldn't be aligned" warning. Trying anyway
-   * still counts as a learn, same as any other continued warn. */
+   * still counts as a learn once it reaches the AI step, same as any other continued warn. It never
+   * gets past the AI readiness gate (SPEC 21 v5 item 4): with no matched rows at all there is nothing
+   * to learn from (`path: 'notReady'`). */
   tryAnyway?: boolean;
+  /**
+   * SPEC 21 v5 item 1: whether this caller may use the AI step at all. 'notAllowed' (a user who isn't
+   * signed in) never reaches the LLM: when the fast path can't finish, the learn returns the local
+   * partial result (`path: 'partial'`) instead, with the columns that need the AI step listed. Default
+   * 'allowed' (the existing behavior). `callLearn` is never called when 'notAllowed'.
+   */
+  ai?: 'allowed' | 'notAllowed';
   /** SPEC 5 A step 5: one learn action (however many calls it takes under the hood -
    * server repair rounds and escalation are `callLearn`'s own business, e.g.
    * `apps/api/src/learn`'s `learn()`). */
@@ -76,7 +86,12 @@ export interface LearnFromExamplesOptions<Call = unknown> {
   onAnalysis?: (analysis: PairAnalysis) => void;
 }
 
-export type LearnPath = 'blocked' | 'local' | 'llm';
+/**
+ * blocked: pre-flight (SPEC 6.3) stopped it.  local: the strict fast path finished it, no LLM.
+ * llm: the AI step ran.  partial (v5): the local partial result - see `LearnFromExamplesResult.partial`.
+ * notReady (v5): the AI readiness gate stopped the AI step - see `readiness`; nothing was consumed.
+ */
+export type LearnPath = 'blocked' | 'local' | 'llm' | 'partial' | 'notReady';
 
 /**
  * DECISION: SPEC 10's report needs per-stage shares ("share blocked, share fast path
@@ -99,6 +114,29 @@ export interface LearnStages {
   /** Final verification result: after the browser-triggered repair when one was used,
    * otherwise the same as `verifiedFirstCall` (or the fast path's own verification). */
   verifiedAfterRepair: boolean;
+  /** v5: the AI readiness gate ran (the fast path did not finish the learn). */
+  readinessChecked?: boolean;
+  /** v5: the gate stopped the AI step with a block (`path: 'notReady'`). */
+  readinessBlocked?: boolean;
+  /** v5: the local partial result was built and returned (`path: 'partial'`). */
+  partialBuilt?: boolean;
+}
+
+/** v5 items 1 and 4: what the local partial result holds and why it was returned. */
+export interface PartialInfo {
+  /** 'aiNotAllowed': the caller may not use the AI step (sign in to finish). 'onlyExternalColumns': the AI can't
+   * help - what is left is external data - so this IS the finished local result. */
+  reason: 'aiNotAllowed' | 'onlyExternalColumns';
+  /** Headers of the output columns code built (and `verification` counts). */
+  solved: string[];
+  /** Headers of the output columns that need the AI step. */
+  needsAi: string[];
+  /** Headers of the output columns whose values aren't in the input file (marked "needs your input"). */
+  external: string[];
+  /** Output column positions of `solved`. */
+  solvedColumns: number[];
+  /** What besides columns still needs the AI step (rows that change shape, dropped rows, sort, groups, ...). */
+  needsAiParts: AiStepPartCode[];
 }
 
 export interface LearnFromExamplesResult<Call = unknown> {
@@ -114,6 +152,11 @@ export interface LearnFromExamplesResult<Call = unknown> {
   unsupported: LearnResult['unsupported'];
   calls: Call[];
   stages: LearnStages;
+  /** path 'partial': see `PartialInfo`. `rules` are the partial rules; `verification` counts the solved columns only. */
+  partial?: PartialInfo;
+  /** The AI readiness verdict, when the gate ran (paths 'notReady', 'partial' and 'llm'). Issues carry codes and
+   * params for `aiReadinessMessages`; the payload the check built is not included. */
+  readiness?: AiReadiness;
 }
 
 function emptyStages(status: PreflightResult['status']): LearnStages {
@@ -125,6 +168,9 @@ function emptyStages(status: PreflightResult['status']): LearnStages {
     verifiedFirstCall: false,
     browserRepairUsed: false,
     verifiedAfterRepair: false,
+    readinessChecked: false,
+    readinessBlocked: false,
+    partialBuilt: false,
   };
 }
 
@@ -134,8 +180,9 @@ function blockedResult<Call>(pf: PreflightResult): LearnFromExamplesResult<Call>
 
 /**
  * Runs SPEC 5 flow A/A2 end to end: read both files, analyze the pair, pre-flight,
- * the local fast path, the (optionally masked) payload, the learn call, unmasking,
- * full verification, and - when needed and offered - one browser-triggered repair.
+ * the local fast path, the AI readiness gate (v5: which also builds the (optionally masked) payload, and
+ * decides whether the AI step runs at all - see `ai`, `partial` and `readiness`), the learn call,
+ * unmasking, full verification, and - when needed and offered - one browser-triggered repair.
  */
 export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesOptions<Call>): Promise<LearnFromExamplesResult<Call>> {
   if (opts.masking && !opts.key) {
@@ -198,9 +245,36 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     }
   }
 
-  // ---- SPEC 5 A step 4 / 7: the (optionally masked) payload ----
+  // ---- SPEC 21 v5 item 4: the AI readiness gate, before any payload or LLM call. It also builds the
+  // (optionally masked, SPEC 7.2) payload, which the learn call below then uses as it is. ----
+  const ai = opts.ai ?? 'allowed';
   const masker: Masker | undefined = opts.masking ? createMasker(opts.key!) : undefined;
-  const { payload } = buildPayload(analysis, pf, { ...(masker ? { masker } : {}), ...(opts.target ? { target: opts.target } : {}) });
+  const partial = localPartial(analysis, pf);
+  const readiness = aiReadiness(analysis, pf, { ...(masker ? { masker } : {}), ...(opts.target ? { target: opts.target } : {}), partial });
+  stages.readinessChecked = true;
+  const shownReadiness: AiReadiness = readiness.ready ? { ready: true } : readiness;
+
+  // Only external columns are left: the AI can't help, so this IS the finished local result (SPEC 21 v5 item 4).
+  const onlyExternal = !readiness.ready && readiness.issues.every((i) => i.code === 'onlyExternalColumns');
+  if (partial && onlyExternal) return partialResult(analysis, pf, partial, 'onlyExternalColumns', shownReadiness, stages);
+
+  // A block: the AI step can't succeed. Signed-out callers still get the local result unless it has no
+  // example pairs at all (then signing in wouldn't help either).
+  if (!readiness.ready) {
+    const noPairs = readiness.issues.some((i) => i.code === 'noRowsMatched');
+    if (ai === 'notAllowed' && partial && !noPairs) return partialResult(analysis, pf, partial, 'aiNotAllowed', shownReadiness, stages);
+    stages.readinessBlocked = true;
+    return { path: 'notReady', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls: [], stages, readiness: shownReadiness };
+  }
+
+  // The AI step isn't available to this caller: the local partial result is what they get (SPEC 21 v5 item 1).
+  if (ai === 'notAllowed') {
+    if (partial) return partialResult(analysis, pf, partial, 'aiNotAllowed', shownReadiness, stages);
+    return blockedResult(pf);
+  }
+
+  // ---- SPEC 5 A step 4 / 7: the payload (built by the gate) ----
+  const payload: LearnPayload = readiness.built!.payload;
 
   // ---- SPEC 5 A step 5: the learn call ----
   stages.llmCalled = true;
@@ -208,7 +282,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   const calls: Call[] = [...learned.calls];
 
   if (!learned.rules) {
-    return { path: 'llm', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls, stages };
+    return { path: 'llm', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls, stages, readiness: shownReadiness };
   }
 
   let maskedRules = learned.rules;
@@ -231,5 +305,49 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   }
   stages.verifiedAfterRepair = verification.verified;
 
-  return { path: 'llm', preflight: pf, rules, verification, assumptions: rules.assumptions, unsupported: rules.unsupported, calls, stages };
+  return { path: 'llm', preflight: pf, rules, verification, assumptions: rules.assumptions, unsupported: rules.unsupported, calls, stages, readiness: shownReadiness };
+}
+
+/** The local partial result, or null when there is none. It is a preview built from what code already knows, so a
+ * problem in building it must never take down a learn that would otherwise reach the AI step. */
+function localPartial(analysis: PairAnalysis, pf: PreflightResult): PartialRulesResult | null {
+  try {
+    const p = partialRules(analysis, pf);
+    return 'reason' in p ? null : p;
+  } catch {
+    return null;
+  }
+}
+
+/** The local partial result (SPEC 21 v5 items 1 and 4): built rules for what code explained, checked against the
+ * example on those columns only. */
+function partialResult<Call>(
+  analysis: PairAnalysis,
+  pf: PreflightResult,
+  partial: PartialRulesResult,
+  reason: PartialInfo['reason'],
+  readiness: AiReadiness,
+  stages: LearnStages,
+): LearnFromExamplesResult<Call> {
+  stages.partialBuilt = true;
+  const verification = verifyAgainstExample(partial.rules, analysis, { onlyColumns: partial.solvedColumns });
+  return {
+    path: 'partial',
+    preflight: pf,
+    rules: partial.rules,
+    verification,
+    assumptions: partial.assumptions,
+    unsupported: partial.rules.unsupported,
+    calls: [],
+    stages,
+    partial: {
+      reason,
+      solved: partial.solved,
+      needsAi: partial.needsAi,
+      external: partial.external,
+      solvedColumns: partial.solvedColumns,
+      needsAiParts: partial.needsAiParts,
+    },
+    readiness,
+  };
 }

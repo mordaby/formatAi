@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { API_ERROR_CODES, LIMIT_CODES, apiErrorMessages, limitMessages, limits } from '../src/index';
+import {
+  API_ERROR_CODES,
+  LIMIT_CODES,
+  aiAttemptsExhaustedMessages,
+  aiLearnsLimitMessages,
+  apiErrorMessages,
+  limitMessages,
+  limits,
+  tiers,
+} from '../src/index';
 
 // SPEC 9.5/11: the API returns only stable codes; every one needs he + en UI text.
 describe('API error codes and messages', () => {
@@ -19,16 +28,58 @@ describe('API error codes and messages', () => {
     expect(Object.keys(limitMessages).sort()).toEqual([...LIMIT_CODES].sort());
   });
 
-  it('includes the codes the M2 protections return', () => {
-    for (const code of ['limitHit', 'anonBudgetExhausted', 'budgetExhausted', 'rateLimited', 'turnstileFailed']) {
+  it('includes the codes the M2 protections and the M3 AI quota / registry return', () => {
+    for (const code of [
+      'limitHit',
+      'anonBudgetExhausted',
+      'budgetExhausted',
+      'rateLimited',
+      'turnstileFailed',
+      'signInForAi',
+      'aiAttemptsExhausted',
+      'signInRequired',
+      'notFound',
+      'invalidRules',
+      'formatMismatch',
+    ]) {
       expect(API_ERROR_CODES).toContain(code);
     }
+    for (const limit of ['aiLearns', 'savedFormats', 'newFormatsPerMonth', 'sourcesPerFormat', 'rulesPerFormat']) {
+      expect(LIMIT_CODES).toContain(limit);
+    }
+  });
+
+  it('has he and en text for the AI-learn period and failed-attempt variants (SPEC 21 v5)', () => {
+    for (const period of ['lifetime', 'month', 'day'] as const) {
+      expect(aiLearnsLimitMessages[period].en.length, period).toBeGreaterThan(0);
+      expect(aiLearnsLimitMessages[period].he.length, period).toBeGreaterThan(0);
+    }
+    for (const k of ['counted', 'notCounted'] as const) {
+      expect(aiAttemptsExhaustedMessages[k].en.length, k).toBeGreaterThan(0);
+      expect(aiAttemptsExhaustedMessages[k].he.length, k).toBeGreaterThan(0);
+    }
+    expect(aiAttemptsExhaustedMessages.notCounted.en).toBe(apiErrorMessages.aiAttemptsExhausted.en);
+  });
+});
+
+describe('AI learn quota config (SPEC 11, 21 v5)', () => {
+  it('gives anonymous none, registered 3 a month and paid 150 a month', () => {
+    expect(tiers.anonymous.aiLearns).toEqual({ count: 0, period: 'lifetime' });
+    expect(tiers.registered.aiLearns).toEqual({ count: 3, period: 'month' });
+    expect(tiers.paid.aiLearns).toEqual({ count: 150, period: 'month' });
+    for (const t of Object.values(tiers)) {
+      expect(['lifetime', 'month', 'day', 'unlimited']).toContain(t.aiLearns.period);
+    }
+  });
+
+  it('caps failed attempts on one example pair in config', () => {
+    expect(limits.learn.maxFailedAiAttempts).toBe(3);
+    expect(limits.learn.failedAttemptsWindowHours).toBeGreaterThan(0);
   });
 });
 
 describe('protection config (SPEC 8: limits live in config)', () => {
   it('defines positive protection and cache settings', () => {
-    expect(limits.protection.anonLearnsPerIpPerDay).toBeGreaterThan(0);
     expect(limits.protection.learnRequestsPerIpPerMinute).toBeGreaterThan(0);
     expect(limits.protection.learnIdTtlMinutes).toBeGreaterThan(0);
     expect(limits.cache.ttlDays).toBeGreaterThan(0);

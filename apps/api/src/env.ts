@@ -46,6 +46,10 @@ const OPTIONAL_STRING_KEYS = [
   'GOOGLE_CLIENT_SECRET',
   'MICROSOFT_CLIENT_ID',
   'MICROSOFT_CLIENT_SECRET',
+  /** Comma-separated Microsoft object ids (`oid`, or `tid:oid`) of admins - the Microsoft counterpart of ADMIN_EMAILS (SPEC 12). */
+  'MICROSOFT_ADMIN_OIDS',
+  /** Public base URL of this API, used to build the OIDC redirect URIs (`<url>/api/auth/<provider>/callback`). Default http://localhost:<PORT>. Required in production when a provider is configured. */
+  'API_PUBLIC_URL',
   'ADMIN_EMAILS',
   'TURNSTILE_SECRET_KEY',
   'VITE_TURNSTILE_SITE_KEY',

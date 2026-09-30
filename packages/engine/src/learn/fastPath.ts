@@ -61,7 +61,7 @@ export interface FastPathSuccess {
 
 export type FastPathResult = FastPathSuccess | FastPathFailure;
 
-function fail(reason: FastPathReasonCode, params?: Record<string, string | number>): FastPathFailure {
+export function fail(reason: FastPathReasonCode, params?: Record<string, string | number>): FastPathFailure {
   return params ? { reason, params } : { reason };
 }
 
@@ -81,7 +81,7 @@ function slug(header: string): string {
 
 /** A short, unique camelCase id (LEARN_PROMPT step 12): an ascii-slug of the
  * header when one exists, else a neutral `c1`, `c2`, ... scheme. */
-function freshId(header: string, fallback: string, used: Set<string>): string {
+export function freshId(header: string, fallback: string, used: Set<string>): string {
   let base = slug(header);
   if (base === '' || /^[0-9]/.test(base)) base = fallback;
   let id = base;
@@ -91,11 +91,11 @@ function freshId(header: string, fallback: string, used: Set<string>): string {
   return id;
 }
 
-function columnType(p: ProfileType): ColumnType {
+export function columnType(p: ProfileType): ColumnType {
   return p === 'empty' ? 'text' : p;
 }
 
-function isPlainXlsx(f: OutputFileSpec): boolean {
+export function isPlainXlsx(f: OutputFileSpec): boolean {
   return f.type === 'xlsx' && f.delimiter === undefined && f.header === undefined && f.encoding === undefined && f.quote === undefined;
 }
 
@@ -103,7 +103,7 @@ function isPlainXlsx(f: OutputFileSpec): boolean {
 // Build context
 // ---------------------------------------------------------------------------
 
-interface Ctx {
+export interface Ctx {
   usedIds: Set<string>;
   /** Input column index -> declared id, created lazily on first use. */
   inputIds: Map<number, string>;
@@ -113,11 +113,49 @@ interface Ctx {
   valueMaps: ValueMap[];
   /** Input columns actually fed into a rule (output, filter or dedupe key). */
   usedInputCols: Set<number>;
+  /**
+   * Relation operands >= input.columnCount are columns a family pattern creates (SPEC 8.5); the local
+   * partial result (partial.ts) maps each to the id its `expand` declares. Always empty for the strict
+   * fast path, which never sees a family.
+   */
+  createdIds: Map<number, string>;
 }
 
-function ensureInputColumn(ctx: Ctx, analysis: PairAnalysis, i: number): string {
+export function newCtx(): Ctx {
+  return { usedIds: new Set(), inputIds: new Map(), inputColumns: new Map(), computed: [], valueMaps: [], usedInputCols: new Set(), createdIds: new Map() };
+}
+
+/** A copy of the build state, to roll a failed column back (partial.ts builds tolerantly). */
+export function snapshotCtx(ctx: Ctx): Ctx {
+  return {
+    usedIds: new Set(ctx.usedIds),
+    inputIds: new Map(ctx.inputIds),
+    inputColumns: new Map([...ctx.inputColumns].map(([i, c]) => [i, { ...c }])),
+    computed: [...ctx.computed],
+    valueMaps: [...ctx.valueMaps],
+    usedInputCols: new Set(ctx.usedInputCols),
+    createdIds: new Map(ctx.createdIds),
+  };
+}
+
+export function restoreCtx(ctx: Ctx, snap: Ctx): void {
+  ctx.usedIds = snap.usedIds;
+  ctx.inputIds = snap.inputIds;
+  ctx.inputColumns = snap.inputColumns;
+  ctx.computed = snap.computed;
+  ctx.valueMaps = snap.valueMaps;
+  ctx.usedInputCols = snap.usedInputCols;
+  ctx.createdIds = snap.createdIds;
+}
+
+export function ensureInputColumn(ctx: Ctx, analysis: PairAnalysis, i: number): string {
   const existing = ctx.inputIds.get(i);
   if (existing !== undefined) return existing;
+  if (i >= analysis.input.columnCount) {
+    const created = ctx.createdIds.get(i);
+    if (created === undefined) throw new Error(`fastPath: operand ${i} is not an input column and no family column was declared for it`);
+    return created;
+  }
   const profile = analysis.input.profile[i]!;
   const id = freshId(profile.header, `c${i + 1}`, ctx.usedIds);
   ctx.inputIds.set(i, id);
@@ -142,7 +180,7 @@ function newComputedId(ctx: Ctx, outHeader: string): string {
 // Layout eligibility (SPEC 6.5: "nothing beyond constant title rows")
 // ---------------------------------------------------------------------------
 
-function layoutIssue(analysis: PairAnalysis): FastPathFailure | null {
+export function layoutIssue(analysis: PairAnalysis): FastPathFailure | null {
   const layout = analysis.layout;
   if (layout.groupBy !== null) return fail('layoutUnsupported', { part: 'group' });
   if (layout.summaryRows.length > 0) return fail('layoutUnsupported', { part: 'summaryRows' });
@@ -204,7 +242,7 @@ function thinEvidenceIssue(analysis: PairAnalysis, rel: Relation): FastPathFailu
 // One output column's rule, from its chosen relation
 // ---------------------------------------------------------------------------
 
-function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, rel: Relation): string | FastPathFailure {
+export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, rel: Relation): string | FastPathFailure {
   const input = (i: number): string => ensureInputColumn(ctx, analysis, i);
   const use = (i: number): void => void ctx.usedInputCols.add(i);
 
@@ -345,7 +383,7 @@ function toFilterScalar(v: PayloadCell): FilterScalar {
   return v;
 }
 
-function buildRowFilter(fr: FilterRelation, column: string, assumptions: Assumption[]): RowFilter {
+export function buildRowFilter(fr: FilterRelation, column: string, assumptions: Assumption[]): RowFilter {
   if (fr.droppedWhen) {
     const { op, value } = fr.droppedWhen;
     if (op === 'isEmpty' || op === 'notEmpty') return { column, op };
@@ -367,12 +405,12 @@ function buildRowFilter(fr: FilterRelation, column: string, assumptions: Assumpt
     : { column, op: 'oneOf', value: fr.keptValues!.map(toFilterScalar) };
 }
 
-interface DroppedBuild {
+export interface DroppedBuild {
   dedupe?: Dedupe;
   rowFilters: RowFilter[];
 }
 
-function buildDropped(analysis: PairAnalysis, ctx: Ctx): { build: DroppedBuild; assumptions: Assumption[] } | FastPathFailure {
+export function buildDropped(analysis: PairAnalysis, ctx: Ctx): { build: DroppedBuild; assumptions: Assumption[] } | FastPathFailure {
   const dropped = analysis.dropped;
   if (dropped.unexplained.length > 0) return fail('droppedRowsUnexplained');
 
@@ -406,13 +444,13 @@ function buildDropped(analysis: PairAnalysis, ctx: Ctx): { build: DroppedBuild; 
 // Validations (LEARN_PROMPT step 11)
 // ---------------------------------------------------------------------------
 
-function directOutputHeader(outputColumns: readonly { header: string; from: string }[], inputId: string): string | undefined {
+function directOutputHeader(outputColumns: readonly { header: string; from: string | null }[], inputId: string): string | undefined {
   return outputColumns.find((c) => c.from === inputId)?.header;
 }
 
 const NUMERIC_PROFILE_TYPES: ReadonlySet<ProfileType> = new Set(['integer', 'decimal', 'currency', 'percent']);
 
-function buildValidations(analysis: PairAnalysis, ctx: Ctx, outputColumns: readonly { header: string; from: string }[]): Validation[] {
+export function buildValidations(analysis: PairAnalysis, ctx: Ctx, outputColumns: readonly { header: string; from: string | null }[]): Validation[] {
   const validations: Validation[] = [];
   const entries = [...ctx.inputColumns.entries()].sort((a, b) => a[0] - b[0]);
   for (const [i, col] of entries) {
@@ -460,6 +498,78 @@ function buildValidations(analysis: PairAnalysis, ctx: Ctx, outputColumns: reado
 }
 
 // ---------------------------------------------------------------------------
+// Assembly (shared with the local partial result, partial.ts)
+// ---------------------------------------------------------------------------
+
+export interface BuiltOutputColumn {
+  header: string;
+  from: string | null;
+  format?: string;
+  width?: number;
+}
+
+export interface AssembleExtras {
+  /** `transform.expand`, when the rows expand (partial.ts only). */
+  expand?: NonNullable<RulesTransform['expand']>;
+  /** Title rows to write (default: every title row of the example, as constants). */
+  titleRows?: TitleRow[];
+  unsupported?: LearnResult['unsupported'];
+}
+
+/** The rules file from what the builders collected: input columns, computed columns, value maps, dropped-row
+ * rules, output columns and validations. The strict fast path and the partial result share this. */
+export function assembleRules(
+  analysis: PairAnalysis,
+  ctx: Ctx,
+  outputColumns: BuiltOutputColumn[],
+  dropped: DroppedBuild,
+  validations: Validation[],
+  assumptions: Assumption[],
+  extras: AssembleExtras = {},
+): LearnResult {
+  const input: RulesInput = {
+    sheet: { pick: 'first' },
+    headerRow: 'auto',
+    columns: [...ctx.inputColumns.entries()].sort((a, b) => a[0] - b[0]).map(([, col]) => col),
+  };
+  if (analysis.input.layout.footerFirstCell.length > 0) {
+    input.stopAt = { when: 'firstCellMatches', values: analysis.input.layout.footerFirstCell };
+  }
+  if (dropped.rowFilters.length > 0) input.rowFilters = dropped.rowFilters;
+
+  const transform: RulesTransform = { computed: ctx.computed, valueMaps: ctx.valueMaps, sort: [] };
+  if (dropped.dedupe) transform.dedupe = dropped.dedupe;
+  if (extras.expand) transform.expand = extras.expand;
+
+  const titleRows: TitleRow[] =
+    extras.titleRows ??
+    analysis.layout.titleRows.map((t): TitleRow => {
+      if (t.blank) return { blank: true };
+      return t.bold ? { text: t.text ?? '', bold: true } : { text: t.text ?? '' };
+    });
+
+  const output: RulesOutput = {
+    sheetName: analysis.layout.sheetName,
+    direction: analysis.layout.direction,
+    language: analysis.layout.language,
+    titleRows,
+    columns: outputColumns,
+  };
+  if (!isPlainXlsx(analysis.layout.file)) output.file = analysis.layout.file;
+  if (analysis.layout.headerBold) output.headerStyle = { bold: true };
+
+  return {
+    schemaVersion: 1,
+    input,
+    transform,
+    output,
+    validations,
+    unsupported: extras.unsupported ?? [],
+    assumptions,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -478,14 +588,7 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
   const layoutFail = layoutIssue(analysis);
   if (layoutFail) return layoutFail;
 
-  const ctx: Ctx = {
-    usedIds: new Set(),
-    inputIds: new Map(),
-    inputColumns: new Map(),
-    computed: [],
-    valueMaps: [],
-    usedInputCols: new Set(),
-  };
+  const ctx = newCtx();
 
   const outputColumns: { header: string; from: string; format?: string; width?: number }[] = [];
 
@@ -510,43 +613,7 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
 
   const validations = buildValidations(analysis, ctx, outputColumns);
 
-  const input: RulesInput = {
-    sheet: { pick: 'first' },
-    headerRow: 'auto',
-    columns: [...ctx.inputColumns.entries()].sort((a, b) => a[0] - b[0]).map(([, col]) => col),
-  };
-  if (analysis.input.layout.footerFirstCell.length > 0) {
-    input.stopAt = { when: 'firstCellMatches', values: analysis.input.layout.footerFirstCell };
-  }
-  if (dropped.rowFilters.length > 0) input.rowFilters = dropped.rowFilters;
-
-  const transform: RulesTransform = { computed: ctx.computed, valueMaps: ctx.valueMaps, sort: [] };
-  if (dropped.dedupe) transform.dedupe = dropped.dedupe;
-
-  const titleRows: TitleRow[] = analysis.layout.titleRows.map((t): TitleRow => {
-    if (t.blank) return { blank: true };
-    return t.bold ? { text: t.text ?? '', bold: true } : { text: t.text ?? '' };
-  });
-
-  const output: RulesOutput = {
-    sheetName: analysis.layout.sheetName,
-    direction: analysis.layout.direction,
-    language: analysis.layout.language,
-    titleRows,
-    columns: outputColumns,
-  };
-  if (!isPlainXlsx(analysis.layout.file)) output.file = analysis.layout.file;
-  if (analysis.layout.headerBold) output.headerStyle = { bold: true };
-
-  const rules: LearnResult = {
-    schemaVersion: 1,
-    input,
-    transform,
-    output,
-    validations,
-    unsupported: [],
-    assumptions,
-  };
+  const rules = assembleRules(analysis, ctx, outputColumns, dropped, validations, assumptions);
 
   return { rules, assumptions };
 }
@@ -580,7 +647,7 @@ function ambiguityBucket(r: Relation): string {
  * doesn't yet distinguish the readings, not because the data supports two
  * solid, competing interpretations.
  */
-function chooseColumnRelation(analysis: PairAnalysis, ca: ColumnAnalysis): Relation | FastPathFailure {
+export function chooseColumnRelation(analysis: PairAnalysis, ca: ColumnAnalysis): Relation | FastPathFailure {
   const c1 = ca.relations.filter((r) => r.coverage === 1);
   if (c1.length === 0) return fail('columnNotFullyExplained', { column: ca.out });
   const buckets = new Set(c1.map(ambiguityBucket));
@@ -601,7 +668,7 @@ function chooseColumnRelation(analysis: PairAnalysis, ca: ColumnAnalysis): Relat
 /** SPEC 8.13: a headerless output's columns still need a header, "used in the
  * UI and for matching"; the analysis has none to offer (there is no header
  * row), so this falls back to the source input column's own header. */
-function headerFor(analysis: PairAnalysis, ca: ColumnAnalysis, rel: Relation): string {
+export function headerFor(analysis: PairAnalysis, ca: ColumnAnalysis, rel: Relation): string {
   if (ca.header !== '') return ca.header;
   const i = rel.in[0];
   if (i !== undefined) return analysis.input.profile[i]?.header ?? `column${ca.out + 1}`;

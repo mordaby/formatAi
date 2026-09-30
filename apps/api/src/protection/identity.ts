@@ -1,21 +1,32 @@
 // Who is calling (SPEC 12). Anonymous visitors are identified by a random first-party `anonId`
-// cookie; signed-in users (M3) will add the `user` variant - the limit, budget and cache code
-// below already works on this type, so M3 only has to resolve a session into it.
+// cookie; signed-in users by their session (resolved once per request by `auth/session.ts`, which
+// sets `req.authUser`). `identityOf` turns both into the `Identity` the limit, budget and cache code works on.
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { limits } from '@formatai/shared';
 
 export type Identity =
-  | { kind: 'anon'; anonId: string }
+  | {
+      kind: 'anon';
+      anonId: string;
+      /** Always false: there is no admin without a sign-in. */
+      isAdmin?: false;
+    }
   | {
       kind: 'user';
       userId: string;
       tier: 'registered' | 'paid';
+      /** This browser's anonId (always set by `identityOf`; its past events were attached to the user at sign-in). */
+      anonId?: string;
+      /** Verified Google email in ADMIN_EMAILS, or Microsoft oid in MICROSOFT_ADMIN_OIDS (SPEC 12). Always set by `identityOf`. */
+      isAdmin?: boolean;
       /** `users.limitOverrides` for the monthly learn count (SPEC 13), when an admin set one. */
       learnLimitOverride?: number;
+      /** All of `users.limitOverrides` (SPEC 13). */
+      limitOverrides?: Record<string, number>;
     };
 
-/** The cache/ownership scope: `anon:<id>` now, `user:<id>` in M3. */
+/** The cache/ownership scope: `anon:<id>` when not signed in, `user:<id>` when signed in. */
 export function ownerOf(identity: Identity): string {
   return identity.kind === 'anon' ? `anon:${identity.anonId}` : `user:${identity.userId}`;
 }
@@ -74,7 +85,36 @@ export function registerAnonId(app: FastifyInstance, opts: { secure: boolean }):
   });
 }
 
-/** The caller's identity. M3: resolve a signed-in session here first, falling back to the anonId. */
+/** What the session resolves to for one request (`req.authUser`), set by `auth/session.ts`. */
+export interface AuthedUser {
+  userId: string;
+  tier: 'registered' | 'paid';
+  isAdmin: boolean;
+  limitOverrides?: Record<string, number>;
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** The signed-in user of this request's session; null when there is none (or no auth is registered). */
+    authUser: AuthedUser | null;
+  }
+}
+
+/**
+ * The caller's identity: the signed-in user when the request carries a valid session, else the anonymous
+ * visitor. Synchronous - the session was already resolved (one database read) in an onRequest hook.
+ */
 export function identityOf(req: FastifyRequest): Identity {
-  return { kind: 'anon', anonId: req.anonId };
+  const user = req.authUser ?? null;
+  if (!user) return { kind: 'anon', anonId: req.anonId };
+  const learnLimitOverride = user.limitOverrides?.aiLearns ?? user.limitOverrides?.learnsToLlm;
+  return {
+    kind: 'user',
+    userId: user.userId,
+    tier: user.tier,
+    anonId: req.anonId,
+    isAdmin: user.isAdmin,
+    ...(learnLimitOverride !== undefined ? { learnLimitOverride } : {}),
+    ...(user.limitOverrides ? { limitOverrides: user.limitOverrides } : {}),
+  };
 }

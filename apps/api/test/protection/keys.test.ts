@@ -1,19 +1,27 @@
 import { limits, tiers } from '@formatai/shared';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import type { Identity } from '../../src/protection/identity.js';
 import {
-  anonLearnKey,
+  aiFailKey,
+  aiLearnStateKey,
+  aiLearnsKey,
+  aiQuotaOf,
   dailyCounterExpiry,
   dayKey,
   endOfUtcDay,
-  ipLearnKey,
-  learnCounterSpecs,
   monthKey,
+  newFormatsKey,
   repairKey,
   tierOf,
-  userLearnKey,
 } from '../../src/protection/keys.js';
 
 const noon = new Date('2026-09-30T12:00:00.000Z');
+const registered = (extra: Partial<Extract<Identity, { kind: 'user' }>> = {}): Identity => ({
+  kind: 'user',
+  userId: 'u1',
+  tier: 'registered',
+  ...extra,
+});
 
 describe('usage counter keys (SPEC 13)', () => {
   it('formats the UTC day and month', () => {
@@ -25,9 +33,12 @@ describe('usage counter keys (SPEC 13)', () => {
   });
 
   it('builds the documented key shapes', () => {
-    expect(anonLearnKey('abc', '2026-09-30')).toBe('anon:abc:2026-09-30');
-    expect(ipLearnKey('deadbeef', '2026-09-30')).toBe('ip:deadbeef:2026-09-30');
-    expect(userLearnKey('u1', '2026-09')).toBe('user:u1:2026-09');
+    expect(aiLearnsKey('u1', 'lifetime', noon)).toBe('user:u1:aiLearns');
+    expect(aiLearnsKey('u1', 'month', noon)).toBe('user:u1:aiLearns:2026-09');
+    expect(aiLearnsKey('u1', 'day', noon)).toBe('user:u1:aiLearns:2026-09-30');
+    expect(newFormatsKey('u1', noon)).toBe('user:u1:newFormats:2026-09');
+    expect(aiFailKey('user:u1', 'abc123')).toBe('aiFail:user:u1:abc123');
+    expect(aiLearnStateKey('x')).toBe('aiLearn:x');
     expect(repairKey('x')).toBe('repair:x');
   });
 
@@ -38,40 +49,53 @@ describe('usage counter keys (SPEC 13)', () => {
   });
 });
 
-describe('learnCounterSpecs (SPEC 11, 9.5)', () => {
-  it('limits an anonymous visitor per anonId AND per IP hash, per UTC day, with a TTL', () => {
-    const specs = learnCounterSpecs({ kind: 'anon', anonId: 'AAA' }, 'iphash', noon);
-    expect(specs.map((s) => s.key)).toEqual(['anon:AAA:2026-09-30', 'ip:iphash:2026-09-30']);
-    expect(specs[0]!.limit).toBe(tiers.anonymous.learnsToLlm.count);
-    expect(specs[0]!.limit).toBe(2);
-    expect(specs[1]!.limit).toBe(limits.protection.anonLearnsPerIpPerDay);
-    for (const s of specs) {
-      expect(s.limitCode).toBe('learnsPerDay');
-      expect(s.expiresAt).toBeInstanceOf(Date);
-    }
+describe('aiQuotaOf (SPEC 11, 21 v5: AI learns per tier, config only)', () => {
+  const original = structuredClone(tiers.registered.aiLearns);
+  afterEach(() => {
+    tiers.registered.aiLearns = structuredClone(original);
   });
 
-  it('limits a signed-in user per month with no expiry (ready for M3)', () => {
-    const registered = learnCounterSpecs({ kind: 'user', userId: 'u1', tier: 'registered' }, 'iphash', noon);
-    expect(registered).toEqual([
-      { key: 'user:u1:2026-09', limit: tiers.registered.learnsToLlm.count, limitCode: 'learnsPerMonth' },
-    ]);
-    const paid = learnCounterSpecs({ kind: 'user', userId: 'u2', tier: 'paid' }, 'iphash', noon);
-    expect(paid[0]!.limit).toBe(tiers.paid.learnsToLlm.count);
-    expect(paid[0]!.expiresAt).toBeUndefined();
+  it('gives a registered user its monthly count, with no expiry on the counter', () => {
+    const q = aiQuotaOf(registered(), noon);
+    expect(q.period).toBe('month');
+    expect(q.spec).toEqual({ key: 'user:u1:aiLearns:2026-09', limit: tiers.registered.aiLearns.count, limitCode: 'aiLearns' });
+    expect(q.spec!.expiresAt).toBeUndefined();
   });
 
-  it('honours a per-user limit override', () => {
-    const [spec] = learnCounterSpecs(
-      { kind: 'user', userId: 'u1', tier: 'registered', learnLimitOverride: 99 },
-      'iphash',
-      noon,
-    );
-    expect(spec!.limit).toBe(99);
+  it('gives a paid user its own, larger quota', () => {
+    const q = aiQuotaOf(registered({ tier: 'paid' }), noon);
+    expect(q.spec!.limit).toBe(tiers.paid.aiLearns.count);
+    expect(q.spec!.limit).toBeGreaterThan(tiers.registered.aiLearns.count);
+  });
+
+  it('follows the configured period: lifetime has no date part, day has a TTL, unlimited has no counter', () => {
+    tiers.registered.aiLearns = { count: 2, period: 'lifetime' };
+    const lifetime = aiQuotaOf(registered(), noon);
+    expect(lifetime.spec).toEqual({ key: 'user:u1:aiLearns', limit: 2, limitCode: 'aiLearns' });
+    // The same counter in another month: a lifetime allowance does not reset.
+    expect(aiQuotaOf(registered(), new Date('2027-03-01T00:00:00Z')).spec!.key).toBe('user:u1:aiLearns');
+
+    tiers.registered.aiLearns = { count: 2, period: 'day' };
+    const day = aiQuotaOf(registered(), noon);
+    expect(day.spec!.key).toBe('user:u1:aiLearns:2026-09-30');
+    expect(day.spec!.expiresAt).toEqual(dailyCounterExpiry(noon));
+
+    tiers.registered.aiLearns = { count: 2, period: 'unlimited' };
+    expect(aiQuotaOf(registered(), noon)).toEqual({ period: 'unlimited', spec: null });
+  });
+
+  it('honours a per-user override of the count (users.limitOverrides.aiLearns)', () => {
+    expect(aiQuotaOf(registered({ learnLimitOverride: 99 }), noon).spec!.limit).toBe(99);
+  });
+
+  it('gives an anonymous visitor none: a limit of 0 (it never reaches the AI)', () => {
+    const q = aiQuotaOf({ kind: 'anon', anonId: 'AAA' }, noon);
+    expect(q.spec!.limit).toBe(0);
+    expect(tiers.anonymous.aiLearns.count).toBe(0);
   });
 
   it('maps identities to their tier config', () => {
     expect(tierOf({ kind: 'anon', anonId: 'a' })).toBe('anonymous');
-    expect(tierOf({ kind: 'user', userId: 'u', tier: 'paid' })).toBe('paid');
+    expect(tierOf(registered({ tier: 'paid' }))).toBe('paid');
   });
 });

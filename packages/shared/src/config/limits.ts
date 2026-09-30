@@ -40,9 +40,6 @@ export const limits = {
    * DECISION: placeholder numbers (SPEC 20.4), tuned later from `limit_hit` events.
    */
   protection: {
-    /** SPEC 9.5: "limits apply per anonymous id AND per IP" - anonymous learns per IP per UTC day
-     * (the per-anonId limit is `tiers.anonymous.learnsToLlm`). */
-    anonLearnsPerIpPerDay: 2,
     /** Simple in-memory per-IP request rate limit on POST /api/learn and /api/learn/repair. */
     learnRequestsPerIpPerMinute: 10,
     rateLimitWindowMs: 60_000,
@@ -58,6 +55,17 @@ export const limits = {
   /** SPEC 9.5 "Cache": saved rules for a structure the same owner already learned. */
   cache: {
     ttlDays: 30,
+  },
+  /** SPEC 12: sign-in. DECISION: placeholder numbers (SPEC 20.4). */
+  auth: {
+    /** A session lasts this long after its last renewal (sliding). */
+    sessionDays: 30,
+    /** The session (and `users.lastSeenAt`) is renewed at most this often, so a request is not a write. */
+    sessionRenewMinutes: 60,
+    /** How long after "Continue with ..." the provider's answer is accepted (state / nonce / PKCE cookie). */
+    flowMinutes: 10,
+    /** A user's `anonIds` keeps this many most recent ids (one per browser they signed in from). */
+    maxAnonIds: 50,
   },
   /**
    * SPEC 8.3/8.14/21 (v3): limits on the rules language itself, checked by
@@ -86,9 +94,54 @@ export const limits = {
    * DECISION: 'wide' (a looser fast path that would also cover some cases that
    * currently need the LLM) is reserved for later, once eval data shows the
    * strict path is too narrow to matter; only 'strict' is implemented in M1.
+   * SPEC 21 v5 item 4: the AI readiness gate (engine `aiReadiness`) is deliberately minimal - it
+   * stops only what is certain to fail even with the AI - so it has no thresholds of its own
+   * (its payload check uses the `payload` caps above).
    */
   learn: {
     fastPathMode: 'strict',
+    /**
+     * SPEC 21 v5 item 3: after this many failed AI attempts on the same example pair (same owner, same
+     * structure hash) the app stops calling the AI for that pair and counts it as ONE AI learn.
+     */
+    maxFailedAiAttempts: 3,
+    /** How long those failed attempts are remembered; after it the pair may be tried again. */
+    failedAttemptsWindowHours: 24,
+  },
+  /**
+   * SPEC 8.11 / 8.12 / 11 / 13: the registry (saved formats and their conversions).
+   * DECISION: placeholder numbers (SPEC 20.4).
+   */
+  registry: {
+    maxNameChars: 100,
+    /** Aliases one input column may collect from confirmed mappings (SPEC 5 C). */
+    maxAliasesPerColumn: 20,
+    maxAliasChars: 200,
+    /** Older versions kept per conversion / format (SPEC 8.11 "Every save creates a new version"); the oldest is dropped past this. */
+    maxVersions: 30,
+    /** Example rows a user may mark as "fixed by hand" (SPEC 8.11), per conversion. */
+    maxExampleExceptions: 5_000,
+    /** Formats one list call returns. */
+    maxFormatsListed: 500,
+  },
+  /**
+   * SPEC 8.12 / DECISION 10: matching a file to a conversion, in the browser.
+   * Score = share of required columns found, minus a small penalty per extra unknown column.
+   */
+  matching: {
+    /** A conversion is picked automatically at or above this score... */
+    autoScore: 0.9,
+    /** ...and at least this far above the next best one. */
+    autoMargin: 0.1,
+    /** Penalty per file column the conversion doesn't know (many exports carry columns nobody uses), capped by maxExtraPenalty. */
+    extraColumnPenalty: 0.01,
+    maxExtraPenalty: 0.05,
+    /** How many conversions the user is offered when nothing is picked automatically. */
+    maxSuggestions: 3,
+    /** How many renamed-column candidates are offered per missing required column. */
+    maxRenamedCandidates: 3,
+    /** Minimum header similarity (0..1) for a file column to be offered as a renamed column. */
+    minRenamedSimilarity: 0.4,
   },
 } as const;
 

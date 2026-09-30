@@ -44,6 +44,9 @@ export interface RunCtx {
   /** `transform.functions` / `transform.tables`, compiled once per run (SPEC 8.14). */
   functions: ReadonlyMap<string, Fn>;
   tables: ReadonlyMap<string, CompiledTable>;
+  /** SPEC 21 v5 item 5: input rows (1-based) the user chose to keep as they are in this run; a `block`
+   * validation doesn't leave them out (its failure is a flag, accepted). */
+  keepRows?: ReadonlySet<number>;
 }
 
 export interface FlagInit {

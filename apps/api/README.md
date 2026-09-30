@@ -24,36 +24,97 @@ want the default `formatai` database name. Without `MONGODB_URI`, the API still
 boots and `GET /api/health` reports `"db": "not configured"` - this is expected
 until you provide a connection string.
 
-## Protections in front of the LLM (M2, SPEC 9.5 / 11 / 12 / 15)
+## The AI step and its protections (M2 + M3, SPEC 9.5 / 11 / 15 / 21 v5)
 
-`POST /api/learn` and `POST /api/learn/repair` exist in every environment and are guarded by, in order:
-a per-IP request rate limit (`limits.protection`), the body shape, Cloudflare Turnstile
-(`turnstileToken`, anonymous learns), the owner's structure cache, the daily budgets
-(`limits.budgets`), and the per-tier learn limits (`tiers.*.learnsToLlm`, plus
-`limits.protection.anonLearnsPerIpPerDay`). Refusals are `{ error, limit? }` with a stable code
+The AI step is for signed-in users only. `POST /api/learn`, `POST /api/learn/repair` and
+`POST /api/learn/:learnId/outcome` exist in every environment; an anonymous caller gets
+`403 signInForAi` before anything else costs anything (free users get everything that runs locally, and
+the web shows the local result first). For a signed-in user `POST /api/learn` is guarded by, in order:
+a per-IP request rate limit (`limits.protection`), the body shape, the owner's structure cache (a hit costs
+nothing and is served even when the quota is spent), the failed-attempt cap of the example pair, the daily
+budgets (`limits.budgets`), and the user's AI-learn quota (`tiers.*.aiLearns: { count, period }`, period
+`lifetime | month | day | unlimited`). Refusals are `{ error, limit?, period?, counted? }` with a stable code
 (`packages/shared/src/codes.ts`, texts in `i18n/messages.ts`):
 
 | Status | `error` | When |
 |---|---|---|
 | 429 | `rateLimited` | too many requests from one IP this minute (`Retry-After` set) |
-| 403 | `turnstileFailed` | Turnstile token missing or rejected |
-| 429 | `limitHit` + `limit` (`learnsPerDay`, `learnsPerMonth`, `repairsPerLearn`) | a per-tier limit |
-| 429 | `anonBudgetExhausted` | the daily anonymous budget is spent ("Sign in to keep going") |
+| 403 | `signInForAi` | not signed in (learn, repair and outcome) |
+| 429 | `limitHit` + `limit: 'aiLearns'` + `period` | the AI-learn quota of the period is used up |
+| 429 | `limitHit` + `limit: 'repairsPerLearn'` | the one browser repair of this learn was used |
+| 409 | `aiAttemptsExhausted` + `counted` | 3 failed attempts on the same example pair (`limits.learn.maxFailedAiAttempts`); `counted: true` when this very answer counted the pair as one AI learn |
 | 503 | `budgetExhausted` | the daily overall budget is spent (kill switch) |
-| 400 | `invalidPayload`, `invalidPreviousRules`, `invalidProblems`, `invalidLearnId` | malformed body / repair without a valid `learnId` |
+| 400 | `invalidPayload`, `invalidPreviousRules`, `invalidProblems`, `invalidLearnId`, `invalidRequest` | malformed body / follow-up without a valid `learnId` |
+
+**What counts as an AI learn** (`src/protection/aiLearns.ts` has the state machine and its diagram): a
+learn counts once, when it succeeds. One unit of the user's period counter (`user:<id>:aiLearns[:<period-key>]`)
+is reserved before the LLM call (so concurrent learns cannot pass the quota) and settled after it: kept
+when the server checks (SPEC 9.2 layers 1-7) pass, put back when they fail. A failed attempt is recorded on
+the pair (owner + structure hash, `aiFail:<owner>:<group>`, remembered for `limits.learn.failedAttemptsWindowHours`);
+the attempt that reaches the cap keeps its unit - the pair counts as one learn - and answers
+`409 aiAttemptsExhausted { counted: true }`; later attempts on the pair are refused without calling the AI.
+A provider outage (no model answered) is nobody's failed attempt. The browser then reports how the
+learn ended with `POST /api/learn/:learnId/outcome { outcome: 'verified' | 'accepted' | 'failed' }`
+(signed learnId, idempotent): `verified`/`accepted` count a learn that failed the server checks, `failed`
+gives back a counted one and records a failure. A browser repair that passes the server checks counts its
+learn too, and is never a learn of its own.
 
 `GET /api/session` returns `{ anonId, tier: 'free', limits, turnstileSiteKey? }` and sets the
 first-party `anonId` cookie (httpOnly, SameSite=Lax, Secure in production) on first contact.
 
 Production (`NODE_ENV=production`) refuses to start without `TURNSTILE_SECRET_KEY`,
 `IP_HASH_SECRET` (or `SESSION_SECRET`) and `MONGODB_URI`. Behind a proxy or load balancer set
-`TRUST_PROXY` (number of hops, or `true`) so per-IP limits see the real client address. In
-development with no `TURNSTILE_SECRET_KEY`, Turnstile is skipped (one warning); with no
-`MONGODB_URI`, limits, budgets and the cache are kept in memory.
+`TRUST_PROXY` (number of hops, or `true`) so per-IP limits see the real client address. With no
+`MONGODB_URI`, limits, budgets and the cache are kept in memory (the registry needs the database).
 
 The learn cache (`learn_cache`) is keyed by a hash of the structure only and is only ever returned
-to the same owner (anonId now, user id in M3) - see `src/protection/cache.ts`.
+to the same owner (`user:<id>`) - see `src/protection/cache.ts`.
 
-Tests: `test/protection/`. The MongoDB-backed suites run when `MONGODB_URI` is set (they use a
-throwaway database that is dropped afterwards), e.g.
+## Registry: formats and conversions (M3, SPEC 8.12 / 13)
+
+Signed-in users only (`401 signInRequired`), database required (`503 unavailable`); every read and write
+checks ownership (someone else's id is a `404 notFound`); ids are 24-hex ObjectIds. Code in `src/registry/`.
+
+| Route | What |
+|---|---|
+| `POST /api/formats` | create the format (`formatOf(rules)`) and its first conversion (source name default "Source 1") |
+| `GET /api/formats`, `GET /api/formats/:id` | list (sources, statuses, runs) / a format with its output side and its conversions |
+| `PATCH /api/formats/:id`, `DELETE /api/formats/:id` | rename / delete with its conversions (frees a slot, never refunds learns or this month's new-format count) |
+| `POST /api/formats/:id/conversions` | attach a source: the rules must pass the format lock, else `422 formatMismatch { problems }` |
+| `GET /api/conversions/:id`, `DELETE /api/conversions/:id` | the conversion with its rules / delete (the format stays) |
+| `PATCH /api/conversions/:id` | rename, and/or save edited rules as a new version (`{ rules, status, acceptedDifferences, exampleExceptions?, baseVersion? }`); if the output side changed it is a **format edit**: the format gets a new version and every other conversion of the format is rebuilt around it (`needsReview` when its references no longer resolve); the response says how many sources were affected |
+| `GET /api/conversions/:id/versions`, `POST /api/conversions/:id/restore/:version` | history (newest first) / restore an older version as a new one (send `{}`); refused with `formatMismatch` when the format changed since |
+| `POST /api/conversions/:id/runs` | `{ rows, flagged }` - counts only - bumps `runCount` / `lastRunAt` |
+| `POST /api/conversions/:id/aliases` | `{ header, alias }` - a confirmed column mapping saved as an alias (no new version) |
+| `GET /api/signatures` | every conversion's input signature + ids and names, for matching a dropped file in the browser |
+
+Tier limits (SPEC 11) answer `403 limitHit` with `limit: savedFormats | sourcesPerFormat | rulesPerFormat`,
+or `429 limitHit` with `limit: newFormatsPerMonth` (paid, DECISION 9). Other refusals: `422 invalidRules
+{ problems }`, `409 nameTaken | aliasConflict | versionConflict`, `400 invalidRequest`.
+
+Tests: `test/protection/` and `test/registry/`. The MongoDB-backed suites run when `MONGODB_URI` is set (they
+use a throwaway database that is dropped afterwards), e.g.
 `MONGODB_URI=mongodb://127.0.0.1:27017 pnpm --filter @formatai/api test`.
+
+## Sign-in (M3, SPEC 5 E / 12)
+
+Google and Microsoft through one OpenID Connect implementation (`openid-client`, authorization code + PKCE);
+code in `src/auth/`. A provider is offered when its `<PREFIX>_CLIENT_ID` and `_CLIENT_SECRET` are both set
+(`.env.example` lists the redirect URIs to register). Adding a provider = one entry in `auth/providers.ts`.
+
+| Route | |
+|---|---|
+| `GET /api/auth/providers` | `{ providers: ['google', 'microsoft'] }` - the configured ones, Google first |
+| `GET /api/auth/:provider/start?returnTo=` | 302 to the provider; state, nonce and the PKCE verifier go in a signed httpOnly `flow_<provider>` cookie (10 min); `returnTo` must be a same-site relative path |
+| `GET /api/auth/:provider/callback` | validates, finds-or-creates the user by identity, sets the session, attaches the anonId, 302 to `WEB_ORIGIN` + `returnTo` (`?authError=<code>` on failure, `?linked=<provider>` after linking) |
+| `POST /api/auth/logout` | ends the session |
+| `GET /api/me` | `{ user: { id, name, avatarUrl, email?, tier, providers, isAdmin, uiLanguage } \| null }` |
+| `PATCH /api/me` | `{ uiLanguage: 'he' \| 'en' }` and nothing else |
+| `POST /api/me/link/:provider/start` | `{ url }` to navigate to; links a second provider to the signed-in user |
+
+Identity is provider + subject (Microsoft: `tid` + `oid`) - never the email; the same email at another provider is another
+user. Sessions are stateful (`sessions` collection, TTL, only SHA-256 of the id stored; the cookie is `<id>.<HMAC>`), rotated at
+sign-in, 30 days sliding (`limits.auth`). `identityOf(req)` (`protection/identity.ts`) returns the signed-in user
+`{ kind: 'user', userId, tier, anonId, isAdmin, ... }` or the anonymous visitor. New users are `registered`; an admin sets `paid`.
+Admin = verified Google email in `ADMIN_EMAILS` or Microsoft `oid` in `MICROSOFT_ADMIN_OIDS`. Production requires `SESSION_SECRET`
+(and `API_PUBLIC_URL` when a provider is configured). Tests (`test/auth/`) run the real client against a fake local issuer.

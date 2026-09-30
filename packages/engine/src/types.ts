@@ -183,7 +183,31 @@ export interface Flag {
   params?: Record<string, string | number>;
   /** Only for mechanical, safe fixes (padding, day/month swap). */
   suggestion?: string | number;
+  /** SPEC 21 v5 item 5: the user chose "keep it as is" for this row in this run (`RowDecision` keep). */
+  accepted?: boolean;
 }
+
+// ---------- Per-run row decisions (SPEC 21 v5 item 5, issue #36) ----------
+
+/**
+ * What the user decided for one flagged input row of THIS run. Applied by `runRules`/`convertFile`
+ * without touching the saved rules; never stored anywhere.
+ *  - skip: the row is left out of the output.
+ *  - keep: the row stays as it is; its flags are accepted (they stay in the flag list with
+ *    `accepted: true`, and the cells are not highlighted). A row a `block` validation would leave
+ *    out is written too.
+ *  - override: replaces cell values of the input row (a one-off value edit) BEFORE normalization,
+ *    and the row goes through the whole pipeline again. `values` is keyed by an input column's id
+ *    or its header (the rules' declared header, or the file's own); a value is a cell value, so text
+ *    is read by the column's type exactly like a file cell (a date as "31/01/2024", a number as "12.5").
+ */
+export type RowDecision =
+  | { action: 'skip' }
+  | { action: 'keep' }
+  | { action: 'override'; values: Record<string, string | number | boolean | null> };
+
+/** Keyed by the 1-based input row number, as shown in Excel (`Flag.rowNumber`). */
+export type RowDecisions = Record<number, RowDecision>;
 
 export interface RunSummary {
   rowsIn: number;
@@ -194,6 +218,15 @@ export interface RunSummary {
   duplicatesFlagged: number;
   /** Rows left out by a validation with severity "block". */
   blockedRows: { rowNumber: number; rule: string; column: string }[];
+  // The three lists below are present only when the run was given `rowDecisions` (SPEC 21 v5
+  // item 5), in input-row order. Skipped rows still count in `rowsIn`, so
+  // rowsIn = rowsOut + rowsFiltered + duplicatesRemoved + blockedRows + skippedByUser (plain rows).
+  /** Rows the user chose to skip. */
+  skippedByUser?: { rowNumber: number }[];
+  /** Rows whose values the user edited for this run: the input column ids that changed. */
+  editedByUser?: { rowNumber: number; columns: string[] }[];
+  /** Rows the user kept as they are, with how many of their flags (or blocks) were accepted. */
+  acceptedByUser?: { rowNumber: number; flags: number }[];
 }
 
 export type RunErrorCode = 'missingRequiredColumns' | 'noTable' | 'sheetNotFound' | 'invalidRules';

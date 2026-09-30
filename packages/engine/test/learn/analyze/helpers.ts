@@ -39,8 +39,9 @@ export function xlsx(rows: V[][], opts: SheetOpts = {}): RawWorkbook {
 }
 
 /** A delimited-text workbook as readWorkbook would give it: every cell a string. */
-export function delimited(rows: (string | number | null)[][], type: 'csv' | 'txt', delimiter: ',' | '\t' = type === 'txt' ? '\t' : ','): RawWorkbook {
-  const s = sheet(rows.map((r) => r.map((v) => (v === null ? '' : String(v)))), { name: 'out' });
+export function delimited(rows: V[][], type: 'csv' | 'txt', delimiter: ',' | '\t' = type === 'txt' ? '\t' : ','): RawWorkbook {
+  const text = (v: V): string => (v === null ? '' : typeof v === 'object' ? String(v.v ?? '') : String(v));
+  const s = sheet(rows.map((r) => r.map(text)), { name: 'out' });
   return { fileType: type, sheets: [s], encoding: 'utf-8', delimiter };
 }
 

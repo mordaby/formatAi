@@ -1,9 +1,10 @@
-// The API protections end to end (fastify inject): anonId cookie, Turnstile, per-tier learn limits,
-// repair-once, budgets, the owner-scoped structure cache, the per-IP rate limit and production mode.
+// The API protections end to end (fastify inject): anonId cookie, the AI-for-signed-in-users-only rule,
+// repair-once, budgets, the owner-scoped structure cache and the per-IP rate limit. (The AI-learn quota and
+// what counts as a learn are in aiQuota.test.ts; production mode in production.test.ts.)
 // Every suite runs against the in-memory store, and against a real local MongoDB when MONGODB_URI is set.
 import { limits, tiers } from '@formatai/shared';
 import { afterEach, describe, expect, it } from 'vitest';
-import { dayKey } from '../../src/protection/keys.js';
+import { aiLearnsKey, dayKey } from '../../src/protection/keys.js';
 import { basicPayload, wrongRoundingWireJson } from '../learn/fixtures.js';
 import {
   anonCookie,
@@ -15,6 +16,8 @@ import {
   mongoUri,
   nextIp,
   rulesWithTextConstantWireJson,
+  TEST_USER,
+  testUserId,
   useKit,
   type Harness,
   type StoreKit,
@@ -104,184 +107,62 @@ function defineProtectionSuite(kit: StoreKit): void {
       expect(res.headers['set-cookie']).toBeUndefined();
     });
 
-    it("counts a visitor's learns under their anonId: the same cookie shares one daily counter", async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      const cookie = anonCookie(await h.get('/api/session'));
-      const id = cookie.slice('anonId='.length);
-
-      await h.learn({ noCache: true }, { cookie });
-      expect(await h.handle.counter(`anon:${id}:${dayKey(h.clock.current)}`)).toBe(1);
-    });
   });
 
-  // ---------- Turnstile ----------
+  // ---------- the AI is for signed-in users only ----------
 
-  describe('Turnstile (SPEC 9.5)', () => {
-    it('requires a token for anonymous learns when a secret is configured', async () => {
-      const llm = makeComplete();
-      const ts = makeTurnstileFetch(['good']);
-      const h = await setup({ env: { TURNSTILE_SECRET_KEY: 'secret' }, complete: llm.fn, fetch: ts.fn });
-
-      const res = await h.learn({ turnstileToken: undefined });
-      expect(res.statusCode).toBe(403);
-      expect(res.json()).toEqual({ error: 'turnstileFailed' });
-      expect(llm.calls).toHaveLength(0);
-      expect(ts.calls).toHaveLength(0);
-    });
-
-    it('rejects a token Cloudflare refuses, and never counts that as a learn', async () => {
+  describe('the AI step is for signed-in users only (SPEC 21 v5)', () => {
+    it('answers 403 signInForAi to an anonymous learn, before anything else costs anything', async () => {
       const llm = makeComplete();
       const ts = makeTurnstileFetch(['good']);
       const h = await setup({ env: { TURNSTILE_SECRET_KEY: 'secret' }, complete: llm.fn, fetch: ts.fn });
       const cookie = anonCookie(await h.get('/api/session'));
 
-      const res = await h.learn({ turnstileToken: 'forged' }, { cookie });
+      const res = await h.learn({ turnstileToken: 'good' }, { cookie, user: null });
       expect(res.statusCode).toBe(403);
-      expect(res.json()).toEqual({ error: 'turnstileFailed' });
+      expect(res.json()).toEqual({ error: 'signInForAi' });
       expect(llm.calls).toHaveLength(0);
-      expect(await h.handle.counter(`anon:${cookie.slice(7)}:${dayKey(h.clock.current)}`)).toBe(0);
+      expect(ts.calls).toHaveLength(0); // not even a Turnstile call
+      expect(await h.handle.ledger()).toHaveLength(0);
+      expect(await h.handle.cacheEntryCount()).toBe(0);
     });
 
-    it('accepts a valid token and verifies it server-side against the siteverify endpoint', async () => {
+    it('answers it before validating the body: the same answer for a bad payload', async () => {
+      const h = await setup();
+      const res = await h.learn({ payload: { not: 'a payload' } }, { user: null });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toEqual({ error: 'signInForAi' });
+    });
+
+    it('also refuses an anonymous repair and outcome report', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const repair = await h.post(
+        '/api/learn/repair',
+        { payload: basicPayload(), previousRules: {}, problems: [], learnId: 'x' },
+        { user: null },
+      );
+      expect(repair.statusCode).toBe(403);
+      expect(repair.json()).toEqual({ error: 'signInForAi' });
+      const outcome = await h.post('/api/learn/whatever/outcome', { outcome: 'verified' }, { user: null });
+      expect(outcome.statusCode).toBe(403);
+      expect(outcome.json()).toEqual({ error: 'signInForAi' });
+      expect(llm.calls).toHaveLength(0);
+    });
+
+    it('does not use Turnstile for a signed-in user: no token needed, no siteverify call', async () => {
       const llm = makeComplete();
       const ts = makeTurnstileFetch(['good']);
       const h = await setup({ env: { TURNSTILE_SECRET_KEY: 'secret' }, complete: llm.fn, fetch: ts.fn });
-
-      const res = await h.learn({ turnstileToken: 'good' }, { ip: '203.0.113.9' });
+      const res = await h.learn({});
       expect(res.statusCode).toBe(200);
       expect(res.json().verified).toBe(true);
-      expect(ts.calls).toHaveLength(1);
-      expect(ts.calls[0]!.url).toMatch(/challenges\.cloudflare\.com\/turnstile\/v0\/siteverify$/);
-      expect(ts.calls[0]!.body.get('secret')).toBe('secret');
-      expect(ts.calls[0]!.body.get('remoteip')).toBe('203.0.113.9');
-    });
-
-    it('is skipped (with a warning) when the secret is unset and NODE_ENV is not production', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      const res = await h.learn({ turnstileToken: undefined });
-      expect(res.statusCode).toBe(200);
-      expect(llm.calls).toHaveLength(1);
-    });
-
-    it('is checked after the body shape (a malformed request never costs a siteverify call)', async () => {
-      const ts = makeTurnstileFetch(['good']);
-      const h = await setup({ env: { TURNSTILE_SECRET_KEY: 'secret' }, fetch: ts.fn });
-      const res = await h.learn({ payload: { not: 'a payload' } });
-      expect(res.statusCode).toBe(400);
-      expect(res.json()).toEqual({ error: 'invalidPayload' });
       expect(ts.calls).toHaveLength(0);
     });
 
-    it('is also required for a cache hit', async () => {
-      const llm = makeComplete();
-      const ts = makeTurnstileFetch(['good']);
-      const h = await setup({ env: { TURNSTILE_SECRET_KEY: 'secret' }, complete: llm.fn, fetch: ts.fn });
-      const cookie = anonCookie(await h.get('/api/session'));
-      expect((await h.learn({}, { cookie })).statusCode).toBe(200);
-
-      const again = await h.learn({ turnstileToken: 'forged' }, { cookie });
-      expect(again.statusCode).toBe(403);
-    });
-  });
-
-  // ---------- learn limits ----------
-
-  describe('server-side learn limits (SPEC 11, 9.5)', () => {
-    it('allows 2 learns per day per anonId, then 429 limitHit learnsPerDay - before the LLM is called', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      const cookie = anonCookie(await h.get('/api/session'));
-      const id = cookie.slice('anonId='.length);
-
-      // Different IPs each time: only the anonId limit can be what stops the third.
-      expect((await h.learn({ noCache: true }, { cookie })).statusCode).toBe(200);
-      expect((await h.learn({ noCache: true }, { cookie })).statusCode).toBe(200);
-      const third = await h.learn({ noCache: true }, { cookie });
-
-      expect(third.statusCode).toBe(429);
-      expect(third.json()).toEqual({ error: 'limitHit', limit: 'learnsPerDay' });
-      expect(llm.calls).toHaveLength(2);
-      // The refused attempt recorded nothing (events come in M4) and left the counter at 2.
-      expect(await h.handle.counter(`anon:${id}:${dayKey(h.clock.current)}`)).toBe(2);
-      expect(await h.handle.ledger()).toHaveLength(2);
-    });
-
-    it('allows 2 learns per IP per day across different anonIds, then 429', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      const ip = '203.0.113.50';
-
-      // No cookie sent: every request is a brand-new anonymous visitor on the same IP.
-      expect((await h.learn({}, { ip })).statusCode).toBe(200);
-      expect((await h.learn({}, { ip })).statusCode).toBe(200);
-      const third = await h.learn({}, { ip });
-
-      expect(third.statusCode).toBe(429);
-      expect(third.json()).toEqual({ error: 'limitHit', limit: 'learnsPerDay' });
-      expect(llm.calls).toHaveLength(2);
-      // The counter is keyed by a hash, never by the address itself.
-      const day = dayKey(h.clock.current);
-      expect(await h.handle.counter(`ip:203.0.113.50:${day}`)).toBe(0);
-    });
-
-    it('treats every address in one IPv6 /64 as one IP', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      expect((await h.learn({}, { ip: '2001:db8:1:1::1' })).statusCode).toBe(200);
-      expect((await h.learn({}, { ip: '2001:db8:1:1::2' })).statusCode).toBe(200);
-      expect((await h.learn({}, { ip: '2001:db8:1:1:ffff::3' })).statusCode).toBe(429);
-    });
-
-    it('starts a new count on the next UTC day', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      const cookie = anonCookie(await h.get('/api/session'));
-      const ip = nextIp();
-      await h.learn({ noCache: true }, { cookie, ip });
-      await h.learn({ noCache: true }, { cookie, ip });
-      expect((await h.learn({ noCache: true }, { cookie, ip })).statusCode).toBe(429);
-
-      h.clock.current = new Date(h.clock.current.getTime() + DAY_MS);
-      expect((await h.learn({ noCache: true }, { cookie, ip })).statusCode).toBe(200);
-    });
-
-    it('never lets concurrent learns slip past the limit', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      const cookie = anonCookie(await h.get('/api/session'));
-
-      const results = await Promise.all(
-        Array.from({ length: 6 }, () => h.learn({ noCache: true }, { cookie })),
-      );
-      const statuses = results.map((r) => r.statusCode).sort();
-      expect(statuses.filter((s) => s === 200)).toHaveLength(2);
-      expect(statuses.filter((s) => s === 429)).toHaveLength(4);
-      expect(llm.calls).toHaveLength(2);
-    });
-
-    it('does not count a malformed request as a learn', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      const cookie = anonCookie(await h.get('/api/session'));
-      for (let i = 0; i < 4; i++) {
-        expect((await h.learn({ payload: { not: 'a payload' } }, { cookie })).statusCode).toBe(400);
-      }
-      expect((await h.learn({ noCache: true }, { cookie })).statusCode).toBe(200);
-    });
-
-    it('counts a learn however many LLM calls it took (repair + escalation are one learn)', async () => {
-      // Wrong rules every time: first try, server repair, then escalation = 3 calls, one learn.
-      const llm = makeComplete({ json: wrongRoundingWireJson() });
-      const h = await setup({ complete: llm.fn });
-      const cookie = anonCookie(await h.get('/api/session'));
-      const res = await h.learn({ noCache: true }, { cookie });
-
-      expect(res.statusCode).toBe(200);
-      expect(res.json().verified).toBe(false);
-      expect(llm.calls.length).toBeGreaterThan(1);
-      expect(await h.handle.counter(`anon:${cookie.slice(7)}:${dayKey(h.clock.current)}`)).toBe(1);
+    it('is still answered for a visitor with no cookie at all (an anonymous caller is never a user)', async () => {
+      const h = await setup();
+      expect((await h.learn({}, { user: null })).statusCode).toBe(403);
     });
   });
 
@@ -319,20 +200,21 @@ function defineProtectionSuite(kit: StoreKit): void {
       expect(llm.calls).toHaveLength(callsAfterLearn + 1);
     });
 
-    it('is not counted as a new learn, and is allowed even once the daily learn limit is spent', async () => {
+    it('is not counted as a new learn, and is allowed even once the AI-learn quota is spent', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
-      const day = dayKey(h.clock.current);
-      const key = `anon:${cookie.slice(7)}:${day}`;
+      const key = aiLearnsKey(TEST_USER, 'month', h.clock.current);
 
       await learned(h, cookie);
+      await learned(h, cookie);
       const { rules, learnId } = await learned(h, cookie);
-      expect(await h.handle.counter(key)).toBe(2);
+      expect(await h.handle.counter(key)).toBe(tiers.registered.aiLearns.count);
+      expect((await h.learn({ noCache: true }, { cookie })).statusCode).toBe(429); // the quota is spent
 
       const repair = await h.post('/api/learn/repair', repairBody(rules, learnId), { cookie });
       expect(repair.statusCode).toBe(200);
-      expect(await h.handle.counter(key)).toBe(2);
+      expect(await h.handle.counter(key)).toBe(tiers.registered.aiLearns.count);
     });
 
     it('writes the repair to the ledger under the same learnId as its learn', async () => {
@@ -348,21 +230,21 @@ function defineProtectionSuite(kit: StoreKit): void {
       expect(learnId.startsWith(ledger[0]!.learnId)).toBe(true);
     });
 
-    it('requires a valid learnId issued to the same visitor', async () => {
+    it('requires a valid learnId issued to the same user', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
       const { rules, learnId } = await learned(h, cookie);
       const before = llm.calls.length;
 
-      const other = anonCookie(await h.get('/api/session'));
+      const other = testUserId(2);
       for (const [id, who] of [
-        [undefined, cookie],
-        ['not-a-learn-id', cookie],
-        [`${learnId}x`, cookie],
+        [undefined, TEST_USER],
+        ['not-a-learn-id', TEST_USER],
+        [`${learnId}x`, TEST_USER],
         [learnId, other], // someone else's learnId
       ] as const) {
-        const res = await h.post('/api/learn/repair', repairBody(rules, id), { cookie: who });
+        const res = await h.post('/api/learn/repair', repairBody(rules, id), { cookie, user: who });
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: 'invalidLearnId' });
       }
@@ -404,50 +286,36 @@ function defineProtectionSuite(kit: StoreKit): void {
   // ---------- budgets ----------
 
   describe('budgets (SPEC 9.5)', () => {
-    it('accumulates each call\'s cost into the day\'s budget, overall and anonymous', async () => {
+    it('accumulates each call\'s cost into the day\'s overall budget (never the anonymous one: only signed-in users reach the AI)', async () => {
       const llm = makeComplete({ costUsd: 0.5 });
       const h = await setup({ complete: llm.fn });
-      await h.learn();
-      await h.learn();
+      await h.learn({ noCache: true });
+      await h.learn({ noCache: true });
 
       const spend = await h.handle.store.getSpend(dayKey(h.clock.current));
       expect(spend.spendUsd).toBeCloseTo(1);
-      expect(spend.anonSpendUsd).toBeCloseTo(1);
+      expect(spend.anonSpendUsd).toBe(0);
       const ledger = await h.handle.ledger();
       expect(ledger.map((d) => d.costUsd)).toEqual([0.5, 0.5]);
     });
 
-    it('counts a subscription (cost 0) learn against the learn limit but not the budget', async () => {
+    it('counts a subscription (cost 0) learn against the AI-learn quota but not the budget', async () => {
       const llm = makeComplete({ costUsd: 0 });
       const h = await setup({ complete: llm.fn });
-      const cookie = anonCookie(await h.get('/api/session'));
-      await h.learn({ noCache: true }, { cookie });
+      await h.learn({ noCache: true });
 
       const day = dayKey(h.clock.current);
       expect(await h.handle.store.getSpend(day)).toEqual({ spendUsd: 0, anonSpendUsd: 0 });
-      expect(await h.handle.counter(`anon:${cookie.slice(7)}:${day}`)).toBe(1);
+      expect(await h.handle.counter(aiLearnsKey(TEST_USER, 'month', h.clock.current))).toBe(1);
     });
 
-    it('pauses anonymous learning with 429 anonBudgetExhausted once the anonymous budget is spent', async () => {
+    it('does not apply the anonymous budget to a signed-in user (only the overall kill switch does)', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
-      const day = dayKey(h.clock.current);
-      await h.handle.store.addSpend(day, limits.budgets.dailyAnonUsd, true);
-      const cookie = anonCookie(await h.get('/api/session'));
-
-      const res = await h.learn({ noCache: true }, { cookie });
-      expect(res.statusCode).toBe(429);
-      expect(res.json()).toEqual({ error: 'anonBudgetExhausted' });
-      expect(llm.calls).toHaveLength(0);
-      // Refused before the limits: it did not use up one of the day's learns.
-      expect(await h.handle.counter(`anon:${cookie.slice(7)}:${day}`)).toBe(0);
-    });
-
-    it('stays open while the anonymous budget has room', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyAnonUsd - 0.01, true);
-      expect((await h.learn()).statusCode).toBe(200);
+      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyAnonUsd, true);
+      const res = await h.learn({ noCache: true });
+      expect(res.statusCode).toBe(200);
+      expect(llm.calls).toHaveLength(1);
     });
 
     it('is the kill switch: 503 budgetExhausted once the overall budget is spent', async () => {
@@ -508,7 +376,7 @@ function defineProtectionSuite(kit: StoreKit): void {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
-      const key = `anon:${cookie.slice(7)}:${dayKey(h.clock.current)}`;
+      const key = aiLearnsKey(TEST_USER, 'month', h.clock.current);
 
       const first = (await h.learn({}, { cookie })).json();
       expect(first.cached).toBe(false);
@@ -555,6 +423,7 @@ function defineProtectionSuite(kit: StoreKit): void {
         model: 'cache',
         anonId: cookie.slice(7),
       });
+      expect(String(ledger[1]!.userId)).toBe(TEST_USER);
       expect(ledger[0]).toMatchObject({ outcome: 'verified', cacheHit: false });
       // A hit spends nothing.
       expect((await h.handle.store.getSpend(dayKey(h.clock.current))).spendUsd).toBeCloseTo(0.5);
@@ -563,17 +432,17 @@ function defineProtectionSuite(kit: StoreKit): void {
     it('NEVER returns one owner\'s rules to another owner, even for an identical structure', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
-      const alice = anonCookie(await h.get('/api/session'));
-      const bob = anonCookie(await h.get('/api/session'));
+      const alice = testUserId(11);
+      const bob = testUserId(12);
 
-      await h.learn({}, { cookie: alice });
-      const bobs = await h.learn({}, { cookie: bob });
+      await h.learn({}, { user: alice });
+      const bobs = await h.learn({}, { user: bob });
 
       expect(bobs.statusCode).toBe(200);
       expect(bobs.json().cached).toBe(false);
       expect(llm.calls).toHaveLength(2);
       // Bob's learn was a real, counted learn of his own.
-      expect(await h.handle.counter(`anon:${bob.slice(7)}:${dayKey(h.clock.current)}`)).toBe(1);
+      expect(await h.handle.counter(aiLearnsKey(bob, 'month', h.clock.current))).toBe(1);
       expect(await h.handle.cacheEntryCount()).toBe(2);
     });
 
@@ -593,7 +462,7 @@ function defineProtectionSuite(kit: StoreKit): void {
       const fresh = await h.learn({ noCache: true }, { cookie });
       expect(fresh.json().cached).toBe(false);
       expect(llm.calls).toHaveLength(2);
-      expect(await h.handle.counter(`anon:${cookie.slice(7)}:${dayKey(h.clock.current)}`)).toBe(2);
+      expect(await h.handle.counter(aiLearnsKey(TEST_USER, 'month', h.clock.current))).toBe(2);
     });
 
     it('expires entries after the configured TTL', async () => {
@@ -748,7 +617,7 @@ function defineProtectionSuite(kit: StoreKit): void {
   // ---------- ledger ----------
 
   describe('ledger', () => {
-    it('attaches the anonId and a learnId to llm_calls, and stores no payload content', async () => {
+    it('attaches the userId, the anonId and a learnId to llm_calls, and stores no payload content', async () => {
       const h = await setup({ complete: makeComplete({ costUsd: 0.1 }).fn });
       const cookie = anonCookie(await h.get('/api/session'));
       const payload = basicPayload();
@@ -756,6 +625,7 @@ function defineProtectionSuite(kit: StoreKit): void {
       const res = await h.learn({ payload, noCache: true }, { cookie });
 
       const [doc] = await h.handle.ledger();
+      expect(String(doc!.userId)).toBe(TEST_USER);
       expect(doc).toMatchObject({
         anonId: cookie.slice(7),
         purpose: 'learn',

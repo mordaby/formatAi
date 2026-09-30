@@ -25,6 +25,7 @@
   },
   "exports": {
     "./learn": "./src/learn/index.ts",
+    "./registry": "./src/registry/index.ts",
     "./llm": "./src/llm/index.ts",
     "./env": "./src/env.ts"
   }

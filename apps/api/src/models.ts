@@ -6,7 +6,7 @@
  * from one owner's data, so it is owner-scoped and TTL-expired - see `LearnCacheDoc`.
  */
 import type { ObjectId } from 'mongodb';
-import type { RepairProblem } from '@formatai/shared';
+import type { RepairProblem, Tier } from '@formatai/shared';
 
 export type AuthProvider = 'google' | 'microsoft';
 
@@ -19,7 +19,8 @@ export interface UserIdentity {
   emailVerified: boolean;
 }
 
-export type UserTier = 'anonymous' | 'free' | 'paid';
+/** A signed-in user's tier (SPEC 11): new users are 'registered'; an admin sets 'paid' (M4). Not signed in = 'anonymous', which has no user. */
+export type UserTier = Exclude<Tier, 'anonymous'>;
 
 export interface UserDoc {
   _id?: ObjectId;
@@ -35,16 +36,34 @@ export interface UserDoc {
   limitOverrides?: Record<string, number>;
 }
 
+/**
+ * A sign-in session (SPEC 12). `_id` is the SHA-256 (hex) of the random session id held in the signed cookie, so
+ * a copy of this collection can't be used to take over a session. TTL-expired through `expiresAt`.
+ */
+export interface SessionDoc {
+  _id: string;
+  userId: ObjectId;
+  createdAt: Date;
+  lastSeenAt: Date;
+  expiresAt: Date;
+}
+
 // ---- Registry (SPEC 8.12): a format has many conversions (one per source) ----
 
 export type ConversionStatus = 'verified' | 'differencesAccepted' | 'userConfirmed' | 'draft' | 'needsReview';
 export type LearnPath = 'local' | 'llm' | 'cache';
 export type LearnSource = 'examplePair' | 'inputDescription' | 'descriptionOnly';
 
+/**
+ * An earlier version of a format. `FormatDoc.versions` holds the versions that were REPLACED (oldest first, at
+ * most `limits.registry.maxVersions`); the current one lives in the document's own fields.
+ */
 export interface FormatVersion {
-  /** The format side at that version (output, layout, outputValidations). */
+  version: number;
+  /** The format side at that version: `{ output, layout, outputValidations }`. */
   format: unknown;
   editedBy?: ObjectId;
+  /** When that version was saved. */
   at: Date;
 }
 
@@ -61,8 +80,11 @@ export interface FormatDoc {
   /** Validations with `on: "output"`. */
   outputValidations: unknown[];
   origin: 'learned' | 'template';
+  /** Starts at 1; every change to the output side (SPEC 8.12 "Editing a format") makes the next one. */
+  version: number;
   versions: FormatVersion[];
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface InputColumnSignature {
@@ -72,10 +94,19 @@ export interface InputColumnSignature {
   required: boolean;
 }
 
+/**
+ * An earlier version of a conversion (SPEC 8.11 "Saving": every save creates one; old ones can be restored).
+ * `ConversionDoc.versions` holds the versions that were REPLACED (oldest first, at most
+ * `limits.registry.maxVersions`); the current one lives in the document's own fields.
+ */
 export interface ConversionVersion {
+  version: number;
   /** Full rules file (schema v1, SPEC 8). */
   rules: unknown;
+  status: ConversionStatus;
+  acceptedDifferences: number;
   editedBy?: ObjectId;
+  /** When that version was saved. */
   at: Date;
 }
 
@@ -97,10 +128,15 @@ export interface ConversionDoc {
   masking: boolean;
   model?: string;
   promptVersion?: string;
+  /** Starts at 1; every save (and every restore, and a format edit written to it) makes the next one. */
+  version: number;
   versions: ConversionVersion[];
   runCount: number;
   lastRunAt?: Date;
+  /** Counts of the last run - never rows or values. */
+  lastRun?: { rows: number; flagged: number };
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface EventDoc {

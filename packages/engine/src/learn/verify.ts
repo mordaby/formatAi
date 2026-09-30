@@ -44,6 +44,14 @@ export interface VerifyOptions {
    * (never the UI-facing `mismatches`) is masked with it, so a browser-triggered
    * repair call never sends real data when masking is on. */
   masker?: Masker;
+  /**
+   * SPEC 21 v5 item 1 (the local partial result): only these output columns (0-based positions) are
+   * compared, on the aligned data rows. Everything that is about the whole file's structure - the row count
+   * and the title, header, blank and summary rows - is skipped, since a partial result doesn't build all of
+   * it yet; the file settings, the unmatched-rows notice and rows the example dropped that the rules still
+   * produce are still reported. An empty list checks nothing: `verified` is false with 0 of 0 rows.
+   */
+  onlyColumns?: number[];
 }
 
 export interface Mismatch {
@@ -305,6 +313,7 @@ function groupAlignmentByInputRow(analysis: PairAnalysis): { inRow: number; alig
 export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairAnalysis, opts: VerifyOptions = {}): VerifyResult {
   const exceptions = new Set(opts.exceptions ?? []);
   const masker = opts.masker;
+  const only = opts.onlyColumns !== undefined ? new Set(opts.onlyColumns) : null;
 
   const table: InputTable = {
     sheetName: analysis.input.sheetName,
@@ -325,6 +334,10 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
     const repairProblems: RepairProblem[] =
       result.error.code === 'missingRequiredColumns' ? [{ kind: 'reference', message }] : [{ kind: 'schema', path: 'input', message }];
     return { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [message], layoutIssues: [{ code: 'runFailed', message }], repairProblems };
+  }
+
+  if (only !== null && only.size === 0) {
+    return { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] };
   }
 
   const repairProblems: RepairProblem[] = [];
@@ -384,6 +397,7 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
       total++;
       let rowOk = true;
       for (let c = 0; c < analysis.output.columnCount; c++) {
+        if (only !== null && !only.has(c)) continue;
         const expected = expectedCells[c] ?? null;
         const actual = actualCellValue(actualRow?.cells[c]);
         if (!cellsMatch(expected, actual, analysis.output.profile[c]?.type)) {
@@ -430,7 +444,7 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
 
   const expectedDataTotal = analysis.output.dataRows.length;
   const actualDataTotal = dataRowsActual.length;
-  if (expectedDataTotal !== actualDataTotal) {
+  if (only === null && expectedDataTotal !== actualDataTotal) {
     repairProblems.push({ kind: 'rowCount', expected: expectedDataTotal, actual: actualDataTotal });
     layoutIssues.push({ code: 'rowCount', message: `expected ${expectedDataTotal} data row(s) in the example output, the rules produce ${actualDataTotal}` });
   }
@@ -445,7 +459,7 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   }
 
   // ---- layout: titles, header, summary rows, blank rows ----
-  for (const issue of compareLayoutRows(analysis, result.sheet.rows)) {
+  for (const issue of only === null ? compareLayoutRows(analysis, result.sheet.rows) : []) {
     layoutIssues.push({ code: issue.code, message: issue.message });
     repairProblems.push({ kind: 'layout', message: issue.message });
   }
