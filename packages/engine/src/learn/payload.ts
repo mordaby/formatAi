@@ -359,6 +359,12 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
     const outType = analysis.output.profile[h.out]?.type ?? 'text';
     return { ...h, value: masker.maskCell(h.value, outType) };
   }
+  if (h.rel === 'template') {
+    // The fixed text is masked like any other text in the payload: a word that also sits in the (masked) sample
+    // cells gets the same fake word, so the hint and the samples agree. Punctuation and label words stay real.
+    const parts = h.parts.map((p) => (typeof p === 'string' ? masker.maskText(p) : p));
+    return { ...h, parts };
+  }
   if (h.rel === 'bands') {
     // The thresholds are numbers or ISO dates (sent real, SPEC 7.2); the band values are output cells, masked like samples.
     const outType = analysis.output.profile[h.out]?.type ?? 'text';

@@ -220,7 +220,7 @@ The example output is checked more loosely, because a report may contain title, 
      - **fixed fan-out:** every family has the same size (2–5), and each position in the family follows its own pattern (e.g. position 1 = "חובה" with the amount, position 2 = "זכות" with the negative amount).
      - Families that fit none of these are **row expansion**, which isn't supported.
 4. **Test relations** for every output data column, on every aligned row. Each relation gets a **coverage** (the share of rows where it holds):
-   - text: `copy`, `normalize` (trim, case, quote marks and geresh), `padLeft`, `substr` (prefix, suffix, fixed position), `concat` (whole words from 2+ input columns with a separator), `valueMap` (a consistent correspondence with an input column, at most 50 distinct values), `constant`;
+   - text: `copy`, `normalize` (trim, case, quote marks and geresh), `padLeft`, `substr` (prefix, suffix, fixed position), `concat` (whole words from 2+ input columns with a separator), `template` (short fixed text around/between at most 2 input columns, e.g. `<id>:"<name>"` — tried only when nothing simpler explains the column, used only when it holds on every row and exactly one template fits; limits in config), `valueMap` (a consistent correspondence with an input column, at most 50 distinct values), `constant`;
    - formats: `dateFormat` (from → to), `numberFormat`;
    - numbers: `mulConst`, `addConst`, `add`, `sub`, `mul` and `div` between two input columns, and `sum` of several columns, each with rounding detection;
    - summaries: `aggregate` (sum, count, min or max per group);

@@ -144,6 +144,10 @@ export type ColumnHint = HintBase & { out: number } & (
   | { rel: 'padLeft'; in: [number]; length: number; char?: string }
   | { rel: 'substr'; in: [number]; from: 'start' | 'end' | number; length: number }
   | { rel: 'concat'; in: number[]; separator: string }
+  // Fixed text around and between 1-2 input values (`12345:"Cohen"` from ID and Name). `parts` is the output text
+  // in order: a string is fixed text, `{ in: n }` is the value of input column n (a column may appear twice).
+  // `in` lists the columns used, once each. Sent only at coverage 1 (see `limits.learn.template`).
+  | { rel: 'template'; in: number[]; parts: (string | { in: number })[] }
   | { rel: 'valueMap'; in: [number]; pairs: [string, string][] }
   | { rel: 'constant'; in: []; value: PayloadCell }
   | { rel: 'dateFormat'; in: [number]; from: string; to: string }

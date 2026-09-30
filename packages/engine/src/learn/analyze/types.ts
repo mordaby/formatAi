@@ -289,6 +289,13 @@ export type RelationBody =
   /** Whole part of a split: index is 1-based, negative counts from the end (the engine's split). */
   | { rel: 'split'; in: [number]; separator: string; index: number }
   | { rel: 'concat'; in: number[]; separator: string; skipEmpty: boolean }
+  /**
+   * Fixed text around and between 1-2 input values, identical on every row (`<id>:"<name>"`). `parts` is the
+   * output text in order: a string is fixed text (never empty), `{ in: n }` is the value of column n (a column
+   * may appear twice). `in` lists the columns used, once each, in order of first use. Coverage is always 1:
+   * a template that fails on any row is not reported (SPEC 6.2 step 4; `limits.learn.template`).
+   */
+  | { rel: 'template'; in: number[]; parts: (string | { in: number })[] }
   | { rel: 'valueMap'; in: [number]; pairs: [string, string][] }
   | { rel: 'constant'; in: []; value: PayloadCell }
   /**

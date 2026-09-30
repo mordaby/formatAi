@@ -49,6 +49,8 @@ function columnHintBody(rel: Relation): ColumnHintBody | null {
       return null;
     case 'concat':
       return { rel: 'concat', in: rel.in, separator: rel.separator };
+    case 'template':
+      return { rel: 'template', in: rel.in, parts: rel.parts };
     case 'valueMap':
       return { rel: 'valueMap', in: rel.in, pairs: rel.pairs };
     case 'constant':

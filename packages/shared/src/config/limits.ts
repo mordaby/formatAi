@@ -107,6 +107,19 @@ export const limits = {
     maxFailedAiAttempts: 3,
     /** How long those failed attempts are remembered; after it the pair may be tried again. */
     failedAttemptsWindowHours: 24,
+    /**
+     * SPEC 6.2 step 4 (the `template` relation): an output text built from input values with FIXED text around
+     * and between them (`<id>:"<name>"`, `INV-<n>`). Deliberately light: a rule this loose is only trusted when
+     * it is short and proven on every row, and a wrongly caught complex rule is worse than one sent to the AI.
+     */
+    template: {
+      /** Input columns a template may read; the same column used twice counts twice. */
+      maxColumns: 2,
+      /** Longest fixed text (in characters) in any one place. */
+      maxLiteralChars: 6,
+      /** Longest fixed text (in characters) in total, all places together. */
+      maxTotalLiteralChars: 10,
+    },
   },
   /**
    * SPEC 8.11 / 8.12 / 11 / 13: the registry (saved formats and their conversions).

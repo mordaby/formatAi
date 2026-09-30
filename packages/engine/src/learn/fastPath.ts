@@ -35,6 +35,7 @@ import type { OutputFileSpec } from '../types';
 import type { ColumnAnalysis, FilterRelation, PairAnalysis, Relation } from './analyze';
 import { relationHasHint } from './hints';
 import type { PreflightResult } from './preflight';
+import { maxDistinctValues, templateOperandForm, type OperandForm } from './templateOperands';
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -119,10 +120,24 @@ export interface Ctx {
    * fast path, which never sees a family.
    */
   createdIds: Map<number, string>;
+  /**
+   * Input columns a `template` column reads as they are (its text was proven for the column as declared, see
+   * templateOperands.ts), so no other column may later change how the engine reads them (zero padding).
+   */
+  templateCols: Set<number>;
 }
 
 export function newCtx(): Ctx {
-  return { usedIds: new Set(), inputIds: new Map(), inputColumns: new Map(), computed: [], valueMaps: [], usedInputCols: new Set(), createdIds: new Map() };
+  return {
+    usedIds: new Set(),
+    inputIds: new Map(),
+    inputColumns: new Map(),
+    computed: [],
+    valueMaps: [],
+    usedInputCols: new Set(),
+    createdIds: new Map(),
+    templateCols: new Set(),
+  };
 }
 
 /** A copy of the build state, to roll a failed column back (partial.ts builds tolerantly). */
@@ -135,6 +150,7 @@ export function snapshotCtx(ctx: Ctx): Ctx {
     valueMaps: [...ctx.valueMaps],
     usedInputCols: new Set(ctx.usedInputCols),
     createdIds: new Map(ctx.createdIds),
+    templateCols: new Set(ctx.templateCols),
   };
 }
 
@@ -146,6 +162,7 @@ export function restoreCtx(ctx: Ctx, snap: Ctx): void {
   ctx.valueMaps = snap.valueMaps;
   ctx.usedInputCols = snap.usedInputCols;
   ctx.createdIds = snap.createdIds;
+  ctx.templateCols = snap.templateCols;
 }
 
 export function ensureInputColumn(ctx: Ctx, analysis: PairAnalysis, i: number): string {
@@ -235,6 +252,11 @@ function thinEvidenceIssue(analysis: PairAnalysis, rel: Relation): FastPathFailu
   if (rel.rel === 'valueMap') {
     if (!valueMapHasRepeat(analysis, rel.in[0])) return fail('thinEvidence', { column: rel.out, relation: rel.rel });
   }
+  // A template whose every input column takes fewer than 3 different values is as likely a value map (or plain
+  // fixed text): nothing shows that the columns really vary.
+  if (rel.rel === 'template' && maxDistinctValues(analysis, rel.in, 3) < 3) {
+    return fail('thinEvidence', { column: rel.out, relation: rel.rel });
+  }
   return null;
 }
 
@@ -264,6 +286,7 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
       use(rel.in[0]);
       const inputId = input(rel.in[0]);
       if (rel.char === '0') {
+        if (ctx.templateCols.has(rel.in[0])) return fail('columnNotFullyExplained', { column: outHeader });
         const col = ctx.inputColumns.get(rel.in[0])!;
         if (col.padLeft !== undefined && col.padLeft !== rel.length) {
           return fail('columnNotFullyExplained', { column: outHeader });
@@ -296,6 +319,33 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
         if (idx > 0 && rel.separator !== '') args.push({ const: rel.separator });
         args.push({ col: input(i) });
       });
+      const id = newComputedId(ctx, outHeader);
+      ctx.computed.push({ id, type: 'text', expr: { op: 'concat', args } });
+      return id;
+    }
+    case 'template': {
+      // Fixed text around 1-2 input values (limits.learn.template): `concat` of const literals and the columns.
+      // DECISION: only true input columns, and only when the engine's text for each column is proven to be the
+      // text the analysis compared (templateOperands.ts); anything else is left to the AI step.
+      const forms = new Map<number, OperandForm>();
+      for (const i of rel.in) {
+        if (i >= analysis.input.columnCount) return fail('columnNotFullyExplained', { column: outHeader });
+        input(i);
+        const col = ctx.inputColumns.get(i)!;
+        const form = col.padLeft === undefined ? templateOperandForm(analysis, i, col.type) : null;
+        if (form === null) return fail('columnNotFullyExplained', { column: outHeader });
+        forms.set(i, form);
+      }
+      for (const i of rel.in) {
+        use(i);
+        ctx.templateCols.add(i);
+      }
+      const operand = (i: number): Expr => {
+        const col: Expr = { col: input(i) };
+        const form = forms.get(i);
+        return form === 'trim' ? { op: 'trim', arg: col } : form === 'toText' ? { op: 'toText', arg: col } : col;
+      };
+      const args: Expr[] = rel.parts.map((p) => (typeof p === 'string' ? { const: p } : operand(p.in)));
       const id = newComputedId(ctx, outHeader);
       ctx.computed.push({ id, type: 'text', expr: { op: 'concat', args } });
       return id;
@@ -629,6 +679,7 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
  * are correctly seen as different buckets. */
 function ambiguityBucket(r: Relation): string {
   if (r.rel === 'copy' || r.rel === 'normalize') return `text:${r.in[0]}`;
+  if (r.rel === 'template') return `template:${JSON.stringify(r.parts)}`;
   return `${r.rel}:${r.in.join(',')}`;
 }
 

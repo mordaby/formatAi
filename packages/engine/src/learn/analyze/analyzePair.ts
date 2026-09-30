@@ -292,7 +292,7 @@ function analyzeSides(
     }
   } else {
     const src = [...inp.cols.map((c) => gather(c, inIdx)), ...created.map((c) => c.col)];
-    const env: RelationEnv = { src, total: K, sample, minCoverage, language };
+    const env: RelationEnv = { src, inputCount: inp.cols.length, total: K, sample, minCoverage, language };
     for (let o = 0; o < nCols; o++) {
       const rels = findRelations(env, outA[o]!, o, outProfile[o]?.format);
       const ca = columnAnalysis(o, outSide.headers[o] ?? '', rels);
@@ -311,6 +311,7 @@ function analyzeSides(
         for (let k = 0; k < K; k++) if (pos.num[k] === p + 1) rowsP.push(k);
         const envP: RelationEnv = {
           src: src.map((c) => gather(c, rowsP)),
+          inputCount: inp.cols.length,
           total: rowsP.length,
           sample: sampleIndices(rowsP.length, sampleSize, seed + p + 1),
           minCoverage,

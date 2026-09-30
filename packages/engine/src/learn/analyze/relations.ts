@@ -6,6 +6,7 @@
 // aligned rows where it fails.
 
 import Decimal from 'decimal.js';
+import { limits } from '@formatai/shared';
 import type { PayloadCell } from '@formatai/shared';
 import { formatYmd } from '../../values/dates';
 import { padLeft } from '../../values/text';
@@ -40,6 +41,8 @@ const SLACK = 0.03;
 export interface RelationEnv {
   /** Source columns aligned to the rows: input columns, then created family columns. */
   src: ColumnData[];
+  /** How many of `src` are input columns (the rest are created family columns); default: all. */
+  inputCount?: number;
   /** Rows tested (aligned rows, or one family position's rows). */
   total: number;
   /** Row indices (0..total-1, ascending) of the first pass. */
@@ -74,6 +77,7 @@ const RANK: Record<RelationBody['rel'], number> = {
   substr: 3,
   split: 3,
   concat: 4,
+  template: 4.5,
   constant: 5,
   mulConst: 6,
   addConst: 6,
@@ -459,6 +463,152 @@ function concatCands(env: RelationEnv, out: ColumnData): Cand[] {
     }
   }
   return cands;
+}
+
+// ---------- stage 2b: template (fixed text around and between input values) ----------
+
+/** Sample rows the candidate templates are derived from and cross-checked on before the full test. */
+const TEMPLATE_PROBE_ROWS = 12;
+/** Probe rows a search runs on (a column that is empty on one row can be located on another). */
+const TEMPLATE_SEARCH_ROWS = 3;
+/** Search budget per probe row, and candidates kept: past this the data fits many readings and none is reported anyway. */
+const TEMPLATE_MAX_NODES = 4000;
+const TEMPLATE_MAX_CANDIDATES = 40;
+
+interface TemplateShape {
+  /** Source column of each value, in output order (a column may repeat). */
+  cols: number[];
+  /** Fixed text before, between and after the values: cols.length + 1 entries, any of them may be ''. */
+  lits: string[];
+}
+
+/** Exact test: the output cell is text and equals lits[0] + v(cols[0]) + lits[1] + ... on this row. */
+function templateTest(out: ColumnData, srcCols: ColumnData[], lits: string[]): Test {
+  const n = srcCols.length;
+  return (k) => {
+    if (out.kind[k] !== TEXT) return 0;
+    const o = out.text[k]!;
+    let pos = 0;
+    for (let i = 0; i <= n; i++) {
+      const lit = lits[i]!;
+      if (lit !== '') {
+        if (!o.startsWith(lit, pos)) return 0;
+        pos += lit.length;
+      }
+      if (i < n) {
+        const v = textAt(srcCols[i]!, k);
+        if (v !== '') {
+          if (!o.startsWith(v, pos)) return 0;
+          pos += v.length;
+        }
+      }
+    }
+    return pos === o.length ? 1 : 0;
+  };
+}
+
+/**
+ * DECISION (owner: keep it light - a wrongly caught complex rule is worse than one sent to the AI): the
+ * `template` relation - output text = fixed text + the value of 1-2 input columns (+ fixed text + ...), e.g.
+ * `12345:"Cohen"` from ID and Name - is reported only when
+ *  - no simpler relation explained the column (the caller runs this after copy/normalize/padLeft/substr/concat...);
+ *  - it holds on EVERY row (coverage 1, the output cell is text and equals the regenerated text exactly);
+ *  - it is short: at most `limits.learn.template` columns (the same column twice counts twice), literals and total literal length;
+ *  - it is the ONLY template that fits: two readings that both reproduce every row (a column equal to another,
+ *    a column that is constant and could equally be fixed text) report none, and the column goes to the AI.
+ * The input values are located as substrings of the output on a few rows, the literals are what lies between
+ * them, and each candidate is then confirmed on the 2,000-row sample and on all rows. No regex.
+ */
+function templateRelation(env: RelationEnv, out: ColumnData, outIndex: number): Relation | null {
+  const { maxColumns, maxLiteralChars, maxTotalLiteralChars } = limits.learn.template;
+  if (kindShare(out, TEXT) < 0.5) return null;
+  const src = env.src;
+  const nIn = Math.min(src.length, env.inputCount ?? src.length);
+  const probe: number[] = [];
+  for (const k of env.sample) {
+    if (out.kind[k] === TEXT) probe.push(k);
+    if (probe.length >= TEMPLATE_PROBE_ROWS) break;
+  }
+  if (probe.length === 0) return null;
+
+  // Columns that can take part: the value is in the output text on every probe row where it is not empty.
+  const cols: number[] = [];
+  for (let s = 0; s < nIn; s++) {
+    const a = src[s]!;
+    let seen = false;
+    let ok = true;
+    for (const k of probe) {
+      const v = textAt(a, k);
+      if (v === '') continue;
+      seen = true;
+      if (!out.text[k]!.includes(v)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok && seen && kindShare(a, DATE) === 0) cols.push(s);
+  }
+  if (cols.length === 0) return null;
+
+  // Candidate shapes: from a few probe rows, every way of locating up to `maxColumns` values in order.
+  const shapes = new Map<string, TemplateShape>();
+  for (const k0 of probe.slice(0, TEMPLATE_SEARCH_ROWS)) {
+    const o0 = out.text[k0]!;
+    const seq: { col: number; at: number; end: number }[] = [];
+    let nodes = 0;
+    const emit = (): void => {
+      const lits: string[] = [];
+      let pos = 0;
+      let total = 0;
+      for (const p of seq) {
+        lits.push(o0.slice(pos, p.at));
+        pos = p.end;
+      }
+      lits.push(o0.slice(pos));
+      for (const l of lits) {
+        if (l.length > maxLiteralChars) return;
+        total += l.length;
+      }
+      if (total === 0 || total > maxTotalLiteralChars) return; // no fixed text at all is a copy / concat
+      const shape: TemplateShape = { cols: seq.map((p) => p.col), lits };
+      shapes.set(`${shape.cols.join(',')}\u0000${lits.join('\u0000')}`, shape);
+    };
+    const walk = (pos: number): void => {
+      if (seq.length > 0) emit();
+      if (seq.length >= maxColumns) return;
+      for (const c of cols) {
+        const v = textAt(src[c]!, k0);
+        if (v === '') continue;
+        for (let at = o0.indexOf(v, pos); at >= 0 && at - pos <= maxLiteralChars; at = o0.indexOf(v, at + 1)) {
+          if (++nodes > TEMPLATE_MAX_NODES) return;
+          seq.push({ col: c, at, end: at + v.length });
+          walk(at + v.length);
+          seq.pop();
+        }
+      }
+    };
+    walk(0);
+  }
+  if (shapes.size === 0) return null;
+
+  // Confirm: the other probe rows, then the sample, then every row. Coverage must be exactly 1.
+  const strict: RelationEnv = { ...env, minCoverage: 1 };
+  const holding: Relation[] = [];
+  for (const shape of [...shapes.values()].slice(0, TEMPLATE_MAX_CANDIDATES)) {
+    const test = templateTest(out, shape.cols.map((c) => src[c]!), shape.lits);
+    if (!probe.every((k) => test(k) === 1)) continue;
+    const parts: (string | { in: number })[] = [];
+    shape.lits.forEach((lit, i) => {
+      if (lit !== '') parts.push(lit);
+      if (i < shape.cols.length) parts.push({ in: shape.cols[i]! });
+    });
+    const cand: Cand = { body: { rel: 'template', in: [...new Set(shape.cols)], parts }, rank: RANK.template, test };
+    if (!passesSample(strict, cand)) continue;
+    const rel = evaluate(strict, out, outIndex, cand);
+    if (rel !== null && rel.coverage === 1) holding.push(rel);
+  }
+  // More than one template fits every row: it is a guess which one is meant, so none is reported.
+  return holding.length === 1 ? holding[0]! : null;
 }
 
 /** Output renderings tried for text dates besides the output column's own format. */
@@ -997,6 +1147,7 @@ export function findRelations(env: RelationEnv, out: ColumnData, outIndex: numbe
   if (nonEmptyCount(out) === 0) {
     return [{ rel: 'constant', in: [], value: null, out: outIndex, coverage: 1, matched: env.total, total: env.total, failing: [], failCount: 0 }];
   }
+  // Stages run from simplest to most expensive; each one is skipped once an earlier stage explained the column on every row.
   const stages: (() => Cand[])[] = [
     () => stage1(env, out),
     () => [
@@ -1007,12 +1158,12 @@ export function findRelations(env: RelationEnv, out: ColumnData, outIndex: numbe
       ...dateCands(env, out, outFormat),
       ...numberFormatCands(env, out),
     ],
-    () => numericCands(env, out),
-    () => valueMapCands(env, out),
   ];
+  const later: (() => Cand[])[] = [() => numericCands(env, out), () => valueMapCands(env, out)];
   const found: Relation[] = [];
   const seen = new Set<string>();
-  for (const stage of stages) {
+  const explained = (): boolean => found.some((r) => r.coverage === 1);
+  const run = (stage: () => Cand[]): void => {
     for (const cand of stage()) {
       const key = relationKey(cand.body);
       if (seen.has(key)) continue;
@@ -1026,7 +1177,19 @@ export function findRelations(env: RelationEnv, out: ColumnData, outIndex: numbe
       }
       found.push(rel);
     }
-    if (found.some((r) => r.coverage === 1)) break;
+  };
+  for (const stage of stages) {
+    run(stage);
+    if (explained()) break;
+  }
+  // Fixed text around input values: only when nothing simpler explained the column (limits.learn.template).
+  if (!explained()) {
+    const template = templateRelation(env, out, outIndex);
+    if (template !== null) found.push(template);
+  }
+  for (const stage of later) {
+    if (explained()) break;
+    run(stage);
   }
   // A concat found both with and without skipEmpty: keep the better one.
   const out1 = sortRelations(found).filter((r, i, all) => {
