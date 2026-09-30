@@ -1,12 +1,13 @@
-// UI strings of "convert a file" and "batch" (SPEC 5 C/D, 16.1 screen 6, 21 v5 item 5). Merged into `en` and `he` in
+// UI strings of "convert a file" and "batch" (SPEC 5 C/D, 8.15, 16.1 screen 6, 21 v5 item 5, 21 v6). Merged into `en` and `he` in
 // dictionaries.ts (one line each), where the compiler catches a missing Hebrew string.
 //
-// Copy is plain and says what to do: "format" and "source", not "schema" and "conversion". Sentence case.
+// Copy is plain and says what to do: "format" and "source", not "schema" and "conversion". Sentence case. A source is one
+// kind of incoming file (a supplier's price list); it can feed several formats.
 
 export const convertEn = {
   // ----- the Convert screen -----
   'conv.title': 'Convert a file',
-  'conv.lead': "Drop a file. We find which of your sources it is and make it into that source's format.",
+  'conv.lead': 'Drop a file. We find which of your sources it is and make it into the format (or formats) that source feeds.',
   'conv.onlyFormat': 'Only the sources of {format}.',
   'conv.allFormats': 'Use all my formats',
   'conv.drop.label': 'File to convert',
@@ -32,6 +33,7 @@ export const convertEn = {
   'conv.choose.title': 'Which source is this file?',
   'conv.choose.lead': "We are not sure enough to pick for you, so we didn't guess. Choose the source this file comes from.",
   'conv.choose.pick': 'Use this source',
+  'conv.choose.feeds': 'Converted into:',
   'conv.match.high': 'Almost every column matches',
   'conv.match.mid': 'Most columns match',
   'conv.match.low': 'Some columns match',
@@ -39,6 +41,7 @@ export const convertEn = {
   'conv.match.percent': '{n}% match',
   'conv.match.missing': 'Missing from the file:',
   'conv.match.auto': 'Matched to {source} of {format}.',
+  'conv.match.source': 'Matched to {source}.',
   'conv.noMatch.title': "This file doesn't look like any of your sources",
   'conv.noMatch.text': 'None of your sources shares enough columns with this file.',
   'conv.noMatch.todo': 'Check that it is the right file. If it is a new layout, add it as a source of a format.',
@@ -51,6 +54,7 @@ export const convertEn = {
   'conv.missing.text.other': '{source} needs {count} columns this file does not have:',
   'conv.missing.todo': 'Add the column to the file with exactly this name and drop the file again. If it is the wrong source, choose another one.',
   'conv.missing.another': 'Choose another file',
+  'conv.affects': 'Formats this affects:',
   'conv.map.title': 'Is a column named differently?',
   'conv.map.lead.one': "{source} needs a column that this file doesn't have under that name. Say which column of the file it is.",
   'conv.map.lead.other': "{source} needs {count} columns that this file doesn't have under those names. Say which column of the file each one is.",
@@ -61,10 +65,20 @@ export const convertEn = {
   'conv.map.none': "It isn't in this file",
   'conv.map.remember': 'Remember this for the next files',
   'conv.map.remember.hint': 'Next time this name is matched with no questions.',
+  'conv.map.remember.hint.all': 'It is saved on the source, so next time it applies to all {n} of its formats with no questions.',
   'conv.map.continue': 'Continue',
   'conv.map.aliasNotSaved': "We couldn't save this rename for next time, but this file was converted.",
 
+  // ----- a source that feeds several formats (SPEC 8.15) -----
+  'conv.formats.title': 'This file feeds {n} formats',
+  'conv.formats.lead': 'This file is from {source}. Choose which formats to make from it. Each one is checked on its own, and you look at its flagged rows before its file is made.',
+  'conv.formats.legend': 'Formats to make',
+  'conv.formats.all': 'All formats',
+  'conv.formats.continue': 'Continue',
+  'conv.formats.none': 'Choose at least one format.',
+
   // ----- the review before the file is written (SPEC 21 v5 item 5) -----
+  'conv.review.for': 'Format {n} of {total}: {format}',
   'conv.review.title': 'Some rows need a look before the file is made',
   'conv.review.lead.one': '1 row is flagged.',
   'conv.review.lead.other': '{n} rows are flagged.',
@@ -100,6 +114,16 @@ export const convertEn = {
   'conv.done.download': 'Download the file',
   'conv.done.another': 'Convert another file',
   'conv.done.formats': 'My formats',
+  'conv.results.title.none': 'No file could be made',
+  'conv.results.title.one': 'One file is ready',
+  'conv.results.title.other': 'Your {n} files are ready',
+  'conv.results.source': 'Converted with {source}: one file for each format.',
+  'conv.results.note': 'The zip has a folder for each format and a small summary sheet with a line for each one.',
+  'conv.results.downloadAll': 'Download all (zip)',
+  'conv.results.download': 'Download',
+  'conv.results.downloadOne': 'Download the file for {format}',
+  'conv.results.failed.title': "These formats couldn't be made",
+  'conv.results.summaryFile': 'formatAI conversion summary.xlsx',
   'conv.sum.rowsIn': 'Rows in',
   'conv.sum.rowsOut': 'Rows out',
   'conv.sum.filtered': 'Left out by a filter',
@@ -131,6 +155,7 @@ export const convertEn = {
   'batch.what.1': 'Files from different sources can be mixed. Each one finds its own source.',
   'batch.what.2': 'Files that clearly match a source are converted one at a time on your computer.',
   'batch.what.3': 'You get a zip with the converted files, grouped by format, and a summary sheet of every flag.',
+  'batch.what.4': 'A source that feeds several formats converts the file into all of them.',
   'batch.wall.title': 'Sign in to run a batch',
   'batch.wall.text': 'Batch uses your saved formats, so it needs an account.',
   'batch.paid.title': 'Batch is part of the paid plan',
@@ -165,6 +190,7 @@ export const convertEn = {
   'batch.reason.rules': "The rules of {source} can't run on it.",
   'batch.reason.failed': "It couldn't be converted. Try this file on its own.",
   'batch.reason.gone': "That source isn't in your account any more.",
+  'batch.forFormat': 'For the format {format}.',
   'batch.rows': '{rowsIn} rows in · {rowsOut} rows out',
   'batch.flagsCount.one': '1 flagged row',
   'batch.flagsCount.other': '{n} flagged rows',
@@ -199,7 +225,7 @@ export const convertEn = {
 export const convertHe: Record<keyof typeof convertEn, string> = {
   // ----- the Convert screen -----
   'conv.title': 'המרת קובץ',
-  'conv.lead': 'גררו קובץ. אנחנו מזהים מאיזה מקור הוא ומכינים אותו בפורמט של אותו מקור.',
+  'conv.lead': 'גררו קובץ. אנחנו מזהים מאיזה מקור הוא ומכינים אותו בפורמט (או בפורמטים) שהמקור הזה מזין.',
   'conv.onlyFormat': 'רק המקורות של {format}.',
   'conv.allFormats': 'להשתמש בכל הפורמטים שלי',
   'conv.drop.label': 'קובץ להמרה',
@@ -225,6 +251,7 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'conv.choose.title': 'מאיזה מקור הקובץ הזה?',
   'conv.choose.lead': 'אנחנו לא בטוחים מספיק כדי לבחור בשבילכם, ולכן לא ניחשנו. בחרו את המקור שממנו הגיע הקובץ.',
   'conv.choose.pick': 'להשתמש במקור הזה',
+  'conv.choose.feeds': 'מומר אל:',
   'conv.match.high': 'כמעט כל העמודות תואמות',
   'conv.match.mid': 'רוב העמודות תואמות',
   'conv.match.low': 'חלק מהעמודות תואמות',
@@ -232,6 +259,7 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'conv.match.percent': 'התאמה של {n}%',
   'conv.match.missing': 'חסר בקובץ:',
   'conv.match.auto': 'הקובץ הותאם ל{source} של {format}.',
+  'conv.match.source': 'הקובץ הותאם ל{source}.',
   'conv.noMatch.title': 'הקובץ הזה לא נראה כמו אף אחד מהמקורות שלכם',
   'conv.noMatch.text': 'לאף אחד מהמקורות שלכם אין מספיק עמודות משותפות עם הקובץ.',
   'conv.noMatch.todo': 'בדקו שזה הקובץ הנכון. אם זו תבנית חדשה, הוסיפו אותה כמקור של פורמט.',
@@ -244,6 +272,7 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'conv.missing.text.other': 'ל{source} דרושות {count} עמודות שאין בקובץ הזה:',
   'conv.missing.todo': 'הוסיפו את העמודה לקובץ בדיוק בשם הזה וגררו את הקובץ שוב. אם זה המקור הלא נכון, בחרו מקור אחר.',
   'conv.missing.another': 'בחירת קובץ אחר',
+  'conv.affects': 'פורמטים שהדבר משפיע עליהם:',
   'conv.map.title': 'עמודה בשם אחר?',
   'conv.map.lead.one': 'ל{source} דרושה עמודה שאין בקובץ הזה בשם הזה. אמרו איזו עמודה בקובץ היא.',
   'conv.map.lead.other': 'ל{source} דרושות {count} עמודות שאין בקובץ הזה בשמות האלה. אמרו איזו עמודה בקובץ היא כל אחת מהן.',
@@ -254,10 +283,20 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'conv.map.none': 'היא לא בקובץ הזה',
   'conv.map.remember': 'לזכור את זה לקבצים הבאים',
   'conv.map.remember.hint': 'בפעם הבאה השם הזה יזוהה בלי לשאול.',
+  'conv.map.remember.hint.all': 'השם נשמר במקור, ולכן בפעם הבאה הוא יזוהה בלי לשאול בכל {n} הפורמטים שלו.',
   'conv.map.continue': 'המשך',
   'conv.map.aliasNotSaved': 'לא הצלחנו לשמור את השינוי הזה לפעם הבאה, אבל הקובץ הזה הומר.',
 
+  // ----- a source that feeds several formats (SPEC 8.15) -----
+  'conv.formats.title': 'הקובץ הזה מזין {n} פורמטים',
+  'conv.formats.lead': 'הקובץ הזה הוא של {source}. בחרו אילו פורמטים להכין ממנו. כל פורמט נבדק בנפרד, ואתם עוברים על השורות המסומנות שלו לפני שהקובץ שלו נוצר.',
+  'conv.formats.legend': 'פורמטים להכנה',
+  'conv.formats.all': 'כל הפורמטים',
+  'conv.formats.continue': 'המשך',
+  'conv.formats.none': 'בחרו לפחות פורמט אחד.',
+
   // ----- the review before the file is written (SPEC 21 v5 item 5) -----
+  'conv.review.for': 'פורמט {n} מתוך {total}: {format}',
   'conv.review.title': 'כמה שורות דורשות מבט לפני שהקובץ נוצר',
   'conv.review.lead.one': 'שורה אחת מסומנת.',
   'conv.review.lead.other': '{n} שורות מסומנות.',
@@ -293,6 +332,16 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'conv.done.download': 'הורדת הקובץ',
   'conv.done.another': 'המרת קובץ נוסף',
   'conv.done.formats': 'הפורמטים שלי',
+  'conv.results.title.none': 'לא ניתן היה ליצור אף קובץ',
+  'conv.results.title.one': 'קובץ אחד מוכן',
+  'conv.results.title.other': '{n} הקבצים שלכם מוכנים',
+  'conv.results.source': 'הומר באמצעות {source}: קובץ אחד לכל פורמט.',
+  'conv.results.note': 'ב-zip יש תיקייה לכל פורמט וגיליון סיכום קטן עם שורה לכל אחד.',
+  'conv.results.downloadAll': 'הורדת הכול (zip)',
+  'conv.results.download': 'הורדה',
+  'conv.results.downloadOne': 'הורדת הקובץ של {format}',
+  'conv.results.failed.title': 'את הפורמטים האלה לא ניתן היה ליצור',
+  'conv.results.summaryFile': 'formatAI conversion summary.xlsx',
   'conv.sum.rowsIn': 'שורות שנכנסו',
   'conv.sum.rowsOut': 'שורות שיצאו',
   'conv.sum.filtered': 'הושמטו בסינון',
@@ -324,6 +373,7 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'batch.what.1': 'אפשר לערבב קבצים ממקורות שונים. כל קובץ מוצא את המקור שלו.',
   'batch.what.2': 'קבצים שמתאימים בבירור למקור מומרים בזה אחר זה במחשב שלכם.',
   'batch.what.3': 'מקבלים zip עם הקבצים שהומרו, מקובצים לפי פורמט, וגיליון סיכום של כל הסימונים.',
+  'batch.what.4': 'מקור שמזין כמה פורמטים ממיר את הקובץ לכולם.',
   'batch.wall.title': 'התחברו כדי להריץ אצווה',
   'batch.wall.text': 'אצווה משתמשת בפורמטים השמורים שלכם, ולכן צריך חשבון.',
   'batch.paid.title': 'אצווה היא חלק מהתוכנית בתשלום',
@@ -358,6 +408,7 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'batch.reason.rules': 'הכללים של {source} לא יכולים לרוץ עליו.',
   'batch.reason.failed': 'לא הצלחנו להמיר אותו. נסו את הקובץ הזה בנפרד.',
   'batch.reason.gone': 'המקור הזה כבר לא נמצא בחשבון שלכם.',
+  'batch.forFormat': 'עבור הפורמט {format}.',
   'batch.rows': '{rowsIn} שורות נכנסו · {rowsOut} שורות יצאו',
   'batch.flagsCount.one': 'שורה אחת מסומנת',
   'batch.flagsCount.other': '{n} שורות מסומנות',

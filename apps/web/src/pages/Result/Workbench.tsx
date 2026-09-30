@@ -2,7 +2,7 @@
 // preview grid and the flagged rows. It does not know where the rules came from - a fresh learn, a source being added to a
 // format, or a saved source opened for editing - or what "save" means there: the caller passes the header's actions, banners
 // and (when there is no example in memory) what replaces the preview.
-import type { AiStepPartCode, Format, Tier } from '@formatai/shared';
+import type { AiStepPartCode, Format, SourceStructure, Tier } from '@formatai/shared';
 import type { PartialInfo } from '@formatai/engine';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LeaveGuard } from '../../app/LeaveGuard';
@@ -64,6 +64,8 @@ export interface WorkbenchProps {
   tier: Tier;
   /** Inside a format: turns on the format lock (SPEC 8.12). */
   format?: Format | undefined;
+  /** An existing source the user chose for a conversion that is not saved yet: turns on the source lock (SPEC 8.15). */
+  source?: SourceStructure | undefined;
   /** SPEC 21 v5 item 1: the local partial result (columns the AI step still has to work out are marked, and only the built ones are checked). */
   partial?: PartialInfo | undefined;
   /** The learn's own verification, shown in the map until the live check answers. */
@@ -97,7 +99,7 @@ export interface WorkbenchProps {
 export function Workbench(props: WorkbenchProps) {
   const { t, lang, dir } = useI18n();
   const { engine } = useServices();
-  const { store, exampleId, exampleInput, inputFile, tier, format, partial, verification, previewLimit } = props;
+  const { store, exampleId, exampleInput, inputFile, tier, format, source, partial, verification, previewLimit } = props;
   const editor = useEditor(store);
   const rules = editor.state.rules;
 
@@ -123,7 +125,7 @@ export function Workbench(props: WorkbenchProps) {
 
   const unsaved = props.trackUnsaved !== false && editor.state.dirty;
 
-  const check = useLiveCheck({ engine, exampleId, editor: editor.state, tier, ...(format ? { format } : {}), ...(onlyColumns ? { onlyColumns } : {}) });
+  const check = useLiveCheck({ engine, exampleId, editor: editor.state, tier, ...(format ? { format } : {}), ...(source ? { source } : {}), ...(onlyColumns ? { onlyColumns } : {}) });
   const live = check.state.live;
 
   // What the last edit did, said on the line it changed for a few seconds.

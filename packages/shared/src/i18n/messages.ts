@@ -272,8 +272,17 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
     he: 'הפלט של הקובץ הזה לא תואם לפורמט. ראו אילו עמודות שונות ותקנו אותן, או שמרו אותו כפורמט חדש.',
   },
   nameTaken: {
-    en: 'Another source of this format already has that name. Choose a different name.',
-    he: 'מקור אחר של הפורמט הזה כבר נושא את השם הזה. בחרו שם אחר.',
+    en: 'You already have a source with that name. Choose a different name.',
+    he: 'כבר יש לכם מקור בשם הזה. בחרו שם אחר.',
+  },
+  // SPEC 8.15: the conversion's input side has to match its source (the source lock).
+  sourceMismatch: {
+    en: "This file's columns don't match the source it belongs to. See which columns differ and fix them, or save it as a new source.",
+    he: 'העמודות של הקובץ הזה לא תואמות למקור שאליו הוא שייך. ראו אילו עמודות שונות ותקנו אותן, או שמרו אותו כמקור חדש.',
+  },
+  sourceInUse: {
+    en: 'This source still feeds a format. Remove it from its formats first.',
+    he: 'המקור הזה עדיין מזין פורמט. הסירו אותו מהפורמטים שלו קודם.',
   },
   aliasConflict: {
     en: 'That column name is already used for a different column in this source.',

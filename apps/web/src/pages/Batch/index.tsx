@@ -1,5 +1,6 @@
-// Batch (SPEC 5 D, 11): many files, one at a time in the worker, each matched to its own source; a zip of the converted files
-// plus a summary sheet of flags. A paid feature: everyone can see what it does; others get an Upgrade prompt.
+// Batch (SPEC 5 D, 8.15, 11): many files, one at a time in the worker, each matched to its own source (and converted into every
+// format that source feeds); a zip of the converted files plus a summary sheet of flags. A paid feature: everyone can see what
+// it does; others get an Upgrade prompt.
 import { tiers, type Tier } from '@formatai/shared';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -23,7 +24,7 @@ export default function BatchPage() {
             <p className="lead">{t('batch.lead')}</p>
           </header>
           <ul className="what">
-            {(['batch.what.1', 'batch.what.2', 'batch.what.3'] as const).map((key) => (
+            {(['batch.what.1', 'batch.what.2', 'batch.what.3', 'batch.what.4'] as const).map((key) => (
               <li key={key}>
                 <Icon name="check" size={16} />
                 <span>{t(key)}</span>
@@ -94,7 +95,7 @@ function BatchTool({ tier }: { tier: Tier }) {
   if (phase === 'packing' || phase === 'done') return <BatchResults flow={flow} />;
 
   const running = phase === 'running';
-  const progress = t('batch.progress', { done: Math.min(flow.done + 1, items.length), total: items.length });
+  const progress = t('batch.progress', { done: Math.min(flow.done + 1, flow.total), total: flow.total });
   const count = (n: number): string => t(n === 1 ? 'batch.count.one' : 'batch.count.other', { n: nf.format(n) });
 
   return (
@@ -110,7 +111,7 @@ function BatchTool({ tier }: { tier: Tier }) {
         />
       ) : (
         <div className="conv__progress">
-          <Progress value={items.length === 0 ? 0 : flow.done / items.length} label={progress} />
+          <Progress value={flow.total === 0 ? 0 : flow.done / flow.total} label={progress} />
           <p className="muted tabular" role="status" data-testid="batch-progress">
             {progress}
           </p>
@@ -123,7 +124,7 @@ function BatchTool({ tier }: { tier: Tier }) {
         <>
           <div className="batch__bar">
             <p className="muted tabular" data-testid="batch-count">
-              {count(items.length)}
+              {count(flow.total)}
             </p>
             {running ? (
               <Button variant="secondary" size="sm" onClick={flow.stop}>

@@ -6,7 +6,7 @@
  * from one owner's data, so it is owner-scoped and TTL-expired - see `LearnCacheDoc`.
  */
 import type { ObjectId } from 'mongodb';
-import type { RepairProblem, Tier } from '@formatai/shared';
+import type { RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, Validation } from '@formatai/shared';
 
 export type AuthProvider = 'google' | 'microsoft';
 
@@ -110,11 +110,51 @@ export interface ConversionVersion {
   at: Date;
 }
 
+/**
+ * An earlier version of a source (SPEC 13 `sources.versions[{ source, editedBy, at }]`). `SourceDoc.versions` holds the
+ * versions that were REPLACED (oldest first, at most `limits.registry.maxVersions`); the current one lives in the
+ * document's own fields.
+ */
+export interface SourceVersionDoc {
+  version: number;
+  /** The structure at that version. */
+  source: SourceStructure;
+  editedBy?: ObjectId;
+  /** When that version was saved. */
+  at: Date;
+}
+
+/**
+ * One kind of incoming file the company receives or keeps (SPEC 8.15, 13). STRUCTURE ONLY - headers, types, shapes, reading
+ * options and input checks; never a value, a range or a sample read from data cells. Conversions link it to formats.
+ */
+export interface SourceDoc {
+  _id?: ObjectId;
+  ownerId: ObjectId;
+  name: string;
+  /** `nameKey(name)` (trimmed, spaces collapsed, lower-cased): what the unique (ownerId, nameKey) index runs on, so names are
+   * unique per owner regardless of case (SPEC 13). Always written together with `name`. */
+  nameKey: string;
+  /** The union of the columns its conversions use, with aliases; `required` = required by at least one conversion. */
+  inputSignature: SourceInputSignature;
+  inputReading: SourceInputReading;
+  inputValidations: Validation[];
+  /** Starts at 1; every edit of the structure (SPEC 8.15 "Editing a source") makes the next one. */
+  version: number;
+  versions: SourceVersionDoc[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /** How one source becomes a format: a full, self-contained rules file. */
 export interface ConversionDoc {
   _id?: ObjectId;
   ownerId: ObjectId;
   formatId: ObjectId;
+  /** The source this conversion reads (SPEC 8.15). Optional only for documents written before sources existed - see
+   * `pnpm migrate:sources`; every conversion the API creates has one. */
+  sourceId?: ObjectId;
+  /** A copy of the source's name, kept for display only (SPEC 13): the source's own name wins. */
   sourceName: string;
   schemaVersion: number;
   rules: unknown;

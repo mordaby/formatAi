@@ -1,6 +1,7 @@
-// The Batch screen (SPEC 5 D, 11): gated by tier (paid only; the files per run come from the tier), one file at a time in the
-// worker, each file matched on its own (auto-pick only), a status per file, results grouped by format, a zip and a summary
-// sheet, and counts-only reports to the API. The last test runs the real worker methods and opens the zip and the sheet.
+// The Batch screen (SPEC 5 D, 8.15, 11): gated by tier (paid only; the files per run come from the tier), one file at a time in
+// the worker, each file matched to a SOURCE on its own (auto-pick only), a status per file, results grouped by format (a source
+// that feeds several formats converts the file into all of them), a zip and a summary sheet, and counts-only reports to the API.
+// The last tests run the real worker methods and open the zip and the sheet.
 import { readWorkbook, readZip, type Flag } from '@formatai/engine';
 import { tiers } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
@@ -11,7 +12,7 @@ import type { BatchArgs, ConvertRunOutput, MatchFileOutput } from '../src/worker
 import { createEngineClient, type EngineClient } from '../src/worker/engineClient';
 import { engineMethods } from '../src/worker/engineMethods';
 import { loopbackWorker } from './helpers/loopback';
-import { csvFile, entry, fakeConvertApi, match, PAID, renderConvert, REGISTERED, SUPPLIER_A_CLEAN_CSV, SUPPLIER_A_CSV } from './helpers/convertKit';
+import { csvFile, entry, fakeConvertApi, match, PAID, renderConvert, REGISTERED, RULES, SUPPLIER_A_CLEAN_CSV, SUPPLIER_A_CSV, sourceEntry } from './helpers/convertKit';
 
 const { signInOpen, downloaded } = vi.hoisted(() => ({ signInOpen: vi.fn(), downloaded: vi.fn() }));
 vi.mock('../src/app/SignIn', () => ({ useSignIn: () => ({ open: signInOpen, close: vi.fn() }) }));
@@ -220,6 +221,190 @@ describe('a batch, file by file', () => {
     expect(within(results).getAllByTestId('batch-file')).toHaveLength(1);
     expect(screen.getByTestId('batch-counts').textContent).toBe('1 converted · 0 with flags · 0 did not match');
   });
+});
+
+describe('a source that feeds several formats (SPEC 8.15)', () => {
+  // One source, two formats: every file of this source is converted into BOTH, one item per (file, format).
+  const feeds = sourceEntry({
+    sourceId: 's1',
+    name: 'Supplier A',
+    conversions: [
+      { conversionId: 'c1', formatId: 'F1', formatName: 'Load file' },
+      { conversionId: 'c2', formatId: 'F2', formatName: 'ERP load' },
+    ],
+  });
+  const other = entry({ conversionId: 'c3', sourceId: 's3', sourceName: 'Supplier C', formatId: 'F3', formatName: 'Ledger' });
+
+  function setup(opts: { failC2?: boolean } = {}) {
+    const matchFile = vi.fn(async (args: { file: { name: string } }): Promise<MatchFileOutput> => {
+      const s = args.file.name === 'x.csv' ? 's3' : 's1';
+      return { ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: s, name: s === 's3' ? 'Supplier C' : 'Supplier A' }) } };
+    });
+    const convertWithDecisions = vi.fn(async (args: { file: { name: string }; rules: { name?: string } }): Promise<ConvertRunOutput> => {
+      if (opts.failC2 && args.rules.name === 'rules-c2') return { ok: false, error: { code: 'invalidRules' } };
+      // b.csv has a flag in each format; the other files are clean.
+      const flags = args.file.name === 'b.csv' ? [flag(3)] : [];
+      return {
+        ok: true,
+        written: true,
+        bytes: new ArrayBuffer(8),
+        fileType: 'csv',
+        flags,
+        summary: { rowsIn: 10, rowsOut: 9, rowsFiltered: 0, duplicatesRemoved: [], duplicatesFlagged: 0, blockedRows: [] },
+        preview: { name: 'Load', direction: 'ltr', language: 'en', columns: [], rows: [], merges: [] },
+        totalRows: 0,
+      };
+    });
+    const batch = vi.fn(async (_args: BatchArgs) => ({ zip: new ArrayBuffer(6), summary: new ArrayBuffer(4) }));
+    const engine = { matchFile, convertWithDecisions, batch, terminate: vi.fn() } as unknown as EngineClient;
+    const rulesById = { c1: { ...RULES, name: 'rules-c1' }, c2: { ...RULES, name: 'rules-c2' }, c3: { ...RULES, name: 'rules-c3' } };
+    return { engine, matchFile, convertWithDecisions, batch, rulesById };
+  }
+
+  it('one file whose source feeds 2 formats gives 2 outputs, grouped by format, with a row per (file, format) in the summary', async () => {
+    const { engine, matchFile, convertWithDecisions, batch, rulesById } = setup();
+    const api = fakeConvertApi({ user: PAID, entries: [feeds, other], rulesById });
+    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x'), csvFile('x.csv', 'x')]);
+    expect(screen.getByText('A source that feeds several formats converts the file into all of them.')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 3 files' }));
+    const results = await screen.findByTestId('batch-results');
+
+    // The matcher was offered SOURCES (one signature per source), once per file.
+    expect(matchFile.mock.calls[0]![0]).toMatchObject({ signatures: [{ id: 's1', name: 'Supplier A' }, { id: 's3', name: 'Supplier C' }] });
+    expect(matchFile).toHaveBeenCalledTimes(3);
+    // a and b go into both formats, x into one: 5 conversions in all.
+    expect(convertWithDecisions).toHaveBeenCalledTimes(5);
+    // 5 results in all: 3 clean and 2 with flags (each file counts once per format).
+    expect(screen.getByTestId('batch-counts').textContent).toBe('3 converted · 2 with flags · 0 did not match');
+
+    // Results stay grouped by format: each file appears under each format its source feeds.
+    const groups = within(results).getAllByTestId(/group-/);
+    expect(groups.map((g) => g.querySelector('h3')?.textContent)).toEqual(['Load file · 2 files', 'ERP load · 2 files', 'Ledger · 1 file']);
+    const namesIn = (i: number) => within(groups[i]!).getAllByTestId('batch-file').map((r) => r.querySelector('.bfile__name')?.textContent);
+    expect(namesIn(0)).toEqual(['a.csv', 'b.csv']);
+    expect(namesIn(1)).toEqual(['a.csv', 'b.csv']);
+    expect(namesIn(2)).toEqual(['x.csv']);
+
+    // The rules of each conversion were fetched ONCE for the whole batch (a cache), not once per file.
+    expect(api.conversion.mock.calls.map((c) => c[0]).sort()).toEqual(['c1', 'c2', 'c3']);
+
+    // The zip: a folder per format; the summary: a row per (file, format).
+    const args = batch.mock.calls[0]![0];
+    expect(args.outputs.map((o) => [o.folder, o.fileName])).toEqual([
+      ['Load file', 'a (converted).csv'],
+      ['ERP load', 'a (converted).csv'],
+      ['Load file', 'b (converted).csv'],
+      ['ERP load', 'b (converted).csv'],
+      ['Ledger', 'x (converted).csv'],
+    ]);
+    expect(args.summary.files.rows.map((r) => [r[0], r[1], r[2], r[3], r[6]])).toEqual([
+      ['a.csv', 'Load file', 'Supplier A', 'Converted', 0],
+      ['a.csv', 'ERP load', 'Supplier A', 'Converted', 0],
+      ['b.csv', 'Load file', 'Supplier A', 'Converted with flags', 1],
+      ['b.csv', 'ERP load', 'Supplier A', 'Converted with flags', 1],
+      ['x.csv', 'Ledger', 'Supplier C', 'Converted', 0],
+    ]);
+    // A file made into several formats says which format each flag belongs to (the sheet keeps its five columns).
+    expect(args.summary.flags.rows.map((r) => [r[0], r[1]])).toEqual([['b.csv (Load file)', 3], ['b.csv (ERP load)', 3]]);
+
+    // POST /runs: once per converted (file, conversion), counts only.
+    expect(api.recordRun.mock.calls).toEqual([
+      ['c1', { rows: 10, flagged: 0 }],
+      ['c2', { rows: 10, flagged: 0 }],
+      ['c1', { rows: 10, flagged: 1 }],
+      ['c2', { rows: 10, flagged: 1 }],
+      ['c3', { rows: 10, flagged: 0 }],
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Download all (zip)' }));
+    expect(downloaded).toHaveBeenLastCalledWith('formatAI batch.zip', expect.any(ArrayBuffer), 'application/zip');
+  });
+
+  it('a format whose rules cannot run does not stop the file\'s other formats: it is listed as not converted, with the format named', async () => {
+    const { engine, batch, rulesById } = setup({ failC2: true });
+    const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
+    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    await addFiles([csvFile('a.csv', 'x')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
+    const results = await screen.findByTestId('batch-results');
+    expect(screen.getByTestId('batch-counts').textContent).toBe('1 converted · 0 with flags · 1 did not match');
+    const groups = within(results).getAllByTestId(/group-/);
+    expect(groups.map((g) => g.querySelector('h3')?.textContent)).toEqual(['Load file · 1 file', "Didn't match · 1 file"]);
+    // (The names inside sentences are wrapped in direction isolates; the words are what is checked here.)
+    const failed = (within(groups[1]!).getByTestId('batch-file').textContent ?? '').replace(/[⁦-⁩]/g, '');
+    expect(failed).toContain("The rules of Supplier A can't run on it.");
+    expect(failed).toContain('For the format ERP load.');
+    // Only what was converted is packed, and only it is reported.
+    expect(batch.mock.calls[0]![0].outputs.map((o) => o.folder)).toEqual(['Load file']);
+    expect(api.recordRun.mock.calls).toEqual([['c1', { rows: 10, flagged: 0 }]]);
+    // The summary keeps a row for the format that failed, with why.
+    expect(batch.mock.calls[0]![0].summary.files.rows.map((r) => [r[1], r[3]])).toEqual([['Load file', 'Converted'], ['ERP load', "Didn't match"]]);
+  });
+
+  it('a structural change is detected at source level: a file that lacks a required column of the source is not converted into any format', async () => {
+    const { engine, matchFile, convertWithDecisions, rulesById } = setup();
+    matchFile.mockImplementationOnce(async () => ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: 's1', score: 0.9, missingRequired: ['Qty'] }) } }) as MatchFileOutput);
+    const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
+    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    await addFiles([csvFile('d.csv', 'x')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
+    await screen.findByTestId('batch-results');
+    expect(screen.getByTestId('batch-file').textContent).toContain('Missing columns:');
+    expect(convertWithDecisions).not.toHaveBeenCalled();
+    expect(api.conversion).not.toHaveBeenCalled();
+    expect(api.recordRun).not.toHaveBeenCalled();
+  });
+
+  it('the progress counts FILES, not the (file, format) items a finished file becomes', async () => {
+    const { engine, rulesById } = setup();
+    const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
+    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
+    expect(screen.getByTestId('batch-count').textContent).toBe('2 files');
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    await screen.findByTestId('batch-results');
+    // 4 items, 2 files.
+    expect(within(screen.getByTestId('batch-results')).getAllByTestId('batch-file')).toHaveLength(4);
+  });
+});
+
+describe('the real worker: one source, two formats', () => {
+  it('converts a real file into both formats: a folder per format in the zip, a row per (file, format) in the workbook', async () => {
+    const RULES_ERP = { ...RULES, name: 'ERP rules', output: { ...RULES.output, columns: [{ header: 'Item', from: 'c_code' }, { header: 'Amount', from: 'c_qty' }] } };
+    const feeds = sourceEntry({
+      sourceId: 's1',
+      name: 'Supplier A',
+      conversions: [
+        { conversionId: 'c1', formatId: 'F1', formatName: 'Load file' },
+        { conversionId: 'c2', formatId: 'F2', formatName: 'ERP load' },
+      ],
+    });
+    const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById: { c1: RULES, c2: RULES_ERP } });
+    const engine = createEngineClient({ createWorker: () => loopbackWorker(engineMethods) });
+    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    await addFiles([csvFile('jan.csv', SUPPLIER_A_CLEAN_CSV)]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
+    await screen.findByRole('button', { name: 'Download all (zip)' }, { timeout: 15000 });
+    expect(screen.getByTestId('batch-counts').textContent).toBe('2 converted · 0 with flags · 0 did not match');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download all (zip)' }));
+    const zip = downloaded.mock.calls.at(-1)![1] as ArrayBuffer;
+    const inZip = await readZip(zip);
+    expect(inZip.map((e) => e.path)).toEqual(['Load file/jan (converted).csv', 'ERP load/jan (converted).csv', 'formatAI batch summary.xlsx']);
+    const text = (e: { bytes: Uint8Array | ArrayBuffer }) => new TextDecoder().decode(e.bytes instanceof Uint8Array ? e.bytes : new Uint8Array(e.bytes));
+    expect(text(inZip[0]!)).toContain('Unit price');
+    expect(text(inZip[1]!)).toContain('Item');
+    expect(text(inZip[1]!)).not.toContain('Unit price');
+
+    const sheet = await readWorkbook(inZip[2]!.bytes as Uint8Array, 'summary.xlsx');
+    const files = sheet.sheets[0]!.rows.map((r) => r.map((c) => c?.v ?? null));
+    expect(files).toEqual([
+      ['File', 'Format', 'Source', 'Status', 'Rows in', 'Rows out', 'Flagged rows', 'Note'],
+      ['jan.csv', 'Load file', 'Supplier A', 'Converted', 3, 3, 0, ''],
+      ['jan.csv', 'ERP load', 'Supplier A', 'Converted', 3, 3, 0, ''],
+    ]);
+    expect(api.recordRun.mock.calls).toEqual([['c1', { rows: 3, flagged: 0 }], ['c2', { rows: 3, flagged: 0 }]]);
+  }, 30000);
 });
 
 describe('the real worker: the zip and the summary sheet', () => {

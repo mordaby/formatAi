@@ -10,7 +10,7 @@ import type { ExampleInputColumn } from '../src/editor';
 import { ordersRules } from '../src/editor/testkit';
 import type { LiveCheckResult } from '../src/worker/editorApi';
 import type { LearnOutput } from '../src/worker/engineApi';
-import { conversionDetail, conversionSummary, formatSummary, getFormatResponse } from './helpers/registryKit';
+import { conversionDetail, conversionSummary, createFormatResponse, formatSummary, getFormatResponse } from './helpers/registryKit';
 import { csv, fakeApi, fakeEngine, learnResult, liveResult, renderApp, USER } from './helpers/renderApp';
 
 const { downloaded } = vi.hoisted(() => ({ downloaded: vi.fn() }));
@@ -58,7 +58,7 @@ interface Opened {
 /** Learns the orders example (the worker is faked) and waits for the rules map. */
 async function openResult(result: Record<string, unknown> = {}, opts: { live?: LiveFn; signedIn?: boolean; exampleInput?: ExampleInputColumn[] | undefined } = {}): Promise<Opened> {
   const liveCheck = vi.fn<LiveFn>(opts.live ?? (async () => liveResult({ matched: 30, total: 30 })));
-  const createFormat = vi.fn(async () => ({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1' }) }));
+  const createFormat = vi.fn(async () => createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1' }) }));
   const api = fakeApi({ ...(opts.signedIn ? { user: USER } : {}), registry: { createFormat } });
   const { engine } = fakeEngine(
     async () => learnResult({ rules: ordersRules(), exampleInput: 'exampleInput' in opts ? opts.exampleInput : EXAMPLE_INPUT, ...result }) as LearnOutput,

@@ -54,6 +54,11 @@ function locate(rules: EditableRules, path: string | undefined): { lineId?: Line
     if (t) return { lineId: lineIds.table(t.name), where: `Table "${t.name}"` };
   }
   if (path.startsWith('output.')) return { where: 'The output file' };
+  // (the source lock, SPEC 8.15: a column the file has, as the conversion declares it)
+  if ((m = path.match(/^input\.columns\[(\d+)\]/))) {
+    const col = rules.input.columns[Number(m[1])];
+    if (col) return { where: `Input column "${col.header}"` };
+  }
   if (path.startsWith('input.')) return { where: 'The input' };
   return { where: 'The rules' };
 }
@@ -78,6 +83,8 @@ function sentence(p: StaticProblem, where: string): string {
       return `${where} is too big: ${m}.`;
     case 'formatLock':
       return `${where} no longer matches the format this source belongs to: ${m}.`;
+    case 'sourceLock':
+      return `${where} doesn't match the source you chose: ${m}.`;
   }
 }
 

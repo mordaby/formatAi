@@ -51,7 +51,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
 
   beforeEach(async () => {
     clock.current = new Date('2026-09-30T12:00:00.000Z');
-    await Promise.all([appDb.formats.deleteMany({}), appDb.conversions.deleteMany({})]);
+    await Promise.all([appDb.formats.deleteMany({}), appDb.conversions.deleteMany({}), appDb.sources.deleteMany({})]);
     await start();
   });
 
@@ -235,7 +235,8 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       const first = await create();
       const full = await rulesOf(first.body.conversion.id);
       full.meta.formatId = 'stale-id-from-elsewhere';
-      const again = await create(full, { name: 'Copy', sourceName: 'Copy source' });
+      // (the same input as the first source: without an explicit `newSource` the server would reuse that source, SPEC 8.15)
+      const again = await create(full, { name: 'Copy', newSource: { name: 'Copy source' } });
       expect(again.status).toBe(201);
       const stored = await rulesOf(again.body.conversion.id);
       expect(stored.meta.formatId).toBe(again.body.format.id);
@@ -621,7 +622,8 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       // A source can be attached to it again (SPEC 8.12: a format need not have been learned).
       const again = await call('POST', `/api/formats/${body.format.id}/conversions`, saveBody(sourceTwo()));
       expect(again.status).toBe(201);
-      expect(again.body.conversion.sourceName).toBe('Source 1');
+      // The first source stays (SPEC 8.15: it is the company's), so its name is not free.
+      expect(again.body.conversion.sourceName).toBe('Source 2');
     });
   });
 
@@ -688,7 +690,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
     });
 
     it('marks a source needsReview when a reference in the format does not resolve for it', async () => {
-      const { s1, s2 } = await twoSources();
+      const { formatId, s1, s2 } = await twoSources();
       const res = await save(
         s1,
         edited(await rulesOf(s1), (r) => {
@@ -698,7 +700,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       );
       expect(res.status).toBe(200);
       expect(res.body.affectedSources).toBe(1);
-      expect(res.body.needsReview).toEqual([{ id: s2, sourceName: 'Source 2' }]);
+      expect(res.body.needsReview).toEqual([{ id: s2, sourceName: 'Source 2', formatId, formatName: 'Catalog load' }]);
       expect((await detail(s2)).status).toBe('needsReview');
     });
 
@@ -766,12 +768,12 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
     });
 
     it('keeps a source that was already marked needsReview marked, and reports it', async () => {
-      const { s1, s2 } = await twoSources();
+      const { formatId, s1, s2 } = await twoSources();
       await save(s1, edited(await rulesOf(s1), (r) => { r.output.columns.push({ header: 'Note', from: null }); r.unsupported.push({ outputColumn: 'Note', reasonCode: 'other' }); }));
       expect((await detail(s2)).status).toBe('needsReview');
       const res = await save(s1, edited(await rulesOf(s1), (r) => { r.output.sheetName = 'Renamed sheet'; }));
       expect(res.body.affectedSources).toBe(1);
-      expect(res.body.needsReview).toEqual([{ id: s2, sourceName: 'Source 2' }]);
+      expect(res.body.needsReview).toEqual([{ id: s2, sourceName: 'Source 2', formatId, formatName: 'Catalog load' }]);
       expect((await detail(s2)).status).toBe('needsReview');
     });
 
@@ -867,26 +869,31 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
   // ---------------------------------------------------------------- signatures, runs, aliases
 
   describe('signatures, runs and aliases', () => {
-    it('returns every conversion\'s input signature with its ids and names, for matching in the browser', async () => {
+    it('returns one signature per SOURCE (SPEC 8.15), with the formats it feeds, for matching in the browser', async () => {
       const { formatId, s1, s2 } = await twoSources();
-      await create(sourceOne(), { name: 'Other format' });
+      // Another format fed by the same source as Source 1: one source, two conversions (SPEC 8.15).
+      const other = await create(sourceOne(), { name: 'Other format' });
+      expect(other.body.sourceReused).toEqual({ id: expect.any(String), name: 'Source 1' });
       await create(sourceOne(), {}, OTHER_USER);
       const res = await call('GET', '/api/signatures');
       expect(res.status).toBe(200);
-      expect(res.body.signatures).toHaveLength(3);
-      const entry = res.body.signatures.find((s: any) => s.conversionId === s2);
+      // Two sources (Source 1 feeds two formats, Source 2 one); the other user's source is not here.
+      expect(res.body.signatures).toHaveLength(2);
+      const entry = res.body.signatures.find((s: any) => s.name === 'Source 2');
       expect(entry).toEqual({
-        conversionId: s2,
-        formatId,
-        formatName: 'Catalog load',
-        sourceName: 'Source 2',
-        status: 'verified',
+        sourceId: expect.any(String),
+        name: 'Source 2',
         columns: [
           { header: 'Code', aliases: [], type: 'idLike', required: true },
           { header: 'Price', aliases: [], type: 'decimal', required: true },
         ],
+        conversions: [{ conversionId: s2, formatId, formatName: 'Catalog load', status: 'verified' }],
       });
-      expect(res.body.signatures.map((s: any) => s.conversionId)).toContain(s1);
+      const one = res.body.signatures.find((s: any) => s.name === 'Source 1');
+      expect(one.conversions.map((c: any) => [c.conversionId, c.formatName])).toEqual([
+        [s1, 'Catalog load'],
+        [other.body.conversion.id, 'Other format'],
+      ]);
       // Only signatures: no rules, no example values.
       expect(JSON.stringify(res.body)).not.toContain('"transform"');
     });
@@ -896,8 +903,9 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       await save(s1, edited(await rulesOf(s1), (r) => { r.output.columns.push({ header: 'Note', from: null }); r.unsupported.push({ outputColumn: 'Note', reasonCode: 'other' }); }));
       await save(s1, edited(await rulesOf(s1), (r) => { r.input.columns[0]!.header = 'Item'; }));
       const { signatures } = (await call('GET', '/api/signatures')).body;
-      expect(signatures.find((s: any) => s.conversionId === s1).columns[0].header).toBe('Item');
-      expect(signatures.find((s: any) => s.conversionId === s2).status).toBe('needsReview');
+      const ofConversion = (id: string) => signatures.find((s: any) => s.conversions.some((c: any) => c.conversionId === id));
+      expect(ofConversion(s1).columns[0].header).toBe('Item');
+      expect(ofConversion(s2).conversions[0].status).toBe('needsReview');
     });
 
     it('counts a run: runCount, lastRunAt and the counts of the last run - nothing else is kept', async () => {

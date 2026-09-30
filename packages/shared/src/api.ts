@@ -3,7 +3,11 @@
 import type { ApiErrorCode, LimitCode } from './codes';
 import type { AiLearnPeriod, TierLimits } from './config/tiers';
 import type { LearnPayload, RepairProblem } from './payload';
-import type { LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus } from './rules/schema';
+import type { LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, Validation } from './rules/schema';
+import type { SourceColumn, SourceInputReading, SourceInputSignature, SourceLockProblem } from './source';
+
+/** What an error's `problems` may hold: what the checks found in a rules file, or what the source lock found (SPEC 8.15). */
+export type ApiProblem = RepairProblem | SourceLockProblem;
 
 /** The error body of every non-2xx API response (SPEC 9.5). `limit` accompanies `limitHit`. */
 export interface ApiErrorBody {
@@ -13,8 +17,8 @@ export interface ApiErrorBody {
   period?: AiLearnPeriod;
   /** `aiAttemptsExhausted`: true when this very answer counted the pair as one AI learn (SPEC 21 v5). */
   counted?: boolean;
-  /** `invalidRules` / `formatMismatch` (registry): what failed, in the same shape a repair call takes. */
-  problems?: RepairProblem[];
+  /** `invalidRules` / `formatMismatch` / `sourceMismatch` (registry): what failed, in the same shape a repair call takes. */
+  problems?: ApiProblem[];
 }
 
 /** GET /api/session (SPEC 12): no user data. */
@@ -161,22 +165,43 @@ export interface SaveConversionFields {
   source?: RulesMetaSource;
 }
 
-/** POST /api/formats body: creates the format (from the rules' output side) and its first conversion. */
-export interface CreateFormatRequest extends SaveConversionFields {
-  /** The format's name, e.g. "Priority catalog load". */
-  name: string;
-  /** The first source's name; default "Source 1". */
+/**
+ * Which source a saved conversion belongs to (SPEC 8.15 "Saving"). Without `sourceId` and `newSource` the server looks
+ * for one of the caller's sources the example input matches (the same matching and threshold as flow C, on
+ * `inputHeaders`) and REUSES it, answering `sourceReused`; otherwise it creates a new one.
+ */
+export interface SourceChoice {
+  /** Use this existing source of the caller's (explicit reuse): 404 if it isn't theirs, 422 `sourceMismatch` if it doesn't fit. */
+  sourceId?: string;
+  /** Create a new source with this name, even when an existing one would match (409 `nameTaken` if the name is in use). */
+  newSource?: { name: string };
+  /**
+   * The headers of the example INPUT file (structure only - never a value): what the server matches against the caller's
+   * sources. Without it the headers the rules declare are used, which is usually a subset of the file's.
+   */
+  inputHeaders?: string[];
+  /** Legacy: the name of a NEW source when neither `sourceId` nor `newSource` is given (default: the first free "Source N"). */
   sourceName?: string;
 }
 
-/** POST /api/formats/:id/conversions body (SPEC 5 A2). The rules must pass the format lock. */
-export interface AttachSourceRequest extends SaveConversionFields {
-  /** Default: the first free "Source N". */
-  sourceName?: string;
+/** POST /api/formats body: creates the format (from the rules' output side), its source (or reuses one) and the conversion. */
+export interface CreateFormatRequest extends SaveConversionFields, SourceChoice {
+  /** The format's name, e.g. "Priority catalog load". */
+  name: string;
+}
+
+/** POST /api/formats/:id/conversions body (SPEC 5 A2). The rules must pass the format lock and the source lock. */
+export interface AttachSourceRequest extends SaveConversionFields, SourceChoice {}
+
+/** The source a save used, when it was an existing one: the UI says "Reused your source X". */
+export interface SourceReused {
+  id: string;
+  name: string;
 }
 
 /** PATCH /api/conversions/:id body: rename the source, and/or save edited rules as a new version. */
 export interface UpdateConversionRequest {
+  /** Renames the conversion's SOURCE (source names are the company's; every conversion of it shows the new name). */
   sourceName?: string;
   /** Saving rules needs `status` (the browser verified them) and `acceptedDifferences`. */
   rules?: Rules | LearnResult;
@@ -198,7 +223,8 @@ export interface RecordRunRequest {
   flagged: number;
 }
 
-/** POST /api/conversions/:id/aliases body (SPEC 5 C): the file's header `alias` was confirmed to be the input column `header`. */
+/** POST /api/sources/:id/aliases (and, forwarded to the conversion's source, POST /api/conversions/:id/aliases) body
+ * (SPEC 5 C): the file's header `alias` was confirmed to be the input column `header`. */
 export interface AddAliasRequest {
   header: string;
   alias: string;
@@ -234,6 +260,9 @@ export interface FormatSummary {
 export interface ConversionSummary {
   id: string;
   formatId: string;
+  /** The source it belongs to (SPEC 8.15). Absent only on data not yet migrated (`pnpm migrate:sources`). */
+  sourceId?: string;
+  /** The SOURCE's name (it wins over any copy kept on the conversion). */
   sourceName: string;
   status: ConversionStatus;
   acceptedDifferences: number;
@@ -279,11 +308,17 @@ export interface GetFormatResponse {
 export interface CreateFormatResponse {
   format: FormatSummary;
   conversion: ConversionSummary;
+  /** The source the conversion belongs to. */
+  source: { id: string; name: string };
+  /** Present when an existing source was used instead of creating one (SPEC 8.15 "Saving"). */
+  sourceReused?: SourceReused;
 }
 
 /** POST /api/formats/:id/conversions 201 body. */
 export interface AttachSourceResponse {
   conversion: ConversionSummary;
+  source: { id: string; name: string };
+  sourceReused?: SourceReused;
 }
 
 /** PATCH /api/conversions/:id 200 body. */
@@ -293,8 +328,15 @@ export interface UpdateConversionResponse {
   formatChanged: boolean;
   /** The other sources the format change was written to. */
   affectedSources: number;
-  /** Of those, the ones whose references no longer resolve and now need review. */
-  needsReview: { id: string; sourceName: string }[];
+  /** Of those (format siblings, and - after a source change - the other conversions of the source), the ones whose
+   * references no longer resolve and now need review. `formatId` / `formatName` say which format each one belongs to (it is not
+   * always the saved conversion's own: a source feeds several formats). */
+  needsReview: { id: string; sourceName: string; formatId?: string; formatName?: string }[];
+  /** Set when the save changed the input side, i.e. the SOURCE (SPEC 8.15 "Editing a source"): it was written to the
+   * source and to every other conversion of it. Additive: absent = false. */
+  sourceChanged?: boolean;
+  /** The other conversions (formats fed by the same source) the source change was written to. */
+  affectedConversions?: number;
 }
 
 /** GET /api/conversions/:id/versions: newest first, the current one included. */
@@ -309,17 +351,98 @@ export interface ListVersionsResponse {
   versions: ConversionVersionSummary[];
 }
 
-/** GET /api/signatures: what the browser needs to match a dropped file to a conversion (SPEC 8.12). */
-export interface SignatureEntry {
+/** One conversion of a source: the format it feeds (SPEC 8.15). */
+export interface SourceConversionRef {
   conversionId: string;
   formatId: string;
   formatName: string;
-  sourceName: string;
   status: ConversionStatus;
+}
+
+/**
+ * GET /api/signatures: what the browser needs to match a dropped file (SPEC 8.12, 8.15) - ONE ENTRY PER SOURCE, with the
+ * conversions (formats) it feeds. A source with no conversion yet has an empty `conversions`.
+ */
+export interface SignatureEntry {
+  sourceId: string;
+  /** The source's name. */
+  name: string;
   columns: SignatureColumn[];
+  conversions: SourceConversionRef[];
 }
 export interface SignaturesResponse {
   signatures: SignatureEntry[];
+}
+
+// ---- Sources (SPEC 8.15, 13) ----
+
+export interface SourceSummary {
+  id: string;
+  name: string;
+  /** How many columns its signature has. */
+  columns: number;
+  /** The formats it feeds: one per conversion. */
+  conversions: SourceConversionRef[];
+  /** Conversions per status. */
+  statuses: Partial<Record<ConversionStatus, number>>;
+  version: number;
+  runCount: number;
+  lastRunAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A source with its structure (headers, types, reading options, input checks - never a value). */
+export interface SourceDetail extends SourceSummary {
+  inputSignature: SourceInputSignature;
+  inputReading: SourceInputReading;
+  inputValidations: Validation[];
+}
+
+/** GET /api/sources */
+export interface ListSourcesResponse {
+  sources: SourceSummary[];
+}
+
+/** GET /api/sources/:id, and the 200 body of PATCH. */
+export interface GetSourceResponse {
+  source: SourceDetail;
+}
+
+/** A column in a source edit: `was` is the header it had before, when this edit renames it (so its conversions follow). */
+export type SourceColumnEdit = SourceColumn & { was?: string };
+
+/**
+ * PATCH /api/sources/:id body: a rename, and/or an edit of the structure. A structural edit makes a new version of the source
+ * and is written to every conversion of it (SPEC 8.15); `required` is derived from the conversions and is not edited here.
+ */
+export interface UpdateSourceRequest {
+  name?: string;
+  inputSignature?: { columns: SourceColumnEdit[] };
+  inputReading?: SourceInputReading;
+  inputValidations?: Validation[];
+  /** Optimistic concurrency: 409 `versionConflict` when the source is no longer at this version. */
+  baseVersion?: number;
+}
+
+export interface UpdateSourceResponse {
+  source: SourceDetail;
+  /** True when the structure changed (not just the name). */
+  structureChanged: boolean;
+  /** The conversions the change was written to. */
+  affectedConversions: number;
+  /** Of those, the ones whose rules no longer resolve and now need review. */
+  needsReview: { id: string; formatId: string; formatName: string }[];
+}
+
+/** DELETE /api/sources/:id 200 body (409 `sourceInUse` while it has conversions). */
+export interface DeleteSourceResponse {
+  deleted: true;
+}
+
+/** POST /api/sources/:id/aliases 200 body. */
+export interface AddAliasResponse {
+  inputSignature: { columns: SignatureColumn[] };
 }
 
 /** POST /api/conversions/:id/runs 200 body. */

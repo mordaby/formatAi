@@ -1,8 +1,10 @@
-// The batch result (SPEC 5 D, 16.1 screen 6): grouped by format, a status for every file (converted, converted with flags,
-// didn't match, with the reason), and the two downloads - the zip of every converted file and the summary sheet of flags.
+// The batch result (SPEC 5 D, 8.15, 16.1 screen 6): grouped by format, a status for every file (converted, converted with flags,
+// didn't match, with the reason) - a file whose source feeds several formats appears under each of them - and the two downloads:
+// the zip of every converted file and the summary sheet of flags.
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { Badge, Button, InlineMessage, Spinner } from '../../ui';
+import { isolate } from '../Convert/logic';
 import { reasonText, type BatchItem, type BatchStatus, type UseBatchFlow } from './useBatchFlow';
 
 const FLAGS_LISTED = 20;
@@ -121,7 +123,8 @@ function BatchFileRow({ item }: { item: BatchItem }) {
           <Cell value={item.file.name} />
         </p>
         {item.status === 'noMatch' && item.reason ? <p className="muted bfile__reason">{reasonText(i18n, item.reason)}</p> : null}
-        {item.sourceName ? (
+        {item.status === 'noMatch' && item.formatName ? <p className="muted bfile__reason">{t('batch.forFormat', { format: isolate(item.formatName) })}</p> : null}
+        {item.status !== 'noMatch' && item.sourceName ? (
           <p className="muted bfile__meta tabular">
             <Cell value={item.sourceName} /> · {t('batch.rows', { rowsIn: nf.format(item.rowsIn ?? 0), rowsOut: nf.format(item.rowsOut ?? 0) })}
             {flagRows > 0 ? ` · ${t(flagRows === 1 ? 'batch.flagsCount.one' : 'batch.flagsCount.other', { n: nf.format(flagRows) })}` : ''}

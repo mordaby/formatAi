@@ -126,6 +126,11 @@ export function fakeApi(over: Partial<Omit<Api, 'auth' | 'registry'>> & { auth?:
       renameFormat: vi.fn(),
       deleteFormat: vi.fn(async () => undefined),
       attachSource: vi.fn(),
+      // The company's sources (SPEC 8.15): none unless a test says so.
+      listSources: vi.fn(async () => []),
+      getSource: vi.fn(),
+      updateSource: vi.fn(),
+      deleteSource: vi.fn(async () => undefined),
       getConversion: vi.fn(),
       updateConversion: vi.fn(),
       deleteConversion: vi.fn(async () => undefined),

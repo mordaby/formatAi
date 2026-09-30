@@ -3,6 +3,7 @@ export * from './rules/check';
 export * from './rules/jsonSchema';
 export * from './rules/wire';
 export * from './format';
+export * from './source';
 
 export * from './codes';
 export * from './i18n/messages';

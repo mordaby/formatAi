@@ -5,9 +5,13 @@ import {
   limits,
   RULES_META_LEARN_PATHS,
   RULES_META_SOURCES,
+  UpdateSourceBodySchema,
   type RulesMetaLearnPath,
   type RulesMetaSource,
+  type UpdateSourceRequest,
 } from '@formatai/shared';
+import type { ObjectId } from 'mongodb';
+import { objectIdOf } from './ids.js';
 
 /** The statuses a client may set: `needsReview` is set only by the server (SPEC 8.12). */
 export const SAVABLE_STATUSES = ['verified', 'differencesAccepted', 'userConfirmed', 'draft'] as const;
@@ -160,4 +164,72 @@ export function parseAlias(body: Record<string, unknown>): { header: string; ali
   const alias = body.alias.trim();
   if (alias.length === 0 || alias.length > limits.registry.maxAliasChars) return null;
   return { header, alias };
+}
+
+/** Which source a save belongs to (POST /api/formats and .../conversions; SPEC 8.15 "Saving"). */
+export interface SourceChoiceFields {
+  /** Use this existing source (explicit). */
+  sourceId?: ObjectId;
+  /** Create a new source with this name, never reuse (explicit). */
+  newSourceName?: string;
+  /** Headers of the example input, to match against the owner's sources. */
+  inputHeaders?: string[];
+  /** Legacy name for a new source when nothing explicit was said. */
+  sourceName?: string;
+}
+
+/**
+ * `sourceId`, `newSource`, `inputHeaders` and the legacy `sourceName` (all optional). Null for a body that names both a source and a
+ * new source, or anything malformed. Over-long headers are left out of `inputHeaders` rather than failing the save: they can't
+ * match anything worth matching, and the save must not depend on them.
+ */
+export function parseSourceChoice(body: Record<string, unknown>): SourceChoiceFields | null {
+  const out: SourceChoiceFields = {};
+  if (body.sourceId !== undefined) {
+    const id = objectIdOf(body.sourceId);
+    if (!id) return null;
+    out.sourceId = id;
+  }
+  if (body.newSource !== undefined) {
+    if (!isRecord(body.newSource)) return null;
+    const name = parseName(body.newSource.name);
+    if (name === null) return null;
+    out.newSourceName = name;
+  }
+  if (out.sourceId && out.newSourceName) return null;
+  if (body.sourceName !== undefined) {
+    const name = parseName(body.sourceName);
+    if (name === null) return null;
+    out.sourceName = name;
+  }
+  if (body.inputHeaders !== undefined) {
+    if (!Array.isArray(body.inputHeaders) || body.inputHeaders.length > limits.registry.maxInputHeaders) return null;
+    const headers: string[] = [];
+    for (const h of body.inputHeaders) {
+      if (typeof h !== 'string') return null;
+      if (h.length <= limits.registry.maxAliasChars) headers.push(h);
+    }
+    out.inputHeaders = headers;
+  }
+  return out;
+}
+
+export interface SourceUpdateFields extends Omit<UpdateSourceRequest, 'name'> {
+  name?: string;
+}
+
+/** PATCH /api/sources/:id: a rename, an edit of the structure, or both. Null when the body is not one of those. */
+export function parseSourceUpdate(body: Record<string, unknown>): SourceUpdateFields | null {
+  const parsed = UpdateSourceBodySchema.safeParse(body);
+  if (!parsed.success) return null;
+  const { name, ...rest } = parsed.data;
+  const out: SourceUpdateFields = { ...(rest as Omit<UpdateSourceRequest, 'name'>) };
+  if (name !== undefined) {
+    const n = parseName(name);
+    if (n === null) return null;
+    out.name = n;
+  }
+  // A version to compare with only makes sense next to an edit.
+  const edits = out.name !== undefined || out.inputSignature !== undefined || out.inputReading !== undefined || out.inputValidations !== undefined;
+  return edits ? out : null;
 }

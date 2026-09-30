@@ -1,4 +1,7 @@
+export * from './deepEqual';
 export * from './formatOf';
 export * from './checkFormatLock';
+export * from './sourceOf';
+export * from './checkSourceLock';
 export * from './inputSignature';
 export * from './matchConversions';

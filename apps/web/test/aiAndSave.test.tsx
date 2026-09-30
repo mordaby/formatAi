@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
 import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
 import type { LearnHost, LearnOutput } from '../src/worker/engineApi';
-import { conversionSummary, formatSummary } from './helpers/registryKit';
+import { conversionSummary, createFormatResponse, formatSummary } from './helpers/registryKit';
 import { csv, fakeApi, fakeEngine, learnResult, liveResult, RULES, renderApp, USER, type FakeApi } from './helpers/renderApp';
 
 const { downloaded } = vi.hoisted(() => ({ downloaded: vi.fn() }));
@@ -168,7 +168,7 @@ describe('Save format and download (signed in)', () => {
     return { convert };
   }
 
-  const created = { format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1' }) };
+  const created = createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1' }) });
 
   it('POSTs the name, the rules, the status and how it was learned; then makes the FULL file in the worker and downloads it', async () => {
     const createFormat = vi.fn(async () => created);
@@ -195,6 +195,76 @@ describe('Save format and download (signed in)', () => {
     expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole('button', { name: 'Download' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Open My formats' })).toBeTruthy();
+  });
+
+  describe('the source the format is saved with (SPEC 8.15)', () => {
+    const INPUT = [
+      { header: 'Order ID', type: 'text' },
+      { header: 'Amount', type: 'decimal' },
+      { header: 'Notes', type: 'text' },
+    ];
+
+    it('sends the example input\'s headers (structure only) so the server can reuse a source it matches, and forces no source', async () => {
+      const createFormat = vi.fn(async () => created);
+      await openLocal(fakeApi({ user: USER, registry: { createFormat } }), {}, { exampleInput: INPUT });
+      fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+      await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+      const body = (createFormat.mock.calls[0] as unknown as [Record<string, unknown>])[0];
+      // The example's headers - all of them, not only the ones the rules use - and nothing read from a cell.
+      expect(body.inputHeaders).toEqual(['Order ID', 'Amount', 'Notes']);
+      expect(body).not.toHaveProperty('sourceId');
+      expect(body).not.toHaveProperty('newSource');
+      expect(body).not.toHaveProperty('sourceName');
+      // A source that was created says nothing about reuse.
+      expect(await screen.findByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
+      expect(screen.queryByTestId('source-reused')).toBeNull();
+    });
+
+    it('says "Reused your source X" when the server reused one of the company\'s', async () => {
+      const reused = createFormatResponse({
+        format: formatSummary({ id: 'F1', name: 'Orders report' }),
+        conversion: conversionSummary({ id: 'C1', formatId: 'F1', sourceName: 'Acme prices' }),
+        source: { id: 'S4', name: 'Acme prices' },
+        sourceReused: { id: 'S4', name: 'Acme prices' },
+      });
+      const createFormat = vi.fn(async () => reused);
+      await openLocal(fakeApi({ user: USER, registry: { createFormat } }), {}, { exampleInput: INPUT });
+      fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+      const line = await screen.findByTestId('source-reused');
+      expect(line.textContent).toContain('Reused your source');
+      expect(line.textContent).toContain('Acme prices');
+      // (next to the message for the save itself; and the screen is now the editor of that source, named as the server named it)
+      expect(screen.getByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
+      expect(screen.getByText('Saved as the source "Acme prices". We do not keep your files.')).toBeTruthy();
+    });
+
+    it('leaves inputHeaders out when the learn kept no example input', async () => {
+      const createFormat = vi.fn(async () => created);
+      await openLocal(fakeApi({ user: USER, registry: { createFormat } }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+      await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+      expect((createFormat.mock.calls[0] as unknown as [Record<string, unknown>])[0]).not.toHaveProperty('inputHeaders');
+    });
+
+    it('says it in Hebrew', async () => {
+      const reused = createFormatResponse({ conversion: conversionSummary({ id: 'C1', formatId: 'F1', sourceName: 'Acme prices' }), source: { id: 'S4', name: 'Acme prices' }, sourceReused: { id: 'S4', name: 'Acme prices' } });
+      const createFormat = vi.fn(async () => reused);
+      const convert = vi.fn(async () => converted());
+      const { engine } = fakeEngine(async () => learnResult({ path: 'local', exampleInput: INPUT }), undefined, { convert });
+      renderApp({ engine, api: fakeApi({ user: USER, registry: { createFormat } }), lang: 'he' });
+      fireEvent.change(screen.getByLabelText('דוגמת קלט'), { target: { files: [csv('orders.csv')] } });
+      fireEvent.change(screen.getByLabelText('דוגמת פלט'), { target: { files: [csv('Orders report.csv')] } });
+      await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /ללמוד את הפורמט/ }));
+      });
+      await screen.findByTestId('rules-map');
+      await waitFor(() => expect((screen.getByRole('button', { name: 'שמירת הפורמט והורדה' }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole('button', { name: 'שמירת הפורמט והורדה' }));
+      const line = await screen.findByTestId('source-reused');
+      expect(line.textContent).toContain('השתמשנו במקור הקיים שלכם:');
+      expect(line.textContent).toContain('Acme prices');
+    });
   });
 
   it('uses the name the user gave', async () => {

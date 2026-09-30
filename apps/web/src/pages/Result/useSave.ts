@@ -1,7 +1,7 @@
 // Saving from the Result screen (SPEC 5 A step 8, A2, 8.11 "Saving", 11): one small state machine for "keep it on the server,
 // then hand the user the full file". What is saved (a new format, a new source, new rules for a source) is the caller's
 // `persist` function; this file owns the busy state, the way failures are told, and the download.
-import type { AiLearnPeriod, LimitCode, RepairProblem } from '@formatai/shared';
+import type { AiLearnPeriod, ApiProblem, LimitCode } from '@formatai/shared';
 import { useCallback, useRef, useState } from 'react';
 import { ApiError, type ApiFailureCode } from '../../api';
 import type { EditableRules } from '../../editor';
@@ -16,7 +16,7 @@ export type SaveFailure =
       limit?: LimitCode | undefined;
       period?: AiLearnPeriod | undefined;
       counted?: boolean | undefined;
-      problems?: RepairProblem[] | undefined;
+      problems?: ApiProblem[] | undefined;
     }
   /** The rules were saved, but the file could not be made. */
   | { kind: 'download' };

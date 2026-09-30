@@ -1,9 +1,13 @@
-// Flow D as a state machine (SPEC 5 D): many files, one at a time in the worker. Each file is matched on its own (only a
-// clear, single winner is used: no guessing, no per-file mapping in the MVP), converted with its source's rules, and
-// gets a status: converted, converted with flags, or didn't match. Then the worker packs a zip (a folder per format) and
-// a summary workbook. Files and their bytes stay on this computer; POST /runs gets counts only.
-import type { ConversionMatch, Flag } from '@formatai/engine';
-import type { Rules, SignatureEntry, Tier } from '@formatai/shared';
+// Flow D as a state machine (SPEC 5 D, 8.15): many files, one at a time in the worker. Each file is matched to a SOURCE on its
+// own (only a clear, single winner is used: no guessing, no per-file mapping in the MVP) and converted with the rules of every
+// conversion that source has, and gets a status: converted, converted with flags, or didn't match. Then the worker packs a zip
+// (a folder per format) and a summary workbook. Files and their bytes stay on this computer; POST /runs gets counts only.
+//
+// DECISION (SPEC 8.15): a source that feeds several formats converts the file into ALL of them, with no question asked (a batch
+// has no per-file dialogue). So the list holds one BatchItem per (file, conversion): results stay grouped by format, the zip has
+// a folder per format and the summary workbook a row per (file, format). `fileId` ties the items of one file together.
+import type { Flag } from '@formatai/engine';
+import type { Rules, SignatureEntry, SourceConversionRef, Tier } from '@formatai/shared';
 import { tiers } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../../api/http';
@@ -12,8 +16,8 @@ import { downloadBytes, outputFileName } from '../../flow/download';
 import { isCancellation } from '../../flow/errors';
 import { useI18n, type I18n } from '../../i18n';
 import { useServices } from '../../services';
-import type { BatchOutputFile, SignatureInput, SummaryTable } from '../../worker/convertApi';
-import { columnLabel, isolate, runCounts } from '../Convert/logic';
+import type { BatchOutputFile, SummaryTable } from '../../worker/convertApi';
+import { columnLabel, isolate, runCounts, scopeSources, signatureOf } from '../Convert/logic';
 
 export type BatchStatus = 'queued' | 'running' | 'converted' | 'convertedFlags' | 'noMatch';
 
@@ -30,6 +34,8 @@ export type NoMatchReason =
 
 export interface BatchItem {
   id: number;
+  /** The id of the file's first item: every (file, conversion) item of one file shares it. */
+  fileId: number;
   file: File;
   status: BatchStatus;
   reason?: NoMatchReason;
@@ -47,7 +53,15 @@ export interface BatchItem {
 
 export type BatchPhase = 'idle' | 'running' | 'packing' | 'done';
 
+/** `entries` are the sources that feed at least one format: a source with no conversion cannot convert anything (SPEC 8.15). */
 export type BatchSources = { status: 'loading' } | { status: 'ready'; entries: SignatureEntry[] } | { status: 'error' };
+
+/** What converting one file gave for ONE of its conversions: the item's fields, the file made, and the counts to report. */
+interface ConversionResult {
+  change: Partial<BatchItem>;
+  bytes?: ArrayBuffer;
+  record?: { conversionId: string; counts: { rows: number; flagged: number } };
+}
 
 export interface BatchDownloads {
   zip: ArrayBuffer;
@@ -65,8 +79,10 @@ export interface UseBatchFlow {
   sources: BatchSources;
   phase: BatchPhase;
   items: BatchItem[];
-  /** How many files are done, for the progress line. */
+  /** How many FILES are done, for the progress line (one file can give several items). */
   done: number;
+  /** How many files the list holds. */
+  total: number;
   stopped: boolean;
   packError: boolean;
   downloads: BatchDownloads | null;
@@ -83,10 +99,6 @@ export interface UseBatchFlow {
 
 const ACCEPTED = ['.xlsx', '.xls', '.csv', '.txt'];
 const fileKey = (f: File): string => `${f.name}|${f.size}|${f.lastModified}`;
-
-function toSignature(e: SignatureEntry): SignatureInput {
-  return { id: e.conversionId, name: e.sourceName, columns: e.columns };
-}
 
 /** The sentence for a "didn't match" reason. */
 export function reasonText(i18n: I18n, reason: NoMatchReason): string {
@@ -142,7 +154,7 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
     const abort = new AbortController();
     setSources({ status: 'loading' });
     api.signatures(abort.signal).then(
-      (list) => setSources({ status: 'ready', entries: list }),
+      (list) => setSources({ status: 'ready', entries: scopeSources(list, null) }),
       (e: unknown) => {
         if (!abort.signal.aborted && !(e instanceof DOMException && e.name === 'AbortError')) setSources({ status: 'error' });
       },
@@ -179,7 +191,8 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
           continue;
         }
         have.add(fileKey(f));
-        fresh.push({ id: nextId.current++, file: f, status: 'queued', flags: [], columnLabels: {} });
+        const id = nextId.current++;
+        fresh.push({ id, fileId: id, file: f, status: 'queued', flags: [], columnLabels: {} });
       }
       if (fresh.length > 0) setItems((list) => [...list, ...fresh]);
       return result;
@@ -190,53 +203,67 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
   const remove = useCallback((id: number) => setItems((list) => list.filter((i) => i.id !== id)), []);
   const clear = useCallback(() => setItems([]), []);
 
-  /** One file, start to finish: match, fetch the rules, convert. */
-  const convertOne = useCallback(
-    async (item: BatchItem, entries: readonly SignatureEntry[], signal: AbortSignal): Promise<Partial<BatchItem>> => {
-      const noMatch = (reason: NoMatchReason): Partial<BatchItem> => ({ status: 'noMatch', reason });
-      const bytes = (): Promise<ArrayBuffer> => item.file.arrayBuffer();
-      const matched = await engine.matchFile({ file: { name: item.file.name, bytes: await bytes() }, signatures: entries.map(toSignature) }, { signal });
-      if (!matched.ok) return noMatch({ kind: matched.reason });
-      // Only a clear winner is used: never a guess (DECISION 10), and no per-file mapping in a batch.
-      if (matched.pick.kind !== 'auto') return noMatch({ kind: matched.pick.options.length === 0 ? 'noSource' : 'unsure' });
-      const match: ConversionMatch = matched.pick.match;
-      if (match.missingRequired.length > 0) return noMatch({ kind: 'missing', columns: match.missingRequired });
-
-      const entry = entries.find((e) => e.conversionId === match.id);
-      let rules = rulesCache.current.get(match.id);
+  /** One file's conversion to one format: fetch its rules (once per batch), convert. */
+  const convertTo = useCallback(
+    async (item: BatchItem, source: SignatureEntry, conv: SourceConversionRef, signal: AbortSignal): Promise<ConversionResult> => {
+      const failed = (reason: NoMatchReason): ConversionResult => ({ change: { status: 'noMatch', reason, conversionId: conv.conversionId, formatName: conv.formatName, sourceName: source.name } });
+      let rules = rulesCache.current.get(conv.conversionId);
       if (!rules) {
         try {
-          rules = (await api.conversion(match.id, signal)).rules;
+          rules = (await api.conversion(conv.conversionId, signal)).rules;
         } catch (e) {
-          if (e instanceof ApiError && (e.code === 'notFound' || e.status === 404)) return noMatch({ kind: 'gone' });
+          if (e instanceof ApiError && (e.code === 'notFound' || e.status === 404)) return failed({ kind: 'gone' });
           throw e;
         }
-        rulesCache.current.set(match.id, rules);
+        rulesCache.current.set(conv.conversionId, rules);
       }
-      const out = await engine.convertWithDecisions({ rules, file: { name: item.file.name, bytes: await bytes() }, mode: 'write', previewRows: 0 }, { signal });
+      const out = await engine.convertWithDecisions({ rules, file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, mode: 'write', previewRows: 0 }, { signal });
       if (!out.ok) {
-        if (out.error.code === 'missingRequiredColumns') return noMatch({ kind: 'missing', columns: out.error.missing ?? [] });
-        if (out.error.code === 'noTable') return noMatch({ kind: 'noTable' });
-        if (out.error.code === 'invalidRules') return noMatch({ kind: 'rules', source: match.name });
-        return noMatch({ kind: 'failed' });
+        if (out.error.code === 'missingRequiredColumns') return failed({ kind: 'missing', columns: out.error.missing ?? [] });
+        if (out.error.code === 'noTable') return failed({ kind: 'noTable' });
+        if (out.error.code === 'invalidRules') return failed({ kind: 'rules', source: source.name });
+        return failed({ kind: 'failed' });
       }
-      if (!out.written) return noMatch({ kind: 'failed' });
-      outputs.current.set(item.id, out.bytes);
-      // SPEC 14.1, 15: counts only - never a value, a header or a file name.
-      void api.recordRun(match.id, runCounts(out.summary, out.flags)).catch(() => undefined);
+      if (!out.written) return failed({ kind: 'failed' });
       return {
-        status: out.flags.length > 0 ? 'convertedFlags' : 'converted',
-        conversionId: match.id,
-        formatName: entry?.formatName ?? '',
-        sourceName: match.name,
-        rowsIn: out.summary.rowsIn,
-        rowsOut: out.summary.rowsOut,
-        flags: out.flags,
-        columnLabels: Object.fromEntries([...new Set(out.flags.map((f) => f.column))].map((c) => [c, columnLabel(rules, c)])),
-        outputName: outputFileName(item.file.name, rules),
+        bytes: out.bytes,
+        // SPEC 14.1, 15: counts only - never a value, a header or a file name.
+        record: { conversionId: conv.conversionId, counts: runCounts(out.summary, out.flags) },
+        change: {
+          status: out.flags.length > 0 ? 'convertedFlags' : 'converted',
+          conversionId: conv.conversionId,
+          formatName: conv.formatName,
+          sourceName: source.name,
+          rowsIn: out.summary.rowsIn,
+          rowsOut: out.summary.rowsOut,
+          flags: out.flags,
+          columnLabels: Object.fromEntries([...new Set(out.flags.map((f) => f.column))].map((c) => [c, columnLabel(rules, c)])),
+          outputName: outputFileName(item.file.name, rules),
+        },
       };
     },
     [api, engine],
+  );
+
+  /** One file, start to finish: match it to a source, then convert it with each conversion of that source. */
+  const convertOne = useCallback(
+    async (item: BatchItem, entries: readonly SignatureEntry[], signal: AbortSignal): Promise<ConversionResult[]> => {
+      const noMatch = (reason: NoMatchReason): ConversionResult[] => [{ change: { status: 'noMatch', reason } }];
+      const matched = await engine.matchFile({ file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, signatures: entries.map(signatureOf) }, { signal });
+      if (!matched.ok) return noMatch({ kind: matched.reason });
+      // Only a clear winner is used: never a guess (DECISION 10), and no per-file mapping in a batch. A structural change
+      // (a missing required column) is detected once, at source level (SPEC 8.15): the file didn't match.
+      if (matched.pick.kind !== 'auto') return noMatch({ kind: matched.pick.options.length === 0 ? 'noSource' : 'unsure' });
+      const match = matched.pick.match;
+      if (match.missingRequired.length > 0) return noMatch({ kind: 'missing', columns: match.missingRequired });
+      const source = entries.find((e) => e.sourceId === match.id);
+      if (!source) return noMatch({ kind: 'gone' });
+
+      const results: ConversionResult[] = [];
+      for (const conv of source.conversions) results.push(await convertTo(item, source, conv, signal));
+      return results;
+    },
+    [engine, convertTo],
   );
 
   /** The zip and the summary workbook, made in the worker from what was converted. */
@@ -247,6 +274,11 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
       if (converted.length === 0) return null;
 
       const statusText = (i: BatchItem): string => t(i.status === 'converted' ? 'batch.status.converted' : i.status === 'convertedFlags' ? 'batch.status.convertedFlags' : 'batch.status.noMatch');
+      // A file that was made into several formats appears once per format, so its flag rows say which format they belong to
+      // (the sheet keeps its five columns: file, row, column, value, message).
+      const perFile = new Map<number, number>();
+      for (const i of converted) perFile.set(i.fileId, (perFile.get(i.fileId) ?? 0) + 1);
+      const flagFile = (i: BatchItem): string => ((perFile.get(i.fileId) ?? 0) > 1 ? `${i.file.name} (${i.formatName ?? ''})` : i.file.name);
       const files: SummaryTable = {
         sheetName: t('batch.summary.sheet.files'),
         headers: (['file', 'format', 'source', 'status', 'rowsIn', 'rowsOut', 'flagged', 'note'] as const).map((k) => t(`batch.summary.col.${k}` as const)),
@@ -265,7 +297,7 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
         sheetName: t('batch.summary.sheet.flags'),
         headers: (['file', 'row', 'column', 'value', 'message'] as const).map((k) => t(`batch.summary.col.${k}` as const)),
         rows: finished.flatMap((i) =>
-          i.flags.map((f) => [i.file.name, f.rowNumber, i.columnLabels[f.column] ?? f.column, f.value, code({ kind: 'flag', code: f.messageKey, ...(f.params ? { params: f.params } : {}) })]),
+          i.flags.map((f) => [flagFile(i), f.rowNumber, i.columnLabels[f.column] ?? f.column, f.value, code({ kind: 'flag', code: f.messageKey, ...(f.params ? { params: f.params } : {}) })]),
         ),
       };
       const outputFiles: BatchOutputFile[] = converted.flatMap((i) => {
@@ -291,11 +323,12 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
     setStopped(false);
     setPackError(false);
     setDownloads(null);
-    setItems((list) => list.map((i) => ({ file: i.file, id: i.id, status: 'queued', flags: [], columnLabels: {} })));
+    setItems((list) => list.filter((i) => i.id === i.fileId).map((i) => ({ file: i.file, id: i.id, fileId: i.fileId, status: 'queued', flags: [], columnLabels: {} })));
     setPhase('running');
 
     void (async () => {
-      const finished = new Map<number, BatchItem>();
+      /** The items of every file that was finished, by file. */
+      const finished = new Map<number, BatchItem[]>();
       let wasStopped = false;
       for (const id of queue) {
         if (abort.signal.aborted || runId !== runRef.current) {
@@ -305,25 +338,33 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
         const base = itemsRef.current.find((i) => i.id === id);
         if (!base) continue;
         patch(id, { status: 'running' });
-        let change: Partial<BatchItem>;
+        let results: ConversionResult[];
         try {
-          change = await convertOne(base, entries, abort.signal);
+          results = await convertOne(base, entries, abort.signal);
         } catch (e) {
           if (abort.signal.aborted || isCancellation(e)) {
             wasStopped = true;
             break;
           }
-          change = { status: 'noMatch', reason: { kind: 'failed' } };
+          results = [{ change: { status: 'noMatch', reason: { kind: 'failed' } } }];
         }
         if (runId !== runRef.current) return;
-        finished.set(id, { ...base, ...change });
-        patch(id, change);
+        // One item per (file, conversion): the first takes the file's place in the list, the others follow it.
+        const made = results.map((r, k): BatchItem => {
+          const itemId = k === 0 ? base.id : nextId.current++;
+          if (r.bytes) outputs.current.set(itemId, r.bytes);
+          return { ...base, ...r.change, id: itemId };
+        });
+        finished.set(id, made);
+        setItems((list) => list.flatMap((i) => (i.id === id ? made : [i])));
+        // Counts only, once per converted (file, conversion); a file the user stopped on is reported for none of them.
+        for (const r of results) if (r.record) void api.recordRun(r.record.conversionId, r.record.counts).catch(() => undefined);
       }
       if (runId !== runRef.current) return;
       // A stopped batch keeps what it converted; files it never reached are dropped from the list.
-      const done = queue.flatMap((id) => (finished.has(id) ? [finished.get(id) as BatchItem] : []));
+      const kept = queue.flatMap((id) => finished.get(id) ?? []);
       if (wasStopped) {
-        setItems(done);
+        setItems(kept);
         setStopped(true);
       }
       setPhase('packing');
@@ -331,14 +372,14 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
       const packing = new AbortController();
       abortRef.current = packing;
       try {
-        setDownloads(await pack(done, packing.signal));
+        setDownloads(await pack(kept, packing.signal));
       } catch (e) {
         if (runId !== runRef.current || isCancellation(e)) return;
         setPackError(true);
       }
       if (runId === runRef.current) setPhase('done');
     })();
-  }, [convertOne, pack, patch, sources]);
+  }, [api, convertOne, pack, patch, sources]);
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
@@ -361,7 +402,8 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
     if (downloads) downloadBytes(i18nRef.current.t('batch.summary.file'), downloads.summary, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   }, [downloads]);
 
-  const done = useMemo(() => items.filter((i) => i.status !== 'queued' && i.status !== 'running').length, [items]);
+  const done = useMemo(() => new Set(items.filter((i) => i.status !== 'queued' && i.status !== 'running').map((i) => i.fileId)).size, [items]);
+  const total = useMemo(() => new Set(items.map((i) => i.fileId)).size, [items]);
 
-  return { sources, phase, items, done, stopped, packError, downloads, filesPerRun, add, remove, clear, run, stop, downloadZip, downloadSummary, reset };
+  return { sources, phase, items, done, total, stopped, packError, downloads, filesPerRun, add, remove, clear, run, stop, downloadZip, downloadSummary, reset };
 }

@@ -125,7 +125,10 @@ export function SourceMessages({ info, saver, notice, formatId, onReload, onSign
   );
 }
 
-/** After a save: which version it is, and - when it changed the format - who else it reached and which sources now need a look. */
+/**
+ * After a save: which version it is, and - when it changed the format, or the source (its input side, SPEC 8.15) - who else it reached and
+ * which conversions now need a look.
+ */
 function SavedNotice({ notice, formatId }: { notice: UpdateConversionResponse; formatId: string }) {
   const { t } = useI18n();
   return (
@@ -138,14 +141,28 @@ function SavedNotice({ notice, formatId }: { notice: UpdateConversionResponse; f
             : t(notice.affectedSources === 1 ? 'edit.formatChange.done.one' : 'edit.formatChange.done.other', { n: notice.affectedSources })}
         </InlineMessage>
       )}
+      {notice.sourceChanged && (
+        <InlineMessage tone="info">
+          {!notice.affectedConversions
+            ? t('edit.sourceChange.done.none')
+            : t(notice.affectedConversions === 1 ? 'edit.sourceChange.done.one' : 'edit.sourceChange.done.other', { n: notice.affectedConversions })}
+        </InlineMessage>
+      )}
       {notice.needsReview.length > 0 && (
-        <InlineMessage tone="warn" title={t(notice.needsReview.length === 1 ? 'edit.needsReview.one' : 'edit.needsReview.other', { n: notice.needsReview.length })} todo={t('edit.needsReview.text')}>
+        <InlineMessage tone="warn" title={t(notice.needsReview.length === 1 ? 'edit.needsReview.one' : 'edit.needsReview.other', { n: notice.needsReview.length })} todo={t(notice.sourceChanged && !notice.formatChanged ? 'edit.needsReview.sourceText' : 'edit.needsReview.text')}>
           <ul className="problem-list">
             {notice.needsReview.map((s) => (
               <li key={s.id}>
-                <Link to={`/formats/${formatId}/sources/${s.id}`}>
+                {/* A source change reaches the other formats it feeds: the entry says which format it belongs to (default: this one). */}
+                <Link to={`/formats/${s.formatId ?? formatId}/sources/${s.id}`}>
                   <Cell value={s.sourceName} />
                 </Link>
+                {s.formatName ? (
+                  <>
+                    {' · '}
+                    <Cell value={s.formatName} />
+                  </>
+                ) : null}
               </li>
             ))}
           </ul>

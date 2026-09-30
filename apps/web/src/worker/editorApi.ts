@@ -1,7 +1,7 @@
 // The worker methods the rules editor uses (SPEC 8.11 "Live check", 9.2 "layers 1-6 run in the browser on
 // every save"): types only, re-exported from engineApi.ts so the rest of the app sees one worker surface.
 import type { LayoutProblem } from '@formatai/engine';
-import type { Format, LearnResult, PayloadCell, Rules, Tier } from '@formatai/shared';
+import type { Format, LearnResult, PayloadCell, Rules, SourceStructure, Tier } from '@formatai/shared';
 import type { ExampleInputColumn } from '../editor/types';
 import type { FileBytes } from './engineApi';
 
@@ -96,11 +96,11 @@ export interface LiveCheckResult {
 
 // ---------- static checks ----------
 
-export type StaticProblemLayer = 'structure' | 'references' | 'types' | 'limits' | 'formatLock';
+export type StaticProblemLayer = 'structure' | 'references' | 'types' | 'limits' | 'formatLock' | 'sourceLock';
 
 export interface StaticProblem {
   layer: StaticProblemLayer;
-  /** reference | depth | duplicateId | arity | type | limit | formatMismatch | schema | internal */
+  /** reference | depth | duplicateId | arity | type | limit | formatMismatch | sourceMismatch | schema | internal */
   kind: string;
   path?: string;
   message: string;
@@ -110,6 +110,11 @@ export interface StaticCheckOptions {
   tier: Tier;
   /** The format this conversion belongs to: turns on the format lock (SPEC 8.12). */
   format?: Format;
+  /**
+   * The existing source the user explicitly chose for a conversion that is not saved yet (SPEC 8.15): turns on the source lock, with
+   * aliases ignored (the server merges them into the source on reuse). Structure only - never a value.
+   */
+  source?: SourceStructure;
 }
 
 export interface StaticChecksArgs extends StaticCheckOptions {

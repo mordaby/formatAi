@@ -4,18 +4,20 @@
 //   result with the example output (`verifyAgainstExample`). Returns counts, per-column counts, a preview
 //   with mismatching rows first, and how long it took. Above `fullCheckAboveRows` example rows it runs on a
 //   deterministic prefix subset and says so (`partial`); `subset: false` runs every row (Apply).
-// - `staticChecks`: zod, checkRules, typeCheck, checkLimits and (inside a format) the format lock.
+// - `staticChecks`: zod, checkRules, typeCheck, checkLimits and (inside a format) the format lock; and, for a conversion about to
+//   join an existing source, the source lock (SPEC 8.15).
 //
 // Pure functions over a `PairAnalysis` and rules, so a Node test runs the same code the worker does.
 import {
   checkFormatLock,
   checkLimits,
+  checkSourceLock,
   typeCheck,
   verifyAgainstExample,
   type PairAnalysis,
   type VerifyResult,
 } from '@formatai/engine';
-import type { Format, LearnResult, PayloadCell, Rules } from '@formatai/shared';
+import type { Format, LearnResult, PayloadCell, Rules, SourceStructure } from '@formatai/shared';
 import { checkRules, LearnResultSchema, RulesSchema } from '@formatai/shared';
 import { editorConfig } from '../editor/config';
 import type { ExampleInputColumn } from '../editor/types';
@@ -255,6 +257,12 @@ export function runStaticChecks(rules: LearnResult | Rules, opts: StaticCheckOpt
   if (opts.format) {
     const format: Format = opts.format;
     guard('formatLock', () => checkFormatLock(rules, format));
+  }
+  if (opts.source) {
+    const source: SourceStructure = opts.source;
+    // DECISION: aliases are not compared here. The check is for a conversion about to be saved into an EXISTING source, and there the
+    // server merges the file's aliases into the source instead of refusing (SPEC 8.15 "Saving": saving = reuse).
+    guard('sourceLock', () => checkSourceLock(rules, source, { ignoreAliases: true }));
   }
   return problems;
 }

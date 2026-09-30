@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
 import { resumeLeaveGuard } from '../src/app/unloadPrompt';
 import { ordersRules } from '../src/editor/testkit';
-import { conversionDetail, conversionSummary, formatSummary, getFormatResponse } from './helpers/registryKit';
+import { conversionDetail, conversionSummary, createFormatResponse, formatSummary, getFormatResponse } from './helpers/registryKit';
 import { fakeApi, USER } from './helpers/renderApp';
 import { line, openLine, openResult, strip } from './helpers/resultKit';
 
@@ -26,7 +26,7 @@ afterEach(() => {
 
 const SUMMARY = { rowsIn: 30, rowsOut: 30, rowsFiltered: 0, duplicatesRemoved: [], duplicatesFlagged: 0, blockedRows: [] };
 const converted = { ok: true, bytes: new ArrayBuffer(8), flags: [], summary: SUMMARY, preview: { name: 'Out', direction: 'ltr', language: 'en', columns: [], rows: [], merges: [] }, totalRows: 30 };
-const created = { format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1', sourceName: 'Source 1', version: 1 }) };
+const created = createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1', sourceName: 'Source 1', version: 1 }) });
 const patched = (over: Record<string, unknown> = {}) => ({ conversion: conversionSummary({ id: 'C1', version: 2 }), formatChanged: false, affectedSources: 0, needsReview: [], ...over });
 
 /** How many row filters the orders rules start with. */

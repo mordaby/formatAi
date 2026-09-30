@@ -7,7 +7,7 @@
 //    never queueing more than the newest one.
 //  - `apply` runs the same check on every row (above 5,000 example rows the live check only sees a subset).
 //  - Static checks (SPEC 9.2 layers 1-5) run in the same cycle, so problems show as soon as they exist.
-import type { Format, Tier } from '@formatai/shared';
+import type { Format, SourceStructure, Tier } from '@formatai/shared';
 import { editorConfig } from './config';
 import type { LiveCheckResult, StaticCheckOptions, StaticProblem } from '../worker/editorApi';
 import type { EngineCallOptions, LiveCheckOptions } from '../worker/engineClient';
@@ -53,6 +53,8 @@ export interface SchedulerOptions {
   exampleId: string | undefined;
   tier: Tier;
   format?: Format | undefined;
+  /** The existing source the conversion is about to join (SPEC 8.15): turns on the source lock. */
+  source?: SourceStructure | undefined;
   debounceMs?: number;
 }
 
@@ -168,7 +170,7 @@ export class LiveCheckScheduler {
     this.fullWanted = false;
     const waiters = this.waiters;
     this.waiters = [];
-    const { engine, exampleId, tier, format } = this.options;
+    const { engine, exampleId, tier, format, source } = this.options;
     const exceptions = input.exceptions;
     const only = input.onlyColumns ? { onlyColumns: input.onlyColumns } : {};
     this.set({ status: 'checking' });
@@ -179,7 +181,7 @@ export class LiveCheckScheduler {
         : wantFull
           ? engine.fullCheck(exampleId, input.rules, { exceptions, ...only })
           : engine.liveCheck(exampleId, input.rules, { exceptions, ...only }),
-      engine.staticChecks(input.rules, { tier, ...(format ? { format } : {}) }),
+      engine.staticChecks(input.rules, { tier, ...(format ? { format } : {}), ...(source ? { source } : {}) }),
     ]);
     this.inFlight = false;
 

@@ -1,16 +1,19 @@
-// "Which source is this file?" (SPEC 5 C, 8.12): several sources fit and none clearly wins, so the user picks from the
-// top matches. Never a guess below the threshold (DECISION 10). The score is said in words, with the percentage beside it.
+// "Which source is this file?" (SPEC 5 C, 8.12, 8.15): several sources fit and none clearly wins, so the user picks from the
+// top matches. Never a guess below the threshold (DECISION 10). The score is said in words, with the percentage beside it, and
+// each source says which formats it feeds (the file will be made into them).
 import type { ConversionMatch } from '@formatai/engine';
 import type { SignatureEntry } from '@formatai/shared';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { Button } from '../../ui';
+import { FormatChips } from './FormatChips';
 import { matchWords } from './logic';
 
 export interface ChooseSourceProps {
   options: readonly ConversionMatch[];
   entries: readonly SignatureEntry[];
-  onChoose(conversionId: string): void;
+  /** Gets the SOURCE's id. */
+  onChoose(sourceId: string): void;
 }
 
 export function ChooseSource({ options, entries, onChoose }: ChooseSourceProps) {
@@ -22,19 +25,14 @@ export function ChooseSource({ options, entries, onChoose }: ChooseSourceProps) 
       <p className="lead">{t('conv.choose.lead')}</p>
       <ul className="srcs">
         {options.map((m) => {
-          const entry = entries.find((e) => e.conversionId === m.id);
+          const entry = entries.find((e) => e.sourceId === m.id);
           return (
             <li key={m.id} className="src" data-testid="source-option">
               <div className="src__main">
                 <p className="src__name">
-                  <Cell value={entry?.formatName} />
-                  {entry?.formatName ? (
-                    <span className="src__arrow" aria-hidden="true">
-                      {' ← '}
-                    </span>
-                  ) : null}
                   <Cell value={m.name} />
                 </p>
+                {entry ? <FormatChips label="conv.choose.feeds" formats={entry.conversions.map((c) => c.formatName)} testId="source-formats" /> : null}
                 <p className="src__why">
                   {t(matchWords(m.score))}
                   <span className="muted"> · {t('conv.match.percent', { n: nf.format(Math.round(m.score * 100)) })}</span>

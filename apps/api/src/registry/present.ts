@@ -7,8 +7,12 @@ import type {
   FormatDetail,
   FormatSummary,
   Rules,
+  SignatureEntry,
+  SourceConversionRef,
+  SourceDetail,
+  SourceSummary,
 } from '@formatai/shared';
-import type { ConversionDoc, FormatDoc } from '../models.js';
+import type { ConversionDoc, FormatDoc, SourceDoc } from '../models.js';
 
 /** What one format's conversions add up to (see `aggregateSources`). */
 export interface SourceStats {
@@ -22,12 +26,17 @@ export const NO_SOURCES: SourceStats = { sources: 0, statuses: {}, runCount: 0 }
 
 const iso = (d: Date | undefined): string | undefined => (d ? d.toISOString() : undefined);
 
-export function conversionSummary(doc: ConversionDoc): ConversionSummary {
+/**
+ * `sourceName` is the SOURCE's name when it is known (SPEC 13: the conversion's own copy is a display fallback only - the source's
+ * name wins); `fromSource` is that name, read from the source document by the route.
+ */
+export function conversionSummary(doc: ConversionDoc, fromSource?: string): ConversionSummary {
   const lastRunAt = iso(doc.lastRunAt);
   return {
     id: doc._id!.toHexString(),
     formatId: doc.formatId.toHexString(),
-    sourceName: doc.sourceName,
+    ...(doc.sourceId ? { sourceId: doc.sourceId.toHexString() } : {}),
+    sourceName: fromSource ?? doc.sourceName,
     status: doc.status,
     acceptedDifferences: doc.acceptedDifferences,
     learnPath: doc.learnPath,
@@ -40,9 +49,9 @@ export function conversionSummary(doc: ConversionDoc): ConversionSummary {
   };
 }
 
-export function conversionDetail(doc: ConversionDoc): ConversionDetail {
+export function conversionDetail(doc: ConversionDoc, fromSource?: string): ConversionDetail {
   return {
-    ...conversionSummary(doc),
+    ...conversionSummary(doc, fromSource),
     rules: doc.rules as Rules,
     exampleExceptions: doc.exampleExceptions,
     masking: doc.masking,
@@ -96,4 +105,67 @@ export function aggregateSources(docs: readonly Pick<ConversionDoc, 'status' | '
     if (d.lastRunAt && (!stats.lastRunAt || d.lastRunAt > stats.lastRunAt)) stats.lastRunAt = d.lastRunAt;
   }
   return stats;
+}
+
+// ---------------------------------------------------------------- sources (SPEC 8.15)
+
+/** The conversions of one source with the names of the formats they feed (`formatNames`: format id -> name). */
+export function conversionRefs(
+  conversions: readonly Pick<ConversionDoc, '_id' | 'formatId' | 'status'>[],
+  formatNames: ReadonlyMap<string, string>,
+): SourceConversionRef[] {
+  return conversions.map((c) => ({
+    conversionId: c._id!.toHexString(),
+    formatId: c.formatId.toHexString(),
+    formatName: formatNames.get(c.formatId.toHexString()) ?? '',
+    status: c.status,
+  }));
+}
+
+export function sourceSummary(
+  doc: SourceDoc,
+  conversions: readonly Pick<ConversionDoc, '_id' | 'formatId' | 'status' | 'runCount' | 'lastRunAt'>[],
+  formatNames: ReadonlyMap<string, string>,
+): SourceSummary {
+  const stats = aggregateSources(conversions);
+  const lastRunAt = iso(stats.lastRunAt);
+  return {
+    id: doc._id!.toHexString(),
+    name: doc.name,
+    columns: doc.inputSignature.columns.length,
+    conversions: conversionRefs(conversions, formatNames),
+    statuses: stats.statuses,
+    version: doc.version,
+    runCount: stats.runCount,
+    ...(lastRunAt ? { lastRunAt } : {}),
+    createdAt: doc.createdAt.toISOString(),
+    updatedAt: doc.updatedAt.toISOString(),
+  };
+}
+
+export function sourceDetail(
+  doc: SourceDoc,
+  conversions: readonly Pick<ConversionDoc, '_id' | 'formatId' | 'status' | 'runCount' | 'lastRunAt'>[],
+  formatNames: ReadonlyMap<string, string>,
+): SourceDetail {
+  return {
+    ...sourceSummary(doc, conversions, formatNames),
+    inputSignature: doc.inputSignature,
+    inputReading: doc.inputReading,
+    inputValidations: doc.inputValidations,
+  };
+}
+
+/** One entry of GET /api/signatures: a source's signature (what matching reads) with the formats it feeds. */
+export function signatureEntry(
+  doc: SourceDoc,
+  conversions: readonly Pick<ConversionDoc, '_id' | 'formatId' | 'status'>[],
+  formatNames: ReadonlyMap<string, string>,
+): SignatureEntry {
+  return {
+    sourceId: doc._id!.toHexString(),
+    name: doc.name,
+    columns: doc.inputSignature.columns.map((c) => ({ header: c.header, aliases: c.aliases, type: c.type, required: c.required })),
+    conversions: conversionRefs(conversions, formatNames),
+  };
 }

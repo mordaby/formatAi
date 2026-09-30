@@ -1,14 +1,16 @@
-// The Convert screen (SPEC 5 C, 21 v5 item 5), with a fake worker and a fake API: matching (auto, or choose among the top
-// three), missing and renamed columns, the review of flagged rows BEFORE the file is written and the decisions it sends,
-// the run summary, and what is (and is not) sent to the API.
+// The Convert screen (SPEC 5 C, 8.15, 21 v5 item 5), with a fake worker and a fake API: matching a file to a SOURCE (auto, or
+// choose among the top three), a source that feeds one format (runs at once) or several (which formats, each with its own review,
+// then a download each and a zip), missing and renamed columns (detected once per source), the review of flagged rows BEFORE the
+// file is written and the decisions it sends, the run summary, and what is (and is not) sent to the API.
 import type { Flag, RunSummary } from '@formatai/engine';
+import type { Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConvertRunOutput, MatchFileArgs, MatchFileOutput } from '../src/worker/convertApi';
+import type { BatchArgs, ConvertRunOutput, MatchFileArgs, MatchFileOutput } from '../src/worker/convertApi';
 import type { EngineClient } from '../src/worker/engineClient';
 import ConvertPage from '../src/pages/Convert';
 import { convertSession } from '../src/pages/Convert/session';
-import { csvFile, entry, fakeConvertApi, match, renderConvert, RULES, SUPPLIER_A_CSV } from './helpers/convertKit';
+import { csvFile, entry, fakeConvertApi, match, renderConvert, RULES, sourceEntry, SUPPLIER_A_CSV } from './helpers/convertKit';
 
 const { signInOpen, downloaded } = vi.hoisted(() => ({ signInOpen: vi.fn(), downloaded: vi.fn() }));
 vi.mock('../src/app/SignIn', () => ({ useSignIn: () => ({ open: signInOpen, close: vi.fn() }) }));
@@ -47,13 +49,15 @@ function review(flags: Flag[], rowInputs: Record<number, { columnId: string; hea
 
 interface EngineOpts {
   match?: MatchFileOutput;
-  run?: (args: { mode: string; rowDecisions?: unknown }) => ConvertRunOutput;
+  run?: (args: { mode: string; rowDecisions?: unknown; rules: Rules }) => ConvertRunOutput;
 }
 function fakeEngine(opts: EngineOpts = {}) {
-  const matchFile = vi.fn(async (_args: MatchFileArgs) => opts.match ?? ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: 'c1' }) } } as MatchFileOutput));
-  const convertWithDecisions = vi.fn(async (args: { mode: string; rowDecisions?: unknown }) => (opts.run ? opts.run(args) : written()));
-  const engine = { matchFile, convertWithDecisions, batch: vi.fn(), terminate: vi.fn() } as unknown as EngineClient;
-  return { engine, matchFile, convertWithDecisions };
+  // Without an answer of its own the fake matcher picks the first source it was offered (a real matcher only ever answers with one of them).
+  const matchFile = vi.fn(async (args: MatchFileArgs) => opts.match ?? ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: args.signatures[0]?.id ?? 'c1' }) } } as MatchFileOutput));
+  const convertWithDecisions = vi.fn(async (args: { mode: string; rowDecisions?: unknown; rules: Rules }) => (opts.run ? opts.run(args) : written()));
+  const batch = vi.fn(async (_args: BatchArgs) => ({ zip: new ArrayBuffer(6), summary: new ArrayBuffer(4) }));
+  const engine = { matchFile, convertWithDecisions, batch, terminate: vi.fn() } as unknown as EngineClient;
+  return { engine, matchFile, convertWithDecisions, batch };
 }
 
 async function drop(name = 'jan.csv', body = SUPPLIER_A_CSV, label = 'File to convert') {
@@ -433,6 +437,400 @@ describe('the review before the file is written', () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Sources that feed formats (SPEC 5 C, 8.15)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** One source ("Supplier A") that feeds three formats; each conversion has its own rules (told apart by `rules.name`). */
+const THREE = sourceEntry({
+  sourceId: 's1',
+  name: 'Supplier A',
+  conversions: [
+    { conversionId: 'c1', formatId: 'F1', formatName: 'Load file' },
+    { conversionId: 'c2', formatId: 'F2', formatName: 'ERP load' },
+    { conversionId: 'c3', formatId: 'F3', formatName: 'Ledger' },
+  ],
+});
+const rulesFor = (id: string): Rules => ({ ...RULES, name: 'rules-' + id });
+const rulesById = { c1: rulesFor('c1'), c2: rulesFor('c2'), c3: rulesFor('c3') };
+const autoSource = (over: Partial<Parameters<typeof match>[0]> = {}): MatchFileOutput => ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: 's1', ...over }) } });
+const ranOrder = (calls: readonly unknown[][], mode: string): string[] =>
+  calls
+    .map((c) => c[0] as { mode: string; rules: Rules })
+    .filter((a) => a.mode === mode)
+    .map((a) => a.rules.name as string);
+const rowCard = (n: number) => document.querySelector(`[data-testid="review-row"][data-row="${n}"]`) as HTMLElement;
+
+describe('a source that feeds ONE format runs it at once', () => {
+  it("matches SOURCES (the signature id is the source id) and runs that source's single conversion, with no question", async () => {
+    // The source's id and its conversion's id differ: c9 is the conversion of source s1.
+    const one = sourceEntry({ sourceId: 's1', name: 'Supplier A', conversions: [{ conversionId: 'c9', formatId: 'F1', formatName: 'Load file' }] });
+    const api = fakeConvertApi({ entries: [one] });
+    const { engine, matchFile, convertWithDecisions } = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    expect(await screen.findByText('Your file is ready')).toBeTruthy();
+    expect(matchFile.mock.calls[0]![0].signatures.map((s) => [s.id, s.name])).toEqual([['s1', 'Supplier A']]);
+    expect(screen.queryByTestId('choose-formats')).toBeNull();
+    expect(api.conversion).toHaveBeenCalledTimes(1);
+    expect(api.conversion).toHaveBeenCalledWith('c9', expect.anything());
+    expect(convertWithDecisions).toHaveBeenCalledTimes(1);
+    expect(api.recordRun).toHaveBeenCalledWith('c9', { rows: 3, flagged: 0 });
+    expect(screen.getByText(/Converted with .*Supplier A.* of .*Load file.*\./)).toBeTruthy();
+  });
+
+  it('a source with no conversion yet is not offered (nothing to run); a page with only such sources says there is nothing to convert with', async () => {
+    const bare = sourceEntry({ sourceId: 's0', name: 'New supplier', conversions: [] });
+    const { engine, matchFile } = fakeEngine();
+    renderConvert(<ConvertPage />, { api: fakeConvertApi({ entries: [bare, entry({ conversionId: 'c1' })] }), engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    expect(matchFile.mock.calls[0]![0].signatures.map((s) => s.id)).toEqual(['c1']);
+
+    cleanup();
+    renderConvert(<ConvertPage />, { api: fakeConvertApi({ entries: [bare] }), engine });
+    expect(await screen.findByText('No formats to convert with yet')).toBeTruthy();
+  });
+
+  it('?format= keeps only the conversion that makes that format: a source that feeds several then runs that one at once', async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const { engine, matchFile, convertWithDecisions } = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api, engine, route: '/convert?format=F2' });
+    expect((await screen.findByTestId('only-format')).textContent).toContain('ERP load');
+    await drop();
+    await screen.findByText('Your file is ready');
+    expect(matchFile.mock.calls[0]![0].signatures.map((s) => s.id)).toEqual(['s1']);
+    expect(screen.queryByTestId('choose-formats')).toBeNull();
+    expect(api.conversion).toHaveBeenCalledTimes(1);
+    expect(api.conversion).toHaveBeenCalledWith('c2', expect.anything());
+    expect(ranOrder(convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c2']);
+    expect(api.recordRun).toHaveBeenCalledTimes(1);
+    expect(api.recordRun).toHaveBeenCalledWith('c2', expect.any(Object));
+  });
+
+  it('when several sources fit, each option says which formats the source feeds', async () => {
+    const other = entry({ conversionId: 'c7', sourceId: 's7', sourceName: 'Supplier C', formatId: 'F7', formatName: 'Ledger' });
+    const api = fakeConvertApi({ entries: [THREE, other], rulesById });
+    const { engine, convertWithDecisions } = fakeEngine({
+      match: { ok: true, headers: [], ranked: [], pick: { kind: 'choose', options: [match({ id: 's1', name: 'Supplier A', score: 0.7 }), match({ id: 's7', name: 'Supplier C', score: 0.6 })] } },
+    });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText('Which source is this file?');
+    const options = screen.getAllByTestId('source-option');
+    expect(within(options[0]!).getByTestId('source-formats').textContent).toBe('Converted into:Load fileERP loadLedger');
+    expect(within(options[1]!).getByTestId('source-formats').textContent).toBe('Converted into:Ledger');
+    expect(convertWithDecisions).not.toHaveBeenCalled();
+
+    // A source that feeds several formats goes on to "which formats?", not straight to a run.
+    fireEvent.click(within(options[0]!).getByRole('button', { name: /Use this source/ }));
+    expect(await screen.findByTestId('choose-formats')).toBeTruthy();
+    expect(convertWithDecisions).not.toHaveBeenCalled();
+  });
+});
+
+describe('a source that feeds SEVERAL formats', () => {
+  const box = (name: string): HTMLInputElement => screen.getByRole('checkbox', { name }) as HTMLInputElement;
+
+  it('asks which formats: all pre-checked, an All toggle, and Continue is off with none selected', async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const { engine, convertWithDecisions } = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+
+    expect(await screen.findByText('This file feeds 3 formats')).toBeTruthy();
+    expect(screen.getByTestId('target-line').textContent).toBe('Matched to ⁨Supplier A⁩.');
+    expect(['All formats', 'Load file', 'ERP load', 'Ledger'].map((n) => box(n).checked)).toEqual([true, true, true, true]);
+    // Nothing is fetched or run until the user continues.
+    expect(api.conversion).not.toHaveBeenCalled();
+    expect(convertWithDecisions).not.toHaveBeenCalled();
+
+    // One box off: All is no longer fully checked (it shows "partly").
+    fireEvent.click(box('ERP load'));
+    expect(box('All formats').checked).toBe(false);
+    expect(box('All formats').indeterminate).toBe(true);
+    // Checking All again selects everything; unchecking it clears everything, and then Continue is off.
+    fireEvent.click(box('All formats'));
+    expect(['Load file', 'ERP load', 'Ledger'].map((n) => box(n).checked)).toEqual([true, true, true]);
+    fireEvent.click(box('All formats'));
+    expect(['Load file', 'ERP load', 'Ledger'].map((n) => box(n).checked)).toEqual([false, false, false]);
+    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Choose at least one format.')).toBeTruthy();
+    fireEvent.click(box('Ledger'));
+    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('runs the chosen formats one after another, each with its OWN review before its file is written', async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const flags = [flag(3, 'c_qty')];
+    const inputs = { 3: [{ columnId: 'c_qty', header: 'Qty', value: 'abc' }] };
+    const { engine, convertWithDecisions } = fakeEngine({
+      match: autoSource(),
+      run: (args) => (args.mode === 'review' ? review(flags, inputs) : written({ flags, summary: summary({ rowsIn: 3, rowsOut: 2 }) })),
+    });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop('jan.csv');
+    await screen.findByText('This file feeds 3 formats');
+    fireEvent.click(box('ERP load'));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    // Format 1 of 2: its review, and nothing has been written or reported yet.
+    await screen.findByText('Some rows need a look before the file is made');
+    expect(screen.getByTestId('review-step').textContent).toBe('Format 1 of 2: ⁨Load file⁩');
+    expect(screen.getByTestId('target-line').textContent).toContain('Load file');
+    expect(ranOrder(convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c1']);
+    expect(api.recordRun).not.toHaveBeenCalled();
+    fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'Skip this row' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
+
+    // Format 2 of 2 (the unchecked format is skipped): its own review, its own decision.
+    await waitFor(() => expect(screen.getByTestId('review-step').textContent).toBe('Format 2 of 2: ⁨Ledger⁩'));
+    expect(ranOrder(convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c1', 'rules-c3']);
+    expect(screen.getByTestId('review-tally').textContent).toBe('0 kept · 0 skipped · 0 fixed · 1 not decided');
+    fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'Keep as is' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
+
+    // Each conversion was written with ITS decisions.
+    expect(await screen.findByTestId('run-results')).toBeTruthy();
+    const writes = convertWithDecisions.mock.calls.map((c) => c[0] as { mode: string; rules: Rules; rowDecisions?: unknown }).filter((a) => a.mode === 'write');
+    expect(writes.map((w) => [w.rules.name, w.rowDecisions])).toEqual([
+      ['rules-c1', { 3: { action: 'skip' } }],
+      ['rules-c3', { 3: { action: 'keep' } }],
+    ]);
+    // c2 was never fetched or run; a run is recorded once per conversion that ran, counts only.
+    expect(api.conversion.mock.calls.map((c) => c[0])).toEqual(['c1', 'c3']);
+    expect(api.recordRun.mock.calls).toEqual([
+      ['c1', { rows: 3, flagged: 1 }],
+      ['c3', { rows: 3, flagged: 1 }],
+    ]);
+  });
+
+  it('several results: every format is listed (rows, flags, a download each) and "Download all (zip)" packs a folder per format', async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const { engine, batch } = fakeEngine({
+      match: autoSource(),
+      run: (args) => (args.rules.name === 'rules-c2' ? written({ flags: [flag(3, 'c_qty')], summary: summary({ rowsIn: 10, rowsOut: 8 }) }) : written({ summary: summary({ rowsIn: 10, rowsOut: 10 }) })),
+    });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop('jan.csv');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+
+    // The ones with nothing to review go straight through: no review screen at all.
+    expect(await screen.findByText('Your 3 files are ready')).toBeTruthy();
+    expect(screen.queryByTestId('review')).toBeNull();
+    const rows = screen.getAllByTestId('result-format');
+    expect(rows.map((r) => r.querySelector('.bfile__name')?.textContent)).toEqual(['Load file', 'ERP load', 'Ledger']);
+    expect(rows[0]!.textContent).toContain('10 rows in · 10 rows out');
+    expect(rows[1]!.textContent).toContain('10 rows in · 8 rows out');
+    expect(rows[1]!.textContent).toContain('1 flagged row');
+    expect(rows[1]!.getAttribute('data-status')).toBe('convertedFlags');
+    expect(rows[0]!.textContent).toContain('jan (converted).csv');
+    expect(api.recordRun.mock.calls.map((c) => c[0])).toEqual(['c1', 'c2', 'c3']);
+
+    // An individual download.
+    fireEvent.click(within(rows[1]!).getByRole('button', { name: /Download the file for .*ERP load/ }));
+    expect(downloaded).toHaveBeenLastCalledWith('jan (converted).csv', expect.any(ArrayBuffer), 'text/csv');
+
+    // The zip: the worker's batch method, a folder per format, a summary row per format.
+    fireEvent.click(screen.getByRole('button', { name: 'Download all (zip)' }));
+    await waitFor(() => expect(downloaded).toHaveBeenLastCalledWith('jan (converted).zip', expect.any(ArrayBuffer), 'application/zip'));
+    expect(batch).toHaveBeenCalledTimes(1);
+    const args = batch.mock.calls[0]![0];
+    expect(args.outputs.map((o) => [o.folder, o.fileName])).toEqual([
+      ['Load file', 'jan (converted).csv'],
+      ['ERP load', 'jan (converted).csv'],
+      ['Ledger', 'jan (converted).csv'],
+    ]);
+    expect(args.summaryFileName).toBe('formatAI conversion summary.xlsx');
+    expect(args.summary.files.rows.map((r) => r.slice(0, 7))).toEqual([
+      ['jan.csv', 'Load file', 'Supplier A', 'Converted', 10, 10, 0],
+      ['jan.csv', 'ERP load', 'Supplier A', 'Converted with flags', 10, 8, 1],
+      ['jan.csv', 'Ledger', 'Supplier A', 'Converted', 10, 10, 0],
+    ]);
+    expect(args.summary.flags.rows.map((r) => [r[0], r[1], r[2]])).toEqual([['ERP load', 3, 'Qty']]);
+  });
+
+  it('a zip that cannot be packed says so, and the single downloads still work', async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const { engine, batch } = fakeEngine({ match: autoSource() });
+    batch.mockRejectedValueOnce(new Error('boom'));
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop('jan.csv');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    await screen.findByText('Your 3 files are ready');
+    fireEvent.click(screen.getByRole('button', { name: 'Download all (zip)' }));
+    expect(await screen.findByText("We couldn't pack the zip. Try again.")).toBeTruthy();
+    expect(downloaded).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getAllByTestId('result-format')[0]!).getByRole('button', { name: /Download the file for/ }));
+    expect(downloaded).toHaveBeenCalledTimes(1);
+    // Trying again works.
+    fireEvent.click(screen.getByRole('button', { name: 'Download all (zip)' }));
+    await waitFor(() => expect(downloaded).toHaveBeenLastCalledWith('jan (converted).zip', expect.any(ArrayBuffer), 'application/zip'));
+  });
+
+  it("exactly one chosen format is today's result screen, not the list", async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const { engine } = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText('This file feeds 3 formats');
+    fireEvent.click(box('All formats'));
+    fireEvent.click(box('Ledger'));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Your file is ready')).toBeTruthy();
+    expect(screen.queryByTestId('run-results')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Download the file' })).toBeTruthy();
+    expect(api.recordRun.mock.calls).toEqual([['c3', { rows: 3, flagged: 0 }]]);
+  });
+
+  it('a format that cannot run does not stop the others: it is listed with why', async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const { engine } = fakeEngine({
+      match: autoSource(),
+      run: (args) => (args.rules.name === 'rules-c2' ? { ok: false, error: { code: 'invalidRules' } } : written()),
+    });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Your 2 files are ready')).toBeTruthy();
+    expect(screen.getAllByTestId('result-format')).toHaveLength(2);
+    const failed = screen.getByTestId('result-failed');
+    expect(failed.textContent).toContain("These formats couldn't be made");
+    expect(failed.textContent).toContain('ERP load');
+    expect(failed.textContent).toContain("The rules of this source can't run");
+    expect(api.recordRun.mock.calls.map((c) => c[0])).toEqual(['c1', 'c3']);
+  });
+
+  it('"Change the rule" keeps the rest of the run: coming back runs that format again and goes on with the others', async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const flags = [flag(3, 'c_qty')];
+    const run = (args: { mode: string; rules: Rules }) => (args.rules.name === 'rules-c1' && args.mode === 'review' ? review(flags, { 3: [{ columnId: 'c_qty', header: 'Qty', value: 'abc' }] }) : written());
+    const first = fakeEngine({ match: autoSource(), run });
+    renderConvert(<ConvertPage />, { api, engine: first.engine });
+    await drop();
+    await screen.findByText('This file feeds 3 formats');
+    fireEvent.click(box('ERP load'));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Some rows need a look before the file is made');
+    fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'Change the rule' }));
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toContain('/formats/F1/sources/c1?'));
+    // The file, the queue and the renames wait in memory.
+    const held = convertSession.peek();
+    expect(held).toMatchObject({ conversionId: 'c1', formatId: 'F1' });
+    expect(held?.job?.queue.map((c) => c.conversionId)).toEqual(['c1', 'c3']);
+    expect(held?.job?.index).toBe(0);
+    expect(api.recordRun).not.toHaveBeenCalled();
+
+    // Back from the editor: c1 (edited) runs again with no review this time, then c3 follows.
+    cleanup();
+    const second = fakeEngine({ match: autoSource(), run: () => written() });
+    renderConvert(<ConvertPage />, { api, engine: second.engine, route: '/convert?resume=1' });
+    expect(await screen.findByText('Your 2 files are ready')).toBeTruthy();
+    expect(second.matchFile).not.toHaveBeenCalled();
+    expect(ranOrder(second.convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c1', 'rules-c3']);
+    expect(api.recordRun.mock.calls.map((c) => c[0])).toEqual(['c1', 'c3']);
+    expect(convertSession.peek()).toBeNull();
+  });
+});
+
+describe('a structural change is detected ONCE per source', () => {
+  const two = sourceEntry({
+    sourceId: 's1',
+    name: 'Supplier A',
+    conversions: [
+      { conversionId: 'c1', formatId: 'F1', formatName: 'Load file' },
+      { conversionId: 'c2', formatId: 'F2', formatName: 'ERP load' },
+    ],
+  });
+  const twoRules = { c1: rulesFor('c1'), c2: rulesFor('c2') };
+  const renamedMatch = (): MatchFileOutput => autoSource({ score: 0.9, missingRequired: ['Qty'], extra: ['Weird', 'Quantity'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] });
+  const affected = () => within(screen.getByTestId('affected-formats')).getAllByRole('listitem').map((li) => li.textContent);
+
+  it('a renamed column: the step lists EVERY format it affects, and the confirmed mapping is saved once, on the source', async () => {
+    const api = fakeConvertApi({ entries: [two], rulesById: twoRules });
+    const { engine, matchFile, convertWithDecisions } = fakeEngine({ match: renamedMatch() });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    expect(await screen.findByText('Is a column named differently?')).toBeTruthy();
+    expect(affected()).toEqual(['Load file', 'ERP load']);
+    expect(screen.getByText(/saved on the source, so next time it applies to all 2 of its formats/)).toBeTruthy();
+    // Detected at match time, once: no conversion has been fetched or run yet.
+    expect(matchFile).toHaveBeenCalledTimes(1);
+    expect(api.conversion).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    // The mapping is saved ONCE, on the source (never per conversion) ...
+    await screen.findByText('This file feeds 2 formats');
+    expect(api.addAlias).toHaveBeenCalledTimes(1);
+    expect(api.addAlias).toHaveBeenCalledWith('s1', { header: 'Qty', alias: 'Quantity' });
+    // ... and the next file re-reads the signatures (the alias is in them now).
+    await waitFor(() => expect(api.signatures).toHaveBeenCalledTimes(2));
+
+    // ... and it is applied in memory to EVERY conversion that runs, without asking again.
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Your 2 files are ready');
+    const reviews = convertWithDecisions.mock.calls.map((c) => c[0] as unknown as { mode: string; rules: Rules }).filter((a) => a.mode === 'review');
+    expect(reviews.map((r) => r.rules.name)).toEqual(['rules-c1', 'rules-c2']);
+    for (const r of reviews) expect(r.rules.input.columns.find((c) => c.id === 'c_qty')?.aliases).toEqual(['Quantity']);
+    expect(matchFile).toHaveBeenCalledTimes(1);
+    expect(api.addAlias).toHaveBeenCalledTimes(1);
+  });
+
+  it('a renamed column on a source with ONE format is saved once and that format runs', async () => {
+    const api = fakeConvertApi();
+    const { engine } = fakeEngine({
+      match: { ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: 'c1', score: 0.9, missingRequired: ['Qty'], extra: ['Quantity'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] }) } },
+    });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText('Is a column named differently?');
+    expect(affected()).toEqual(['Load file']);
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Your file is ready');
+    expect(api.addAlias).toHaveBeenCalledTimes(1);
+    expect(api.addAlias).toHaveBeenCalledWith('c1', { header: 'Qty', alias: 'Quantity' });
+  });
+
+  it('a missing column nothing can stand in for stops the run and names every affected format', async () => {
+    const api = fakeConvertApi({ entries: [two], rulesById: twoRules });
+    const { engine, convertWithDecisions } = fakeEngine({ match: autoSource({ score: 0.9, missingRequired: ['Qty'], extra: [] }) });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    const missing = await screen.findByTestId('missing-columns');
+    expect(within(screen.getByTestId('missing-list')).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Qty']);
+    expect(missing.textContent).toContain('Formats this affects:');
+    expect(affected()).toEqual(['Load file', 'ERP load']);
+    expect(convertWithDecisions).not.toHaveBeenCalled();
+    expect(api.conversion).not.toHaveBeenCalled();
+    expect(api.addAlias).not.toHaveBeenCalled();
+    expect(api.recordRun).not.toHaveBeenCalled();
+  });
+
+  it('on ?format= only the formats of the page are listed as affected', async () => {
+    const api = fakeConvertApi({ entries: [two], rulesById: twoRules });
+    const { engine } = fakeEngine({ match: autoSource({ score: 0.9, missingRequired: ['Qty'], extra: [] }) });
+    renderConvert(<ConvertPage />, { api, engine, route: '/convert?format=F2' });
+    await screen.findByTestId('only-format');
+    await drop();
+    await screen.findByTestId('missing-columns');
+    expect(affected()).toEqual(['ERP load']);
+  });
+
+  it("\"it isn't in this file\" ends with the exact missing header and the affected formats, and saves nothing", async () => {
+    const api = fakeConvertApi({ entries: [two], rulesById: twoRules });
+    const { engine } = fakeEngine({ match: renamedMatch() });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText('Is a column named differently?');
+    fireEvent.change(screen.getByLabelText(/The column .*Qty.* is/), { target: { value: '__none__' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect((await screen.findByTestId('missing-list')).textContent).toBe('Qty');
+    expect(affected()).toEqual(['Load file', 'ERP load']);
+    expect(api.addAlias).not.toHaveBeenCalled();
+    expect(api.conversion).not.toHaveBeenCalled();
+  });
+});
+
 describe('errors', () => {
   it('a file the worker cannot open says what to do', async () => {
     const { engine } = fakeEngine({ match: { ok: false, reason: 'unreadable' } });
@@ -456,6 +854,29 @@ describe('Hebrew', () => {
     expect(await screen.findByText('המרת קובץ')).toBeTruthy();
     await drop('ינואר.csv', SUPPLIER_A_CSV, 'קובץ להמרה');
     expect(await screen.findByText('הקובץ שלכם מוכן')).toBeTruthy();
+  });
+
+  it('a source that feeds several formats: the formats step and the results are in Hebrew, with every name isolated', async () => {
+    const hebrew = sourceEntry({
+      sourceId: 's1',
+      name: 'ספק א',
+      conversions: [
+        { conversionId: 'c1', formatId: 'F1', formatName: 'קובץ טעינה' },
+        { conversionId: 'c2', formatId: 'F2', formatName: 'ERP load' },
+      ],
+    });
+    const { engine } = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api: fakeConvertApi({ entries: [hebrew], rulesById }), engine, lang: 'he' });
+    await drop('ינואר.csv', SUPPLIER_A_CSV, 'קובץ להמרה');
+    expect(await screen.findByText('הקובץ הזה מזין 2 פורמטים')).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'כל הפורמטים' })).toBeTruthy();
+    // A format name is a <bdi>: a Hebrew name never reorders the words around it, and an English one stays whole.
+    expect(screen.getByText('קובץ טעינה').tagName).toBe('BDI');
+    expect(screen.getByText('ERP load').tagName).toBe('BDI');
+    fireEvent.click(screen.getByRole('button', { name: 'המשך' }));
+    expect(await screen.findByText('2 הקבצים שלכם מוכנים')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'הורדת הכול (zip)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /הורדת הקובץ של .*ERP load/ })).toBeTruthy();
   });
 });
 

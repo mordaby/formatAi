@@ -128,8 +128,12 @@ export const API_ERROR_CODES = [
   'invalidRules',
   // 422: attach / restore - the rules don't reproduce the format; `problems` are `formatMismatch` ones.
   'formatMismatch',
-  // 409: another source of this format already has that name.
+  // 409: another source of yours already has that name (source names are the company's, SPEC 8.15).
   'nameTaken',
+  // 422 (SPEC 8.15): the conversion's input side doesn't match its source (the source lock); `problems` are `sourceMismatch` ones.
+  'sourceMismatch',
+  // 409 (SPEC 8.15): a source that still feeds a format can't be deleted.
+  'sourceInUse',
   // 409: that alias already names another input column of the conversion.
   'aliasConflict',
   // 409: the conversion/format was changed by someone else since `baseVersion`.

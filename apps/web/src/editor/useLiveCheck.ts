@@ -1,6 +1,6 @@
 // React wrapper over `LiveCheckScheduler` (see liveCheckScheduler.ts): feeds it every revision of the rules,
 // and turns what it knows into the Save button's status.
-import type { Format, Tier } from '@formatai/shared';
+import type { Format, SourceStructure, Tier } from '@formatai/shared';
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { LiveCheckResult } from '../worker/editorApi';
 import { explainStaticProblems, type ExplainedProblem } from './explain';
@@ -16,6 +16,8 @@ export interface UseLiveCheckOptions {
   tier: Tier;
   /** Set when the conversion belongs to a format: turns on the format lock (SPEC 8.12). */
   format?: Format;
+  /** Set when the conversion is about to join an existing source the user chose: turns on the source lock (SPEC 8.15). */
+  source?: SourceStructure;
   /** SPEC 21 v5 item 1: the local partial result checks only these output columns (positions in the CURRENT rules). Pass a stable array. */
   onlyColumns?: number[];
   debounceMs?: number;
@@ -35,10 +37,11 @@ export interface UseLiveCheck {
 
 export function useLiveCheck(options: UseLiveCheckOptions): UseLiveCheck {
   const { engine, exampleId, editor, tier, debounceMs, onlyColumns } = options;
-  const format = useStableFormat(options.format);
+  const format = useStable(options.format);
+  const source = useStable(options.source);
   const scheduler = useMemo(
-    () => new LiveCheckScheduler({ engine, exampleId, tier, format, ...(debounceMs === undefined ? {} : { debounceMs }) }),
-    [engine, exampleId, tier, format, debounceMs],
+    () => new LiveCheckScheduler({ engine, exampleId, tier, format, source, ...(debounceMs === undefined ? {} : { debounceMs }) }),
+    [engine, exampleId, tier, format, source, debounceMs],
   );
   const state = useSyncExternalStore(scheduler.subscribe, scheduler.getState, scheduler.getState);
 
@@ -79,10 +82,10 @@ export function useLiveCheck(options: UseLiveCheckOptions): UseLiveCheck {
   }, [state, editor.rev, editor.rules, exampleId, scheduler, onlyColumns]);
 }
 
-/** A format object that is equal by content keeps its identity, so passing a fresh one each render does not restart the checks. */
-function useStableFormat(format: Format | undefined): Format | undefined {
-  const key = format === undefined ? '' : JSON.stringify(format);
-  const last = useRef<{ key: string; format: Format | undefined }>({ key, format });
-  if (last.current.key !== key) last.current = { key, format };
-  return last.current.format;
+/** A format (or source) object that is equal by content keeps its identity, so passing a fresh one each render does not restart the checks. */
+function useStable<T extends object>(value: T | undefined): T | undefined {
+  const key = value === undefined ? '' : JSON.stringify(value);
+  const last = useRef<{ key: string; value: T | undefined }>({ key, value });
+  if (last.current.key !== key) last.current = { key, value };
+  return last.current.value;
 }

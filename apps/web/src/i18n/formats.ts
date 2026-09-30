@@ -1,5 +1,5 @@
-// UI strings of the registry screens (SPEC 16.1 screen 5, 8.12): My formats, one format and its sources, editing a saved
-// source without its example files, its versions, and adding a source to a format (flow A2).
+// UI strings of the registry screens (SPEC 16.1 screen 5, 8.12, 8.15): My formats and the company's sources, one format and its
+// sources, editing a saved source without its example files, its versions, and adding a source to a format (flow A2).
 // Merged into `en` and `he` in dictionaries.ts (where a missing Hebrew string is caught by the compiler).
 
 export const formatsEn = {
@@ -51,11 +51,28 @@ export const formatsEn = {
   'formats.renameFailed': "We couldn't rename it. Try again.",
   'formats.deleteTitle': 'Delete "{name}"?',
   'formats.deleteText.none': 'This deletes the format. It frees a saved-format slot, but it does not give back any AI formats you used.',
-  'formats.deleteText.one': 'This deletes the format and its source. It frees a saved-format slot, but it does not give back any AI formats you used.',
-  'formats.deleteText.other': 'This deletes the format and its {n} sources. It frees a saved-format slot, but it does not give back any AI formats you used.',
+  'formats.deleteText.one': 'This deletes the format. Its source stays in your sources. It frees a saved-format slot, but it does not give back any AI formats you used.',
+  'formats.deleteText.other': 'This deletes the format. Its {n} sources stay in your sources. It frees a saved-format slot, but it does not give back any AI formats you used.',
   'formats.deleteConfirm': 'Delete format',
   'formats.deleteCancel': 'Keep it',
   'formats.deleteFailed': "We couldn't delete it. Try again.",
+  'formats.alsoFeeds': 'Also feeds: {names}',
+
+  // ----- the company's sources (SPEC 8.15): under the formats -----
+  'sources.title': 'Sources',
+  'sources.lead': 'Each kind of incoming file you have taught. One source can feed several formats.',
+  'sources.loadFailed': "We couldn't load your sources.",
+  'sources.feeds.none': 'Feeds no format yet',
+  'sources.feeds.one': 'Feeds 1 format',
+  'sources.feeds.other': 'Feeds {n} formats',
+  'sources.columns.one': '1 column',
+  'sources.columns.other': '{n} columns',
+  'sources.actions': 'Actions for the source {name}',
+  'sources.inUse': 'To delete it, first remove it from its formats.',
+  'sources.deleteTitle': 'Delete the source "{name}"?',
+  'sources.deleteText': 'This source feeds no format, so no format changes. You can teach it again any time.',
+  'sources.deleteConfirm': 'Delete source',
+  'sources.deleteFailed': "We couldn't delete the source. Try again.",
 
   // ----- one format and its sources -----
   'format.back': 'All formats',
@@ -70,7 +87,7 @@ export const formatsEn = {
   'format.source.renameLabel': 'Source name',
   'format.source.delete': 'Delete source',
   'format.source.deleteTitle': 'Delete the source "{name}"?',
-  'format.source.deleteText': 'The format and its other sources stay.',
+  'format.source.deleteText': 'The format and its other sources stay. The source itself stays in your sources, and so does every other format it feeds.',
   'format.source.deleteConfirm': 'Delete source',
   'format.source.edit': 'Edit rules',
   'format.source.changed': 'The format changed since the last run.',
@@ -103,6 +120,10 @@ export const formatsEn = {
   'edit.needsReview.one': '1 source needs review',
   'edit.needsReview.other': '{n} sources need review',
   'edit.needsReview.text': 'Their columns no longer line up with the format. Open each one and check its rules:',
+  'edit.needsReview.sourceText': 'Their rules no longer line up with the changed source. Open each one and check its rules:',
+  'edit.sourceChange.done.none': 'The source changed. It does not feed any other format.',
+  'edit.sourceChange.done.one': 'The source changed, and the change reached 1 other format it feeds.',
+  'edit.sourceChange.done.other': 'The source changed, and the change reached {n} other formats it feeds.',
 
   // ----- versions -----
   'versions.title': 'Versions',
@@ -119,13 +140,19 @@ export const formatsEn = {
 
   // ----- adding a source (flow A2, SPEC 5) -----
   'add.title': 'Add a source to "{name}"',
-  'add.lead': 'Name the source, then drop its input file and an output you made from it by hand. The output must match the format.',
+  'add.lead': 'Say which source this is, then drop its input file and an output you made from it by hand. The output must match the format.',
+  'add.source.label': 'Which source is this file?',
+  'add.source.auto': 'Detect automatically: reuse a matching source, or create a new one',
+  'add.source.new': 'A new source…',
+  'add.source.feedsThis': '{name} (already feeds this format)',
   'add.sourceName': 'Source name',
   'add.sourceNameHint': 'For example the supplier or client this file comes from.',
+  'add.sourceNameOptional': 'Only used if a new source is created. Leave it empty and we will name it for you.',
   'add.formatIs': 'The format is {n} columns in this order:',
   'add.learn': 'Learn this source',
   'add.checking': 'Reading the output…',
   'add.needFiles': 'Add the input, the output and a name to continue.',
+  'add.needFiles.noName': 'Add the input and the output to continue.',
   'add.mismatch.title': "This output doesn't match the format",
   'add.mismatch.file': 'The format is {expected}, and this output is {actual}.',
   'add.mismatch.count': 'The format has {expected} columns and this output has {actual}.',
@@ -134,6 +161,7 @@ export const formatsEn = {
   'add.mismatch.extra': 'Column {n}: this output has "{actual}", which is not in the format.',
   'add.mismatch.todo': "Change the output file so its columns are the format's, in the same order, then drop it again.",
   'add.saveMismatch.title': 'This source does not reproduce the format',
+  'add.saveSourceMismatch.title': "This file doesn't fit the source you chose",
   'add.save': 'Add source and download',
   'add.saved': 'Added "{source}" to "{format}". Your file is downloading.',
   'add.changeFiles': 'Choose other files',
@@ -141,6 +169,7 @@ export const formatsEn = {
   'add.type.csv': 'a CSV file',
   'add.type.txt': 'a text file',
   'add.fromMatch': 'We filled in the files from the format you just learned.',
+  'save.sourceReused': 'Reused your source {source}.',
 } as const satisfies Record<string, string>;
 
 export const formatsHe: Record<keyof typeof formatsEn, string> = {
@@ -189,11 +218,27 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'formats.renameFailed': 'לא הצלחנו לשנות את השם. נסו שוב.',
   'formats.deleteTitle': 'למחוק את "{name}"?',
   'formats.deleteText.none': 'זה מוחק את הפורמט. זה פותח מקום לפורמט שמור נוסף, אבל לא מחזיר פורמטים עם AI שכבר ניצלתם.',
-  'formats.deleteText.one': 'זה מוחק את הפורמט ואת המקור שלו. זה פותח מקום לפורמט שמור נוסף, אבל לא מחזיר פורמטים עם AI שכבר ניצלתם.',
-  'formats.deleteText.other': 'זה מוחק את הפורמט ואת {n} המקורות שלו. זה פותח מקום לפורמט שמור נוסף, אבל לא מחזיר פורמטים עם AI שכבר ניצלתם.',
+  'formats.deleteText.one': 'זה מוחק את הפורמט. המקור שלו נשאר ברשימת המקורות שלכם. זה פותח מקום לפורמט שמור נוסף, אבל לא מחזיר פורמטים עם AI שכבר ניצלתם.',
+  'formats.deleteText.other': 'זה מוחק את הפורמט. {n} המקורות שלו נשארים ברשימת המקורות שלכם. זה פותח מקום לפורמט שמור נוסף, אבל לא מחזיר פורמטים עם AI שכבר ניצלתם.',
   'formats.deleteConfirm': 'מחיקת הפורמט',
   'formats.deleteCancel': 'להשאיר אותו',
   'formats.deleteFailed': 'לא הצלחנו למחוק. נסו שוב.',
+  'formats.alsoFeeds': 'מזין גם: {names}',
+
+  'sources.title': 'מקורות',
+  'sources.lead': 'כל סוג של קובץ נכנס שלימדתם. מקור אחד יכול להזין כמה פורמטים.',
+  'sources.loadFailed': 'לא הצלחנו לטעון את המקורות שלכם.',
+  'sources.feeds.none': 'עוד לא מזין פורמט',
+  'sources.feeds.one': 'מזין פורמט אחד',
+  'sources.feeds.other': 'מזין {n} פורמטים',
+  'sources.columns.one': 'עמודה אחת',
+  'sources.columns.other': '{n} עמודות',
+  'sources.actions': 'פעולות עבור המקור {name}',
+  'sources.inUse': 'כדי למחוק אותו, קודם הסירו אותו מהפורמטים שלו.',
+  'sources.deleteTitle': 'למחוק את המקור "{name}"?',
+  'sources.deleteText': 'המקור הזה לא מזין אף פורמט, ולכן שום פורמט לא ישתנה. אפשר ללמד אותו שוב בכל עת.',
+  'sources.deleteConfirm': 'מחיקת המקור',
+  'sources.deleteFailed': 'לא הצלחנו למחוק את המקור. נסו שוב.',
 
   'format.back': 'כל הפורמטים',
   'format.summary': '{columns} עמודות · קובץ {type}',
@@ -207,7 +252,7 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'format.source.renameLabel': 'שם המקור',
   'format.source.delete': 'מחיקת המקור',
   'format.source.deleteTitle': 'למחוק את המקור "{name}"?',
-  'format.source.deleteText': 'הפורמט והמקורות האחרים שלו נשארים.',
+  'format.source.deleteText': 'הפורמט והמקורות האחרים שלו נשארים. המקור עצמו נשאר ברשימת המקורות שלכם, וכך גם כל פורמט אחר שהוא מזין.',
   'format.source.deleteConfirm': 'מחיקת המקור',
   'format.source.edit': 'עריכת כללים',
   'format.source.changed': 'הפורמט השתנה מאז ההרצה האחרונה.',
@@ -238,6 +283,10 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'edit.needsReview.one': 'מקור אחד דורש בדיקה',
   'edit.needsReview.other': '{n} מקורות דורשים בדיקה',
   'edit.needsReview.text': 'העמודות שלהם כבר לא מתאימות לפורמט. פתחו כל אחד ובדקו את הכללים שלו:',
+  'edit.needsReview.sourceText': 'הכללים שלהם כבר לא מתאימים למקור ששונה. פתחו כל אחד ובדקו את הכללים שלו:',
+  'edit.sourceChange.done.none': 'המקור השתנה. הוא לא מזין פורמט אחר.',
+  'edit.sourceChange.done.one': 'המקור השתנה, והשינוי הגיע לפורמט אחד נוסף שהוא מזין.',
+  'edit.sourceChange.done.other': 'המקור השתנה, והשינוי הגיע ל-{n} פורמטים נוספים שהוא מזין.',
 
   'versions.title': 'גרסאות',
   'versions.lead': 'כל שמירה משאירה את הגרסה שלפניה. שחזור גרסה שומר אותה כגרסה חדשה.',
@@ -252,13 +301,19 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'versions.none': 'עד עכשיו יש רק את הגרסה הנוכחית.',
 
   'add.title': 'הוספת מקור אל "{name}"',
-  'add.lead': 'תנו שם למקור, ואז העלו את קובץ הקלט שלו ופלט שיצרתם ממנו ביד. הפלט חייב להתאים לפורמט.',
+  'add.lead': 'אמרו לאיזה מקור הקובץ שייך, ואז העלו את קובץ הקלט שלו ופלט שיצרתם ממנו ביד. הפלט חייב להתאים לפורמט.',
+  'add.source.label': 'לאיזה מקור שייך הקובץ הזה?',
+  'add.source.auto': 'זיהוי אוטומטי: שימוש במקור קיים שמתאים, או יצירת מקור חדש',
+  'add.source.new': 'מקור חדש…',
+  'add.source.feedsThis': '{name} (כבר מזין את הפורמט הזה)',
   'add.sourceName': 'שם המקור',
   'add.sourceNameHint': 'למשל הספק או הלקוח שממנו הקובץ מגיע.',
+  'add.sourceNameOptional': 'משמש רק אם נוצר מקור חדש. השאירו ריק ונבחר שם בשבילכם.',
   'add.formatIs': 'הפורמט הוא {n} עמודות בסדר הזה:',
   'add.learn': 'ללמוד את המקור הזה',
   'add.checking': 'קוראים את הפלט…',
   'add.needFiles': 'הוסיפו את הקלט, את הפלט ושם כדי להמשיך.',
+  'add.needFiles.noName': 'הוסיפו את הקלט ואת הפלט כדי להמשיך.',
   'add.mismatch.title': 'הפלט הזה לא תואם לפורמט',
   'add.mismatch.file': 'הפורמט הוא קובץ {expected}, והפלט הזה הוא קובץ {actual}.',
   'add.mismatch.count': 'בפורמט יש {expected} עמודות ובפלט הזה יש {actual}.',
@@ -267,6 +322,7 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'add.mismatch.extra': 'עמודה {n}: בפלט הזה יש "{actual}", שלא קיימת בפורמט.',
   'add.mismatch.todo': 'שנו את קובץ הפלט כך שהעמודות שלו יהיו של הפורמט, באותו סדר, ואז העלו אותו שוב.',
   'add.saveMismatch.title': 'המקור הזה לא משחזר את הפורמט',
+  'add.saveSourceMismatch.title': 'הקובץ הזה לא מתאים למקור שבחרתם',
   'add.save': 'הוספת המקור והורדה',
   'add.saved': 'המקור "{source}" נוסף אל "{format}". הקובץ שלכם יורד.',
   'add.changeFiles': 'בחירת קבצים אחרים',
@@ -274,4 +330,5 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'add.type.csv': 'CSV',
   'add.type.txt': 'טקסט',
   'add.fromMatch': 'מילאנו את הקבצים מהפורמט שזה עתה למדתם.',
+  'save.sourceReused': 'השתמשנו במקור הקיים שלכם: {source}.',
 };

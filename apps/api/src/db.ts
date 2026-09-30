@@ -11,6 +11,7 @@ import type {
   LearnCacheDoc,
   LlmCallDoc,
   SessionDoc,
+  SourceDoc,
   UsageCounterDoc,
   UserDoc,
   WaitlistDoc,
@@ -23,6 +24,7 @@ export interface AppDb {
   sessions: Collection<SessionDoc>;
   formats: Collection<FormatDoc>;
   conversions: Collection<ConversionDoc>;
+  sources: Collection<SourceDoc>;
   events: Collection<EventDoc>;
   llmCalls: Collection<LlmCallDoc>;
   usageCounters: Collection<UsageCounterDoc>;
@@ -54,6 +56,7 @@ export async function connectDb(env: Env): Promise<AppDb | null> {
     sessions: db.collection<SessionDoc>('sessions'),
     formats: db.collection<FormatDoc>('formats'),
     conversions: db.collection<ConversionDoc>('conversions'),
+    sources: db.collection<SourceDoc>('sources'),
     events: db.collection<EventDoc>('events'),
     llmCalls: db.collection<LlmCallDoc>('llm_calls'),
     usageCounters: db.collection<UsageCounterDoc>('usage_counters'),
@@ -78,6 +81,11 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
     appDb.formats.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'formats_ownerId_createdAt' }),
     appDb.conversions.createIndex({ ownerId: 1, formatId: 1 }, { name: 'conversions_ownerId_formatId' }),
     appDb.conversions.createIndex({ formatId: 1, createdAt: -1 }, { name: 'conversions_formatId_createdAt' }),
+    // SPEC 8.15/13: a source's conversions, and the owner's sources; names are unique per owner, case-insensitively
+    // (the `nameKey` field holds the normalized name).
+    appDb.conversions.createIndex({ ownerId: 1, sourceId: 1 }, { name: 'conversions_ownerId_sourceId' }),
+    appDb.sources.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'sources_ownerId_createdAt' }),
+    appDb.sources.createIndex({ ownerId: 1, nameKey: 1 }, { unique: true, name: 'sources_ownerId_nameKey_unique' }),
     appDb.events.createIndex({ ts: 1 }, { name: 'events_ts' }),
     appDb.events.createIndex({ type: 1, ts: 1 }, { name: 'events_type_ts' }),
     appDb.events.createIndex({ userId: 1 }, { name: 'events_userId' }),

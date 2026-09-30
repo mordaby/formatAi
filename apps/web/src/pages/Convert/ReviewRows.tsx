@@ -1,4 +1,5 @@
-// The review before the file is written (SPEC 21 v5 item 5, issue #36). Flagged rows are shown BEFORE the output exists;
+// The review before the file is written (SPEC 21 v5 item 5, issue #36). Flagged rows are shown BEFORE the output exists (when a
+// source feeds several formats, each format has its own review and this says which one it is);
 // for each the user picks: change the rule (the source's rules editor, then convert again), fix this row only (a one-off
 // value edit, never saved to the rules), skip it, or keep it as it is. The engine applies these per-run decisions
 // without touching the saved rules and lists them in the run summary.
@@ -10,10 +11,12 @@ import { useI18n } from '../../i18n';
 import type { RowInputCell } from '../../worker/convertApi';
 import { Badge, Button, Icon } from '../../ui';
 import { columnLabel, fixFields, isolate, tally, type Choices, type ReviewRow, type RowChoice } from './logic';
-import type { Target } from './useConvertFlow';
+import type { Step, Target } from './useConvertFlow';
 
 export interface ReviewRowsProps {
   target: Target;
+  /** "Format 2 of 3": set when the file is being made into several formats. */
+  step: Step | null;
   rows: readonly ReviewRow[];
   rowInputs: Record<number, RowInputCell[]>;
   choices: Choices;
@@ -25,7 +28,7 @@ export interface ReviewRowsProps {
   onCreate(): void;
 }
 
-export function ReviewRows({ target, rows, rowInputs, choices, onChoice, onKeepAll, onSkipAll, onClear, onChangeRule, onCreate }: ReviewRowsProps) {
+export function ReviewRows({ target, step, rows, rowInputs, choices, onChoice, onKeepAll, onSkipAll, onClear, onChangeRule, onCreate }: ReviewRowsProps) {
   const { t, lang } = useI18n();
   const [fixing, setFixing] = useState<number | null>(null);
   const nf = new Intl.NumberFormat(lang);
@@ -35,6 +38,11 @@ export function ReviewRows({ target, rows, rowInputs, choices, onChoice, onKeepA
   return (
     <section className="conv__step" aria-labelledby="conv-review-title" data-testid="review">
       <header className="conv__head">
+        {step ? (
+          <p className="conv__stepno" data-testid="review-step">
+            {t('conv.review.for', { n: nf.format(step.n), total: nf.format(step.total), format: isolate(target.formatName) })}
+          </p>
+        ) : null}
         <h2 id="conv-review-title">{t('conv.review.title')}</h2>
         <p className="lead" data-testid="review-count">
           {t(rows.length === 1 ? 'conv.review.lead.one' : 'conv.review.lead.other', { n: nf.format(rows.length) })}

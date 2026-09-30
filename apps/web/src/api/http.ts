@@ -4,7 +4,7 @@
 //
 // SPEC 2/15: the only bodies ever sent are JSON (the learn payload, rules, names). There is deliberately no
 // method that takes a File or a Blob.
-import { API_ERROR_CODES, LIMIT_CODES, type AiLearnPeriod, type ApiErrorBody, type ApiErrorCode, type LimitCode, type RepairProblem } from '@formatai/shared';
+import { API_ERROR_CODES, LIMIT_CODES, type AiLearnPeriod, type ApiErrorBody, type ApiErrorCode, type ApiProblem, type LimitCode } from '@formatai/shared';
 import { webConfig } from '../config';
 
 /** Errors the client itself derives (no usable API error body): no connection, a 5xx, a 413, anything else. */
@@ -16,7 +16,7 @@ export interface ApiErrorExtra {
   retryAfterSec?: number | undefined;
   period?: AiLearnPeriod | undefined;
   counted?: boolean | undefined;
-  problems?: RepairProblem[] | undefined;
+  problems?: ApiProblem[] | undefined;
 }
 
 /** Every failed API call rejects with one of these; branch on `code`, never on the message. */
@@ -32,8 +32,8 @@ export class ApiError extends Error {
   readonly period: AiLearnPeriod | undefined;
   /** `aiAttemptsExhausted`: whether that answer counted the example pair as one AI learn. */
   readonly counted: boolean | undefined;
-  /** `invalidRules` / `formatMismatch`: what failed. */
-  readonly problems: RepairProblem[] | undefined;
+  /** `invalidRules` / `formatMismatch` / `sourceMismatch`: what failed (SPEC 8.15: the source lock's findings too). */
+  readonly problems: ApiProblem[] | undefined;
 
   constructor(code: ApiFailureCode, status: number, extra: ApiErrorExtra = {}) {
     super(`API error: ${code}${status ? ` (HTTP ${status})` : ''}`);

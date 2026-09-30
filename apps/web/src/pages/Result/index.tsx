@@ -18,6 +18,7 @@ import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Button, InlineMessage } from '../../ui';
 import type { LearnOutput } from '../../worker/engineApi';
+import { isolate } from '../Convert/logic';
 import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
 import { Versions } from '../Format/Versions';
 import { PartialBanner, PartialSignInDialog } from './PartialResult';
@@ -118,6 +119,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     const file = session.input;
     if (!info.metaStatus || !file) return;
     const learnPath = result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
+    // SPEC 8.15 "Saving": the server looks for one of the caller's sources this example input matches and reuses it. What it matches on is the
+    // example input's HEADERS (structure only - the file and its values never leave the computer); the rules alone would give a subset.
+    const inputHeaders = result.exampleInput?.map((c) => c.header);
     const body: CreateFormatRequest = {
       name,
       rules: info.rules,
@@ -126,6 +130,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       exampleExceptions: info.exceptions,
       learnPath,
       masking: session.masking,
+      ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
       ...(learnPath === 'local' ? {} : { promptVersion }),
     };
     void save.run({
@@ -247,7 +252,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       {/* What the first save said, until a later save has something to say. */}
       {!laterSave && save.state.status === 'saved' && (
         <InlineMessage tone="info" actions={<Link to="/formats">{t('save.viewFormats')}</Link>}>
-          {t('save.done', { name })}
+          <p>{t('save.done', { name })}</p>
+          {/* When the example input matched a source the company already has, it was reused instead of creating a new one (SPEC 8.15). */}
+          {save.state.value.sourceReused && <p data-testid="source-reused">{t('save.sourceReused', { source: isolate(save.state.value.sourceReused.name) })}</p>}
         </InlineMessage>
       )}
       {!laterSave && save.state.status === 'error' && <SaveFailureMessage failure={save.state.error} onSignIn={() => signIn.open('save')} />}

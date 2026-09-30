@@ -136,6 +136,10 @@ export const limits = {
     maxExampleExceptions: 5_000,
     /** Formats one list call returns. */
     maxFormatsListed: 500,
+    /** Sources one list call returns. */
+    maxSourcesListed: 500,
+    /** Headers of an example input a save may send to be matched against the owner's sources (SPEC 8.15; structure only). */
+    maxInputHeaders: 500,
   },
   /**
    * SPEC 8.12 / DECISION 10: matching a file to a conversion, in the browser.

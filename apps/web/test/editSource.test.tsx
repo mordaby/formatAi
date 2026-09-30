@@ -174,6 +174,77 @@ describe('an edit that changes the format (the output side)', () => {
     expect(within(notice).getByRole('link', { name: 'Supplier C' }).getAttribute('href')).toBe('/formats/F1/sources/C3');
   });
 
+  describe('an edit of the input side is an edit of the SOURCE (SPEC 8.15)', () => {
+    /** Adds a filter (any edit will do: the server decides what it changed) and saves it. */
+    async function saveAnEdit(updateConversion: ReturnType<typeof vi.fn>) {
+      const ctx = await openEditor(apiFor({ updateConversion }));
+      fireEvent.click(screen.getByRole('button', { name: 'Add a filter' }));
+      await waitFor(() => expect(line('filter:2')).toBeTruthy());
+      await waitFor(() => expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      return ctx;
+    }
+
+    it('says the change also reached the source\'s other formats, and never runs the source lock in the browser (it is a source edit, not a rejection)', async () => {
+      const updateConversion = vi.fn(async () => ({ conversion: conversionSummary({ id: 'C1', version: 5 }), formatChanged: false, affectedSources: 0, needsReview: [], sourceChanged: true, affectedConversions: 2 }));
+      const { engine } = await saveAnEdit(updateConversion);
+      expect(await screen.findByText('The source changed, and the change reached 2 other formats it feeds.')).toBeTruthy();
+      // (said once, and nothing about the format: only the input side changed)
+      expect(screen.queryByText(/The format changed/)).toBeNull();
+      const asked = (engine.staticChecks as ReturnType<typeof vi.fn>).mock.calls as unknown as [unknown, Record<string, unknown>][];
+      expect(asked.length).toBeGreaterThan(0);
+      for (const [, options] of asked) expect(options).not.toHaveProperty('source');
+    });
+
+    it('says it for one other format, and for none', async () => {
+      const one = vi.fn(async () => ({ conversion: conversionSummary({ id: 'C1', version: 5 }), formatChanged: false, affectedSources: 0, needsReview: [], sourceChanged: true, affectedConversions: 1 }));
+      await saveAnEdit(one);
+      expect(await screen.findByText('The source changed, and the change reached 1 other format it feeds.')).toBeTruthy();
+      cleanup();
+
+      const none = vi.fn(async () => ({ conversion: conversionSummary({ id: 'C1', version: 5 }), formatChanged: false, affectedSources: 0, needsReview: [], sourceChanged: true, affectedConversions: 0 }));
+      await saveAnEdit(none);
+      expect(await screen.findByText('The source changed. It does not feed any other format.')).toBeTruthy();
+    });
+
+    it('lists what needs review across formats: each a link to ITS format\'s editor, with the format\'s name next to the source\'s', async () => {
+      const updateConversion = vi.fn(async () => ({
+        conversion: conversionSummary({ id: 'C1', version: 5 }),
+        formatChanged: false,
+        affectedSources: 0,
+        sourceChanged: true,
+        affectedConversions: 2,
+        needsReview: [
+          { id: 'C8', sourceName: 'Supplier A', formatId: 'F9', formatName: 'Contacts export' },
+          { id: 'C2', sourceName: 'Supplier A', formatId: 'F1', formatName: 'Orders report' },
+          { id: 'C3', sourceName: 'Supplier C' },
+        ],
+      }));
+      await saveAnEdit(updateConversion);
+      const notice = await screen.findByTestId('saved-notice');
+      expect(within(notice).getByText('3 sources need review')).toBeTruthy();
+      // The reason is the source, not the format.
+      expect(within(notice).getByText(/Their rules no longer line up with the changed source/)).toBeTruthy();
+      const links = within(notice).getAllByRole('link');
+      expect(links.map((a) => a.getAttribute('href'))).toEqual(['/formats/F9/sources/C8', '/formats/F1/sources/C2', '/formats/F1/sources/C3']);
+      const items = within(notice).getAllByRole('listitem');
+      expect(items[0]!.textContent).toBe('Supplier A · Contacts export');
+      expect(items[2]!.textContent).toBe('Supplier C');
+    });
+
+    it('says it in Hebrew', async () => {
+      const updateConversion = vi.fn(async () => ({ conversion: conversionSummary({ id: 'C1', version: 5 }), formatChanged: false, affectedSources: 0, needsReview: [], sourceChanged: true, affectedConversions: 2 }));
+      renderApp({ api: apiFor({ updateConversion }), route: ROUTE, lang: 'he' });
+      await screen.findByTestId('rules-map');
+      await waitFor(() => expect(screen.getByTestId('live-check-text')).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: 'הוספת מסנן' }));
+      await waitFor(() => expect(line('filter:2')).toBeTruthy());
+      await waitFor(() => expect((screen.getByRole('button', { name: 'שמירת השינויים' }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole('button', { name: 'שמירת השינויים' }));
+      expect(await screen.findByText('המקור השתנה, והשינוי הגיע ל-2 פורמטים נוספים שהוא מזין.')).toBeTruthy();
+    });
+  });
+
   it('an edit that keeps to the source (a new filter) has no format warning, and says nothing about other sources afterwards', async () => {
     const updateConversion = vi.fn(async () => ({ conversion: conversionSummary({ id: 'C1', version: 5 }), formatChanged: false, affectedSources: 0, needsReview: [] }));
     await openEditor(apiFor({ updateConversion }));

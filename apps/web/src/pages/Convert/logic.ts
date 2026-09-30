@@ -1,9 +1,9 @@
 // The pure parts of "convert a file" (SPEC 5 C, 21 v5 item 5): which rows need a look, what the user chose for each,
 // the RowDecisions those choices become, and the counts a finished run reports. No React, no worker: easy to test.
 import type { ConversionMatch, Flag, RowDecisions, RunSummary } from '@formatai/engine';
-import type { LearnResult, Rules } from '@formatai/shared';
+import type { LearnResult, Rules, SignatureEntry } from '@formatai/shared';
 import type { MessageKey } from '../../i18n';
-import type { RowInputCell } from '../../worker/convertApi';
+import type { RowInputCell, SignatureInput } from '../../worker/convertApi';
 
 // ---------- rows to review ----------
 
@@ -113,6 +113,31 @@ export function runCounts(summary: RunSummary, flags: readonly Flag[]): { rows: 
   return { rows: summary.rowsIn, flagged: flaggedRowCount(flags) };
 }
 
+// ---------- sources and the formats they feed (SPEC 8.15) ----------
+
+/**
+ * The sources a page may run: every source that feeds at least one format (one with no conversion yet cannot run anything),
+ * each with only the conversions this page may use - all of them, or, on `/convert?format=<id>`, the one that makes that format.
+ */
+export function scopeSources(entries: readonly SignatureEntry[], formatId: string | null): SignatureEntry[] {
+  return entries.flatMap((e) => {
+    const conversions = e.conversions.filter((c) => formatId === null || c.formatId === formatId);
+    return conversions.length > 0 ? [{ ...e, conversions }] : [];
+  });
+}
+
+/** What the worker's matcher takes: one signature per SOURCE (its id stands in for the "conversion id" the engine names it by). */
+export function signatureOf(e: SignatureEntry): SignatureInput {
+  return { id: e.sourceId, name: e.name, columns: e.columns };
+}
+
+/** The name of a file without its folder and extension ("Payments.xlsx" -> "Payments"). */
+export function baseName(fileName: string): string {
+  const stem = fileName.split(/[/\\]/).pop() ?? fileName;
+  const dot = stem.lastIndexOf('.');
+  return (dot > 0 ? stem.slice(0, dot) : stem) || 'output';
+}
+
 // ---------- matching, in plain words ----------
 
 /** "Almost every column matches" and so on: the score (SPEC 8.12) said in words; the percentage goes next to it. */
@@ -123,14 +148,36 @@ export function matchWords(score: number): MessageKey {
   return 'conv.match.faint';
 }
 
-/** In-memory copy of the rules with each confirmed rename added as an alias of its column (the saved rules are not touched). */
+/**
+ * A header compared the way the engine's third matching step does, in the small: NFC, trimmed, lower-case. (The main thread
+ * cannot load the engine at run time - it runs in the worker - so this is a local, deliberately simple copy.)
+ */
+export function normalizeHeader(header: string): string {
+  return header.normalize('NFC').trim().toLowerCase();
+}
+
+/** The mapping key (a header of the SOURCE) that names this conversion's declared column: exact first, then normalized. */
+function mappingKeyFor(header: string, keys: readonly string[]): string | undefined {
+  if (keys.includes(header)) return header;
+  const wanted = normalizeHeader(header);
+  return wanted === '' ? undefined : keys.find((k) => normalizeHeader(k) === wanted);
+}
+
+/**
+ * In-memory copy of the rules with each confirmed rename added as an alias of its column (the saved rules are not touched).
+ * The mapping is keyed by the SOURCE's header (SPEC 8.15: the rename is one fact about the source); it is applied to every
+ * conversion of that source that runs, finding each one's declared column by exact header, then by the normalized header.
+ */
 export function withAliases<R extends LearnResult | Rules>(rules: R, mapping: Readonly<Record<string, string>>): R {
+  const keys = Object.keys(mapping);
+  if (keys.length === 0) return rules;
   return {
     ...rules,
     input: {
       ...rules.input,
       columns: rules.input.columns.map((c) => {
-        const alias = mapping[c.header];
+        const key = mappingKeyFor(c.header, keys);
+        const alias = key === undefined ? undefined : mapping[key];
         return alias === undefined || (c.aliases ?? []).includes(alias) ? c : { ...c, aliases: [...(c.aliases ?? []), alias] };
       }),
     },

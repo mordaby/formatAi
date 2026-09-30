@@ -1,22 +1,26 @@
-// The renamed-columns step (SPEC 5 C): a required column the file doesn't have under its usual name, and columns of the
-// file that nothing claimed. The user says which is which (suggestions first); "remember this" saves each answer as an alias.
+// The renamed-columns step (SPEC 5 C, 8.15): a required column the file doesn't have under its usual name, and columns of the
+// file that nothing claimed. The user says which is which (suggestions first); "remember this" saves each answer once, as an
+// alias on the SOURCE. It is asked once per source, so it lists every format the change affects.
 import type { ConversionMatch } from '@formatai/engine';
 import { useId, useState } from 'react';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { Button } from '../../ui';
+import { FormatChips } from './FormatChips';
 import { isolate, mappingOptions } from './logic';
 
 const NONE = '__none__';
 
 export interface MapColumnsProps {
   sourceName: string;
+  /** The names of every format this source feeds (in scope): all of them are affected by the renamed column. */
+  formats: readonly string[];
   match: ConversionMatch;
   onSubmit(mapping: Record<string, string | null>, remember: boolean): void;
   onCancel(): void;
 }
 
-export function MapColumns({ sourceName, match, onSubmit, onCancel }: MapColumnsProps) {
+export function MapColumns({ sourceName, formats, match, onSubmit, onCancel }: MapColumnsProps) {
   const { t } = useI18n();
   const id = useId();
   const required = match.missingRequired;
@@ -46,6 +50,7 @@ export function MapColumns({ sourceName, match, onSubmit, onCancel }: MapColumns
     <section className="conv__step" aria-labelledby={`${id}-title`} data-testid="map-columns">
       <h2 id={`${id}-title`}>{t('conv.map.title')}</h2>
       <p className="lead">{t(required.length === 1 ? 'conv.map.lead.one' : 'conv.map.lead.other', { source: isolate(sourceName), count: required.length })}</p>
+      <FormatChips label="conv.affects" formats={formats} testId="affected-formats" />
       <div className="mapping">
         {required.map((header) => {
           const { suggested, others } = mappingOptions(match, header);
@@ -93,7 +98,7 @@ export function MapColumns({ sourceName, match, onSubmit, onCancel }: MapColumns
         <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
         <span>
           {t('conv.map.remember')}
-          <span className="field__hint"> {t('conv.map.remember.hint')}</span>
+          <span className="field__hint"> {t(formats.length > 1 ? 'conv.map.remember.hint.all' : 'conv.map.remember.hint', { n: formats.length })}</span>
         </span>
       </label>
       <div className="conv__actions">

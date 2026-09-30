@@ -71,14 +71,17 @@
 .src__name {
   font-weight: 500;
 }
-.src__arrow {
-  display: inline-block;
-  color: var(--ink-2);
-  font-weight: 400;
-  white-space: pre;
+/* The formats a source feeds (SPEC 8.15): a label and neutral chips - the amber chips are for missing columns. */
+.src__formats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
 }
-[dir='rtl'] .src__arrow {
-  transform: scaleX(-1);
+.chips.chips--plain li {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink);
 }
 .src__missing {
   display: flex;
@@ -86,6 +89,33 @@
   align-items: center;
   gap: var(--s-2);
   margin-block-start: var(--s-1);
+}
+
+/* ---------- a source that feeds several formats: which to make ---------- */
+.fmts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.fmts__all {
+  font-weight: 500;
+}
+.fmts__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding-inline-start: var(--s-5);
+}
+.conv__stepno {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  font-weight: 500;
 }
 
 /* ---------- renamed columns ---------- */

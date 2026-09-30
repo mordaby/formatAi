@@ -1,10 +1,12 @@
-// Convert a file (SPEC 5 C, 16.1 screen 6): drop a file, we find which saved source it is, run it in the worker, let the user
-// decide about flagged rows BEFORE the file is written (SPEC 21 v5 item 5), then download it. No LLM call, no upload.
+// Convert a file (SPEC 5 C, 8.15, 16.1 screen 6): drop a file, we find which saved source it is, run its conversion(s) in the
+// worker (a source that feeds several formats asks which), let the user decide about flagged rows BEFORE each file is written
+// (SPEC 21 v5 item 5), then download it (or all of them in a zip). No LLM call, no upload.
 import { tiers, type Tier } from '@formatai/shared';
 import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useI18n } from '../../i18n';
 import { Button, DropZone, Icon, InlineMessage, Spinner } from '../../ui';
+import { ChooseFormats } from './ChooseFormats';
 import { ChooseSource } from './ChooseSource';
 import { convertErrorText } from './errors';
 import { AccountGate } from './Gate';
@@ -13,11 +15,17 @@ import { MapColumns } from './MapColumns';
 import { MissingColumns } from './MissingColumns';
 import { ReviewRows } from './ReviewRows';
 import { RunDone } from './RunDone';
+import { RunResults } from './RunResults';
 import { editSourceUrl } from './session';
-import { useConvertFlow, type Phase } from './useConvertFlow';
+import { useConvertFlow, type Phase, type Target } from './useConvertFlow';
 
 /** Phases where the dropped file is still just a file (the user may swap it); later the file is context. */
 const SHOWS_DROP: ReadonlySet<Phase['kind']> = new Set(['idle', 'matching', 'choose', 'noMatch', 'missing', 'running', 'error']);
+
+/** The conversion a phase is working on, when it has one (the "Matched to X of Y" line). */
+function targetOf(phase: Phase): Target | null {
+  return phase.kind === 'running' || phase.kind === 'review' || phase.kind === 'writing' ? phase.target : null;
+}
 
 export default function ConvertPage() {
   const { t } = useI18n();
@@ -58,8 +66,10 @@ function ConvertTool({ tier }: { tier: Tier }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantsResume, sources.status]);
 
-  const entries = sources.status === 'ready' ? sources.entries.filter((e) => formatId === null || e.formatId === formatId) : [];
-  const restrictedName = formatId ? sources.status === 'ready' ? sources.entries.find((e) => e.formatId === formatId)?.formatName : undefined : undefined;
+  // Only sources that feed a format can run; on `?format=`, only that format's conversion of them (SPEC 8.15).
+  const { entries } = flow;
+  const restrictedName = formatId && sources.status === 'ready' ? sources.entries.flatMap((e) => e.conversions).find((c) => c.formatId === formatId)?.formatName : undefined;
+  const target = targetOf(phase);
 
   const changeRule = (): void => {
     if (phase.kind !== 'review') return;
@@ -117,9 +127,13 @@ function ConvertTool({ tier }: { tier: Tier }) {
             <Icon name="file" size={16} /> {t('conv.file', { name: isolate(flow.file.name) })}
           </p>
         ) : null}
-        {'target' in phase && phase.kind !== 'done' ? (
+        {target ? (
           <p className="muted conv__target" data-testid="target-line">
-            {t('conv.match.auto', { source: isolate(phase.target.sourceName), format: isolate(phase.target.formatName) })}
+            {t('conv.match.auto', { source: isolate(target.sourceName), format: isolate(target.formatName) })}
+          </p>
+        ) : phase.kind === 'mapping' || phase.kind === 'missing' || phase.kind === 'formats' ? (
+          <p className="muted conv__target" data-testid="target-line">
+            {t('conv.match.source', { source: isolate(phase.source.name) })}
           </p>
         ) : null}
 
@@ -149,11 +163,17 @@ function ConvertTool({ tier }: { tier: Tier }) {
             {t('conv.noMatch.text')}
           </InlineMessage>
         ) : null}
-        {phase.kind === 'mapping' ? <MapColumns sourceName={phase.target.sourceName} match={phase.match} onSubmit={flow.submitMapping} onCancel={flow.reset} /> : null}
-        {phase.kind === 'missing' ? <MissingColumns sourceName={phase.target.sourceName} missing={phase.missing} onAnotherFile={flow.reset} /> : null}
+        {phase.kind === 'mapping' ? (
+          <MapColumns sourceName={phase.source.name} formats={phase.source.conversions.map((c) => c.formatName)} match={phase.match} onSubmit={flow.submitMapping} onCancel={flow.reset} />
+        ) : null}
+        {phase.kind === 'missing' ? (
+          <MissingColumns sourceName={phase.source.name} formats={phase.source.conversions.map((c) => c.formatName)} missing={phase.missing} onAnotherFile={flow.reset} />
+        ) : null}
+        {phase.kind === 'formats' ? <ChooseFormats source={phase.source} onContinue={flow.chooseFormats} onCancel={flow.reset} /> : null}
         {phase.kind === 'review' ? (
           <ReviewRows
             target={phase.target}
+            step={phase.step}
             rows={phase.rows}
             rowInputs={phase.rowInputs}
             choices={phase.choices}
@@ -166,6 +186,19 @@ function ConvertTool({ tier }: { tier: Tier }) {
           />
         ) : null}
         {phase.kind === 'done' ? <RunDone target={phase.target} finished={phase.finished} aliasNotSaved={flow.aliasNotSaved} onDownload={flow.download} onAnother={flow.reset} /> : null}
+        {phase.kind === 'results' ? (
+          <RunResults
+            sourceName={phase.source.name}
+            results={phase.results}
+            failed={phase.failed}
+            aliasNotSaved={flow.aliasNotSaved}
+            packing={flow.packing}
+            packError={flow.packError}
+            onDownloadOne={flow.downloadOne}
+            onDownloadAll={flow.downloadAll}
+            onAnother={flow.reset}
+          />
+        ) : null}
         {phase.kind === 'error' ? (
           <InlineMessage
             tone="error"

@@ -12,7 +12,7 @@ import { en, he, type Lang } from '../src/i18n';
 import { columnMismatches } from '../src/pages/Result/helpers';
 import { PreviewGrid } from '../src/pages/Result/PreviewGrid';
 import type { CellMismatch, PreviewRow } from '../src/worker/editorApi';
-import { conversionSummary, formatSummary } from './helpers/registryKit';
+import { conversionSummary, createFormatResponse, formatSummary } from './helpers/registryKit';
 import { fakeApi, liveResult, USER } from './helpers/renderApp';
 import { HEADERS, line, openLine, openResult, renderWith, setDiffering, strip } from './helpers/resultKit';
 
@@ -313,7 +313,7 @@ describe('after an edit', () => {
 describe('unsaved changes', () => {
   const SUMMARY = { rowsIn: 30, rowsOut: 30, rowsFiltered: 0, duplicatesRemoved: [], duplicatesFlagged: 0, blockedRows: [] };
   const converted = { ok: true, bytes: new ArrayBuffer(8), flags: [], summary: SUMMARY, preview: { name: 'Out', direction: 'ltr', language: 'en', columns: [], rows: [], merges: [] }, totalRows: 30 };
-  const created = { format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1' }) };
+  const created = createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1' }) });
 
   const rename = async (to = 'Grand total'): Promise<void> => {
     openLine('col:Total');

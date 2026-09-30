@@ -1,7 +1,9 @@
 // Shared pieces of the Convert and Batch tests: a small saved source (rules + signature), a fake ConvertApi that records
 // every call, a fake or real engine, and one `renderConvert` that puts a screen inside the providers it needs.
+// The API's GET /api/signatures gives ONE ENTRY PER SOURCE with the conversions (formats) it feeds (SPEC 8.15): `entry` builds a
+// source with one conversion from the per-conversion parameters, `sourceEntry` a source with several.
 import type { ConversionMatch } from '@formatai/engine';
-import { tiers, type ConversionDetail, type MeUser, type Rules, type SignatureEntry } from '@formatai/shared';
+import { tiers, type ConversionDetail, type ConversionStatus, type MeUser, type Rules, type SignatureColumn, type SignatureEntry, type SourceConversionRef } from '@formatai/shared';
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -52,19 +54,41 @@ export const SUPPLIER_A_CSV = 'Item Code,Qty,Price,Extra\n00001,5,10.5,x\n123,ab
 /** The same list, clean. */
 export const SUPPLIER_A_CLEAN_CSV = 'Item Code,Qty,Price,Extra\n00001,5,10.5,x\n00002,6,3,y\n00003,7,4,z\n';
 
-export function entry(over: Partial<SignatureEntry> & { conversionId: string }): SignatureEntry {
+/** Supplier A's signature: "Item Code" and "Qty" are required, "Price" is optional. */
+export const SUPPLIER_A_COLUMNS: SignatureColumn[] = [
+  { header: 'Item Code', aliases: [], type: 'idLike', required: true },
+  { header: 'Qty', aliases: [], type: 'integer', required: true },
+  { header: 'Price', aliases: [], type: 'decimal', required: false },
+];
+
+/** A source (one entry of GET /api/signatures) that feeds one or several formats. */
+export function sourceEntry(over: { sourceId: string; name?: string; columns?: SignatureColumn[]; conversions: (Partial<SourceConversionRef> & { conversionId: string })[] }): SignatureEntry {
   return {
-    formatId: 'F1',
-    formatName: 'Load file',
-    sourceName: 'Supplier A',
-    status: 'verified',
-    columns: [
-      { header: 'Item Code', aliases: [], type: 'idLike', required: true },
-      { header: 'Qty', aliases: [], type: 'integer', required: true },
-      { header: 'Price', aliases: [], type: 'decimal', required: false },
-    ],
-    ...over,
+    sourceId: over.sourceId,
+    name: over.name ?? 'Supplier A',
+    columns: over.columns ?? SUPPLIER_A_COLUMNS,
+    conversions: over.conversions.map((c) => ({ formatId: 'F1', formatName: 'Load file', status: 'verified' as ConversionStatus, ...c })),
   };
+}
+
+/**
+ * A source with ONE conversion, from the per-conversion parameters the tests were first written with: the source's id is the
+ * conversion id (unless `sourceId` says otherwise) and its name is `sourceName`.
+ */
+export function entry(over: { conversionId: string; sourceId?: string; sourceName?: string; formatId?: string; formatName?: string; status?: ConversionStatus; columns?: SignatureColumn[] }): SignatureEntry {
+  return sourceEntry({
+    sourceId: over.sourceId ?? over.conversionId,
+    name: over.sourceName ?? 'Supplier A',
+    ...(over.columns ? { columns: over.columns } : {}),
+    conversions: [
+      {
+        conversionId: over.conversionId,
+        ...(over.formatId ? { formatId: over.formatId } : {}),
+        ...(over.formatName ? { formatName: over.formatName } : {}),
+        ...(over.status ? { status: over.status } : {}),
+      },
+    ],
+  });
 }
 
 export function detail(over: Partial<ConversionDetail> & { id: string }, rules: Rules = RULES): ConversionDetail {
@@ -96,13 +120,17 @@ export const PAID: MeUser = { ...REGISTERED, tier: 'paid' };
 /** Every call is recorded (and can be given another answer). `user` is who is signed in: the app's `useMe()` reads it (see `renderConvert`). */
 export type FakeConvertApi = { [K in keyof ConvertApi]: Mock<ConvertApi[K]> } & { user: MeUser | null };
 
-export function fakeConvertApi(opts: { user?: MeUser | null; entries?: SignatureEntry[]; rules?: Rules } = {}): FakeConvertApi {
+export function fakeConvertApi(opts: { user?: MeUser | null; entries?: SignatureEntry[]; rules?: Rules; rulesById?: Record<string, Rules> } = {}): FakeConvertApi {
   const user = opts.user === undefined ? REGISTERED : opts.user;
   const entries = opts.entries ?? [entry({ conversionId: 'c1' })];
   return {
     user,
     signatures: vi.fn(async () => entries),
-    conversion: vi.fn(async (id: string) => detail({ id, sourceName: entries.find((e) => e.conversionId === id)?.sourceName ?? 'Supplier A' }, opts.rules ?? RULES)),
+    conversion: vi.fn(async (id: string) => {
+      const source = entries.find((e) => e.conversions.some((c) => c.conversionId === id));
+      const conv = source?.conversions.find((c) => c.conversionId === id);
+      return detail({ id, sourceName: source?.name ?? 'Supplier A', formatId: conv?.formatId ?? 'F1', ...(source ? { sourceId: source.sourceId } : {}) }, opts.rulesById?.[id] ?? opts.rules ?? RULES);
+    }),
     recordRun: vi.fn(async () => undefined),
     addAlias: vi.fn(async () => undefined),
   };

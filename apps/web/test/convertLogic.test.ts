@@ -1,8 +1,8 @@
 // The pure parts of convert: which rows need a look, the decisions the user's choices become, the counts a run reports.
 import type { Flag, RunSummary } from '@formatai/engine';
 import { describe, expect, it } from 'vitest';
-import { applyToAll, columnLabel, fixFields, flaggedRowCount, mappingOptions, matchWords, reviewRows, runCounts, tally, toRowDecisions, withAliases } from '../src/pages/Convert/logic';
-import { match, RULES } from './helpers/convertKit';
+import { applyToAll, baseName, columnLabel, fixFields, flaggedRowCount, mappingOptions, matchWords, normalizeHeader, reviewRows, runCounts, scopeSources, signatureOf, tally, toRowDecisions, withAliases } from '../src/pages/Convert/logic';
+import { entry, match, RULES, sourceEntry } from './helpers/convertKit';
 
 const flag = (rowNumber: number, column: string, extra: Partial<Flag> = {}): Flag => ({ rowNumber, column, rule: 'type', value: 'x', messageKey: 'flag.parseFailed.number', ...extra });
 const summary = (over: Partial<RunSummary> = {}): RunSummary => ({ rowsIn: 10, rowsOut: 9, rowsFiltered: 0, duplicatesRemoved: [], duplicatesFlagged: 0, blockedRows: [], ...over });
@@ -90,5 +90,58 @@ describe('renamed columns', () => {
   it('offers the suggested headers first, then the other unknown ones', () => {
     const m = match({ id: 'x', missingRequired: ['Qty'], extra: ['Foo', 'Quantity', 'Bar'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] });
     expect(mappingOptions(m, 'Qty')).toEqual({ suggested: ['Quantity'], others: ['Foo', 'Bar'] });
+  });
+});
+
+describe('sources and the formats they feed (SPEC 8.15)', () => {
+  const two = sourceEntry({ sourceId: 's1', name: 'Supplier A', conversions: [{ conversionId: 'c1', formatId: 'F1', formatName: 'Load file' }, { conversionId: 'c2', formatId: 'F2', formatName: 'ERP load' }] });
+  const bare = sourceEntry({ sourceId: 's2', name: 'New supplier', conversions: [] });
+
+  it('a source with no conversion cannot run anything, so it is left out', () => {
+    expect(scopeSources([two, bare], null).map((e) => e.sourceId)).toEqual(['s1']);
+  });
+
+  it('on ?format= only that format\'s conversion of a source is kept, and sources that do not feed it are dropped', () => {
+    const other = entry({ conversionId: 'c9', sourceId: 's3', formatId: 'F3', formatName: 'Ledger' });
+    const scoped = scopeSources([two, other], 'F2');
+    expect(scoped.map((e) => [e.sourceId, e.conversions.map((c) => c.conversionId)])).toEqual([['s1', ['c2']]]);
+    // The entry handed in is not changed.
+    expect(two.conversions).toHaveLength(2);
+  });
+
+  it('gives the matcher one signature per SOURCE, keyed by the source id', () => {
+    expect(signatureOf(two)).toEqual({ id: 's1', name: 'Supplier A', columns: two.columns });
+  });
+
+  it('names the output file after the input file, without its folder and extension', () => {
+    expect(baseName('C:\\prices\\jan.2026.xlsx')).toBe('jan.2026');
+    expect(baseName('prices/jan.csv')).toBe('jan');
+    expect(baseName('jan')).toBe('jan');
+    expect(baseName('.csv')).toBe('.csv');
+  });
+});
+
+describe('a confirmed rename is keyed by the source\'s header', () => {
+  it('finds a conversion\'s declared column by exact header first, then by the normalized header', () => {
+    const rules = {
+      ...RULES,
+      input: { ...RULES.input, columns: [...RULES.input.columns.slice(0, 1), { id: 'c_qty', header: ' QTY ', type: 'integer' as const, required: true }] },
+    };
+    const next = withAliases(rules, { Qty: 'Quantity' });
+    expect(next.input.columns.find((c) => c.id === 'c_qty')?.aliases).toEqual(['Quantity']);
+    // An exact header wins over a normalized one: "Qty" is not treated as "QTY" when "Qty" itself is declared.
+    const exact = withAliases(RULES, { Qty: 'Quantity', qty: 'Amount' });
+    expect(exact.input.columns.find((c) => c.id === 'c_qty')?.aliases).toEqual(['Quantity']);
+    // Columns the mapping does not name are left alone.
+    expect(next.input.columns.find((c) => c.id === 'c_code')?.aliases).toBeUndefined();
+  });
+
+  it('with no rename there is nothing to copy', () => {
+    expect(withAliases(RULES, {})).toBe(RULES);
+  });
+
+  it('compares headers after NFC, trimming and lower-casing', () => {
+    expect(normalizeHeader('  Item CODE ')).toBe('item code');
+    expect(normalizeHeader('Cafe\u0301')).toBe(normalizeHeader('Caf\u00e9'));
   });
 });

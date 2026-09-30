@@ -1,8 +1,9 @@
-// Add a source to an existing format (SPEC 5 A2, 8.12): name the source, drop its input file and an output made from it by hand;
+// Add a source to an existing format (SPEC 5 A2, 8.12, 8.15): say which source the file is (detect it, pick one the company already has, or
+// name a new one), drop its input file and an output made from it by hand;
 // the output must match the format (same headers in order, same file type) or the screen says which columns differ. Then the
 // learn runs in attach mode - the format is the `target`, the AI only decides how THIS input produces the format's columns - and
-// the result opens in the same map and editor, ready to save as a new conversion of the format.
-import type { AttachSourceRequest, ConversionSummary, Format, FormatDetail } from '@formatai/shared';
+// the result opens in the same map and editor, ready to save as a new conversion of the format (a link from the source to it).
+import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceStructure, SourceSummary } from '@formatai/shared';
 import { limits, promptVersion } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -22,15 +23,17 @@ import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Button, DropZone, Icon, InlineMessage, Spinner } from '../../ui';
+import { isolate } from '../Convert/logic';
 import { HomeMasking } from '../HomeMasking';
 import { LearningError } from '../LearningError';
 import { LearningNotReady } from '../LearningNotReady';
 import { LearningPreflight } from '../LearningPreflight';
 import { LearningProgress } from '../LearningProgress';
 import { isRunning, useProgressVisible, useStepHistory } from '../learningSteps';
-import { TextField } from '../Result/fields';
+import { SelectField, TextField, type Option } from '../Result/fields';
 import { compareOutput, fileTypeOfName, type OutputMismatch, type OutputFileType } from '../Result/matchFormat';
 import { SaveFailureMessage } from '../Result/SaveMessages';
+import { defaultFormatName } from '../Result/session';
 import { useSave } from '../Result/useSave';
 import { Workbench, type WorkbenchInfo } from '../Result/Workbench';
 import type { LearnOutput } from '../../worker/engineApi';
@@ -48,7 +51,21 @@ function AddSourceLoader() {
   const { t } = useI18n();
   const { api } = useServices();
   const { id = '' } = useParams();
-  const data = useLoad((signal) => api.registry.getFormat(id, signal), [id]);
+  // The format, and the company's sources for the chooser. The list is a convenience (SPEC 8.15): when it can't be read the chooser still
+  // offers "detect automatically" and "a new source", and the server has the last word on a name in use.
+  const data = useLoad(async (signal) => {
+    const [detail, sources] = await Promise.all([
+      api.registry.getFormat(id, signal),
+      (async (): Promise<SourceSummary[]> => {
+        try {
+          return await api.registry.listSources(signal);
+        } catch {
+          return [];
+        }
+      })(),
+    ]);
+    return { detail, sources };
+  }, [id]);
 
   if (data.state.status === 'loading') {
     return (
@@ -86,7 +103,8 @@ function AddSourceLoader() {
       </main>
     );
   }
-  return <AddSource format={data.state.data.format} sourceCount={data.state.data.conversions.length} takenNames={data.state.data.conversions.map((c) => c.sourceName)} />;
+  const { detail, sources } = data.state.data;
+  return <AddSource format={detail.format} sourceCount={detail.conversions.length} sources={sources} formatSourceNames={detail.conversions.map((c) => c.sourceName)} />;
 }
 
 /** The format as a `Format` for the learn (the API keeps it opaque). */
@@ -130,14 +148,23 @@ function useOutputRead(file: File | null): OutputRead | undefined {
   return entry?.file === file ? entry.read : { status: 'reading', headers: [], fileType: fileTypeOfName(file.name) };
 }
 
+/** What the chooser can say (SPEC 5 A2): let the server detect it, use one of the company's sources, or make a new one. */
+const AUTO = 'auto';
+const NEW = 'new';
+const EXISTING = 'source:';
+
 interface AddSourceProps {
   format: FormatDetail;
   sourceCount: number;
-  takenNames: string[];
+  /** The company's sources (SPEC 8.15): what the chooser offers, and the names a new one can't take. */
+  sources: SourceSummary[];
+  /** The names of this format's sources (also names taken: a fallback for when the list of all sources could not be read). */
+  formatSourceNames: string[];
 }
 
-function AddSource({ format, sourceCount, takenNames }: AddSourceProps) {
+function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourceProps) {
   const { t, code } = useI18n();
+  const { api } = useServices();
   const me = useMe();
   const meRef = useRef(me);
   meRef.current = me;
@@ -151,6 +178,7 @@ function AddSource({ format, sourceCount, takenNames }: AddSourceProps) {
   const flow = useLearnFlow({ getTier });
   const target = useMemo(() => formatOf(format), [format]);
 
+  const [choice, setChoice] = useState<string>(AUTO);
   const [sourceName, setSourceName] = useState('');
   const [input, setInput] = useState<File | null>(fromSession ? session.input : null);
   const [output, setOutput] = useState<File | null>(fromSession ? session.output : null);
@@ -170,11 +198,50 @@ function AddSource({ format, sourceCount, takenNames }: AddSourceProps) {
     [format.outputHeaders, format.fileType, headerless],
   );
   const mismatches: OutputMismatch[] = outputRead?.status === 'ready' ? compareOutput(formatShape, { headers: outputRead.headers, fileType: outputRead.fileType }) : [];
-  const nameTrimmed = sourceName.trim();
-  const nameTaken = takenNames.some((n) => n.trim().toLowerCase() === nameTrimmed.toLowerCase());
+  const existingId = choice.startsWith(EXISTING) ? choice.slice(EXISTING.length) : undefined;
+  const existing = existingId === undefined ? undefined : sources.find((s) => s.id === existingId);
+  // The name field is for a source that is about to be created: required for "a new source", optional when the server detects (it is used
+  // only if nothing matches), and gone when one of the company's sources is chosen.
+  const nameShown = existingId === undefined;
+  const nameTrimmed = nameShown ? sourceName.trim() : '';
+  // Source names belong to the company, not to the format (SPEC 8.15): a new name is compared with ALL of them, case-insensitively.
+  const takenNames = useMemo(() => [...sources.map((s) => s.name), ...formatSourceNames], [sources, formatSourceNames]);
+  const nameTaken = nameTrimmed !== '' && takenNames.some((n) => n.trim().toLowerCase() === nameTrimmed.toLowerCase());
+  const nameNeeded = choice === NEW;
+
+  // The chooser's options. DECISION: a source that already feeds this format is listed but not selectable - a format takes a source once
+  // (a conversion is a link between the two), so picking it could only fail.
+  const options: Option[] = useMemo(
+    () => [
+      { value: AUTO, label: t('add.source.auto') },
+      ...sources.map((s) => {
+        const feedsThis = s.conversions.some((c) => c.formatId === format.id);
+        return { value: `${EXISTING}${s.id}`, label: feedsThis ? t('add.source.feedsThis', { name: isolate(s.name) }) : s.name, disabled: feedsThis };
+      }),
+      { value: NEW, label: t('add.source.new') },
+    ],
+    [sources, format.id, t],
+  );
+
+  // The structure of the chosen existing source, for the browser's own source-lock check of the result (SPEC 8.15). Fetched as soon as it
+  // is chosen (the learn takes longer than this). When it can't be fetched the browser skips that check; the server still enforces it.
+  const [structure, setStructure] = useState<{ id: string; structure: SourceStructure } | null>(null);
+  useEffect(() => {
+    if (existingId === undefined) return;
+    let live = true;
+    api.registry.getSource(existingId).then(
+      (d) => {
+        if (live) setStructure({ id: existingId, structure: { inputSignature: d.inputSignature, inputReading: d.inputReading, inputValidations: d.inputValidations } });
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [api, existingId]);
 
   const ready =
-    nameTrimmed !== '' &&
+    (!nameNeeded || nameTrimmed !== '') &&
     !nameTaken &&
     input !== null &&
     output !== null &&
@@ -196,7 +263,24 @@ function AddSource({ format, sourceCount, takenNames }: AddSourceProps) {
   } else if (state.status === 'error') {
     view = <LearningError key="error" error={state.error} onRetry={begin} onChangeFiles={flow.reset} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (state.status === 'done' && state.result.rules) {
-    view = <AttachResult key="result" result={state.result} ai={state.ai} format={format} target={target} sourceCount={sourceCount} sourceName={nameTrimmed} input={input} masking={masking} onChangeFiles={flow.reset} />;
+    view = (
+      <AttachResult
+        key="result"
+        result={state.result}
+        ai={state.ai}
+        format={format}
+        target={target}
+        sourceCount={sourceCount}
+        source={
+          existingId !== undefined
+            ? { kind: 'existing', id: existingId, name: existing?.name ?? '', ...(structure?.id === existingId ? { structure: structure.structure } : {}) }
+            : { kind: choice === NEW ? 'new' : 'auto', name: nameTrimmed }
+        }
+        input={input}
+        masking={masking}
+        onChangeFiles={flow.reset}
+      />
+    );
   } else if (progressVisible && isRunning(state)) {
     view = (
       <LearningProgress key="progress" state={state} steps={steps} inputName={input?.name} outputName={output?.name} masking={masking} onCancel={flow.cancel} />
@@ -225,14 +309,17 @@ function AddSource({ format, sourceCount, takenNames }: AddSourceProps) {
 
         {fromSession ? <InlineMessage tone="info">{t('add.fromMatch')}</InlineMessage> : null}
 
-        <TextField
-          label={t('add.sourceName')}
-          hint={nameTaken ? undefined : t('add.sourceNameHint')}
-          value={sourceName}
-          onChange={setSourceName}
-          invalid={nameTaken}
-          className="add-name"
-        />
+        <SelectField label={t('add.source.label')} value={choice} options={options} onChange={setChoice} className="add-name" />
+        {nameShown && (
+          <TextField
+            label={t('add.sourceName')}
+            hint={nameTaken ? undefined : t(nameNeeded ? 'add.sourceNameHint' : 'add.sourceNameOptional')}
+            value={sourceName}
+            onChange={setSourceName}
+            invalid={nameTaken}
+            className="add-name"
+          />
+        )}
         {nameTaken ? <InlineMessage tone="block">{code({ kind: 'apiError', code: 'nameTaken' })}</InlineMessage> : null}
 
         <div className="zones">
@@ -284,7 +371,7 @@ function AddSource({ format, sourceCount, takenNames }: AddSourceProps) {
           <Button variant="primary" iconEnd="arrow" disabled={!ready} loading={isRunning(state)} onClick={begin}>
             {t('add.learn')}
           </Button>
-          {!ready && mismatches.length === 0 && <p className="learn-row__hint">{t('add.needFiles')}</p>}
+          {!ready && mismatches.length === 0 && <p className="learn-row__hint">{t(nameNeeded ? 'add.needFiles' : 'add.needFiles.noName')}</p>}
         </div>
       </div>
     );
@@ -330,25 +417,35 @@ interface AttachResultProps {
   format: FormatDetail;
   target: Format;
   sourceCount: number;
-  sourceName: string;
+  /** Which source the file is (the chooser): detected by the server, one of the company's, or a new one. */
+  source: SourceChoiceProp;
   input: File | null;
   masking: boolean;
   onChangeFiles(): void;
 }
 
+type SourceChoiceProp =
+  | { kind: 'auto' | 'new'; name: string }
+  /** `structure`: the chosen source's structure, when it could be fetched: turns on the browser's source-lock check. */
+  | { kind: 'existing'; id: string; name: string; structure?: SourceStructure };
+
 /** The learned source, in the same map and editor as any result; saving adds it to the format (the format lock is checked live and by the server). */
-function AttachResult({ result, ai, format, target, sourceName, input, masking, onChangeFiles }: AttachResultProps) {
+function AttachResult({ result, ai, format, target, source, input, masking, onChangeFiles }: AttachResultProps) {
   const { t } = useI18n();
   const { api } = useServices();
   const me = useMe();
   const navigate = useNavigate();
   const rules = result.rules!;
   const [store] = useState(() => new EditorStore(rules));
-  const save = useSave<ConversionSummary>();
+  const save = useSave<AttachSourceResponse>();
+  // What the header calls the result before it is saved: the source's name, or - when the server will pick it - the file's.
+  const shownName = source.name !== '' ? source.name : defaultFormatName(input?.name, t('result.untitled'));
 
   const doSave = (info: WorkbenchInfo): void => {
     if (!info.metaStatus || !input) return;
     const learnPath = result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
+    // The example input's HEADERS (structure only): what the server matches against the company's sources when none was chosen (SPEC 8.15).
+    const inputHeaders = result.exampleInput?.map((c) => c.header);
     const body: AttachSourceRequest = {
       rules: info.rules,
       status: info.metaStatus,
@@ -356,7 +453,10 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
       exampleExceptions: info.exceptions,
       learnPath,
       masking,
-      sourceName,
+      // Chooser -> wire: a chosen source is `sourceId`, "a new source" forces one (`newSource`, 409 if the name is in use), and "detect"
+      // sends only the legacy `sourceName` (used if the server has to create one; nothing when the field was left empty).
+      ...(source.kind === 'existing' ? { sourceId: source.id } : source.kind === 'new' ? { newSource: { name: source.name } } : source.name !== '' ? { sourceName: source.name } : {}),
+      ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
       ...(learnPath === 'local' ? {} : { promptVersion }),
     };
     void save.run({
@@ -376,7 +476,8 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
   };
 
   const failure = save.state.status === 'error' ? save.state.error : undefined;
-  const mismatch = failure?.kind === 'api' && failure.code === 'formatMismatch';
+  const problemsTitle =
+    failure?.kind !== 'api' ? undefined : failure.code === 'formatMismatch' ? t('add.saveMismatch.title') : failure.code === 'sourceMismatch' ? t('add.saveSourceMismatch.title') : undefined;
 
   const actions = (info: WorkbenchInfo) => {
     if (save.state.status === 'saved') {
@@ -403,10 +504,12 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
       ) : null}
       {save.state.status === 'saved' && (
         <InlineMessage tone="info" actions={<Link to={`/formats/${format.id}`}>{t('save.viewFormats')}</Link>}>
-          {t('add.saved', { source: sourceName, format: format.name })}
+          {/* the name is the server's word: it chose it when nothing was typed */}
+          <p>{t('add.saved', { source: save.state.value.source.name, format: format.name })}</p>
+          {save.state.value.sourceReused && <p data-testid="source-reused">{t('save.sourceReused', { source: isolate(save.state.value.sourceReused.name) })}</p>}
         </InlineMessage>
       )}
-      {failure && <SaveFailureMessage failure={failure} onSignIn={() => undefined} {...(mismatch ? { problemsTitle: t('add.saveMismatch.title') } : {})} />}
+      {failure && <SaveFailureMessage failure={failure} onSignIn={() => undefined} {...(problemsTitle ? { problemsTitle } : {})} />}
     </>
   );
 
@@ -419,8 +522,13 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
       inputFile={input}
       tier={me.tier}
       format={target}
+      // DECISION: the source lock runs in the browser only when the user explicitly chose an existing source. Otherwise there is nothing to
+      // compare with yet (a new source is made from these very rules; "detect" is decided by the server). Aliases are ignored by that check
+      // (see runStaticChecks). The saved-source editor does not pass it at all: there an input-side edit is a source edit that reaches
+      // the source and its other conversions (SPEC 8.15), not a rejection.
+      {...(source.kind === 'existing' && source.structure ? { source: source.structure } : {})}
       verification={result.verification}
-      name={sourceName}
+      name={shownName}
       learnedNote={t('edit.note', { format: format.name })}
       previewLimit={null}
       onSignIn={() => undefined}

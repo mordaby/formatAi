@@ -164,6 +164,9 @@ function EditSource({ conversion, format, sourceCount, notice, returnTo, onSaved
       inputFile={example?.input ?? null}
       tier={me.tier}
       // No format lock here: an edit of the output side IS an edit of the format (SPEC 8.12) - it is said before saving and reaches every source.
+      // DECISION: no source lock here either (`source` is not passed): an edit of the input side is an edit of the SOURCE (SPEC 8.15) - written to the
+      // source and to every other conversion of it, and said after saving (`sourceChanged`) - not a rejection. Only Add a source, which joins an
+      // existing source it must fit, runs the browser's source-lock check (and it ignores aliases: the server merges them into the source on reuse).
       formatChangeNote="banner"
       name={conversion.sourceName}
       learnedNote={t('edit.note', { format: format.name })}

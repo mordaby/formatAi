@@ -58,7 +58,7 @@ async function readHeaders(args: HeadersArgs): Promise<HeadersOutput> {
   return { ok: true, headers: table.headers, sheetName: table.sheetName, direction: table.direction, rows: table.rows.length };
 }
 
-/** Matches a file's headers against every saved conversion's signature (SPEC 8.12); the pick is the engine's own rule. */
+/** Matches a file's headers against every saved SOURCE's signature (SPEC 8.12, 8.15); the pick is the engine's own rule. */
 async function matchFile(args: MatchFileArgs): Promise<MatchFileOutput> {
   const read = await readTable(args.file);
   if (!read.ok) return read;

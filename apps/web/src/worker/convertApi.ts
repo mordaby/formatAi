@@ -1,5 +1,5 @@
-// The worker methods of "convert a file" (SPEC 5 C, 5 D, 21 v5 item 5): types only, re-exported from engineApi.ts so the
-// rest of the app sees one worker surface. Matching a file to a saved conversion, running it with the user's row
+// The worker methods of "convert a file" (SPEC 5 C, 5 D, 8.15, 21 v5 item 5): types only, re-exported from engineApi.ts so the
+// rest of the app sees one worker surface. Matching a file to a saved SOURCE, running one of its conversions with the user's row
 // decisions (the review happens BEFORE the file is written), and packing a batch into a zip and a summary workbook.
 import type { ConversionMatch, ConversionPick, Flag, OutputSheet, RowDecisions, RunError, RunSummary } from '@formatai/engine';
 import type { LearnResult, Rules, SignatureColumn } from '@formatai/shared';
@@ -16,13 +16,13 @@ export type HeadersOutput =
   /** `unreadable`: the file doesn't open. `noTable`: it opens, but there is no table with a header row. */
   | { ok: false; reason: 'unreadable' | 'noTable' };
 
-// ---------- matching a file to a saved conversion (SPEC 8.12) ----------
+// ---------- matching a file to a saved source (SPEC 8.12, 8.15) ----------
 
-/** What the API's GET /api/signatures gives, in the shape the engine's matcher takes. */
+/** What the API's GET /api/signatures gives (one entry per SOURCE), in the shape the engine's matcher takes. */
 export interface SignatureInput {
-  /** The conversion's id. */
+  /** The source's id (the engine calls it a conversion id; it only needs a key). */
   id: string;
-  /** Shown next to the score in the "which source is this file?" list. */
+  /** The source's name, shown next to the score in the "which source is this file?" list. */
   name: string;
   columns: SignatureColumn[];
 }
