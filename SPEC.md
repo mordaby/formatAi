@@ -6,7 +6,7 @@
 > - After each milestone, stop and report what was built, what was skipped, and any decision you had to make.
 > - Items marked **DECISION** are listed in section 20. They are not settled: use the default given there and leave a `// DECISION:` comment in the code.
 > - The exact LLM prompt lives in `LEARN_PROMPT.md`. Keep that file and this spec in sync.
-> - This is **v3**. Section 21 lists what changed since v1 and the amendments to the M0 code that was already built.
+> - This is **v6**. Section 21 lists what changed since v1 and the amendments to the M0 code that was already built.
 
 ## 1. What we're building
 
@@ -16,8 +16,8 @@ Companies receive files from other parties (suppliers' price lists, insurers' co
 
 Three words, used the same way everywhere (code, UI, docs):
 - **Format:** the shape of a file the company produces: columns, types, layout, file type and checks. Formats belong to the company (8.12).
-- **Source:** one kind of incoming file, e.g. one supplier's price list.
-- **Conversion:** the rules that turn one source into one format. A format usually has several conversions.
+- **Source:** one kind of incoming file, e.g. one supplier's price list, or a master file that is updated all the time but keeps its structure. Sources belong to the company too (8.15). A source can feed several formats, and a format can be fed by several sources.
+- **Conversion:** the rules that turn one source into one format: a link between a source and a format. A format usually has several conversions, and a source can have several too.
 
 How it works:
 1. The user provides an example input file and the output file they make from it by hand.
@@ -76,6 +76,8 @@ How it works:
 - Ready-made formats (templates) for common systems, e.g. Priority load screens.
 - Comparing a run with the previous run of the same conversion (row count, totals) and flagging unusual changes.
 - A customer-hosted LLM endpoint (9.6).
+- Learn a new format from a known source (the payload carries the source; only the output is new).
+- Run all formats of a source in one click after the source file was updated.
 - Learning from an input file plus a text description, and from a description alone.
 - A side-by-side, merge-style view for resolving flags.
 
@@ -168,7 +170,7 @@ Keep this in mind in the schema (`meta.source`, `meta.status`), but don't build 
 
 ### C. Convert a file
 The user drops a file on **Convert a file** (on Home, or on a format's page). They don't have to say which source it is:
-- code matches the file's headers against the input signature of every saved conversion (8.12), and either picks the conversion or asks the user to choose among the top matches;
+- code matches the file's headers against every saved **source** (8.15), and either picks the source or asks the user to choose among the top matches. If the source feeds one format, its conversion runs; if it feeds several, the user picks the format(s), or "all";
 - missing required columns stop the run with a clear message;
 - extra columns are ignored;
 - renamed columns are matched through aliases or offered to the user for mapping. A confirmed mapping is saved as a new alias.
@@ -629,7 +631,7 @@ Code enforces this after every learn and every edit (9.2). A conversion that bre
 
 **Editing a format.** A change to the output side made from any conversion's rules map is a change to the format. The editor says so ("This changes the format for all N sources"), and on save the change is written to every conversion of that format. Conversions whose `from` references still resolve keep their status; the others become `needsReview`. Example files are not stored, so re-verification happens on each conversion's next run: its flags and summary are shown with a "format changed since last run" notice.
 
-**Matching a file to a conversion** (flow C, and detection in A2): code compares the file's headers with each conversion's input signature (exact, then aliases, then normalized headers, as in 8.2 step 1). Score = share of required columns found, minus a penalty for extra unknown columns. One conversion with a score ≥ 0.9 and at least 0.1 above the next is selected automatically; otherwise the user picks from the top 3. Never run automatically on a guess below the threshold (DECISION 10).
+**Matching a file to a source** (flow C, and detection in A and A2): code compares the file's headers with each source's input signature (8.15) (exact, then aliases, then normalized headers, as in 8.2 step 1). Score = share of required columns found, minus a penalty for extra unknown columns. One conversion with a score ≥ 0.9 and at least 0.1 above the next is selected automatically; otherwise the user picks from the top 3. Never run automatically on a guess below the threshold (DECISION 10).
 
 **Ready-made formats (after the MVP).** A format doesn't have to come from an example. Known system formats (e.g. Priority load screens) can ship as templates: a format object with no conversions yet. Adding a source to it is flow A2. Nothing in the data model may assume that a format was learned.
 
@@ -662,6 +664,17 @@ Reusable logic lives in the rules file itself, so it is saved, versioned and che
 - Like value maps, tables hold real constants after unmasking and never data rows from the user's files.
 
 **In the rules map**, a **Functions and tables** section lists each one as a sentence with its signature. Each has a test panel: enter arguments or a key, see the result. Every function, table, output column, filter, dedupe, expand, sort, group and validation counts as one **rule** for tier limits (11).
+
+### 8.15 Sources
+
+A **source** is one kind of incoming file the company receives or keeps: one supplier's price list, one insurer's report, or a master file (e.g. an analyst's balances file) that is updated all the time but keeps its structure. Like formats, sources belong to the company and are named by the user.
+
+- **Fields:** name; `inputSignature` (columns: header, aliases, type, required); `inputReading` (sheet pick, header row, stopAt); input validations; versions. **Structure only:** headers, types and shapes. Never values, min/max, samples or anything read from data cells.
+- **A conversion links a source to a format.** The registry is a graph: a format can be fed by several sources (many suppliers → one load file), and a source can feed several formats (one master file → several reports). The engine still runs only a conversion's self-contained rules file; it never needs the Source or Format object.
+- **The source lock.** A conversion's `input` section must match its source: every input column it declares exists in the source with the same header, aliases, type and padLeft (a conversion may use a subset of the source's columns), and its sheet pick, header row, stopAt and input validations equal the source's. Code enforces it wherever the format lock runs (after a learn, on every editor save); a conversion that breaks it is rejected like a `formatMismatch`.
+- **Editing a source** propagates to all its conversions, like a format edit (8.12): headers, aliases, types, reading options and input validations are written into every conversion's `input`; a conversion whose rules no longer resolve becomes `needsReview`.
+- **A structural change in an incoming file** (a column renamed, missing or added) is detected once per source, when a file is matched (flow C), and the message lists every format it affects. A confirmed mapping is saved once, as an alias on the source.
+- **Saving:** flow A creates a source, a format and the conversion between them; flow A2 creates a source and a conversion. When the example input matches an existing source (the same matching and threshold as flow C), that source is reused and the user is told.
 
 ## 9. LLM layer
 
@@ -804,9 +817,10 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
 
 - **`users`:** identities[`{ provider, subject, tenantId?, email, emailVerified }`], name, avatarUrl, uiLanguage, tier, createdAt, lastSeenAt, anonIds[], limitOverrides?
 - **`formats`:** ownerId, name, schemaVersion, output, layout (sort and group normalized to output headers), outputValidations, origin (`learned` | `template`), versions[`{ format, editedBy, at }`], createdAt.
+- **`sources`:** ownerId, name, inputSignature `{ columns: [{ header, aliases, type, required }] }`, inputReading `{ sheet, headerRow, stopAt }`, inputValidations, versions[`{ source, editedBy, at }`], createdAt. Structure only (8.15): headers, types and shapes, never values, ranges or samples.
 - **`conversions`:**
-  - ownerId, formatId, sourceName, schemaVersion, rules (the full self-contained rules file);
-  - inputSignature `{ columns: [{ header, aliases, type, required }] }`;
+  - ownerId, sourceId, formatId, sourceName (display fallback only; the source's name wins), schemaVersion, rules (the full self-contained rules file);
+  - inputSignature `{ columns: [{ header, aliases, type, required }] }` (the columns this conversion uses; the source holds the full signature);
   - source, status (`verified` | `differencesAccepted` | `userConfirmed` | `draft` | `needsReview`), acceptedDifferences (count);
   - exampleExceptions: example row numbers the user marked as fixed by hand. They are used only when checking the example, never on future runs;
   - learnPath (`local` | `llm` | `cache`), masking, model, promptVersion;
@@ -1122,3 +1136,14 @@ What changed:
 3. **What counts as one AI learn:** a learn counts **once, when it succeeds** (the result verifies against the example, or the user saves it with accepted differences). A failed attempt doesn't count — but after **3 failed attempts on the same example pair** (config `maxFailedAiAttempts`) the app stops, counts it as one learn, and tells the user plainly what was tried and what to change. Repairs inside a learn never count separately.
 4. **AI readiness gate before any LLM call — minimal.** The gate blocks only what is **certain** to fail even with the AI; anything ambiguous still goes to the LLM (the AI exists to deduce rules code can't). In addition to 6.3: **block** when no output data row can be matched to an input row (there is no example pair to learn from — "the two files don't seem to come from the same data"), or when the payload still exceeds its caps after trimming (say which part is too large); **finish locally without a call** when every column the code couldn't explain is external data (the AI can't produce it; those columns are marked "needs your input"). Few matched rows, some unmatched output rows or partly unreadable values are NOT blocked. None of this consumes a learn.
 5. **Conversion-time review of unmatched rows (flow C/D, issue #36).** When a new file converts with flagged rows, show them before the output is written; per row the user picks: change the rule (opens the editor, converts again), fix this row only (a one-off value edit, not saved to the rules), skip the row, or keep it as is. The engine takes these per-run row decisions without modifying the saved rules, and lists them in the run summary.
+
+### v6 changes: sources as first-class objects (2026-09-30)
+
+1. **Source is an object**, next to Format (1, 8.15). A conversion is a link between a source and a format, so the registry supports both many sources → one format and one source → many formats.
+2. **The source lock** (8.15), enforced wherever the format lock runs; editing a source propagates to all its conversions (like 8.12).
+3. **Flow C matches a file to a source** (5 C, 8.12); one conversion runs directly, several let the user pick the format(s) or "all". A structural change in a file is detected once per source.
+4. **Saving** creates or reuses a source (flow A: source + format + conversion; A2: source + conversion).
+5. **Data** (13): a `sources` collection; conversions get `sourceId`; `sourceName` stays only as a display fallback.
+6. **After the MVP** (3): learn a new format from a known source; run all formats of a source in one click.
+
+**Code amendments:** listed here once implemented.
