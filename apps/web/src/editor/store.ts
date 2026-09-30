@@ -11,7 +11,7 @@ import {
   resetEditor,
   undo,
 } from './model';
-import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState } from './types';
+import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, ExampleInputColumn } from './types';
 
 export interface ApplyActionOptions {
   /**
@@ -19,6 +19,8 @@ export interface ApplyActionOptions {
    * Any other edit, undo, redo or save ends the run.
    */
   coalesce?: string;
+  /** The example input's columns: an edit that uses one no rule declares yet declares it in the same undoable step. */
+  available?: readonly ExampleInputColumn[] | undefined;
 }
 
 export class EditorStore {
@@ -47,7 +49,7 @@ export class EditorStore {
   apply = (action: EditAction, options: ApplyActionOptions = {}): ActionResult => {
     const key = options.coalesce;
     const merge = key !== undefined && key !== '' && key === this.coalesceKey;
-    const { state, result } = applyEdit(this.state, action, { merge });
+    const { state, result } = applyEdit(this.state, action, { merge, available: options.available });
     if (result.ok && result.changed) this.coalesceKey = key === '' ? undefined : key;
     this.set(state);
     return result;

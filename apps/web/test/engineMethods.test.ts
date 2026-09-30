@@ -4,7 +4,7 @@
 // progress, the masking key, host calls, and the transfer of bytes.
 import type { LearnPayload, LearnResult } from '@formatai/shared';
 import { describe, expect, it, vi } from 'vitest';
-import type { ConvertOutput, LearnOutput, LearnProgress, VerifyOutput } from '../src/worker/engineApi';
+import type { ConvertOutput, LearnOutput, LearnProgress, LoadExampleOutput, VerifyOutput } from '../src/worker/engineApi';
 import { engineMethods } from '../src/worker/engineMethods';
 import { RpcRemoteError } from '../src/worker/rpcClient';
 import { loopback } from './helpers/loopback';
@@ -23,6 +23,29 @@ function renamePair(prefix = 'C') {
   return {
     input: 'Customer ID,First Name,Last Name,Email\n' + rows.map((r) => `${r.id},${r.f},${r.l},${r.email}`).join('\n') + '\n',
     output: 'Contact ID,Last Name,First Name,Email Address\n' + rows.map((r) => `${r.id},${r.l},${r.f},${r.email}`).join('\n') + '\n',
+  };
+}
+
+/** The check digit that makes a 9-digit Israeli ID number valid, for the 8 digits before it. */
+function withCheckDigit(eight: string): string {
+  let sum = 0;
+  [...eight].forEach((ch, i) => {
+    const n = Number(ch) * (i % 2 === 0 ? 1 : 2);
+    sum += n > 9 ? n - 9 : n;
+  });
+  return eight + String((10 - (sum % 10)) % 10);
+}
+
+/** The rename pair, but the input also has an ID number column (some with their leading zero lost) that the output leaves out. */
+function withUnusedIdColumn() {
+  const ids = Array.from({ length: 8 }, (_, i) => {
+    const id = withCheckDigit(i < 2 ? `0${String(1234567 + i)}` : String(31234567 + i)); // two of them start with 0
+    return id.replace(/^0+/, ''); // stored as a number: the leading zero is lost
+  });
+  const rows = FIRST.map((f, i) => ({ id: `C-${1000 + i}`, f, l: LAST[i]!, national: ids[i]! }));
+  return {
+    input: 'Customer ID,First Name,Last Name,ID Number\n' + rows.map((r) => `${r.id},${r.f},${r.l},${r.national}`).join('\n') + '\n',
+    output: 'Contact ID,Last Name,First Name\n' + rows.map((r) => `${r.id},${r.l},${r.f}`).join('\n') + '\n',
   };
 }
 
@@ -64,6 +87,36 @@ describe('engine methods, through the worker RPC', () => {
     expect(fractions.length).toBeGreaterThan(2);
     expect(fractions).toEqual([...fractions].sort((a, b) => a - b));
     expect(fractions[fractions.length - 1]).toBe(1);
+  });
+
+  it('learn: hands the editor the columns of the example input, including one no rule uses (headers and facts about the values only)', async () => {
+    const client = loopback(engineMethods);
+    const pair = withUnusedIdColumn();
+    const { args, transfer } = learnArgs(pair, true);
+    const res = await client.call<LearnOutput>('learn', args, { transfer });
+
+    expect(res.path).toBe('local');
+    // No learned rule reads the ID number, so the rules do not declare it...
+    expect(res.rules?.input.columns.map((c) => c.header)).not.toContain('ID Number');
+    // ...but the example input's columns come with the result, in file order, so a dropdown can still offer it.
+    expect(res.exampleInput?.map((c) => c.header)).toEqual(['Customer ID', 'First Name', 'Last Name', 'ID Number']);
+    expect(res.exampleInput?.find((c) => c.header === 'ID Number')).toMatchObject({ type: 'idLike', israeliId: true, leadingZerosLost: true, maxLength: 9 });
+    expect(res.exampleInput?.find((c) => c.header === 'First Name')).toMatchObject({ type: 'text' });
+    // Nothing but headers and facts: none of the cell values are in it.
+    expect(JSON.stringify(res.exampleInput)).not.toContain('Gal');
+    expect(res.exampleId).toBeTruthy();
+  });
+
+  it('loadExample: reads the example files of a saved source again and returns the same columns', async () => {
+    const client = loopback(engineMethods);
+    const pair = withUnusedIdColumn();
+    const input = enc(pair.input);
+    const output = enc(pair.output);
+    const res = await client.call<LoadExampleOutput>('loadExample', { input: { name: 'in.csv', bytes: input }, output: { name: 'out.csv', bytes: output } }, { transfer: [input, output] });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.exampleInput.map((c) => c.header)).toEqual(['Customer ID', 'First Name', 'Last Name', 'ID Number']);
+    expect(res.exampleInput.find((c) => c.header === 'ID Number')).toMatchObject({ type: 'idLike', israeliId: true });
   });
 
   it('learn: moves the file bytes to the worker (the caller no longer holds them)', async () => {

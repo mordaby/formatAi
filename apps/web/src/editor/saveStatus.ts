@@ -5,6 +5,8 @@
 //   checkFailed          the check itself failed (the worker timed out or crashed): press Apply to try again
 //   noExample            no example in memory: the rules can't be verified (save as `userConfirmed`)
 //   verified             every row matches, not counting one-off exceptions
+//   needsInput (N)       the compared columns match, but N columns are left out of the check because nothing fills them yet
+//                        (values that are not in the input file, or columns the AI step still has to work out): saved as `userConfirmed`
 //   differences (N)      "Save with N differences": saved as `differencesAccepted`, the badge shows N
 import type { Rules } from '@formatai/shared';
 import type { LiveCheckResult, StaticProblem } from '../worker/editorApi';
@@ -17,6 +19,7 @@ export type SaveStatus =
   | { kind: 'checkFailed'; message: string }
   | { kind: 'noExample' }
   | { kind: 'verified' }
+  | { kind: 'needsInput'; columns: number }
   | { kind: 'differences'; differences: number };
 
 export interface SaveInputs {
@@ -29,6 +32,13 @@ export interface SaveInputs {
   fullCheck: LiveCheckResult | null;
   /** The last check failed to run at all (not a mismatch: an error from the worker). */
   checkError?: { code?: string; message: string } | null;
+  /**
+   * Output columns left out of the comparison because nothing fills them yet (`from: null`, or unsupported). Their values
+   * are not in the input, so they would differ on every row; that is "needs your input", not "N differences".
+   */
+  excludedColumns?: number;
+  /** How many output columns the check compared (with `excludedColumns`: none means there is nothing to say about rows yet). */
+  comparedColumns?: number;
 }
 
 export function computeSaveStatus(input: SaveInputs): SaveStatus {
@@ -38,6 +48,8 @@ export function computeSaveStatus(input: SaveInputs): SaveStatus {
   if (input.fullCheck === null || input.fullCheck.partial) {
     return input.checkError ? { kind: 'checkFailed', message: input.checkError.message } : { kind: 'checking' };
   }
+  const excluded = input.excludedColumns ?? 0;
+  if (excluded > 0 && (input.fullCheck.verified || input.comparedColumns === 0)) return { kind: 'needsInput', columns: excluded };
   if (input.fullCheck.verified) return { kind: 'verified' };
   return { kind: 'differences', differences: input.fullCheck.differences };
 }
@@ -50,6 +62,7 @@ export function metaStatusOf(status: SaveStatus): 'verified' | 'differencesAccep
     case 'differences':
       return 'differencesAccepted';
     case 'noExample':
+    case 'needsInput':
       return 'userConfirmed';
     default:
       return null;

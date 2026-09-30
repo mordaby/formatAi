@@ -16,7 +16,7 @@ import { useI18n, type MessageKey } from '../../i18n';
 import type { Line } from '../../rulesText';
 import { Button, InlineMessage } from '../../ui';
 import type { LiveCheckResult } from '../../worker/editorApi';
-import { CheckField, ChoiceGroup, FormSection, NumberField, ProblemList, SelectField, TextField, useEdit, type EditorCtx, type Option } from './fields';
+import { CheckField, ChoiceGroup, FormSection, NumberField, ProblemList, SelectField, SourceField, TextField, useEdit, type EditorCtx, type Option } from './fields';
 import { exampleValues } from './helpers';
 import { formatPreview } from './formatPreview';
 
@@ -90,7 +90,7 @@ export function ColumnEditor({ ctx, index, line, live, onRenamed, onRemoved, onM
   });
   if (!col || !draft) return null;
 
-  const sources = sourceOptions(rules, { forColumn: index });
+  const sources = sourceOptions(rules, { forColumn: index, exampleInput: ctx.available });
   const examples = exampleValues(live, index);
   const wants = line && (line.status === 'needsInput' || line.status === 'check') && line.statusReason;
 
@@ -141,7 +141,7 @@ export function ColumnEditor({ ctx, index, line, live, onRenamed, onRemoved, onM
         }}
       />
 
-      <MethodForm draft={draft} sources={sources} setMethod={setMethod} />
+      <MethodForm ctx={ctx} draft={draft} sources={sources} setMethod={setMethod} />
 
       <ProblemList problems={edit.problems} />
 
@@ -170,6 +170,7 @@ export function ColumnEditor({ ctx, index, line, live, onRenamed, onRemoved, onM
 // ---------- the seven forms ----------
 
 interface MethodFormProps {
+  ctx: EditorCtx;
   draft: ColumnMethod;
   sources: readonly SourceOption[];
   setMethod(next: ColumnMethod, coalesce?: string): void;
@@ -179,13 +180,13 @@ function sourceChoices(sources: readonly SourceOption[]): Option[] {
   return sources.map((s) => ({ value: s.id, label: s.label }));
 }
 
-function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
+function MethodForm({ ctx, draft, sources, setMethod }: MethodFormProps) {
   const { t } = useI18n();
   switch (draft.kind) {
     case 'copy':
       return (
         <FormSection>
-          <SelectField label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
+          <SourceField ctx={ctx} label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
           <NumberField
             label={t('editor.col.pad')}
             hint={t('editor.col.padHint')}
@@ -202,14 +203,15 @@ function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
         </FormSection>
       );
     case 'calculate':
-      return <CalculateForm draft={draft} sources={sources} setMethod={setMethod} />;
+      return <CalculateForm ctx={ctx} draft={draft} sources={sources} setMethod={setMethod} />;
     case 'join':
       return (
         <FormSection>
           <p className="field__label">{t('editor.col.joinColumns')}</p>
           {draft.columns.map((c, i) => (
             <div className="row" key={i}>
-              <SelectField
+              <SourceField
+                ctx={ctx}
                 className="row__grow"
                 hideLabel
                 label={t('editor.col.joinColumn', { n: i + 1 })}
@@ -239,12 +241,14 @@ function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
             </Button>
           </div>
           <TextField label={t('editor.col.separator')} hint={t('editor.col.separatorHint')} value={draft.separator} onChange={(separator) => setMethod({ ...draft, separator }, 'separator')} />
+          <TextField label={t('editor.col.joinBefore')} hint={t('editor.col.joinFixedHint')} value={draft.before ?? ''} onChange={(before) => setMethod(withFixed(draft, 'before', before), 'joinBefore')} />
+          <TextField label={t('editor.col.joinAfter')} value={draft.after ?? ''} onChange={(after) => setMethod(withFixed(draft, 'after', after), 'joinAfter')} />
         </FormSection>
       );
     case 'partOfText':
       return (
         <FormSection>
-          <SelectField label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
+          <SourceField ctx={ctx} label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
           <ChoiceGroup
             label={t('editor.col.part')}
             value={draft.part}
@@ -258,7 +262,7 @@ function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
         </FormSection>
       );
     case 'translate':
-      return <TranslateForm draft={draft} sources={sources} setMethod={setMethod} />;
+      return <TranslateForm ctx={ctx} draft={draft} sources={sources} setMethod={setMethod} />;
     case 'fixed':
       return <FixedForm draft={draft} setMethod={setMethod} />;
     case 'empty':
@@ -278,6 +282,14 @@ function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
   }
 }
 
+/** The join with its fixed text at the start or the end set (an empty text removes it). */
+function withFixed(draft: Extract<ColumnMethod, { kind: 'join' }>, side: 'before' | 'after', text: string): ColumnMethod {
+  const { before, after, ...rest } = draft;
+  const fixed = { ...(before ? { before } : {}), ...(after ? { after } : {}) };
+  delete fixed[side];
+  return { ...rest, ...fixed, ...(text === '' ? {} : { [side]: text }) };
+}
+
 // ---------- Calculate: blocks, not typed ----------
 
 const OPS: readonly { value: CalcOp; label: string }[] = [
@@ -287,7 +299,7 @@ const OPS: readonly { value: CalcOp; label: string }[] = [
   { value: '/', label: '÷' },
 ];
 
-function CalculateForm({ draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'calculate' }> }) {
+function CalculateForm({ ctx, draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'calculate' }> }) {
   const { t } = useI18n();
   const usable = sources.filter((s) => isNumeric(s.type) || isTextLike(s.type));
   const setTerm = (i: number, term: CalcTerm): void => setMethod({ ...draft, terms: draft.terms.map((x, k) => (k === i ? term : x)) }, `term:${i}`);
@@ -310,7 +322,9 @@ function CalculateForm({ draft, sources, setMethod }: MethodFormProps & { draft:
                 />
               )}
               <div className="calc__block">
-                <SelectField
+                <SourceField
+                  ctx={ctx}
+                  valuePrefix="col:"
                   hideLabel
                   label={t('editor.col.calcTerm', { n: i + 1 })}
                   value={value}
@@ -318,12 +332,14 @@ function CalculateForm({ draft, sources, setMethod }: MethodFormProps & { draft:
                     ...usable.map((s): Option => ({ value: `col:${s.id}`, label: isTextLike(s.type) ? `${s.label} (${t('editor.col.textAsNumber')})` : s.label })),
                     { value: '#number', label: t('editor.col.aNumber') },
                   ]}
-                  onChange={(v) => {
+                  onChange={(v, typed) => {
                     if (v === '#number') setTerm(i, { number: 1 });
                     else {
                       const id = v.slice(4);
                       const src = usable.find((s) => s.id === id);
-                      setTerm(i, isTextLike(src?.type) ? { column: id, toNumber: true } : { column: id });
+                      // A column just typed in is not in the list yet: what the person said it holds decides.
+                      const text = src ? isTextLike(src.type) : typed !== undefined && (typed.type === 'text' || typed.type === 'idLike');
+                      setTerm(i, text ? { column: id, toNumber: true } : { column: id });
                     }
                   }}
                 />
@@ -369,12 +385,12 @@ function CalculateForm({ draft, sources, setMethod }: MethodFormProps & { draft:
 
 // ---------- Translate values ----------
 
-function TranslateForm({ draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'translate' }> }) {
+function TranslateForm({ ctx, draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'translate' }> }) {
   const { t } = useI18n();
   const setPair = (i: number, patch: Partial<TranslatePair>): void => setMethod({ ...draft, pairs: draft.pairs.map((p, k) => (k === i ? { ...p, ...patch } : p)) }, `pair:${i}`);
   return (
     <FormSection>
-      <SelectField label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
+      <SourceField ctx={ctx} label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
       <table className="pairs">
         <thead>
           <tr>

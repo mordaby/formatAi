@@ -76,12 +76,19 @@ export function buildCalcExpr(terms: CalcTerm[], ops: CalcOp[], round: number | 
   return round === undefined ? e : { op: 'round', arg: e, digits: round };
 }
 
-export function buildJoinExpr(columns: string[], separator: string, typeOf: (id: string) => ValueType | undefined): Expr {
+export function buildJoinExpr(
+  columns: string[],
+  separator: string,
+  typeOf: (id: string) => ValueType | undefined,
+  fixed: { before?: string; after?: string } = {},
+): Expr {
   const args: Expr[] = [];
+  if (fixed.before) args.push({ const: fixed.before });
   columns.forEach((c, i) => {
     if (i > 0 && separator !== '') args.push({ const: separator });
     args.push(asText(c, typeOf(c)));
   });
+  if (fixed.after) args.push({ const: fixed.after });
   return { op: 'concat', args };
 }
 
@@ -155,19 +162,39 @@ function readCalc(e: Expr, typeOf: (id: string) => ValueType | undefined): Colum
   return sameExpr(buildCalcExpr(terms, ops, round, typeOf), e) ? method : undefined;
 }
 
+const isTextConst = (e: Expr): e is { const: string } => 'const' in e && typeof e.const === 'string';
+
 function readJoin(e: Expr, typeOf: (id: string) => ValueType | undefined): ColumnMethod | undefined {
   if (!('op' in e) || e.op !== 'concat') return undefined;
+  // Fixed text may open and close the join; a separator goes between the columns. Rebuilding the same tree proves the reading.
+  let args = e.args;
+  let before: string | undefined;
+  let after: string | undefined;
+  if (args.length > 1 && isTextConst(args[0]!) && textSource(args[1]!)) {
+    before = args[0]!.const;
+    args = args.slice(1);
+  }
+  if (args.length > 1 && isTextConst(args[args.length - 1]!) && textSource(args[args.length - 2]!)) {
+    after = (args[args.length - 1] as { const: string }).const;
+    args = args.slice(0, -1);
+  }
   const columns: string[] = [];
   let separator: string | undefined;
-  for (const a of e.args) {
+  for (const a of args) {
     const src = textSource(a);
     if (src) columns.push(src.col);
-    else if ('const' in a && typeof a.const === 'string') separator ??= a.const;
+    else if (isTextConst(a)) separator ??= a.const;
     else return undefined;
   }
   if (columns.length < 2) return undefined;
-  const method: ColumnMethod = { kind: 'join', columns, separator: separator ?? '' };
-  return sameExpr(buildJoinExpr(columns, method.separator, typeOf), e) ? method : undefined;
+  const method: ColumnMethod = {
+    kind: 'join',
+    columns,
+    separator: separator ?? '',
+    ...(before ? { before } : {}),
+    ...(after ? { after } : {}),
+  };
+  return sameExpr(buildJoinExpr(columns, method.separator, typeOf, { ...(before ? { before } : {}), ...(after ? { after } : {}) }), e) ? method : undefined;
 }
 
 function readPart(e: Expr, typeOf: (id: string) => ValueType | undefined): ColumnMethod | undefined {
@@ -364,7 +391,7 @@ export function applyColumnMethod(rules: EditableRules, index: number, method: C
       break;
     case 'join':
       from = 'self';
-      computed = { expr: buildJoinExpr(method.columns, method.separator, typeOf), type: 'text' };
+      computed = { expr: buildJoinExpr(method.columns, method.separator, typeOf, { ...(method.before ? { before: method.before } : {}), ...(method.after ? { after: method.after } : {}) }), type: 'text' };
       break;
     case 'partOfText':
       from = 'self';

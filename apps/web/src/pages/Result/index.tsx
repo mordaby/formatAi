@@ -166,6 +166,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         stepper
         store={saved.store}
         exampleId={result.exampleId}
+        exampleInput={result.exampleInput}
         inputFile={session.input}
         tier={me.tier}
         partial={partial}

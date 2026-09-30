@@ -15,7 +15,7 @@ import { useState } from 'react';
 import { effectiveEndSummaryRows, effectiveGroupSummaryRows, lineIds, sourceOptions, type SummaryScope } from '../../editor';
 import { useI18n, type MessageKey } from '../../i18n';
 import { Button } from '../../ui';
-import { CheckField, ChoiceGroup, FormSection, NumberField, ProblemList, SelectField, TextField, useEdit, type EditorCtx, type Option } from './fields';
+import { CheckField, ChoiceGroup, FormSection, NumberField, ProblemList, SelectField, SourceField, TextField, useEdit, type EditorCtx, type Option } from './fields';
 import { RemoveButton } from './RowEditors';
 
 // ---------- title rows ----------
@@ -26,7 +26,7 @@ export function TitleEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index: 
   const row = rules.output.titleRows[index];
   const edit = useEdit(ctx);
   if (!row) return null;
-  const dates = sourceOptions(rules).filter((s) => s.type === 'date');
+  const dates = sourceOptions(rules, { exampleInput: ctx.available }).filter((s) => s.type === 'date');
   const dateChoices = dates.map((s): Option => ({ value: s.id, label: s.label }));
   const setRow = (next: TitleRow, coalesce?: string): void => {
     edit.run({ type: 'setTitleRows', rows: rules.output.titleRows.map((r, k) => (k === index ? next : r)) }, coalesce ? { coalesce } : undefined);
@@ -134,7 +134,7 @@ export function SortEditor({ ctx }: { ctx: EditorCtx }) {
   const { rules } = ctx;
   const keys = rules.transform.sort;
   const edit = useEdit(ctx);
-  const sources = sourceOptions(rules);
+  const sources = sourceOptions(rules, { exampleInput: ctx.available });
   const choices = sources.map((s): Option => ({ value: s.id, label: s.label }));
   const set = (next: SortKey[], coalesce?: string): void => void edit.run({ type: 'setSort', keys: next }, coalesce ? { coalesce } : undefined);
   const swap = (i: number, j: number): void => {
@@ -153,7 +153,7 @@ export function SortEditor({ ctx }: { ctx: EditorCtx }) {
       {keys.length === 0 && <p className="muted">{t('editor.sort.none')}</p>}
       {keys.map((k, i) => (
         <div className="row row--end" key={`${k.column}`}>
-          <SelectField className="row__grow" label={t('editor.sort.column', { n: i + 1 })} value={k.column} options={choices} onChange={(column) => set(keys.map((x, m) => (m === i ? { ...x, column } : x)))} />
+          <SourceField ctx={ctx} className="row__grow" label={t('editor.sort.column', { n: i + 1 })} value={k.column} options={choices} onChange={(column) => set(keys.map((x, m) => (m === i ? { ...x, column } : x)))} />
           <SelectField
             label={t('editor.sort.dir', { n: i + 1 })}
             value={k.dir}
@@ -187,7 +187,7 @@ export function GroupEditor({ ctx, onOpen }: { ctx: EditorCtx; onOpen(lineId: st
   const { rules } = ctx;
   const group = rules.transform.group;
   const edit = useEdit(ctx);
-  const sources = sourceOptions(rules);
+  const sources = sourceOptions(rules, { exampleInput: ctx.available });
   const choices = sources.map((s): Option => ({ value: s.id, label: s.label }));
   const summaries = effectiveGroupSummaryRows(rules);
 
@@ -216,7 +216,7 @@ export function GroupEditor({ ctx, onOpen }: { ctx: EditorCtx; onOpen(lineId: st
 
   return (
     <div className="editor-form">
-      <SelectField label={t('editor.group.by')} value={group.by} options={choices} onChange={(by) => set({ by })} />
+      <SourceField ctx={ctx} label={t('editor.group.by')} value={group.by} options={choices} onChange={(by) => set({ by })} />
       <CheckField label={t('editor.group.detail')} hint={t('editor.group.detailHint')} checked={group.showDetailRows} onChange={(showDetailRows) => set({ showDetailRows })} />
       <NumberField label={t('editor.group.blank')} min={0} max={20} value={group.blankRowsAfter ?? 0} onChange={(n) => set({ blankRowsAfter: n === undefined || n === 0 ? undefined : n }, 'blank')} />
       <FormSection title={t('editor.group.summaries')}>

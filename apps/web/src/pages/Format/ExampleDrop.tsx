@@ -3,6 +3,7 @@
 import type { Format } from '@formatai/shared';
 import { useState } from 'react';
 import { useFileInfo } from '../../app/useFileInfo';
+import type { ExampleInputColumn } from '../../editor';
 import { webConfig } from '../../config';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
@@ -12,7 +13,7 @@ export interface ExampleDropProps {
   /** The format the output must match (turns on the format's own file settings when the example is read). */
   target?: Format | undefined;
   /** The example is in the worker's memory: its id, and the input file (for the flagged rows a real run would give). */
-  onLoaded(loaded: { exampleId: string; input: File }): void;
+  onLoaded(loaded: { exampleId: string; exampleInput: ExampleInputColumn[]; input: File }): void;
 }
 
 export function ExampleDrop({ target, onLoaded }: ExampleDropProps) {
@@ -35,7 +36,7 @@ export function ExampleDrop({ target, onLoaded }: ExampleDropProps) {
         output: { name: output.name, bytes: await output.arrayBuffer() },
         ...(target ? { target } : {}),
       });
-      if (res.ok) onLoaded({ exampleId: res.exampleId, input });
+      if (res.ok) onLoaded({ exampleId: res.exampleId, exampleInput: res.exampleInput ?? [], input });
       else setState('failed');
     } catch {
       setState('failed');

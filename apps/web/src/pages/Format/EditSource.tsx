@@ -10,7 +10,7 @@ import { useMe } from '../../app/Me';
 import { RequireSignIn } from '../../app/RequireSignIn';
 import { useLoad } from '../../app/useLoad';
 import { Cell } from '../../components/Cell';
-import { EditorStore } from '../../editor';
+import { EditorStore, type ExampleInputColumn } from '../../editor';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Button, InlineMessage, Spinner } from '../../ui';
@@ -130,7 +130,7 @@ function EditSource({ conversion, format, sourceCount, notice, returnTo, onSaved
   // The format as the format lock (SPEC 8.12) compares with.
   const target = useMemo(() => ({ output: format.output, layout: format.layout, outputValidations: format.outputValidations }) as Format, [format]);
 
-  const [example, setExample] = useState<{ exampleId: string; input: File } | null>(null);
+  const [example, setExample] = useState<{ exampleId: string; exampleInput: ExampleInputColumn[]; input: File } | null>(null);
   const save = useSave<UpdateConversionResponse>();
   const version = useRef(conversion.version);
   const [savedVersion, setSavedVersion] = useState(conversion.version);
@@ -213,6 +213,7 @@ function EditSource({ conversion, format, sourceCount, notice, returnTo, onSaved
     <Workbench
       store={store}
       exampleId={example?.exampleId}
+      exampleInput={example?.exampleInput}
       inputFile={example?.input ?? null}
       tier={me.tier}
       // No format lock here: an edit of the output side IS an edit of the format (SPEC 8.12) - it is said before saving and reaches every source.

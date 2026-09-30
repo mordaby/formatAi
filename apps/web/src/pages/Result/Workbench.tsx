@@ -4,8 +4,9 @@
 // and (when there is no example in memory) what replaces the preview.
 import type { AiStepPartCode, Format, Tier } from '@formatai/shared';
 import type { PartialInfo } from '@formatai/engine';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { lineIds, useEditor, useLiveCheck, metaStatusOf, differencesOf, type EditableRules, type EditorStore, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { availableInputs, lineIds, useEditor, useLiveCheck, metaStatusOf, differencesOf, type ApplyActionOptions, type EditableRules, type EditAction, type EditorStore, type ExampleInputColumn, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';
+import { normalizeHeader } from '../../editor/rulesUtil';
 import { useI18n } from '../../i18n';
 import { describeRules, type Line, type VerificationLike } from '../../rulesText';
 import { useServices } from '../../services';
@@ -51,6 +52,11 @@ export interface WorkbenchProps {
   store: EditorStore;
   /** Undefined: no example is in memory; only the static checks run. */
   exampleId: string | undefined;
+  /**
+   * The example INPUT's columns (from the learn, or from the example files dropped again): every source dropdown offers the ones no
+   * rule uses yet. Undefined: none is known (a saved source without example files), and a column can be typed in by its header.
+   */
+  exampleInput?: readonly ExampleInputColumn[] | undefined;
   /** The example INPUT file, for the flagged rows a real run would give. */
   inputFile: File | null;
   tier: Tier;
@@ -84,21 +90,29 @@ export interface WorkbenchProps {
 export function Workbench(props: WorkbenchProps) {
   const { t, lang, dir } = useI18n();
   const { engine } = useServices();
-  const { store, exampleId, inputFile, tier, format, partial, verification, previewLimit } = props;
+  const { store, exampleId, exampleInput, inputFile, tier, format, partial, verification, previewLimit } = props;
   const editor = useEditor(store);
   const rules = editor.state.rules;
 
-  // SPEC 21 v5 item 1: only the columns code built are compared in the local partial result. Positions follow the current rules.
-  const solved = partial && partial.reason === 'aiNotAllowed' ? partial.solved : undefined;
+  // A column that still has nothing to fill it says so (amber) even after the user touched it: "edited" would hide that.
+  const needsInput = useMemo(() => {
+    const headers = new Set<string>();
+    for (const c of rules.output.columns) if (c.from === null) headers.add(c.header);
+    for (const u of rules.unsupported) if (rules.output.columns.some((c) => c.header === u.outputColumn)) headers.add(u.outputColumn);
+    return headers;
+  }, [rules]);
+  // Only the columns something fills are compared with the example: a column whose values are not in the input (or that the AI step still has
+  // to work out) would differ on every row, and "N differences" is not what it means - it says "N columns need your input" (SPEC 8.11).
+  // Whatever is compared is the same everywhere: the local partial result (SPEC 21 v5 item 1) and a finished result with such a column.
+  const partialPending = partial !== undefined && partial.reason === 'aiNotAllowed';
   const onlyColumns = useMemo(() => {
-    if (!solved) return undefined;
-    const set = new Set(solved);
+    if (!partialPending && needsInput.size === 0) return undefined;
     const positions: number[] = [];
     rules.output.columns.forEach((c, i) => {
-      if (set.has(c.header)) positions.push(i);
+      if (!needsInput.has(c.header)) positions.push(i);
     });
     return positions;
-  }, [solved, rules.output.columns]);
+  }, [partialPending, needsInput, rules.output.columns]);
 
   const check = useLiveCheck({ engine, exampleId, editor: editor.state, tier, ...(format ? { format } : {}), ...(onlyColumns ? { onlyColumns } : {}) });
   const live = check.state.live;
@@ -141,13 +155,6 @@ export function Workbench(props: WorkbenchProps) {
     return () => document.removeEventListener('keydown', onKey);
   }, [undo, redo]);
 
-  // A column that still has nothing to fill it says so (amber) even after the user touched it: "edited" would hide that.
-  const needsInput = useMemo(() => {
-    const headers = new Set<string>();
-    for (const c of rules.output.columns) if (c.from === null) headers.add(c.header);
-    for (const u of rules.unsupported) if (rules.output.columns.some((c) => c.header === u.outputColumn)) headers.add(u.outputColumn);
-    return headers;
-  }, [rules]);
   const model = useMemo(() => {
     const edited = new Set([...editor.state.edited].filter((id) => !(id.startsWith('col:') && needsInput.has(id.slice(4)))));
     return describeRules(rules, { lang, verification: live ?? verification ?? undefined, edited });
@@ -160,16 +167,50 @@ export function Workbench(props: WorkbenchProps) {
     ready: !check.stale && check.state.status === 'ready' && check.problems.length === 0,
   });
 
+  // The example input's columns no rule declares yet are offered by every source dropdown, and an edit that uses one declares it in the same
+  // undoable step. Columns the user typed in (a saved source has no example files) are treated the same way; the ref lets an edit made right
+  // after typing one see it before the next render.
+  const [typed, setTyped] = useState<readonly ExampleInputColumn[]>([]);
+  const typedRef = useRef<readonly ExampleInputColumn[]>(typed);
+  const available = useMemo<readonly ExampleInputColumn[]>(() => [...(exampleInput ?? []), ...typed], [exampleInput, typed]);
+  const applyEdit = useCallback(
+    (action: EditAction, options?: ApplyActionOptions) => editor.apply(action, { ...options, available: [...(exampleInput ?? []), ...typedRef.current] }),
+    [editor.apply, exampleInput],
+  );
+  const addInput = useCallback(
+    (column: ExampleInputColumn): string => {
+      const current = editor.store.getState().rules;
+      const key = normalizeHeader(column.header);
+      const declared = current.input.columns.find((c) => normalizeHeader(c.header) === key || (c.aliases ?? []).some((a) => normalizeHeader(a) === key));
+      if (declared) return declared.id;
+      if (!(exampleInput ?? []).some((c) => normalizeHeader(c.header) === key) && !typedRef.current.some((c) => normalizeHeader(c.header) === key)) {
+        typedRef.current = [...typedRef.current, column];
+        setTyped(typedRef.current);
+      }
+      const list = [...(exampleInput ?? []), ...typedRef.current];
+      return availableInputs(current, list).find((a) => normalizeHeader(a.column.header) === key)?.id ?? '';
+    },
+    [editor.store, exampleInput],
+  );
   const ctx = useMemo<EditorCtx>(
-    () => ({ rules, apply: editor.apply, rev: editor.state.rev, currentRev: () => editor.store.getState().rev, language: rules.output.language }),
-    [rules, editor.apply, editor.state.rev, editor.store],
+    () => ({
+      rules,
+      apply: applyEdit,
+      rev: editor.state.rev,
+      currentRev: () => editor.store.getState().rev,
+      language: rules.output.language,
+      available,
+      canTypeInput: exampleInput === undefined,
+      addInput,
+    }),
+    [rules, applyEdit, editor.state.rev, editor.store, available, exampleInput, addInput],
   );
 
   // ----- actions -----
 
   const add = (kind: AddKind): void => {
     const plan = planAdd(rules, kind, { column: t('map.newColumn'), title: t('map.newTitle'), total: t('map.newTotal') });
-    if (plan && editor.apply(plan.action).ok) open(plan.lineId);
+    if (plan && applyEdit(plan.action).ok) open(plan.lineId);
   };
   const keep = (line: Line): void => {
     // From the last to the first, so the indexes still mean what they meant.
@@ -197,6 +238,7 @@ export function Workbench(props: WorkbenchProps) {
   else if (aiStep && aiStep.columns.size > 0) badge = { tone: 'check', text: t(aiStep.columns.size === 1 ? 'partial.badge.one' : 'partial.badge.other', { n: aiStep.columns.size }) };
   else if (aiStep && aiStep.parts.length > 0) badge = { tone: 'check', text: t('partial.badge.parts') };
   else if (needsInput.size > 0) badge = { tone: 'check', text: t(needsInput.size === 1 ? 'result.badge.needsInput.one' : 'result.badge.needsInput.other', { n: needsInput.size }) };
+  else if (status.kind === 'needsInput') badge = { tone: 'check', text: t(status.columns === 1 ? 'result.badge.needsInput.one' : 'result.badge.needsInput.other', { n: status.columns }) };
   else if (status.kind === 'verified') badge = { tone: 'verified', text: t('result.badge.verified') };
   else if (status.kind === 'differences') badge = { tone: 'check', text: t(status.differences === 1 ? 'result.badge.differences.one' : 'result.badge.differences.other', { n: status.differences }) };
   else if (status.kind === 'checkFailed') badge = { tone: 'check', text: t('result.badge.checkFailed') };

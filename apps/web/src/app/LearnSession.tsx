@@ -5,7 +5,6 @@ import { webConfig } from '../config';
 import { useMe } from './Me';
 import { fileOf, getPendingStore, storeFile, type PendingLearn, type PendingResult } from './pendingLearn';
 import { useSignIn } from './SignIn';
-import { useTurnstile } from './Turnstile';
 import type { Tier } from '@formatai/shared';
 
 /**
@@ -49,16 +48,15 @@ export function useLearnSession(): LearnSession {
 }
 
 export function LearnSessionProvider({ children }: { children: ReactNode }) {
-  const { getToken } = useTurnstile();
   const me = useMe();
   const signIn = useSignIn();
   const meRef = useRef(me);
   meRef.current = me;
   // Read at the start of every learn, so a sign-in never replaces the flow (and with it a result on screen).
   const getTier = useCallback((): Tier => meRef.current.tier, []);
-  // Only a visitor is ever asked for the anti-bot token (the AI step, the one thing it guarded, is for signed-in users now).
-  const getTokenIfVisitor = useCallback((): Promise<string | undefined> => (meRef.current.user ? Promise.resolve(undefined) : getToken()), [getToken]);
-  const flow = useLearnFlow({ getTurnstileToken: getTokenIfVisitor, getTier });
+  // No anti-bot widget here: a visitor never reaches the AI step (the one thing Turnstile guarded), so the learn asks for no token.
+  // (The Turnstile code stays: the lead form will use it.)
+  const flow = useLearnFlow({ getTier });
   const [input, setInput] = useState<File | null>(null);
   const [output, setOutput] = useState<File | null>(null);
   const [masking, setMasking] = useState(true);

@@ -1,7 +1,9 @@
 // The small form kit the editor panels are built from: labelled fields, choices, and the plain-words problem list.
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import type { ApplyActionOptions, ActionResult, EditableRules, EditAction, EditProblem } from '../../editor';
+import type { ColumnType } from '@formatai/shared';
+import type { ApplyActionOptions, ActionResult, EditableRules, EditAction, EditProblem, ExampleInputColumn } from '../../editor';
 import { useI18n, type MessageKey } from '../../i18n';
+import { Button } from '../../ui';
 
 /** What every editor panel needs of the editor: the current rules and a way to change them. */
 export interface EditorCtx {
@@ -13,6 +15,15 @@ export interface EditorCtx {
   currentRev(): number;
   /** The output's language (month names in previews). */
   language: 'he' | 'en';
+  /**
+   * The columns of the example input that no rule declares yet, and the ones typed in (`addInput`): every "source column"
+   * dropdown offers them, and an edit that uses one declares it first, in the same undoable step.
+   */
+  available: readonly ExampleInputColumn[];
+  /** No example input is known here (a saved source without its example files): a column can be typed in by its header. */
+  canTypeInput: boolean;
+  /** Remembers a column the user typed in by its header; returns the id a rule uses to read it (the column's own, when it is already declared). */
+  addInput(column: ExampleInputColumn): string;
 }
 
 // ---------- problems, in the user's language ----------
@@ -289,5 +300,95 @@ export function FormSection({ title, children, className }: { title?: ReactNode;
       {title ? <h3 className="fsection__title">{title}</h3> : null}
       {children}
     </section>
+  );
+}
+
+// ---------- a source column: the dropdown, and typing in a column of the input file that we have not seen ----------
+
+const OTHER = '#other';
+/** What a typed-in column can hold (ColumnType is wider than a person needs here). */
+const TYPED_TYPES: readonly ColumnType[] = ['text', 'integer', 'decimal', 'idLike', 'date'];
+
+export interface SourceFieldProps {
+  ctx: EditorCtx;
+  label: ReactNode;
+  /** The chosen option's value. */
+  value: string;
+  /** The choices (built from `sourceOptions(rules, { exampleInput: ctx.available })`), plus any of the caller's own. */
+  options: readonly Option[];
+  /** `typed` is set when the value is a column the user has just typed in (its type is what they said). */
+  onChange(value: string, typed?: ExampleInputColumn): void;
+  /** Put in front of a typed-in column's id to make an option's value (a caller whose values are "col:<id>"). */
+  valuePrefix?: string;
+  hideLabel?: boolean;
+  className?: string;
+}
+
+/**
+ * A "which input column" dropdown. Without example files (ctx.canTypeInput) it also offers "Another column from your input file...":
+ * a small form for its header (exactly as in the file) and what it holds. The next conversion reads the column by that header.
+ */
+export function SourceField({ ctx, label, value, options, onChange, valuePrefix = '', hideLabel, className }: SourceFieldProps) {
+  const { t } = useI18n();
+  const [typing, setTyping] = useState(false);
+  const choices = ctx.canTypeInput ? [...options, { value: OTHER, label: t('editor.source.other') }] : options;
+  return (
+    <>
+      <SelectField
+        {...(className ? { className } : {})}
+        {...(hideLabel ? { hideLabel } : {})}
+        label={label}
+        value={typing ? OTHER : value}
+        options={choices}
+        onChange={(v) => {
+          if (v === OTHER) setTyping(true);
+          else {
+            setTyping(false);
+            onChange(v);
+          }
+        }}
+      />
+      {typing && (
+        <TypedSource
+          ctx={ctx}
+          onUse={(id, typed) => {
+            setTyping(false);
+            onChange(valuePrefix + id, typed);
+          }}
+          onCancel={() => setTyping(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function TypedSource({ ctx, onUse, onCancel }: { ctx: EditorCtx; onUse(id: string, typed: ExampleInputColumn): void; onCancel(): void }) {
+  const { t } = useI18n();
+  const [header, setHeader] = useState('');
+  const [type, setType] = useState<ColumnType>('text');
+  const name = header.trim();
+  const use = (): void => {
+    if (name === '') return;
+    const typed: ExampleInputColumn = { header: name, type };
+    onUse(ctx.addInput(typed), typed);
+  };
+  return (
+    <div className="editor-form__group" data-testid="typed-source">
+      <TextField label={t('editor.source.header')} hint={t('editor.source.headerHint')} value={header} onChange={setHeader} />
+      <SelectField
+        label={t('editor.source.type')}
+        value={type}
+        options={TYPED_TYPES.map((c): Option<ColumnType> => ({ value: c, label: t(`editor.type.${c}` as MessageKey) }))}
+        onChange={(v) => setType(v)}
+      />
+      <div className="row">
+        <Button variant="secondary" size="sm" disabled={name === ''} onClick={use}>
+          {t('editor.source.use')}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          {t('editor.source.cancel')}
+        </Button>
+      </div>
+    </div>
   );
 }

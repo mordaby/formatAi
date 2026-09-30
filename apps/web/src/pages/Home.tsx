@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useLearnSession } from '../app/LearnSession';
 import { useMe } from '../app/Me';
 import { useSignIn } from '../app/SignIn';
-import { TurnstileSlot } from '../app/Turnstile';
 import type { LearnFlowStatus } from '../flow/learnFlow';
 import { Stepper, type StepNumber } from '../ui';
 import { HomeActions } from './HomeActions';
@@ -96,7 +95,6 @@ export default function Home() {
       <section className="tool">
         {offerConvert ? null : <Stepper current={stepFor(state.status)} />}
         {view}
-        <TurnstileSlot key="turnstile" />
       </section>
       {state.status === 'idle' || state.status === 'done' ? <HomeHowItWorks /> : null}
     </main>

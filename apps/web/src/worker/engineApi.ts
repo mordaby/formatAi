@@ -23,6 +23,7 @@ import type {
   MatchFileArgs,
   MatchFileOutput,
 } from './convertApi';
+import type { ExampleInputColumn } from '../editor/types';
 import type {
   LiveCheckArgs,
   LiveCheckResult,
@@ -64,8 +65,11 @@ export type LearnProgress =
   | { phase: 'learning'; attempt: 'learn' | 'repair' }
   | { phase: 'verifying' };
 
-/** `exampleId`: set when the worker kept the example (the rules editor's live check reads it, SPEC 8.11). */
-export type LearnOutput = LearnFromExamplesResult & { exampleId?: string };
+/**
+ * `exampleId`: set when the worker kept the example (the rules editor's live check reads it, SPEC 8.11).
+ * `exampleInput`: the example input's columns (headers and profile facts, no values), so the editor can offer the ones no rule uses yet.
+ */
+export type LearnOutput = LearnFromExamplesResult & { exampleId?: string; exampleInput?: ExampleInputColumn[] };
 
 /** What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). */
 export interface LearnHost {

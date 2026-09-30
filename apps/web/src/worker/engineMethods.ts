@@ -16,7 +16,7 @@ import {
 import type { AnalysisProgress, PairAnalysis } from '@formatai/engine';
 import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress, VerifyArgs, VerifyOutput } from './engineApi';
 import type { LiveCheckArgs, LiveCheckResult, LoadExampleArgs, LoadExampleOutput, StaticChecksArgs, StaticProblem } from './editorApi';
-import { checkExample, getExample, rememberExample, runStaticChecks } from './liveCheck';
+import { checkExample, exampleInputOf, getExample, rememberExample, runStaticChecks } from './liveCheck';
 import { convertMethods } from './convertMethods';
 import { Transfer, type MethodContext, type MethodMap } from './runtime';
 
@@ -70,7 +70,8 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     },
   });
   // The rules editor's live check (SPEC 8.11) re-runs rules on this example; it stays in the worker.
-  return analysis && result.rules ? { ...result, exampleId: rememberExample(analysis) } : result;
+  // Its input's columns come with it: the editor offers the ones no rule uses yet (headers only; the file stays here).
+  return analysis && result.rules ? { ...result, exampleId: rememberExample(analysis), exampleInput: exampleInputOf(analysis) } : result;
 }
 
 async function convert(args: ConvertArgs): Promise<Transfer<ConvertOutput> | ConvertOutput> {
@@ -132,7 +133,13 @@ async function loadExample(args: LoadExampleArgs): Promise<LoadExampleOutput> {
     ...(args.target ? { outputFileSpec: args.target.output.file } : {}),
   });
   if (!analysis.ok) return { ok: false, reason: 'analysisFailed' };
-  return { ok: true, exampleId: rememberExample(analysis), inputRows: analysis.input.rows.length, outputRows: analysis.output.dataRows.length };
+  return {
+    ok: true,
+    exampleId: rememberExample(analysis),
+    exampleInput: exampleInputOf(analysis),
+    inputRows: analysis.input.rows.length,
+    outputRows: analysis.output.dataRows.length,
+  };
 }
 
 /** Runs the rules on the example in memory (a subset above 5,000 rows, unless `subset: false`). */

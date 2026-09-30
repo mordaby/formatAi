@@ -558,13 +558,19 @@ The rules map is where users read, fix and add rules. It is generated from the J
 - **Calculate:** built from blocks, not typed.
   - Each term is a column or a number, joined by an operator (+ − × ÷), with up to 3 terms and optional rounding.
   - In the MVP, conditions (if … then … otherwise) and text functions are available only in the Advanced JSON view.
-- **Join text:** pick the columns and a separator.
+- **Join text:** pick the columns, a separator, and optional fixed text before and after (e.g. an ID and a name: `ID: 012345678 - Dana`).
 - **Part of text:** the first or last N characters.
 - **Translate values:** a two-column table (value in the input → value in the output). For values not in the list, the user chooses between flagging them and keeping them as they are.
 - **Fixed value.**
 - **Leave empty.**
 
 Every column also has an output number or date format, with a preview.
+
+**Source dropdowns list every input column.** A learned rules file declares only the input columns some rule reads, so the columns of the example INPUT that no rule uses (an ID number, say) would be missing from every dropdown that picks an input column (copy, calculate, join, part of text, translate, filters, duplicate keys, sort, group, checks, title month). So:
+- The worker returns the example input's columns with the learn result (and with `loadExample`): header plus profile facts (type, `israeliId`, `leadingZerosLost`, `serialDates`, longest length, date format). Headers only, never values.
+- Every such dropdown lists the columns no input column declares yet, after the declared ones, labelled by the header. Choosing one declares it (`input.columns`: a fresh camelCase id, the header exactly as in the file, the type from the profile - an id with lost leading zeros keeps `idLike` with `padLeft`, a serial date gets `excelSerial` among its `inputFormats`) **in the same undoable edit** that uses it.
+- A saved source has no example files: the dropdown offers "Another column from your input file…", a small form for the header (exactly as in the file) and what the column holds. The column is declared the same way, and the next conversion reads it by that header. Dropping the example files instead offers their columns as above.
+- "Add a column" is on the Columns section in every result state (verified, differences, the partial result, the saved-source editor).
 
 **Row editors.**
 - **Filters** read as sentences: "Keep rows where [column] [is / is not / is one of / is empty / is greater than …] [value]".
@@ -593,6 +599,7 @@ Every column also has an output number or date format, with a preview.
 - **Status:**
   - **Verified:** every row matches, not counting exceptions.
   - Otherwise the user can "Save with N differences". The status becomes `differencesAccepted`, and the badge shows N.
+  - **Columns that need your input** (`from: null`, or unsupported) are left out of the comparison, so they never count as differences: the badge says "N columns need your input" and the format saves as `userConfirmed`. Once every column has a rule, all columns are compared again.
 - **Versions:**
   - Undo and redo work within the session.
   - Every save creates a new version, and old versions can be restored from the history.

@@ -65,6 +65,7 @@ export function useLiveCheck(options: UseLiveCheckOptions): UseLiveCheck {
       hasExample: exampleId !== undefined && state.status !== 'noExample',
       fullCheck: fullCurrent,
       checkError: state.status === 'error' ? state.error : null,
+      ...(onlyColumns ? { excludedColumns: editor.rules.output.columns.length - onlyColumns.length, comparedColumns: onlyColumns.length } : {}),
     });
     const problems = staticCurrent ? explainStaticProblems(editor.rules, staticCurrent) : [];
     return {
@@ -75,7 +76,7 @@ export function useLiveCheck(options: UseLiveCheckOptions): UseLiveCheck {
       saveStatus,
       problems,
     };
-  }, [state, editor.rev, editor.rules, exampleId, scheduler]);
+  }, [state, editor.rev, editor.rules, exampleId, scheduler, onlyColumns]);
 }
 
 /** A format object that is equal by content keeps its identity, so passing a fresh one each render does not restart the checks. */

@@ -413,6 +413,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
     <Workbench
       store={store}
       exampleId={result.exampleId}
+      exampleInput={result.exampleInput}
       inputFile={input}
       tier={me.tier}
       format={target}

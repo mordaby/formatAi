@@ -2,6 +2,7 @@
 // every save"): types only, re-exported from engineApi.ts so the rest of the app sees one worker surface.
 import type { LayoutProblem } from '@formatai/engine';
 import type { Format, LearnResult, PayloadCell, Rules, Tier } from '@formatai/shared';
+import type { ExampleInputColumn } from '../editor/types';
 import type { FileBytes } from './engineApi';
 
 // ---------- the example kept in worker memory ----------
@@ -15,7 +16,7 @@ export interface LoadExampleArgs {
 }
 
 export type LoadExampleOutput =
-  | { ok: true; exampleId: string; inputRows: number; outputRows: number }
+  | { ok: true; exampleId: string; /** The example input's columns (SPEC 8.11): see `LearnOutput.exampleInput`. */ exampleInput: ExampleInputColumn[]; inputRows: number; outputRows: number }
   | { ok: false; reason: 'analysisFailed' };
 
 // ---------- live check / full check ----------

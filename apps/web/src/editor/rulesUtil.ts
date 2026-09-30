@@ -5,13 +5,14 @@ import type {
   ColumnType,
   Computed,
   Expr,
+  InputColumn,
   OutputColumnRule,
   Rules,
   SummaryAgg,
   SummaryRow,
   ValueType,
 } from '@formatai/shared';
-import type { EditableRules, SourceOption } from './types';
+import type { EditableRules, ExampleInputColumn, SourceOption } from './types';
 
 // ---------- comparing ----------
 
@@ -307,14 +308,91 @@ export function withColumns<T extends EditableRules>(rules: T, columns: OutputCo
   return { ...rules, output: { ...rules.output, columns } } as T;
 }
 
+// ---------- input columns of the example that no rule declares yet ----------
+
+/** A header compared the way a person reads it: case, spacing and surrounding blanks do not matter. */
+export function normalizeHeader(header: string): string {
+  return header.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** `unitPrice` for "Unit price"; empty when the header has no latin letters or digits (a Hebrew header). */
+function slug(header: string): string {
+  const words = header
+    .replace(/[^A-Za-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0) return '';
+  return words.map((w, i) => (i === 0 ? w.toLowerCase() : w[0]!.toUpperCase() + w.slice(1).toLowerCase())).join('');
+}
+
+/** The declaration an example input column gets when a rule first uses it (the way the local learn declares one). */
+export function inputColumnFor(id: string, c: ExampleInputColumn): InputColumn {
+  const type: ColumnType = c.serialDates ? 'date' : c.type === 'empty' ? 'text' : c.type;
+  const col: InputColumn = { id, header: c.header, type };
+  if (type === 'idLike' && c.leadingZerosLost) {
+    const width = c.israeliId ? 9 : c.maxLength;
+    if (width !== undefined && width > 0) col.padLeft = width;
+  }
+  if (type === 'date') {
+    const formats: string[] = [];
+    if (c.dateFormat !== undefined && c.dateFormat !== 'excel') formats.push(c.dateFormat);
+    if (c.serialDates) formats.push('excelSerial');
+    if (formats.length > 0) col.inputFormats = formats;
+  }
+  return col;
+}
+
+export interface AvailableInput {
+  /** The id it has once declared (unique among every id in the rules and among the other available columns). */
+  id: string;
+  /** What to add to `rules.input.columns`. */
+  column: InputColumn;
+}
+
+/**
+ * The example input's columns that the rules do not declare yet, in file order, each with the id it would get. A column
+ * is "declared" when an input column has its header (or an alias of it). The ids are made one after the other, so they
+ * are distinct, and they come out the same whenever the rules and the list are the same.
+ */
+export function availableInputs(rules: EditableRules, exampleInput: readonly ExampleInputColumn[] | undefined): AvailableInput[] {
+  if (!exampleInput || exampleInput.length === 0) return [];
+  const known = new Set<string>();
+  for (const c of rules.input.columns) {
+    known.add(normalizeHeader(c.header));
+    for (const a of c.aliases ?? []) known.add(normalizeHeader(a));
+  }
+  const used = allIds(rules);
+  const out: AvailableInput[] = [];
+  exampleInput.forEach((c, i) => {
+    const key = normalizeHeader(c.header);
+    if (key === '' || known.has(key)) return;
+    known.add(key);
+    let base = slug(c.header);
+    if (base === '' || /^[0-9]/.test(base)) base = `c${i + 1}`;
+    let id = base;
+    for (let n = 2; used.has(id); n++) id = `${base}${n}`;
+    used.add(id);
+    out.push({ id, column: inputColumnFor(id, c) });
+  });
+  return out;
+}
+
+/** The rules with these input columns declared (after the ones already there). */
+export function withInputColumns<T extends EditableRules>(rules: T, columns: readonly InputColumn[]): T {
+  if (columns.length === 0) return rules;
+  return { ...rules, input: { ...rules.input, columns: [...rules.input.columns, ...columns] } } as T;
+}
+
 // ---------- source options for the dropdowns ----------
 
 /**
  * What a "source column" dropdown offers: the input columns and what expand adds, plus the computed
  * columns that an output column shows (labelled by that output header) and that come before
- * `forColumn`'s own computed column (computed columns run in order).
+ * `forColumn`'s own computed column (computed columns run in order). Then every column of the example input
+ * (`exampleInput`) that no rule declares yet, as kind `available`: choosing one declares it.
  */
-export function sourceOptions(rules: EditableRules, opts: { forColumn?: number } = {}): SourceOption[] {
+export function sourceOptions(rules: EditableRules, opts: { forColumn?: number; exampleInput?: readonly ExampleInputColumn[] | undefined } = {}): SourceOption[] {
   const own = opts.forColumn === undefined ? undefined : ownedComputedId(rules, opts.forColumn);
   const limit = own === undefined ? undefined : rules.transform.computed.findIndex((c) => c.id === own);
   const infos = idInfos(rules, limit !== undefined && limit >= 0 ? { computedBefore: limit } : {});
@@ -334,6 +412,9 @@ export function sourceOptions(rules: EditableRules, opts: { forColumn?: number }
     } else {
       options.push({ id: info.id, label: info.id, type: info.type, kind: 'expand' });
     }
+  }
+  for (const a of availableInputs(rules, opts.exampleInput)) {
+    options.push({ id: a.id, label: a.column.header, type: valueTypeOf(a.column.type), kind: 'available' });
   }
   return options;
 }

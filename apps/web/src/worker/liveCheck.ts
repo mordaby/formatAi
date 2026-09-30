@@ -18,6 +18,7 @@ import {
 import type { Format, LearnResult, PayloadCell, Rules } from '@formatai/shared';
 import { checkRules, LearnResultSchema, RulesSchema } from '@formatai/shared';
 import { editorConfig } from '../editor/config';
+import type { ExampleInputColumn } from '../editor/types';
 import type { LiveCheckResult, PreviewRow, StaticCheckOptions, StaticProblem } from './editorApi';
 
 // ---------- the example kept in worker memory ----------
@@ -41,6 +42,22 @@ export function rememberExample(analysis: PairAnalysis): string {
   const id = crypto.randomUUID();
   current = { id, analysis };
   return id;
+}
+
+/**
+ * The example INPUT's columns for the rules editor's source dropdowns (SPEC 8.11): the header and what the profile knows
+ * about the values (never the values). A column no rule declares yet can still be chosen.
+ */
+export function exampleInputOf(analysis: PairAnalysis): ExampleInputColumn[] {
+  return analysis.input.profile.map((p) => ({
+    header: p.header,
+    type: p.type,
+    ...(p.israeliId ? { israeliId: true } : {}),
+    ...(p.leadingZerosLost ? { leadingZerosLost: true } : {}),
+    ...(p.serialDates ? { serialDates: true } : {}),
+    ...(p.len !== undefined ? { maxLength: p.len[1] } : {}),
+    ...(p.dateFormat !== undefined ? { dateFormat: p.dateFormat } : {}),
+  }));
 }
 
 export function getExample(id: string): PairAnalysis {

@@ -7,6 +7,7 @@ import type {
   LearnResult,
   OutputColumnAgg,
   OutputFile,
+  ProfileType,
   RowFilterOp,
   Rules,
   RulesTable,
@@ -44,7 +45,8 @@ export interface TranslatePair {
 export type ColumnMethod =
   | { kind: 'copy'; source: string; padLeft?: number; trim?: boolean }
   | { kind: 'calculate'; terms: CalcTerm[]; ops: CalcOp[]; round?: number }
-  | { kind: 'join'; columns: string[]; separator: string }
+  /** `before`/`after` are optional fixed text at the start and end (e.g. "ID: "); `separator` goes between the columns. */
+  | { kind: 'join'; columns: string[]; separator: string; before?: string; after?: string }
   | { kind: 'partOfText'; source: string; part: 'first' | 'last'; n: number }
   | { kind: 'translate'; source: string; pairs: TranslatePair[]; onMissing: 'flag' | 'keep' }
   | { kind: 'fixed'; value: string | number | boolean }
@@ -223,11 +225,31 @@ export interface EditorOptions {
 
 export type ReadMethod = ColumnMethod;
 
+/**
+ * One column of the example INPUT file, as the editor needs it (headers and facts about the values, never the values
+ * themselves). The worker builds these from the kept analysis; the file is the user's own and stays in the browser.
+ */
+export interface ExampleInputColumn {
+  header: string;
+  type: ProfileType;
+  israeliId?: boolean;
+  leadingZerosLost?: boolean;
+  serialDates?: boolean;
+  /** Longest text length of the values (ids), so a padded id can be declared with the right width. */
+  maxLength?: number;
+  /** Date columns: the token format of text dates ("DD/MM/YYYY"), or "excel" for real date cells. */
+  dateFormat?: string;
+}
+
 /** One choice in a "source column" dropdown. */
 export interface SourceOption {
   id: string;
   /** What to show: the input header, or the output header of the computed column that feeds it. */
   label: string;
   type: ValueType | undefined;
-  kind: 'input' | 'expand' | 'computed';
+  /**
+   * `available`: a column of the example input file that no rule declares yet. Choosing it declares it (in the same edit
+   * that uses it), so the id is the one it will have once declared.
+   */
+  kind: 'input' | 'expand' | 'computed' | 'available';
 }
