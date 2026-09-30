@@ -6,6 +6,7 @@
 // touches, so the full files themselves never have to be re-read here.
 
 import type {
+  Band,
   ColumnHint,
   Format,
   Hint,
@@ -357,6 +358,12 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
   if (h.rel === 'constant') {
     const outType = analysis.output.profile[h.out]?.type ?? 'text';
     return { ...h, value: masker.maskCell(h.value, outType) };
+  }
+  if (h.rel === 'bands') {
+    // The thresholds are numbers or ISO dates (sent real, SPEC 7.2); the band values are output cells, masked like samples.
+    const outType = analysis.output.profile[h.out]?.type ?? 'text';
+    const bands: Band[] = h.bands.map((band) => ({ ...band, value: masker.maskCell(band.value, outType) }));
+    return { ...h, bands };
   }
   return h;
 }

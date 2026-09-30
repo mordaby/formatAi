@@ -3,7 +3,9 @@
 // (fastPath.ts, same builders) but tolerant: every output column the code explained (one coverage-1.0,
 // unambiguous, well-evidenced relation) gets its rule; every other output column gets `from: null`,
 // and comes back listed as either "needs the AI step" or "external data" (its values don't come from
-// the input file at all, SPEC 6.4).
+// the input file at all, SPEC 6.4). A DERIVED column - unexplained by any relation, yet determined by the
+// input (bands on a number, a category dependency; see analyze/derived.ts) - is one the AI can solve: it
+// "needs the AI step", it is not external.
 //
 // Structure the strict path refuses outright is built here only where the analysis says exactly what
 // it is, and otherwise reported in `needsAiParts` instead of guessed:
@@ -17,7 +19,7 @@
 
 import type { AiStepPartCode, Assumption, ColumnType, Expand, LearnResult, TitleRow } from '@formatai/shared';
 import { AI_STEP_PART_CODES } from '@formatai/shared';
-import type { ColumnAnalysis, PairAnalysis, Relation } from './analyze';
+import { isExternalColumn, type ColumnAnalysis, type PairAnalysis, type Relation } from './analyze';
 import {
   assembleRules,
   buildDropped,
@@ -167,7 +169,8 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
   const solvedColumns: number[] = [];
 
   for (const ca of analysis.columns) {
-    const isExternal = ca.unknown || skip.has(ca.out);
+    // A derived column (the input determines it) is not external: the AI can solve it, so it "needs the AI step".
+    const isExternal = isExternalColumn(ca) || skip.has(ca.out);
     let from: string | null = null;
     let header = looseHeader(analysis, ca);
 

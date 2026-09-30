@@ -15,6 +15,7 @@
 //  - "sheet row"        = 0-based row index in the output sheet (`output.sheet.rows`)
 
 import type {
+  Band,
   InputLayout,
   OutputLayout,
   PayloadCell,
@@ -308,13 +309,40 @@ export type RelationKind = RelationBody['rel'];
 
 export type Relation = RelationStats & RelationBody;
 
+/**
+ * SPEC 6.2 step 4 (v5): an output column no relation explains, but that the INPUT determines - a functional
+ * dependency with real evidence (see derived.ts). The AI can solve such a column (e.g. `Size = "bulk" if Qty >= 10
+ * else "single"`), so it is NOT external data: it is not skipped, and it counts as "needs the AI step".
+ */
+export type Derivation = { coverage: number; /** Aligned rows where it fails, ascending, capped. */ failing: number[]; failCount: number } & (
+  | {
+      kind: 'category';
+      /** The determining input (or created family) columns: 1, or 2 together. */
+      in: number[];
+      /** Distinct values (or value pairs) of the determining columns. */
+      keys: number;
+    }
+  | {
+      kind: 'bands';
+      in: [number];
+      /** Contiguous ranges of the input column with one output value each (<= 5 breakpoints). */
+      bands: Band[];
+    }
+);
+
 export interface ColumnAnalysis {
   out: number;
   header: string;
   /** Best first: coverage desc, then the simplest. Only relations with coverage >= minCoverage. */
   relations: Relation[];
-  /** No relation reached minCoverage: the values don't come from the input (SPEC 6.4 skipColumns). */
+  /** No relation reached minCoverage (SPEC 6.2 "unknown"). Whether it is external data or derived: see `derived`. */
   unknown: boolean;
+  /**
+   * Unknown columns only: set when the input determines the values (a `derived` column, solvable by the AI).
+   * An unknown column with `derived === null` is EXTERNAL data: its values don't come from the input file
+   * (SPEC 6.4 skipColumns) - see `isExternalColumn`.
+   */
+  derived: Derivation | null;
 }
 
 // ---------- Dropped rows ----------

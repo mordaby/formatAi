@@ -226,7 +226,7 @@ The example output is checked more loosely, because a report may contain title, 
    - summaries: `aggregate` (sum, count, min or max per group);
    - dropped rows: `filter` (an input column whose values separate kept rows from dropped rows: a set of values, emptiness, or a numeric threshold);
    - dropped rows: `dedupe` (the dropped rows are copies of kept rows, either on every column or on a key column; records whether the first or the last copy was kept);
-   - anything else: `unknown`.
+   - anything else: `unknown`. An unknown column is then split: **derived** when its values are determined by input column(s) — a category that always follows one or two input columns (repeated keys), or contiguous bands of a numeric or date column (e.g. `Qty < 10 → single`, `>= 10 → bulk`) — sent to the LLM with a `dependsOn` or `bands` hint; or **external** when nothing in the input determines it (only these are "another source").
    Inside a family, each output row is tested against its source input row, together with the columns the family pattern creates (label, value, part).
 5. **Detect layout:**
    - title rows (and whether they contain a date or month);
@@ -253,7 +253,7 @@ Pre-flight blocks the learn when any of these is true:
 Each block shows a specific message in the UI language and records `preflight { status: "block", reason }`.
 
 ### 6.4 Warn and continue
-- **Some output columns are `unknown`.** Show them before learning: "These columns have values that don't appear in your input file. They probably come from another source, which isn't supported yet. We'll learn everything else and leave these empty." If the user continues, they are sent as `skipColumns`, so the LLM spends nothing on them.
+- **Some output columns are external** (unknown and not derived, see 6.2 step 4). Show them before learning: "These columns have values that don't appear in your input file. They probably come from another source, which isn't supported yet. We'll learn everything else and leave these empty." If the user continues, they are sent as `skipColumns`, so the LLM spends nothing on them.
 - **Rows couldn't be aligned.** Show "We couldn't match rows between the two files. Are they from the same data?" with a **Try anyway** button. Trying anyway counts as a learn.
 
 ### 6.5 Local fast path

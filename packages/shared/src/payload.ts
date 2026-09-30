@@ -127,6 +127,17 @@ interface HintBase {
 
 type Round = { round?: number };
 
+/**
+ * One band of a `bands` hint: the output value for input values below `lt` and/or at or above `gte`
+ * (numbers for a numeric input column, ISO "YYYY-MM-DD" text for a date column). The first band has only
+ * `lt`, the last only `gte`, the ones between have both.
+ */
+export interface Band {
+  lt?: number | string;
+  gte?: number | string;
+  value: PayloadCell;
+}
+
 export type ColumnHint = HintBase & { out: number } & (
   | { rel: 'copy'; in: [number] }
   | { rel: 'normalize'; in: [number] }
@@ -145,6 +156,12 @@ export type ColumnHint = HintBase & { out: number } & (
   // analysis's summaryRelations actually tests for a summary output's columns
   // (SPEC 8.6 v4) - LEARN_PROMPT.md §3 updated to match.
   | { rel: 'aggregate'; in: [number]; fn: SummaryAgg }
+  // v5 amendment (derived columns, SPEC 6.2 step 4): no simple relation explains the column, but the
+  // input DETERMINES it (a functional dependency seen on repeated input values), so the AI can solve it.
+  // `dependsOn`: the same values of the `in` columns always give the same output value.
+  | { rel: 'dependsOn'; in: number[] }
+  // `bands`: sorted by the `in` column, the output values form a few contiguous ranges (<= 5 breakpoints).
+  | { rel: 'bands'; in: [number]; bands: Band[] }
 );
 
 export type RowHint = HintBase &

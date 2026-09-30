@@ -8,7 +8,7 @@
 
 import type { PreflightBlockReason, PreflightWarnReason, Tier } from '@formatai/shared';
 import { tiers } from '@formatai/shared';
-import type { PairAnalysis, PairAnalysisResult } from './analyze';
+import { isExternalColumn, type PairAnalysis, type PairAnalysisResult } from './analyze';
 
 export interface PreflightIssue {
   code: PreflightBlockReason | PreflightWarnReason;
@@ -21,9 +21,10 @@ export interface PreflightIssue {
 export interface PreflightResult {
   status: 'ok' | 'warn' | 'block';
   issues: PreflightIssue[];
-  /** Output column positions with no relation reaching minCoverage (SPEC 6.2/6.4):
-   * sent to the LLM as `skipColumns` once the user confirms the `unknownOutputColumns`
-   * warn. Empty when the 6.1 table check itself rejected one of the files. */
+  /** Output column positions that are EXTERNAL data (SPEC 6.2/6.4, v5 item 4): no relation reaches
+   * minCoverage AND the input doesn't determine the values either (a derived column, e.g. "bulk" when
+   * Qty >= 10, is solvable by the AI and is NOT listed). Sent to the LLM as `skipColumns` once the user
+   * confirms the `unknownOutputColumns` warn. Empty when the 6.1 table check itself rejected one of the files. */
   skipColumns: number[];
 }
 
@@ -73,18 +74,19 @@ export function preflight(analysis: PairAnalysisResult, tier: Tier): PreflightRe
   // ---- SPEC 6.3 blocks ----
   if (analysis.shape.kind === 'rowExpansion') issues.push(block('rowExpansionUnsupported'));
   if (analysis.shape.kind === 'pivot' || analysis.pivot !== null) issues.push(block('pivotDetected'));
-  const noColumnTraced = analysis.columns.length === 0 || analysis.columns.every((c) => c.unknown);
+  // A derived column is traced to the input (it is a function of it); only external columns aren't.
+  const noColumnTraced = analysis.columns.length === 0 || analysis.columns.every(isExternalColumn);
   if (noColumnTraced) issues.push(block('noColumnTraced'));
   if (analysis.identical) issues.push(block('identicalFiles'));
   const overLimits = overTierLimitsIssue(analysis, tier);
   if (overLimits) issues.push(overLimits);
 
   // ---- SPEC 6.4 warns ----
-  const unknownColumns = analysis.columns.filter((c) => c.unknown).map((c) => c.out);
-  // Every column unknown is already the (stronger) noColumnTraced block above;
+  const externalColumns = analysis.columns.filter(isExternalColumn).map((c) => c.out);
+  // Every column external is already the (stronger) noColumnTraced block above;
   // the warn is for "some, but not all" columns.
-  if (unknownColumns.length > 0 && !noColumnTraced) {
-    issues.push(warn('unknownOutputColumns', { count: unknownColumns.length }));
+  if (externalColumns.length > 0 && !noColumnTraced) {
+    issues.push(warn('unknownOutputColumns', { count: externalColumns.length }));
   }
   if (analysis.alignment.unalignedOut.length > 0) {
     issues.push(warn('rowsNotAligned', { count: analysis.alignment.unalignedOut.length }));
@@ -96,5 +98,5 @@ export function preflight(analysis: PairAnalysisResult, tier: Tier): PreflightRe
       ? 'warn'
       : 'ok';
 
-  return { status, issues, skipColumns: unknownColumns };
+  return { status, issues, skipColumns: externalColumns };
 }

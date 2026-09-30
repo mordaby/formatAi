@@ -211,7 +211,7 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
 | `samples[]` | up to 12 `{ in: [...], out: [...] }`, or up to 6 families `{ in: [...], out: [[...], [...]] }` when rows expand; values masked when masking is on |
 | `dropped[]` | up to 5 input rows |
 | `hints[]` | see below |
-| `skipColumns[]` | output positions |
+| `skipColumns[]` | output positions of columns whose values are external data (not in the input file and not determined by it) |
 | `output.file` | `{ type, delimiter?, header, encoding? }`, detected by code from the example output |
 | `target` | attach mode only: `{ output, layout, validations }` of the existing format. `output.summaryRows` (like `output` itself) is already keyed by output header, copied as-is. `layout` is normalized to output headers: `sort: [{ header, dir }]`, `group: { by: header, showDetailRows, blankRowsAfter, agg?: { header: fn }, summaryRows: [{ label?, labelColumn?, bold?, cells: { header: agg } }] }` |
 
@@ -230,14 +230,17 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
 
 **Hints:**
 - Each hint is `{ out?, rel, in, ...params, coverage, failsOn? }`.
-- `rel` is one of: `copy`, `normalize`, `padLeft {length}`, `substr {from: "start"|"end"|index, length}`, `concat {separator}`, `valueMap {pairs}`, `constant {value}`, `dateFormat {from, to}`, `numberFormat {format}`, `mulConst {const, round}`, `addConst {const, round}`, `add`/`sub`/`mul`/`div {round}`, `sum {round}`, `aggregate {fn: sum|count|min|max|average|first|last}`, `filter {keptValues | droppedWhen}`, `dedupe {keys | "all", keep}`, `expand {mode, ...}` (see below).
+- `rel` is one of: `copy`, `normalize`, `padLeft {length}`, `substr {from: "start"|"end"|index, length}`, `concat {separator}`, `valueMap {pairs}`, `constant {value}`, `dateFormat {from, to}`, `numberFormat {format}`, `mulConst {const, round}`, `addConst {const, round}`, `add`/`sub`/`mul`/`div {round}`, `sum {round}`, `aggregate {fn: sum|count|min|max|average|first|last}`, `dependsOn`, `bands {bands}`, `filter {keptValues | droppedWhen}`, `dedupe {keys | "all", keep}`, `expand {mode, ...}` (see below).
+- `dependsOn` and `bands` describe a **derived** column: no simple relation explains it, yet the input determines it (it is a function of the input), so it is NOT in `skipColumns` and the AI step is expected to write its rule (an expression, an `if`/`switch`, a value map or a lookup table). They need no words in the system prompt: it already says that hints are relations tested on all rows, that coverage 1 is a fact, and that samples show the values.
+  - `dependsOn` (`in`: 1 or 2 input columns): the same values of those columns always gave the same output value on the real data, each value seen on more than one row (on average at least 1.5 rows per value). The output values are not listed; the samples show them.
+  - `bands` (`in`: one numeric or date input column): sorted by that column, the output values form a few contiguous ranges (at most 5 breakpoints), each seen on at least 2 rows: `bands: [{ lt?, gte?, value }, ...]` in ascending order (the first band has only `lt`, the last only `gte`, the ones between have both). `lt`/`gte` are numbers, or ISO "YYYY-MM-DD" strings for a date column. A breakpoint is only known to lie between the two neighbouring values seen in the data; the app reports the roundest number in that gap (10 for 9 and 12). Below coverage 1, `failsOn` lists the samples that break the rule.
 - A relation the app tested that has no Hint shape here (a whole-part text split that isn't one of the `expand` modes) is simply not sent as a hint for that column; nothing needs to change in how you read hints.
 - `filter`'s `droppedWhen.value` is a number for a numeric threshold, or an ISO "YYYY-MM-DD" string for a date threshold (the same convention as date cells elsewhere in the payload).
 - `expand` hints by mode:
   - `columnsToRows`: `{ in: [cols], labelOut, valueOut, skipEmpty }`
   - `splitCell`: `{ in: [col], separator, out }`
   - `fixedFanOut`: `{ size, positions: [[hints for position 1], [hints for position 2], ...] }`. For example, position 1: `{ out: 3, rel: "constant", value: "חובה" }`; position 2: `{ out: 3, rel: "constant", value: "זכות" }` and `{ out: 4, rel: "mulConst", in: [5], const: -1 }`.
-- With masking on, values inside hints (value-map pairs, filter values, constants) are masked with the same map as the samples.
+- With masking on, values inside hints (value-map pairs, filter values, constants, `bands` values) are masked with the same map as the samples. Band thresholds are numbers or dates and stay real.
 - With masking on, words in `target` that also appear in data cells are masked with the same map; label words (titles, summary-row labels, headers) are sent real, as in the samples.
 
 **Size rules:**

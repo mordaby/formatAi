@@ -6,6 +6,7 @@
 import type { RawWorkbook } from '../../types';
 import { gather, isoOfSerial, normFast, norms, type ColumnData } from './cells';
 import { alignRows } from './align';
+import { findDerivation } from './derived';
 import { analyzeDropped } from './dropped';
 import { detectFamilies, type CreatedData, type FamilyFinding } from './families';
 import { analyzeLayout } from './layout';
@@ -74,7 +75,7 @@ function hebrewHeaders(headers: string[]): boolean {
 }
 
 function columnAnalysis(out: number, header: string, relations: Relation[]): ColumnAnalysis {
-  return { out, header, relations, unknown: relations.length === 0 };
+  return { out, header, relations, unknown: relations.length === 0, derived: null };
 }
 
 /** Facts the relations prove about input columns (SPEC 7.1 serialDates, leadingZerosLost). */
@@ -294,7 +295,11 @@ function analyzeSides(
     const env: RelationEnv = { src, total: K, sample, minCoverage, language };
     for (let o = 0; o < nCols; o++) {
       const rels = findRelations(env, outA[o]!, o, outProfile[o]?.format);
-      columns.push(columnAnalysis(o, outSide.headers[o] ?? '', rels));
+      const ca = columnAnalysis(o, outSide.headers[o] ?? '', rels);
+      // SPEC 6.2 step 4 (v5): an unknown column the input still determines is derived (the AI can solve it),
+      // not external data.
+      if (ca.unknown) ca.derived = findDerivation(env, outA[o]!);
+      columns.push(ca);
       progress('relations', 0.35 + (0.4 * (o + 1)) / Math.max(1, nCols));
     }
     // Fixed fan-out: relations per position in the family.

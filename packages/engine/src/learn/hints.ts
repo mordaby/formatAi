@@ -20,7 +20,7 @@
 // translate it into the final `failsOn` before the Hint is sent.
 
 import type { ColumnHint, ExpandHint, Hint, RowHint } from '@formatai/shared';
-import type { ColumnAnalysis, DedupeRelation, FilterRelation, PairAnalysis, Relation } from './analyze';
+import type { ColumnAnalysis, DedupeRelation, Derivation, FilterRelation, PairAnalysis, Relation } from './analyze';
 import type { PreflightResult } from './preflight';
 
 /** A Hint plus the real-data row indices it fails on (coverage < 1 only),
@@ -86,6 +86,14 @@ export function bestHintableRelation(ca: ColumnAnalysis): Relation | null {
     if (relationHasHint(rel)) return rel;
   }
   return null;
+}
+
+/** A derived column's hint (SPEC 6.2 step 4 v5): `bands` when the output is a few contiguous ranges of one input
+ * column, else `dependsOn` (the same input values always give the same output value). */
+function derivedHintCandidate(out: number, d: Derivation): HintCandidate {
+  const failingRows = d.coverage < 1 && d.failing.length > 0 ? d.failing : undefined;
+  const base = { out, coverage: d.coverage, ...(failingRows ? { failingRows } : {}) };
+  return d.kind === 'bands' ? { rel: 'bands', in: d.in, bands: d.bands, ...base } : { rel: 'dependsOn', in: d.in, ...base };
 }
 
 function toColumnHintCandidate(rel: Relation): HintCandidate {
@@ -166,8 +174,9 @@ function dedupeToHintCandidate(d: DedupeRelation): HintCandidate {
 /**
  * Every hint the LLM (and the local fast path) receive for this pair: one
  * per output column not in `preflight.skipColumns` (its best hintable
- * relation), the shape's expand hint when rows expand, and the dropped-rows
- * hints (dedupe, then the best filter).
+ * relation, or - for a derived column no relation explains - its `bands` /
+ * `dependsOn` hint), the shape's expand hint when rows expand, and the
+ * dropped-rows hints (dedupe, then the best filter).
  */
 export function relationsToHints(analysis: PairAnalysis, preflight: PreflightResult): HintCandidate[] {
   const skip = new Set(preflight.skipColumns);
@@ -177,6 +186,7 @@ export function relationsToHints(analysis: PairAnalysis, preflight: PreflightRes
     if (skip.has(ca.out)) continue;
     const rel = bestHintableRelation(ca);
     if (rel) hints.push(toColumnHintCandidate(rel));
+    else if (ca.derived) hints.push(derivedHintCandidate(ca.out, ca.derived));
   }
 
   const expandHint = expandHintCandidate(analysis);
