@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom';
 import { LinkButton } from '../../app/LinkButton';
 import { useLoad } from '../../app/useLoad';
 import { Cell } from '../../components/Cell';
-import { isolate } from '../Convert/logic';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Badge, Button, Dialog, Icon, InlineMessage, Spinner } from '../../ui';
@@ -17,14 +16,10 @@ export interface FormatCardProps {
   onRenamed(format: FormatSummary): void;
   /** After the format is gone (its slot is free again). */
   onDeleted(id: string): void;
-  /** Conversion id -> the names of the OTHER formats its source also feeds (SPEC 8.15): a hint on the source line. */
-  alsoFeeds?: ReadonlyMap<string, readonly string[]>;
-  /** Changes when a source was renamed elsewhere on the page: the open list of sources reads again. */
-  sourcesVersion?: number;
 }
 
 /** One format of My formats (SPEC 16.1 screen 5): its name, "← N sources", the status of the sources, and what can be done with it. */
-export function FormatCard({ format, onRenamed, onDeleted, alsoFeeds, sourcesVersion = 0 }: FormatCardProps) {
+export function FormatCard({ format, onRenamed, onDeleted }: FormatCardProps) {
   const { t, lang } = useI18n();
   const { api } = useServices();
   const [renaming, setRenaming] = useState(false);
@@ -36,7 +31,7 @@ export function FormatCard({ format, onRenamed, onDeleted, alsoFeeds, sourcesVer
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
 
-  const sources = useLoad((signal) => api.registry.getFormat(format.id, signal), [format.id, format.sources, sourcesVersion], expanded);
+  const sources = useLoad((signal) => api.registry.getFormat(format.id, signal), [format.id, format.sources], expanded);
 
   const counts = statusCounts(t, format.statuses);
   const number = (n: number): string => n.toLocaleString(lang === 'he' ? 'he-IL' : 'en-US');
@@ -148,7 +143,6 @@ export function FormatCard({ format, onRenamed, onDeleted, alsoFeeds, sourcesVer
                     <Cell value={c.sourceName} />
                   </Link>
                   <Badge tone={statusTone(c.status)}>{statusLabel(t, c.status, c.acceptedDifferences)}</Badge>
-                  {alsoFeeds?.get(c.id) ? <span className="muted">{t('formats.alsoFeeds', { names: alsoFeeds.get(c.id)!.map(isolate).join(', ') })}</span> : null}
                 </li>
               ))}
               {sources.state.data.conversions.length === 0 && <li className="muted">{t('format.noSources')}</li>}

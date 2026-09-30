@@ -124,7 +124,8 @@ interface EditSourceProps {
 function EditSource({ conversion, format, sourceCount, notice, returnTo, onSaved, onRestored, onReload }: EditSourceProps) {
   const { t } = useI18n();
   const me = useMe();
-  const [store] = useState(() => new EditorStore(conversion.rules, { format: { sourceCount }, exceptions: conversion.exampleExceptions }));
+  // `source`: how many formats this conversion's source feeds - an edit of the input side is then said to change all of them (SPEC 8.15).
+  const [store] = useState(() => new EditorStore(conversion.rules, { format: { sourceCount }, source: { formats: conversion.sourceFormats }, exceptions: conversion.exampleExceptions }));
   // The format as the format lock (SPEC 8.12) compares with.
   const target = useMemo(() => ({ output: format.output, layout: format.layout, outputValidations: format.outputValidations }) as Format, [format]);
 

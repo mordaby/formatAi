@@ -66,7 +66,8 @@ describe('after the first save', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Orders report');
     // The name is saved with the format: no longer renamed in place here.
     expect(screen.queryByRole('button', { name: /Rename/ })).toBeNull();
-    expect(screen.getByText('Saved as the source "Source 1". We do not keep your files.')).toBeTruthy();
+    expect(screen.getByText('A source of "Orders report". We do not keep your files.')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/saved as (the )?source|recogni[sz]ed|reused/i);
     expect(screen.queryByRole('button', { name: 'Save format and download' })).toBeNull();
     expect(button('Save changes').disabled).toBe(true);
     expect(screen.getByText('No changes to save.')).toBeTruthy();
@@ -277,6 +278,44 @@ describe('Start over from the saved screen', () => {
     expect(router!.state.location.pathname).toBe('/');
     // (no second question from the guard)
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+// SPEC 8.15: a learn that has just been saved into a source the company already uses (the server recognized it, silently) belongs to a source that
+// feeds other formats too: an edit of the input side is then said to change it for all of them, before saving. With one format, nothing extra.
+describe('the source-change warning after the first save (SPEC 8.15)', () => {
+  const into = (formats: number) => createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1', sourceId: 'S4', sourceName: 'Source 1', version: 1 }), source: { id: 'S4', name: 'Source 1', formats } });
+  const addCheck = async (): Promise<void> => {
+    fireEvent.click(screen.getByRole('button', { name: 'Add a check' }));
+    await waitFor(() => expect(document.querySelector('[data-line-id="check:0"]')).toBeTruthy());
+  };
+
+  it('says "This changes the source for N formats" when the source feeds more than one, and not for an edit of the output or the filters', async () => {
+    await openSaved({ createFormat: vi.fn(async () => into(2)) });
+    await addFilter();
+    await renameTotal();
+    expect(screen.queryByTestId('source-change-warning')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await addCheck();
+    expect(screen.getAllByText('This changes the source for 2 formats.')).toHaveLength(1);
+  });
+
+  it('says nothing extra when the source feeds only the format just saved', async () => {
+    await openSaved({ createFormat: vi.fn(async () => into(1)) });
+    await addCheck();
+    expect(screen.queryByTestId('source-change-warning')).toBeNull();
+    expect(screen.queryByText(/This changes the source/)).toBeNull();
+  });
+
+  it('a save that changed nothing of the input side is saved as any other, and the warning is gone after a save of the change', async () => {
+    const updateConversion = vi.fn(async () => patched({ sourceChanged: true, affectedConversions: 1 }));
+    await openSaved({ createFormat: vi.fn(async () => into(2)), updateConversion });
+    await addCheck();
+    expect(screen.getByTestId('source-change-warning')).toBeTruthy();
+    await waitFor(() => enabled('Save changes'));
+    fireEvent.click(button('Save changes'));
+    expect(await screen.findByText('The source changed, and the change reached 1 other format it feeds.')).toBeTruthy();
+    expect(screen.queryByTestId('source-change-warning')).toBeNull();
   });
 });
 

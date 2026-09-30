@@ -94,6 +94,7 @@ export function entry(over: { conversionId: string; sourceId?: string; sourceNam
 export function detail(over: Partial<ConversionDetail> & { id: string }, rules: Rules = RULES): ConversionDetail {
   return {
     formatId: 'F1',
+    sourceId: 'S1',
     sourceName: 'Supplier A',
     status: 'verified',
     acceptedDifferences: 0,
@@ -106,6 +107,7 @@ export function detail(over: Partial<ConversionDetail> & { id: string }, rules: 
     exampleExceptions: [],
     masking: true,
     inputSignature: { columns: [] },
+    sourceFormats: 1,
     ...over,
   };
 }

@@ -18,7 +18,6 @@ import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Button, InlineMessage } from '../../ui';
 import type { LearnOutput } from '../../worker/engineApi';
-import { isolate } from '../Convert/logic';
 import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
 import { Versions } from '../Format/Versions';
 import { PartialBanner, PartialSignInDialog } from './PartialResult';
@@ -119,8 +118,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     const file = session.input;
     if (!info.metaStatus || !file) return;
     const learnPath = result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
-    // SPEC 8.15 "Saving": the server looks for one of the caller's sources this example input matches and reuses it. What it matches on is the
-    // example input's HEADERS (structure only - the file and its values never leave the computer); the rules alone would give a subset.
+    // SPEC 8.15 "Saving": the server looks for one of the caller's sources this example input matches and reuses it, or creates one - silently,
+    // there is no source UI in the MVP. What it matches on is the example input's HEADERS (structure only - the file and its values never
+    // leave the computer); the rules alone would give a subset.
     const inputHeaders = result.exampleInput?.map((c) => c.header);
     const body: CreateFormatRequest = {
       name,
@@ -141,7 +141,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         info.editor.markSaved();
         // From here on the screen edits that source: an edit of the output side is an edit of the format, and the next save is a new version.
         info.editor.store.setFormat({ sourceCount: 1 });
-        const next: SavedSource = { formatId: res.format.id, conversionId: res.conversion.id, sourceName: res.conversion.sourceName, version: res.conversion.version };
+        // ... and of its source: an edit of the input side changes every format that source feeds (said only when that is more than one).
+        info.editor.store.setSource({ formats: res.source.formats });
+        const next: SavedSource = { formatId: res.format.id, conversionId: res.conversion.id, version: res.conversion.version };
         saver.setVersion(next.version);
         kept.source = next;
         setSource(next);
@@ -163,7 +165,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   const reload = async (from: SavedSource): Promise<void> => {
     try {
       const [conversion, format] = await Promise.all([api.registry.getConversion(from.conversionId), api.registry.getFormat(from.formatId)]);
-      kept.store.reset(conversion.rules, { format: { sourceCount: format.conversions.length }, exceptions: conversion.exampleExceptions });
+      kept.store.reset(conversion.rules, { format: { sourceCount: format.conversions.length }, source: { formats: conversion.sourceFormats }, exceptions: conversion.exampleExceptions });
       saver.setVersion(conversion.version);
       saver.save.reset();
       setNotice(null);
@@ -253,8 +255,6 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       {!laterSave && save.state.status === 'saved' && (
         <InlineMessage tone="info" actions={<Link to="/formats">{t('save.viewFormats')}</Link>}>
           <p>{t('save.done', { name })}</p>
-          {/* When the example input matched a source the company already has, it was reused instead of creating a new one (SPEC 8.15). */}
-          {save.state.value.sourceReused && <p data-testid="source-reused">{t('save.sourceReused', { source: isolate(save.state.value.sourceReused.name) })}</p>}
         </InlineMessage>
       )}
       {!laterSave && save.state.status === 'error' && <SaveFailureMessage failure={save.state.error} onSignIn={() => signIn.open('save')} />}
@@ -290,7 +290,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         }
         learnedNote={
           source
-            ? t('result.savedNote', { source: source.sourceName })
+            ? t('edit.note', { format: name })
             : t(partial ? (aiPending ? 'partial.note' : 'flow.path.local') : result.path === 'local' ? 'flow.path.local' : 'flow.path.llm')
         }
         previewLimit={tierLimits.previewRows}

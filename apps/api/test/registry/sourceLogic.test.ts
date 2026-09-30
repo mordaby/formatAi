@@ -1,12 +1,11 @@
 // The pure half of sources (no database): merging a saved conversion into an existing source, writing a source's structure into
-// a conversion, choosing the source a file belongs to, and grouping conversions for the migration (SPEC 8.15).
+// a conversion, and choosing the source a file belongs to (SPEC 8.15).
 import { checkSourceLock, sourceOf } from '@formatai/engine';
 import type { LearnResult, Rules, SourceStructure } from '@formatai/shared';
 import { ObjectId } from 'mongodb';
 import { describe, expect, it } from 'vitest';
 import type { SourceDoc } from '../../src/models.js';
-import { groupingKey, planSourceMigration, type LegacyConversion } from '../../src/registry/migrate.js';
-import { checkRulesFile, signatureOf, withMeta } from '../../src/registry/rules.js';
+import { checkRulesFile, withMeta } from '../../src/registry/rules.js';
 import { applySource, mergeForReuse, mergeFromEdit, pickReusableSource, withDerivedRequired, withSourceAliases } from '../../src/registry/sourceLogic.js';
 import { edited, sourceOne, sourceTwo } from './helpers.js';
 
@@ -247,89 +246,5 @@ describe('pickReusableSource (the same matching and threshold as flow C)', () =>
     const big = sourceDoc('Big', wide); // 10 required + Amount
     const headers = wide.input.columns.map((c) => c.header).filter((h) => h !== 'C8'); // 1 of 10 required missing -> 0.9
     expect(pickReusableSource([big], headers)).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------- migration grouping (pure)
-
-const owner1 = new ObjectId();
-const owner2 = new ObjectId();
-let clock = 0;
-function legacy(ownerId: ObjectId, sourceName: string, rules: Rules, over: Partial<LegacyConversion> = {}): LegacyConversion {
-  return { _id: new ObjectId(), ownerId, sourceName, rules, inputSignature: signatureOf(rules), createdAt: new Date(2026, 8, 1, 0, 0, clock++), ...over };
-}
-
-describe('planSourceMigration (grouping conversions into sources)', () => {
-  it('merges conversions whose signatures are identical after normalization (case, quotes, order; aliases ignored) into one source', () => {
-    const a = legacy(owner1, 'Supplier A', one());
-    const b = legacy(
-      owner1,
-      'Supplier A (copy)',
-      edited(one(), (r) => {
-        r.input.columns.reverse();
-        r.input.columns.find((c) => c.id === 'id')!.header = ' id ';
-        r.input.columns.find((c) => c.id === 'id')!.aliases = ['Identifier'];
-        r.input.columns.find((c) => c.id === 'amount')!.required = true;
-      }),
-    );
-    const plan = planSourceMigration([a, b]);
-    expect(plan.owners).toHaveLength(1);
-    const [source] = plan.owners[0]!.sources;
-    expect(plan.owners[0]!.sources).toHaveLength(1);
-    expect(source!.name).toBe('Supplier A'); // the first (oldest) conversion's
-    expect(source!.columns).toBe(2);
-    expect(source!.conversions).toEqual([a._id, b._id]);
-    // the group's aliases are unioned and `required` is required by at least one
-    expect(source!.structure.inputSignature.columns.map((c) => [c.header, c.aliases, c.required])).toEqual([
-      ['ID', ['Identifier'], false],
-      ['Amount', [], true],
-    ]);
-  });
-
-  it('keeps different signatures apart (other headers, other types) and never merges across owners', () => {
-    const a = legacy(owner1, 'A', one());
-    const b = legacy(owner1, 'B', two());
-    const typed = legacy(owner1, 'C', edited(one(), (r) => { r.input.columns[1]!.type = 'text'; }));
-    const otherOwner = legacy(owner2, 'A', one());
-    const plan = planSourceMigration([a, b, typed, otherOwner]);
-    expect(plan.owners.map((o) => o.sources.map((s) => s.name))).toEqual([['A', 'B', 'C'], ['A']]);
-    expect(plan.owners.every((o) => o.sources.every((s) => s.conversions.length === 1))).toBe(true);
-  });
-
-  it('keeps apart conversions the source lock could not hold together: another way of reading the file, or other input checks', () => {
-    const a = legacy(owner1, 'A', one());
-    const sheet = legacy(owner1, 'B', edited(one(), (r) => { r.input.sheet = { pick: 'name', name: 'Data' }; }));
-    const check = legacy(owner1, 'C', edited(one(), (r) => { r.validations.push({ column: 'id', rule: 'required', severity: 'flag' }); }));
-    const same = legacy(owner1, 'D', edited(one(), (r) => { r.validations.push({ on: 'output', column: 'ID', rule: 'unique', severity: 'flag' }); }));
-    const plan = planSourceMigration([a, sheet, check, same]);
-    // D differs from A only by an OUTPUT check (the format's business): it joins A's source
-    expect(plan.owners[0]!.sources.map((s) => [s.name, s.conversions.length])).toEqual([['A', 2], ['B', 1], ['C', 1]]);
-  });
-
-  it('skips conversions that already have a source, and names a source uniquely (also against existing ones)', () => {
-    const linked = legacy(owner1, 'Old', one(), { sourceId: new ObjectId() });
-    const a = legacy(owner1, 'Same name', one());
-    const b = legacy(owner1, 'Same name', two());
-    const c = legacy(owner1, 'Taken', asRules(edited(sourceOne(), (r) => { r.input.columns[0]!.header = 'K'; r.output.columns[0]!.from = 'id'; })));
-    const plan = planSourceMigration([linked, a, b, c], new Map([[owner1.toHexString(), ['taken']]]));
-    expect(plan.alreadyLinked).toBe(1);
-    expect(plan.owners[0]!.sources.map((s) => s.name)).toEqual(['Same name', 'Same name (2)', 'Taken (2)']);
-  });
-
-  it('the grouping key ignores aliases, required and column order but not headers, types or shapes', () => {
-    const base = sourceOf(one());
-    const key = groupingKey(base);
-    const shuffled: SourceStructure = JSON.parse(JSON.stringify(base));
-    shuffled.inputSignature.columns.reverse();
-    shuffled.inputSignature.columns[0]!.aliases = ['x'];
-    shuffled.inputSignature.columns[1]!.required = true;
-    expect(groupingKey(shuffled)).toBe(key);
-    const padded: SourceStructure = JSON.parse(JSON.stringify(base));
-    padded.inputSignature.columns[0]!.padLeft = 9;
-    expect(groupingKey(padded)).not.toBe(key);
-  });
-
-  it('plans nothing when there is nothing to migrate', () => {
-    expect(planSourceMigration([])).toEqual({ owners: [], alreadyLinked: 0 });
   });
 });

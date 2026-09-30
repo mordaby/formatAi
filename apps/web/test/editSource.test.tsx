@@ -312,6 +312,73 @@ describe('an edit that changes the format (the output side)', () => {
   });
 });
 
+// SPEC 8.15: an edit that changes the input side changes the source for every format it feeds. The warning is said BEFORE saving (like the
+// format-change one), and only when the source feeds MORE THAN ONE format: with one format there is nothing extra to say.
+describe('an edit of the input side of a source that feeds several formats (SPEC 8.15)', () => {
+  const feeding = (formats: number) => apiFor({ getConversion: vi.fn(async () => conversionDetail({ id: 'C1', version: 4, sourceName: 'Supplier A', sourceFormats: formats }, cleanRules())) });
+  /** "Add a check" puts a check on an input column: the input side changes (a new filter or a renamed output column would not). */
+  const addCheck = async (): Promise<void> => {
+    fireEvent.click(screen.getByRole('button', { name: 'Add a check' }));
+    await waitFor(() => expect(document.querySelector('[data-line-id="check:0"]')).toBeTruthy());
+  };
+  const warning = (): HTMLElement | null => screen.queryByTestId('source-change-warning');
+
+  it('says "This changes the source for N formats" BEFORE saving, once, when the source feeds more than one', async () => {
+    await openEditor(feeding(3));
+    expect(warning()).toBeNull();
+    await addCheck();
+    expect(screen.getAllByText('This changes the source for 3 formats.')).toHaveLength(1);
+    expect(warning()).toBeTruthy();
+    // (nothing about the format: only the input side changed)
+    expect(screen.queryByTestId('format-change-warning')).toBeNull();
+  });
+
+  it('says nothing extra when the source feeds one format', async () => {
+    await openEditor(feeding(1));
+    await addCheck();
+    expect(warning()).toBeNull();
+    expect(screen.queryByText(/This changes the source/)).toBeNull();
+    // (the edit still saves as one)
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('says nothing for an edit that keeps to the format and the source: a new filter, a renamed column of the OUTPUT (that one is the format warning)', async () => {
+    await openEditor(feeding(3));
+    fireEvent.click(screen.getByRole('button', { name: 'Add a filter' }));
+    await waitFor(() => expect(line('filter:2')).toBeTruthy());
+    expect(warning()).toBeNull();
+    openLine('col:Total');
+    fireEvent.change(screen.getByLabelText('Column name'), { target: { value: 'Grand total' } });
+    await waitFor(() => line('col:Grand total'));
+    expect(warning()).toBeNull();
+    expect(screen.getByTestId('format-change-warning')).toBeTruthy();
+  });
+
+  it('goes away when the edit is undone, and once the change is saved', async () => {
+    const updateConversion = vi.fn(async () => ({ conversion: conversionSummary({ id: 'C1', version: 5 }), formatChanged: false, affectedSources: 0, needsReview: [], sourceChanged: true, affectedConversions: 2 }));
+    await openEditor(apiFor({ updateConversion, getConversion: vi.fn(async () => conversionDetail({ id: 'C1', version: 4, sourceName: 'Supplier A', sourceFormats: 3 }, cleanRules())) }));
+    await addCheck();
+    expect(warning()).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(warning()).toBeNull());
+
+    await addCheck();
+    expect(warning()).toBeTruthy();
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('The source changed, and the change reached 2 other formats it feeds.')).toBeTruthy();
+    expect(warning()).toBeNull();
+  });
+
+  it('says it in Hebrew', async () => {
+    renderApp({ api: feeding(2), route: ROUTE, lang: 'he' });
+    await screen.findByTestId('rules-map');
+    await waitFor(() => expect(screen.getByTestId('live-check-text')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'הוספת בדיקה' }));
+    expect(await screen.findByText('השינוי הזה משנה את המקור עבור 2 פורמטים.')).toBeTruthy();
+  });
+});
+
 describe('the optional example', () => {
   const dropExample = async (): Promise<void> => {
     fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });

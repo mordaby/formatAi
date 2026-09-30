@@ -20,6 +20,11 @@ export function freeSourceName(taken: readonly string[]): string {
   }
 }
 
+/** How many formats a source feeds: the distinct formats of its conversions (SPEC 8.15). */
+export async function countSourceFormats(d: AppDb, ownerId: ObjectId, sourceId: ObjectId): Promise<number> {
+  return (await d.conversions.distinct('formatId', { ownerId, sourceId })).length;
+}
+
 export async function takenSourceNames(d: AppDb, ownerId: ObjectId, except?: ObjectId): Promise<string[]> {
   return (
     await d.sources.find({ ownerId, ...(except ? { _id: { $ne: except } } : {}) }, { projection: { name: 1 } }).toArray()
@@ -97,12 +102,12 @@ export async function syncRequired(d: AppDb, ownerId: ObjectId, sourceId: Object
   await d.sources.updateOne({ _id: sourceId, ownerId }, { $set: { inputSignature: after.inputSignature } });
 }
 
-/** Renames a source; the conversions keep a copy of the name (display fallback, and `meta.sourceName` inside their rules). */
+/** Renames a source; the conversions' rules files follow (`meta.sourceName` is informational: the source's own name is the only name). */
 export async function renameSource(d: AppDb, ownerId: ObjectId, source: SourceDoc, name: string, now: Date): Promise<void> {
   await d.sources.updateOne({ _id: source._id!, ownerId }, { $set: { name, nameKey: nameKey(name), updatedAt: now } });
   await d.conversions.updateMany(
     { ownerId, sourceId: source._id! },
-    { $set: { sourceName: name, 'rules.meta.sourceName': name } },
+    { $set: { 'rules.meta.sourceName': name } },
   );
 }
 
@@ -179,7 +184,7 @@ export async function propagateSource(
 
       const written = conversionWrite(
         cur,
-        { rules, sourceName: cur.sourceName, status, acceptedDifferences: cur.acceptedDifferences, exampleExceptions: cur.exampleExceptions },
+        { rules, status, acceptedDifferences: cur.acceptedDifferences, exampleExceptions: cur.exampleExceptions },
         now,
       );
       if (await saveVersion(d, ownerId, cur, written)) {

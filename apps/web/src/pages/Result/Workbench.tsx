@@ -45,6 +45,10 @@ export interface WorkbenchInfo {
   /** The output side changed: for a source of a format this is a change to the format (SPEC 8.12). */
   formatChange: boolean;
   sourceCount: number;
+  /** The input side changed (SPEC 8.15): for a source that feeds several formats this is a change to all of them. */
+  sourceChange: boolean;
+  /** How many formats the conversion's source feeds (1 when that isn't known). */
+  sourceFormats: number;
   editor: UseEditor;
   check: UseLiveCheck;
 }
@@ -273,6 +277,8 @@ export function Workbench(props: WorkbenchProps) {
     dirty: editor.state.dirty,
     formatChange: editor.state.formatChange,
     sourceCount: editor.state.format?.sourceCount ?? 1,
+    sourceChange: editor.state.sourceChange,
+    sourceFormats: editor.state.source?.formats ?? 1,
     editor,
     check,
   };

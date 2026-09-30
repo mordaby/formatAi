@@ -58,7 +58,7 @@ import { checkRulesFile, formatFields, lockProblems, plain, signatureOf, withMet
 import { commitSource, planName, planSource, settleSource } from './sourceResolve.js';
 import { applySource, mergeFromEdit, structureOfDoc, withSourceAliases } from './sourceLogic.js';
 import { addSourceAlias, formatNamesOf, registerSourceRoutes } from './sourceRoutes.js';
-import { isDuplicateKey, propagateSource, renameSource, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
+import { countSourceFormats, isDuplicateKey, propagateSource, renameSource, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
 
 export interface RegisterRegistryRoutesOptions {
   /** Null when no database is configured: every route then answers 503 `unavailable`. */
@@ -87,33 +87,23 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
         .toArray(),
     );
 
-  /** The conversions of one format have a name of their own only until they are migrated to a source (see `sourceName` in models). */
-  const takenNames = async (d: AppDb, c: Caller, formatId: ObjectId, except?: ObjectId): Promise<string[]> =>
-    (
-      await d.conversions
-        .find({ ownerId: c.ownerId, formatId, ...(except ? { _id: { $ne: except } } : {}) }, { projection: { sourceName: 1 } })
-        .toArray()
-    ).map((x) => x.sourceName);
-
   const sourcesAllowed = async (d: AppDb, c: Caller, formatId: ObjectId): Promise<boolean> => {
     const cap = tiers[c.tier].sourcesPerFormat;
     if (cap === 'unlimited') return true;
     return (await d.conversions.countDocuments({ ownerId: c.ownerId, formatId })) < cap;
   };
 
-  /** Source id (hex) -> the source's name, for the conversions' summaries (SPEC 13: the source's name wins). */
-  const sourceNames = async (d: AppDb, c: Caller, docs: readonly { sourceId?: ObjectId }[]): Promise<Map<string, string>> => {
-    const ids = [...new Map(docs.flatMap((x) => (x.sourceId ? [[x.sourceId.toHexString(), x.sourceId] as const] : []))).values()];
+  /** Source id (hex) -> the source's name, for the conversions' summaries (SPEC 13: the source's own name is the only name). */
+  const sourceNames = async (d: AppDb, c: Caller, docs: readonly Pick<ConversionDoc, 'sourceId'>[]): Promise<Map<string, string>> => {
+    const ids = [...new Map(docs.map((x) => [x.sourceId.toHexString(), x.sourceId] as const)).values()];
     if (ids.length === 0) return new Map();
     const found = await d.sources.find({ ownerId: c.ownerId, _id: { $in: ids } }, { projection: { name: 1 } }).toArray();
     return new Map(found.map((s) => [s._id!.toHexString(), s.name] as const));
   };
-  const nameOf = (names: ReadonlyMap<string, string>, doc: { sourceId?: ObjectId }): string | undefined =>
-    doc.sourceId ? names.get(doc.sourceId.toHexString()) : undefined;
+  const nameOf = (names: ReadonlyMap<string, string>, doc: Pick<ConversionDoc, 'sourceId'>): string => names.get(doc.sourceId.toHexString()) ?? '';
 
-  /** The conversion's source, when it has one that still exists. */
-  const sourceOfConversion = async (d: AppDb, c: Caller, conv: Pick<ConversionDoc, 'sourceId'>): Promise<SourceDoc | null> =>
-    conv.sourceId ? ownedSource(d, c, conv.sourceId) : null;
+  /** The conversion's source: every conversion has one, so null means the data is broken (the route answers 404). */
+  const sourceOfConversion = (d: AppDb, c: Caller, conv: Pick<ConversionDoc, 'sourceId'>): Promise<SourceDoc | null> => ownedSource(d, c, conv.sourceId);
 
   // ---------------------------------------------------------------- formats
 
@@ -192,7 +182,6 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       ownerId: caller.ownerId,
       formatId,
       sourceId: source.id,
-      sourceName,
       schemaVersion: 1,
       rules: plain(rules),
       inputSignature: signatureOf(rules),
@@ -226,7 +215,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     const response: CreateFormatResponse = {
       format: formatSummary(formatDoc, aggregateSources([conversionDoc])),
       conversion: conversionSummary(conversionDoc, sourceName),
-      source: { id: source.id.toHexString(), name: sourceName },
+      source: { id: source.id.toHexString(), name: sourceName, formats: await countSourceFormats(d, caller.ownerId, source.id) },
       ...(source.reused ? { sourceReused: { id: source.id.toHexString(), name: sourceName } } : {}),
     };
     return reply.code(201).send(response);
@@ -302,7 +291,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     const doomed = await d.conversions.find({ ownerId: caller.ownerId, formatId: format._id! }, { projection: { sourceId: 1 } }).toArray();
     const removed = await d.conversions.deleteMany({ ownerId: caller.ownerId, formatId: format._id! });
     await d.formats.deleteOne({ _id: format._id!, ownerId: caller.ownerId });
-    for (const id of new Map(doomed.flatMap((c) => (c.sourceId ? [[c.sourceId.toHexString(), c.sourceId] as const] : []))).values()) {
+    for (const id of new Map(doomed.map((c) => [c.sourceId.toHexString(), c.sourceId] as const)).values()) {
       await syncRequired(d, caller.ownerId, id);
     }
     return reply.send({ deleted: true, conversions: removed.deletedCount });
@@ -355,7 +344,6 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       ownerId: caller.ownerId,
       formatId,
       sourceId: source.id,
-      sourceName,
       schemaVersion: 1,
       rules: plain(rules),
       inputSignature: signatureOf(rules),
@@ -383,7 +371,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
 
     const response: AttachSourceResponse = {
       conversion: conversionSummary(doc, sourceName),
-      source: { id: source.id.toHexString(), name: sourceName },
+      source: { id: source.id.toHexString(), name: sourceName, formats: await countSourceFormats(d, caller.ownerId, source.id) },
       ...(source.reused ? { sourceReused: { id: source.id.toHexString(), name: sourceName } } : {}),
     };
     return reply.code(201).send(response);
@@ -397,7 +385,8 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     const conversion = await ownedConversion(g.db, g.caller, idParam(req));
     if (!conversion) return fail(reply, 404, { error: 'notFound' });
     const source = await sourceOfConversion(g.db, g.caller, conversion);
-    return reply.send({ conversion: conversionDetail(conversion, source?.name) });
+    if (!source) return fail(reply, 404, { error: 'notFound' });
+    return reply.send({ conversion: conversionDetail(conversion, source.name, await countSourceFormats(g.db, g.caller.ownerId, source._id!)) });
   });
 
   app.patch('/api/conversions/:id', async (req, reply) => {
@@ -415,13 +404,14 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
 
     const now = protection.now();
     const source = await sourceOfConversion(d, caller, conv);
-    const currentName = source?.name ?? conv.sourceName;
+    if (!source) return fail(reply, 404, { error: 'notFound' });
+    const currentName = source.name;
 
     // ---- a new name for the conversion's source (SPEC 8.15: names belong to sources, unique among the caller's) ----
     let sourceName = currentName;
     if (update.sourceName !== undefined) {
       if (nameKey(update.sourceName) !== nameKey(currentName)) {
-        const taken = source ? await takenSourceNames(d, caller.ownerId, source._id!) : await takenNames(d, caller, conv.formatId, conv._id!);
+        const taken = await takenSourceNames(d, caller.ownerId, source._id!);
         if (taken.some((t) => nameKey(t) === nameKey(update.sourceName!))) return fail(reply, 409, { error: 'nameTaken' });
       }
       sourceName = update.sourceName;
@@ -430,8 +420,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     const rename = async (): Promise<FastifyReply | null> => {
       if (!renamed) return null;
       try {
-        if (source) await renameSource(d, caller.ownerId, source, sourceName, now);
-        else await d.conversions.updateOne({ _id: conv._id!, ownerId: caller.ownerId }, { $set: { sourceName, 'rules.meta.sourceName': sourceName, updatedAt: now } });
+        await renameSource(d, caller.ownerId, source, sourceName, now);
       } catch (e) {
         if (isDuplicateKey(e)) return fail(reply, 409, { error: 'nameTaken' });
         throw e;
@@ -445,7 +434,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       if (refused) return refused;
       if (!renamed) await d.conversions.updateOne({ _id: conv._id!, ownerId: caller.ownerId }, { $set: { updatedAt: now } });
       const body: UpdateConversionResponse = {
-        conversion: conversionSummary({ ...conv, sourceName, updatedAt: now }, sourceName),
+        conversion: conversionSummary({ ...conv, updatedAt: now }, sourceName),
         formatChanged: false,
         affectedSources: 0,
         needsReview: [],
@@ -480,15 +469,13 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     // SPEC 8.15: an edit that changes the input side changes the SOURCE, for every format it feeds (like a format edit): the source
     // takes the change, this conversion is brought to the source (aliases the source has and it doesn't), and the others follow below.
     let sourceEdit: { structure: SourceStructure; renames: Map<string, string> } | null = null;
-    if (source) {
-      const structure = structureOfDoc(source);
-      if (checkSourceLock(rules, structure).length > 0) {
-        const merge = mergeFromEdit(structure, rules, before);
-        const applied = applySource(rules, merge.structure);
-        if (applied.needsReview) return fail(reply, 422, { error: 'sourceMismatch', problems: applied.problems });
-        rules = applied.rules;
-        if (!deepEqual(merge.structure, structure)) sourceEdit = merge;
-      }
+    const structure = structureOfDoc(source);
+    if (checkSourceLock(rules, structure).length > 0) {
+      const merge = mergeFromEdit(structure, rules, before);
+      const applied = applySource(rules, merge.structure);
+      if (applied.needsReview) return fail(reply, 422, { error: 'sourceMismatch', problems: applied.problems });
+      rules = applied.rules;
+      if (!deepEqual(merge.structure, structure)) sourceEdit = merge;
     }
 
     // SPEC 8.12: an edit that changes the output side changes the FORMAT, for all its sources.
@@ -501,7 +488,6 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       conv,
       {
         rules,
-        sourceName,
         status: save.status,
         acceptedDifferences: save.acceptedDifferences,
         exampleExceptions: save.exampleExceptions ?? conv.exampleExceptions,
@@ -518,7 +504,6 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
           $set: {
             rules: conv.rules,
             inputSignature: conv.inputSignature,
-            sourceName: conv.sourceName,
             status: conv.status,
             acceptedDifferences: conv.acceptedDifferences,
             exampleExceptions: conv.exampleExceptions,
@@ -531,7 +516,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     };
 
     let writtenSource: SourceDoc | null = null;
-    if (sourceEdit && source) {
+    if (sourceEdit) {
       writtenSource = await writeSourceVersion(d, caller.ownerId, source, sourceEdit.structure, now);
       if (!writtenSource) {
         await revertConversion();
@@ -571,7 +556,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       if (applied.matchedCount === 0) {
         // Someone changed the format meanwhile: give this conversion (and the source) back, so nothing disagrees with the format.
         await revertConversion();
-        if (writtenSource && source) {
+        if (writtenSource) {
           await d.sources.updateOne(
             { _id: source._id!, ownerId: caller.ownerId, version: writtenSource.version },
             {
@@ -596,6 +581,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
         .find({ ownerId: caller.ownerId, formatId: format._id!, _id: { $ne: conv._id! } })
         .toArray();
       others = siblings.length;
+      const siblingSources = await sourceNames(d, caller, siblings);
       for (const sibling of siblings) {
         for (let attempt = 0; attempt < 3; attempt++) {
           const cur = attempt === 0 ? sibling : await d.conversions.findOne({ _id: sibling._id!, ownerId: caller.ownerId });
@@ -608,7 +594,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
             const rewritten: Rules = { ...propagated.rules, meta: { ...propagated.rules.meta, status } };
             written = conversionWrite(
               cur,
-              { rules: rewritten, sourceName: cur.sourceName, status, acceptedDifferences: cur.acceptedDifferences, exampleExceptions: cur.exampleExceptions },
+              { rules: rewritten, status, acceptedDifferences: cur.acceptedDifferences, exampleExceptions: cur.exampleExceptions },
               now,
             );
           } else {
@@ -617,7 +603,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
           }
           if (await saveVersion(d, caller.ownerId, cur, written)) {
             if (written.status === 'needsReview') {
-              affected.push({ id: cur._id!.toHexString(), sourceName: cur.sourceName, formatId: format._id!.toHexString(), formatName: format.name });
+              affected.push({ id: cur._id!.toHexString(), sourceName: nameOf(siblingSources, cur), formatId: format._id!.toHexString(), formatName: format.name });
             }
             break;
           }
@@ -636,7 +622,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
         affected.push({ id: f.id.toHexString(), sourceName, formatId: f.formatId.toHexString(), formatName: names.get(f.formatId.toHexString()) ?? '' });
       }
     }
-    if (source) await syncRequired(d, caller.ownerId, source._id!);
+    await syncRequired(d, caller.ownerId, source._id!);
 
     const body: UpdateConversionResponse = {
       conversion: conversionSummary(next, sourceName),
@@ -654,9 +640,9 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     const conversion = await ownedConversion(g.db, g.caller, idParam(req));
     if (!conversion) return fail(reply, 404, { error: 'notFound' });
     // The format stays, even with no sources left (a format need not have been learned, SPEC 8.12); so does the source (SPEC 8.15:
-    // it is the company's, and may feed other formats - remove it from "Sources" when it is not needed).
+    // it is the company's, and may feed other formats; it can be deleted through `DELETE /api/sources/:id` once it feeds none).
     await g.db.conversions.deleteOne({ _id: conversion._id!, ownerId: g.caller.ownerId });
-    if (conversion.sourceId) await syncRequired(g.db, g.caller.ownerId, conversion.sourceId);
+    await syncRequired(g.db, g.caller.ownerId, conversion.sourceId);
     return reply.send({ deleted: true });
   });
 
@@ -706,6 +692,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     const format = await ownedFormat(d, caller, conv.formatId);
     if (!format) return fail(reply, 404, { error: 'notFound' });
     const source = await sourceOfConversion(d, caller, conv);
+    if (!source) return fail(reply, 404, { error: 'notFound' });
 
     const now = protection.now();
     const oldMeta = isRecord(old.rules) && isRecord(old.rules.meta) ? old.rules.meta : {};
@@ -713,7 +700,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       withMeta(old.rules, {
         name: (conv.rules as Rules).name,
         formatId: format._id!.toHexString(),
-        sourceName: source?.name ?? conv.sourceName,
+        sourceName: source.name,
         status: old.status,
         source: conv.source,
         learnPath: conv.learnPath,
@@ -731,19 +718,15 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
 
     // The same for the source lock (SPEC 8.15) - except its aliases: they are what the source has learned since, not how the rules
     // behave, so the version comes back with the source's.
-    let restored = checked.rules;
-    if (source) {
-      const structure = structureOfDoc(source);
-      restored = withSourceAliases(restored, structure);
-      const sourceProblems = checkSourceLock(restored, structure);
-      if (sourceProblems.length > 0) return fail(reply, 422, { error: 'sourceMismatch', problems: sourceProblems });
-    }
+    const structure = structureOfDoc(source);
+    const restored = withSourceAliases(checked.rules, structure);
+    const sourceProblems = checkSourceLock(restored, structure);
+    if (sourceProblems.length > 0) return fail(reply, 422, { error: 'sourceMismatch', problems: sourceProblems });
 
     const next = conversionWrite(
       conv,
       {
         rules: restored,
-        sourceName: source?.name ?? conv.sourceName,
         status: old.status,
         acceptedDifferences: old.acceptedDifferences,
         exampleExceptions: conv.exampleExceptions,
@@ -751,8 +734,8 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       now,
     );
     if (!(await saveVersion(d, caller.ownerId, conv, next))) return fail(reply, 409, { error: 'versionConflict' });
-    if (source) await syncRequired(d, caller.ownerId, source._id!);
-    return reply.send({ conversion: conversionSummary(next, source?.name) });
+    await syncRequired(d, caller.ownerId, source._id!);
+    return reply.send({ conversion: conversionSummary(next, source.name) });
   });
 
   app.post('/api/conversions/:id/runs', async (req, reply) => {
@@ -787,42 +770,15 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     // DECISION: kept working for the web app as it was, and forwarded to the conversion's SOURCE (SPEC 8.15: a confirmed mapping is
     // saved once, on the source, and reaches every format it feeds). The answer is still this conversion's signature.
     const source = await sourceOfConversion(d, caller, conv);
-    if (source) {
-      const parsed = RulesSchema.safeParse(conv.rules);
-      if (!parsed.success) return fail(reply, 422, { error: 'invalidRules' });
-      if (!(parsed.data as unknown as Rules).input.columns.some((c) => c.header === request.header)) return fail(reply, 400, { error: 'invalidRequest' });
-      const res = await addSourceAlias(d, caller.ownerId, source, request, protection.now());
-      if (!res.ok) return fail(reply, res.status, res.body);
-      await syncRequired(d, caller.ownerId, source._id!);
-      const fresh = await d.conversions.findOne({ _id: conv._id!, ownerId: caller.ownerId }, { projection: { inputSignature: 1 } });
-      return reply.send({ inputSignature: fresh?.inputSignature ?? conv.inputSignature });
-    }
-
-    // A conversion not yet migrated to a source (`pnpm migrate:sources`): the alias goes into its own rules, as before.
+    if (!source) return fail(reply, 404, { error: 'notFound' });
     const parsed = RulesSchema.safeParse(conv.rules);
     if (!parsed.success) return fail(reply, 422, { error: 'invalidRules' });
-    const rules = parsed.data as unknown as Rules;
-    const column = rules.input.columns.find((c) => c.header === request.header);
-    if (!column) return fail(reply, 400, { error: 'invalidRequest' });
-
-    const key = nameKey(request.alias);
-    const clash = rules.input.columns.some(
-      (c) => c !== column && (nameKey(c.header) === key || (c.aliases ?? []).some((a) => nameKey(a) === key)),
-    );
-    if (clash) return fail(reply, 409, { error: 'aliasConflict' });
-
-    const aliases = column.aliases ?? [];
-    const known = nameKey(column.header) === key || aliases.some((a) => nameKey(a) === key);
-    if (!known) {
-      if (aliases.length >= limits.registry.maxAliasesPerColumn) return fail(reply, 400, { error: 'invalidRequest' });
-      column.aliases = [...aliases, request.alias];
-      const applied = await d.conversions.updateOne(
-        { _id: conv._id!, ownerId: caller.ownerId, version: conv.version },
-        { $set: { rules: plain(rules), inputSignature: signatureOf(rules) } },
-      );
-      if (applied.matchedCount === 0) return fail(reply, 409, { error: 'versionConflict' });
-    }
-    return reply.send({ inputSignature: signatureOf(rules) });
+    if (!(parsed.data as unknown as Rules).input.columns.some((c) => c.header === request.header)) return fail(reply, 400, { error: 'invalidRequest' });
+    const res = await addSourceAlias(d, caller.ownerId, source, request, protection.now());
+    if (!res.ok) return fail(reply, res.status, res.body);
+    await syncRequired(d, caller.ownerId, source._id!);
+    const fresh = await d.conversions.findOne({ _id: conv._id!, ownerId: caller.ownerId }, { projection: { inputSignature: 1 } });
+    return reply.send({ inputSignature: fresh?.inputSignature ?? conv.inputSignature });
   });
 
   // ------------------------------------------------------- signatures
@@ -835,14 +791,14 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     const [sources, conversions] = await Promise.all([
       d.sources.find({ ownerId: caller.ownerId }).sort({ createdAt: 1, _id: 1 }).toArray(),
       d.conversions
-        .find({ ownerId: caller.ownerId, sourceId: { $exists: true } }, { projection: { formatId: 1, sourceId: 1, status: 1 } })
+        .find({ ownerId: caller.ownerId }, { projection: { formatId: 1, sourceId: 1, status: 1 } })
         .sort({ createdAt: 1, _id: 1 })
         .toArray(),
     ]);
     const formatNames = await formatNamesOf(d, caller.ownerId, conversions);
     const bySource = new Map<string, typeof conversions>();
     for (const c of conversions) {
-      const key = c.sourceId!.toHexString();
+      const key = c.sourceId.toHexString();
       const list = bySource.get(key);
       if (list) list.push(c);
       else bySource.set(key, [c]);

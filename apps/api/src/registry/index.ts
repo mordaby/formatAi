@@ -13,5 +13,4 @@ export {
   type ReuseMerge,
   type SourceApplied,
 } from './sourceLogic.js';
-export { describeMigration, groupingKey, planSourceMigration, runSourceMigration, type MigrationPlan, type MigrationSummary } from './migrate.js';
 export { checkRulesFile, signatureOf, type RulesCheck } from './rules.js';

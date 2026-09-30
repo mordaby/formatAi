@@ -12,14 +12,13 @@ export const versionCap = (): number => limits.registry.maxVersions;
 /** What one save writes to a conversion's own fields (its rules, signature and counts): the next version of `from`. */
 export function conversionWrite(
   from: ConversionDoc,
-  to: { rules: Rules; sourceName: string; status: ConversionStatus; acceptedDifferences: number; exampleExceptions: number[] },
+  to: { rules: Rules; status: ConversionStatus; acceptedDifferences: number; exampleExceptions: number[] },
   now: Date,
 ): ConversionDoc {
   return {
     ...from,
     rules: plain(to.rules),
     inputSignature: signatureOf(to.rules),
-    sourceName: to.sourceName,
     status: to.status,
     acceptedDifferences: to.acceptedDifferences,
     exampleExceptions: to.exampleExceptions,
@@ -47,7 +46,6 @@ export async function saveVersion(d: AppDb, ownerId: ObjectId, prev: ConversionD
       $set: {
         rules: next.rules,
         inputSignature: next.inputSignature,
-        sourceName: next.sourceName,
         status: next.status,
         acceptedDifferences: next.acceptedDifferences,
         exampleExceptions: next.exampleExceptions,

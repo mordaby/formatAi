@@ -215,27 +215,27 @@ describe('Save format and download (signed in)', () => {
       expect(body).not.toHaveProperty('sourceId');
       expect(body).not.toHaveProperty('newSource');
       expect(body).not.toHaveProperty('sourceName');
-      // A source that was created says nothing about reuse.
+      // A source that was created is not mentioned: there is no source UI in the MVP (SPEC 8.15).
       expect(await screen.findByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
       expect(screen.queryByTestId('source-reused')).toBeNull();
+      expect(document.body.textContent).not.toMatch(/saved as (the )?source|recogni[sz]ed|reused/i);
     });
 
-    it('says "Reused your source X" when the server reused one of the company\'s', async () => {
+    it('says nothing about the source when the server recognized one of the company\'s and reused it - the save reads as any other', async () => {
       const reused = createFormatResponse({
         format: formatSummary({ id: 'F1', name: 'Orders report' }),
-        conversion: conversionSummary({ id: 'C1', formatId: 'F1', sourceName: 'Acme prices' }),
-        source: { id: 'S4', name: 'Acme prices' },
+        conversion: conversionSummary({ id: 'C1', formatId: 'F1', sourceId: 'S4', sourceName: 'Acme prices' }),
+        source: { id: 'S4', name: 'Acme prices', formats: 2 },
         sourceReused: { id: 'S4', name: 'Acme prices' },
       });
       const createFormat = vi.fn(async () => reused);
       await openLocal(fakeApi({ user: USER, registry: { createFormat } }), {}, { exampleInput: INPUT });
       fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
-      const line = await screen.findByTestId('source-reused');
-      expect(line.textContent).toContain('Reused your source');
-      expect(line.textContent).toContain('Acme prices');
-      // (next to the message for the save itself; and the screen is now the editor of that source, named as the server named it)
-      expect(screen.getByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
-      expect(screen.getByText('Saved as the source "Acme prices". We do not keep your files.')).toBeTruthy();
+      // the message for the save itself is all there is; the source's name (the server's word) is nowhere on the screen
+      expect(await screen.findByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
+      expect(screen.queryByTestId('source-reused')).toBeNull();
+      expect(document.body.textContent).not.toContain('Acme prices');
+      expect(document.body.textContent).not.toMatch(/saved as (the )?source|recogni[sz]ed|reused/i);
     });
 
     it('leaves inputHeaders out when the learn kept no example input', async () => {
@@ -246,8 +246,8 @@ describe('Save format and download (signed in)', () => {
       expect((createFormat.mock.calls[0] as unknown as [Record<string, unknown>])[0]).not.toHaveProperty('inputHeaders');
     });
 
-    it('says it in Hebrew', async () => {
-      const reused = createFormatResponse({ conversion: conversionSummary({ id: 'C1', formatId: 'F1', sourceName: 'Acme prices' }), source: { id: 'S4', name: 'Acme prices' }, sourceReused: { id: 'S4', name: 'Acme prices' } });
+    it('says nothing about the source in Hebrew either', async () => {
+      const reused = createFormatResponse({ conversion: conversionSummary({ id: 'C1', formatId: 'F1', sourceId: 'S4', sourceName: 'Acme prices' }), source: { id: 'S4', name: 'Acme prices', formats: 1 }, sourceReused: { id: 'S4', name: 'Acme prices' } });
       const createFormat = vi.fn(async () => reused);
       const convert = vi.fn(async () => converted());
       const { engine } = fakeEngine(async () => learnResult({ path: 'local', exampleInput: INPUT }), undefined, { convert });
@@ -261,9 +261,10 @@ describe('Save format and download (signed in)', () => {
       await screen.findByTestId('rules-map');
       await waitFor(() => expect((screen.getByRole('button', { name: 'שמירת הפורמט והורדה' }) as HTMLButtonElement).disabled).toBe(false));
       fireEvent.click(screen.getByRole('button', { name: 'שמירת הפורמט והורדה' }));
-      const line = await screen.findByTestId('source-reused');
-      expect(line.textContent).toContain('השתמשנו במקור הקיים שלכם:');
-      expect(line.textContent).toContain('Acme prices');
+      await screen.findByText(/^נשמר\. "/);
+      expect(screen.queryByTestId('source-reused')).toBeNull();
+      expect(document.body.textContent).not.toContain('Acme prices');
+      expect(document.body.textContent).not.toContain('השתמשנו במקור');
     });
   });
 

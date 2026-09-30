@@ -24,7 +24,7 @@ export default function BatchPage() {
             <p className="lead">{t('batch.lead')}</p>
           </header>
           <ul className="what">
-            {(['batch.what.1', 'batch.what.2', 'batch.what.3', 'batch.what.4'] as const).map((key) => (
+            {(['batch.what.1', 'batch.what.2', 'batch.what.3'] as const).map((key) => (
               <li key={key}>
                 <Icon name="check" size={16} />
                 <span>{t(key)}</span>

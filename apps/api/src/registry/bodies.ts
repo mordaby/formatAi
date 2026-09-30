@@ -174,12 +174,12 @@ export interface SourceChoiceFields {
   newSourceName?: string;
   /** Headers of the example input, to match against the owner's sources. */
   inputHeaders?: string[];
-  /** Legacy name for a new source when nothing explicit was said. */
+  /** The name for the source the server creates when nothing matched (none: the server picks "Source N"). */
   sourceName?: string;
 }
 
 /**
- * `sourceId`, `newSource`, `inputHeaders` and the legacy `sourceName` (all optional). Null for a body that names both a source and a
+ * `sourceId`, `newSource`, `inputHeaders` and `sourceName` (all optional). Null for a body that names both a source and a
  * new source, or anything malformed. Over-long headers are left out of `inputHeaders` rather than failing the save: they can't
  * match anything worth matching, and the save must not depend on them.
  */

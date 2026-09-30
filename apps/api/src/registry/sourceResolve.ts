@@ -3,7 +3,8 @@
 //   * an explicit `sourceId`: that source (404 if it isn't the caller's, 422 `sourceMismatch` if the conversion doesn't fit it);
 //   * an explicit `newSource`: a new source with that name, never a reuse (409 `nameTaken` if the name is in use);
 //   * neither: the caller's source the example input MATCHES (the same matching and threshold as flow C - `pickReusableSource`)
-//     is REUSED and the caller is told; otherwise a new source, named by the legacy `sourceName` or the first free "Source N".
+//     is REUSED and the caller is told; otherwise a new source, named by `sourceName` or the first free "Source N".
+// Whatever the choice, the conversion ends up with a source: there is no way to save one without.
 //
 // `planSource` decides and refuses; it writes nothing. `commitSource` performs the source's part of the save, and `settleSource`
 // finishes it once the conversion is stored.

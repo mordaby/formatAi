@@ -8,7 +8,6 @@ import type { LearnOutput } from '../../worker/engineApi';
 export interface SavedSource {
   formatId: string;
   conversionId: string;
-  sourceName: string;
   /** The version last saved: the next save says it is based on this one. */
   version: number;
 }

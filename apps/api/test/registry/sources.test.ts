@@ -1,15 +1,14 @@
 // Sources as first-class objects (SPEC 8.15, 13; fastify inject + a real MongoDB; skipped without MONGODB_URI): saving creates or
 // REUSES a source, the source routes, an edit of a source reaching every conversion of it (whatever format it feeds), the source lock
-// on restore, the alias route, and the migration of conversions written before sources existed.
+// on restore, and the alias route.
 import { randomUUID } from 'node:crypto';
 import { checkSourceLock, sourceOf } from '@formatai/engine';
-import type { LearnResult, Rules, SourceStructure } from '@formatai/shared';
+import type { LearnResult, Rules } from '@formatai/shared';
 import type { FastifyInstance } from 'fastify';
 import { ObjectId } from 'mongodb';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { connectDb, ensureIndexes, type AppDb } from '../../src/db.js';
 import { loadEnv } from '../../src/env.js';
-import { describeMigration, runSourceMigration } from '../../src/registry/migrate.js';
 import { createMemoryStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
 import { makeEnv, mongoUri, stubIdentify, testUserId } from '../protection/harness.js';
@@ -87,7 +86,7 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
     it('flow A creates a source, a format and the conversion between them; the source holds structure only', async () => {
       const res = await create(sourceOne(), { name: 'Catalog', sourceName: 'Supplier A' });
       expect(res.status).toBe(201);
-      expect(res.body.source).toEqual({ id: expect.any(String), name: 'Supplier A' });
+      expect(res.body.source).toEqual({ id: expect.any(String), name: 'Supplier A', formats: 1 });
       expect(res.body.sourceReused).toBeUndefined();
       expect(res.body.conversion).toMatchObject({ sourceId: res.body.source.id, sourceName: 'Supplier A' });
 
@@ -212,7 +211,7 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       const res = await create(sourceOne(), { name: 'Copy', newSource: { name: 'My own' } });
       expect(res.status).toBe(201);
       expect(res.body.sourceReused).toBeUndefined();
-      expect(res.body.source).toEqual({ id: expect.not.stringMatching(sourceId), name: 'My own' });
+      expect(res.body.source).toEqual({ id: expect.not.stringMatching(sourceId), name: 'My own', formats: 1 });
       const taken = await create(sourceOne(), { newSource: { name: 'SUPPLIER a' } });
       expect(taken.status).toBe(409);
       expect(taken.body).toEqual({ error: 'nameTaken' });
@@ -532,107 +531,117 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
     });
   });
 
-  // ---------------------------------------------------------------- migration
+  // ---------------------------------------------------------------- sourceId is required
 
-  describe('migration of conversions written before sources existed (pnpm migrate:sources)', () => {
-    /** Creates conversions through the API and then turns them into "legacy" ones: no sourceId, no source documents. */
-    async function legacyConversions() {
-      const a = await create(sourceOne(), { name: 'Catalog', sourceName: 'Supplier A' });
-      const b = await create(
+  describe('a conversion always has a source (sourceId is required)', () => {
+    it("every way of saving leaves a conversion whose sourceId is one of the owner's sources, with no copy of the name", async () => {
+      const a = await create(sourceOne(), { name: 'Catalog', sourceName: 'Supplier A' }); // flow A, a new source
+      const reuse = await create(
         edited(sourceOne(), (r) => {
           r.output.columns = [{ header: 'ID', from: 'id' }];
           r.transform.computed = [];
-          r.input.columns[0]!.header = 'id'; // same signature after normalization
         }),
-        { name: 'Ids', sourceName: 'Supplier A copy', newSource: undefined, inputHeaders: ['ID'] },
+        { name: 'Ids', inputHeaders: ['ID', 'Amount'] },
+      ); // reuses it
+      const attached = await attach(a.body.format.id, sourceTwo()); // flow A2, a new source
+      const named = await attach(
+        a.body.format.id,
+        edited(sourceOne(), (r) => {
+          r.input.columns[1]!.type = 'integer';
+        }),
+        { newSource: { name: 'Third' } },
       );
-      const c = await create(sourceTwo(), { name: 'Prices', sourceName: 'Supplier B' });
-      const d = await create(sourceOne(), { name: 'Theirs', sourceName: 'Supplier A' }, OTHER_USER);
-      await appDb.sources.deleteMany({});
-      await appDb.conversions.updateMany({}, { $unset: { sourceId: '' } });
-      return { a, b, c, d };
-    }
-    const snapshot = async () => JSON.stringify(await appDb.conversions.find({}).sort({ _id: 1 }).toArray());
+      for (const res of [a, reuse, attached, named]) expect(res.status).toBe(201);
 
-    it('a dry run reports what it would do and writes nothing', async () => {
-      await legacyConversions();
-      const before = await snapshot();
-      const summary = await runSourceMigration(appDb, { dryRun: true });
-      expect(summary.dryRun).toBe(true);
-      expect(summary.owners).toHaveLength(2);
-      expect(await appDb.sources.countDocuments()).toBe(0);
-      expect(await snapshot()).toBe(before);
-      const lines = describeMigration(summary, 'x').join('\n');
-      expect(lines).toContain('dry run');
-      expect(lines).toContain('would create source "Supplier A"');
+      const docs = await appDb.conversions.find({}).toArray();
+      expect(docs).toHaveLength(4);
+      for (const doc of docs) {
+        expect(doc.sourceId).toBeInstanceOf(ObjectId);
+        const owned = await appDb.sources.findOne({ _id: doc.sourceId, ownerId: doc.ownerId });
+        expect(owned, 'its source exists and belongs to the same owner').not.toBeNull();
+        expect((doc.rules as Rules).meta.sourceName).toBe(owned!.name); // informational, inside the rules file
+        expect(Object.keys(doc)).not.toContain('sourceName'); // the source's own name is the only name
+      }
+      expect(await appDb.sources.countDocuments()).toBe(3);
     });
 
-    it('creates one source per group, links every conversion, never touches a rules file, and a second run has nothing to do', async () => {
-      const { a, b, c, d } = await legacyConversions();
-      const rulesBefore = (await appDb.conversions.find({}).sort({ _id: 1 }).toArray()).map((x) => JSON.stringify(x.rules));
-
-      const first = await runSourceMigration(appDb, { dryRun: false, now: now() });
-      expect(first).toMatchObject({ dryRun: false, sourcesCreated: 3, conversionsLinked: 4, alreadyLinked: 0 });
-      const owned = await appDb.sources.find({ ownerId: new ObjectId(TEST_USER) }).sort({ createdAt: 1, _id: 1 }).toArray();
-      expect(owned.map((s) => s.name)).toEqual(['Supplier A', 'Supplier B']);
-      // identical-after-normalization signatures merged; different ones did not; other owners never merge
-      const linked = async (id: string) => String((await appDb.conversions.findOne({ _id: new ObjectId(id) }))!.sourceId);
-      expect(await linked(a.body.conversion.id)).toBe(String(owned[0]!._id));
-      expect(await linked(b.body.conversion.id)).toBe(String(owned[0]!._id));
-      expect(await linked(c.body.conversion.id)).toBe(String(owned[1]!._id));
-      expect(await linked(d.body.conversion.id)).not.toBe(String(owned[0]!._id));
-      expect(await appDb.sources.countDocuments({ ownerId: new ObjectId(OTHER_USER) })).toBe(1);
-      // no rules were touched
-      expect((await appDb.conversions.find({}).sort({ _id: 1 }).toArray()).map((x) => JSON.stringify(x.rules))).toEqual(rulesBefore);
-
-      // idempotent: nothing to do, nothing changes
-      const before = await snapshot();
-      const sourcesBefore = await appDb.sources.countDocuments();
-      const second = await runSourceMigration(appDb, { dryRun: false });
-      expect(second).toMatchObject({ owners: [], sourcesCreated: 0, conversionsLinked: 0, alreadyLinked: 4 });
-      expect(await appDb.sources.countDocuments()).toBe(sourcesBefore);
-      expect(await snapshot()).toBe(before);
-      expect(describeMigration(second, 'x').join('\n')).toContain('nothing to do');
+    it("every answer that names a conversion carries its sourceId and the source's name", async () => {
+      const a = await create(sourceOne(), { name: 'Catalog', sourceName: 'Supplier A' });
+      const id = a.body.conversion.id as string;
+      const sid = a.body.source.id as string;
+      const expected = { sourceId: sid, sourceName: 'Supplier A' };
+      expect(a.body.conversion).toMatchObject(expected);
+      expect((await call('GET', `/api/formats/${a.body.format.id}`, undefined, paid)).body.conversions[0]).toMatchObject(expected);
+      expect(await detail(id)).toMatchObject(expected);
+      const saved = await saveRules(id, await rulesOf(id));
+      expect(saved.status).toBe(200);
+      expect(saved.body.conversion).toMatchObject(expected);
+      const restored = await call('POST', `/api/conversions/${id}/restore/1`, {}, paid);
+      expect(restored.status).toBe(200);
+      expect(restored.body.conversion).toMatchObject(expected);
+      const attached = await attach(a.body.format.id, sourceTwo(), { sourceName: 'Supplier B' });
+      expect(attached.body.conversion).toMatchObject({ sourceId: attached.body.source.id, sourceName: 'Supplier B' });
+      // a rename shows the new name everywhere: the source is the only place it is kept
+      expect((await patchSource(sid, { name: 'Acme' })).status).toBe(200);
+      expect(await detail(id)).toMatchObject({ sourceId: sid, sourceName: 'Acme' });
+      expect((await call('GET', `/api/formats/${a.body.format.id}`, undefined, paid)).body.conversions.map((c: any) => c.sourceName)).toEqual(['Acme', 'Supplier B']);
     });
 
-    it('the API works on migrated data: one source per group in signatures, and an edit reaches every conversion of a merged source', async () => {
-      const { a, b } = await legacyConversions();
-      await runSourceMigration(appDb, { dryRun: false });
-      const sigs = (await call('GET', '/api/signatures')).body.signatures;
-      expect(sigs.map((s: any) => [s.name, s.conversions.length])).toEqual([['Supplier A', 2], ['Supplier B', 1]]);
-      // b spells a header differently from the source ("id" / "ID": the migration never touches rules), so it does not pass the lock yet;
-      // saving it brings it to the source (the source's spelling wins: it is the same column to the engine) - no source edit, no sibling touched
-      const s = (await sources())[0];
-      expect(checkSourceLock(await rulesOf(b.body.conversion.id), await source(s.id)).map((p) => p.path)).toEqual(['input.columns[0]']);
-      const res = await saveRules(b.body.conversion.id, await rulesOf(b.body.conversion.id));
-      expect(res.status).toBe(200);
-      expect(res.body.sourceChanged).toBeUndefined();
-      expect(checkSourceLock(await rulesOf(b.body.conversion.id), await source(s.id))).toEqual([]);
-      expect(checkSourceLock(await rulesOf(a.body.conversion.id), await source(s.id))).toEqual([]);
-      expect((await source(s.id)).version).toBe(1);
-      expect((await detail(a.body.conversion.id)).version).toBe(1);
+    it('a save with a source that cannot be resolved is refused, and nothing is stored', async () => {
+      const mine = await create(sourceOne(), { name: 'Mine' });
+      const theirs = await create(sourceTwo(), {}, OTHER_USER);
+      const counts = async () => ({ formats: await appDb.formats.countDocuments(), conversions: await appDb.conversions.countDocuments(), sources: await appDb.sources.countDocuments() });
+      const before = await counts();
+
+      const cases: [string, Record<string, unknown>, number][] = [
+        ['an id that is no source', { sourceId: new ObjectId().toHexString() }, 404],
+        ["another owner's source", { sourceId: theirs.body.source.id }, 404],
+        ['a malformed id', { sourceId: 'nope' }, 400],
+        ['a source and a new source at once', { sourceId: mine.body.source.id, newSource: { name: 'x' } }, 400],
+      ];
+      for (const [label, over, status] of cases) {
+        const created = await create(sourceOne(), { name: 'New', ...over });
+        expect([label, created.status]).toEqual([label, status]);
+        const attached = await attach(mine.body.format.id, sourceTwo(), over);
+        expect([label, attached.status]).toEqual([label, status]);
+      }
+      expect(await counts()).toEqual(before);
     });
 
-    it('creates the sources\' unique name index, and gives a second run of a half-finished migration a fresh name', async () => {
-      await legacyConversions();
-      // a source with the group's name already exists (e.g. a half-finished earlier run): the new one is "(2)"
-      await appDb.sources.insertOne({
-        ownerId: new ObjectId(TEST_USER),
-        name: 'Supplier A',
-        nameKey: 'supplier a',
-        ...(sourceOf(sourceTwo()) as SourceStructure),
-        version: 1,
-        versions: [],
-        createdAt: now(),
-        updatedAt: now(),
-      });
-      const summary = await runSourceMigration(appDb, { dryRun: false });
-      expect(summary.owners.find((o) => String(o.ownerId) === TEST_USER)!.sources.map((s) => s.name)).toEqual(['Supplier A (2)', 'Supplier B']);
-      const indexes = (await appDb.sources.indexes()).map((i) => i.name);
-      expect(indexes).toContain('sources_ownerId_nameKey_unique');
-      await expect(
-        appDb.sources.insertOne({ ownerId: new ObjectId(TEST_USER), name: 'SUPPLIER B', nameKey: 'supplier b', ...(sourceOf(sourceTwo()) as SourceStructure), version: 1, versions: [], createdAt: now(), updatedAt: now() }),
-      ).rejects.toThrow();
+    it('a conversion whose source no longer exists is not served (there is no fallback for one without a source)', async () => {
+      const a = await create(sourceOne(), { name: 'Catalog' });
+      const id = a.body.conversion.id as string;
+      expect((await saveRules(id, await rulesOf(id))).status).toBe(200); // a version to restore
+      await appDb.sources.deleteOne({ _id: new ObjectId(a.body.source.id) }); // the database is now broken: only a direct write can do this
+      expect((await call('GET', `/api/conversions/${id}`, undefined, paid)).status).toBe(404);
+      expect((await call('PATCH', `/api/conversions/${id}`, { sourceName: 'x' }, paid)).status).toBe(404);
+      expect((await call('POST', `/api/conversions/${id}/restore/1`, {}, paid)).status).toBe(404);
+      expect((await call('POST', `/api/conversions/${id}/aliases`, { header: 'ID', alias: 'Code' }, paid)).status).toBe(404);
+    });
+
+    it("`sourceFormats` is how many formats the conversion's source feeds, and a save says so", async () => {
+      const { a, b, sourceId } = await oneSourceTwoFormats();
+      expect(a.source.formats).toBe(1);
+      expect(b.source).toEqual({ id: sourceId, name: 'Supplier A', formats: 2 });
+      expect((await detail(a.conversion.id)).sourceFormats).toBe(2);
+      expect((await detail(b.conversion.id)).sourceFormats).toBe(2);
+      // another conversion of the same source into a format it already feeds is still one format
+      const third = await attach(
+        b.format.id,
+        edited(sourceOne(), (r) => {
+          r.output.columns = [
+            { header: 'ID', from: 'id' },
+            { header: 'Amount', from: 'amount' },
+          ];
+          r.transform.computed = [];
+        }),
+        { sourceId },
+      );
+      expect(third.status).toBe(201);
+      expect(third.body.source.formats).toBe(2);
+      // deleting a format's conversion takes it off the count
+      await call('DELETE', `/api/conversions/${a.conversion.id}`, undefined, paid);
+      expect((await detail(b.conversion.id)).sourceFormats).toBe(1);
     });
   });
 });

@@ -27,8 +27,8 @@ import { normalizeText } from '../values/text';
 
 /**
  * How a header is compared when matching a file to a source (SPEC 8.12): `normalizeText` and case-insensitive - the very
- * normalization of `mapHeaders` (`pipeline/v1/normalize.ts`), so grouping conversions into sources (the migration) and
- * matching a file to one can never disagree.
+ * normalization of `mapHeaders` (`pipeline/v1/normalize.ts`), so the way a conversion's columns are
+ * compared with its source's and the way a file is matched to one can never disagree.
  */
 export function sourceHeaderKey(header: string): string {
   return normalizeText(header).toLowerCase();

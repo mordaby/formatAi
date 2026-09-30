@@ -5,16 +5,16 @@
 import { applyRulesAction, type RulesAction } from './actions';
 import { parseAdvancedJson } from './advanced';
 import { editorConfig } from './config';
-import { editedLines, formatFingerprint } from './lines';
+import { editedLines, formatFingerprint, inputSideChanged } from './lines';
 import { fail, isProblems } from './problems';
 import { availableInputs, isStored, referencedIds, sameContent, withInputColumns } from './rulesUtil';
-import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, EditProblem, ExampleInputColumn, FormatInfo, Snapshot } from './types';
+import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, EditProblem, ExampleInputColumn, FormatInfo, Snapshot, SourceInfo } from './types';
 import { validateEdit } from './validate';
 
 export * from './types';
 export { applyColumnMethod, readColumnMethod, methodSources, mismatchMessage } from './columnMethod';
 export { advancedJsonOf, parseAdvancedJson } from './advanced';
-export { editedLines, formatFingerprint, lineIds, lineIdsOf } from './lines';
+export { editedLines, formatFingerprint, inputSideChanged, lineIds, lineIdsOf } from './lines';
 export { sourceOptions, availableInputs, effectiveEndSummaryRows, effectiveGroupSummaryRows } from './rulesUtil';
 export { validateEdit } from './validate';
 
@@ -36,12 +36,14 @@ function derive(state: EditorState, rules: EditableRules, exceptions: number[]):
   const edited = new Set<string>(state.baseEdited);
   for (const id of editedLines(state.baseline, rules)) edited.add(id);
   const formatChange = state.format !== null && formatFingerprint(rules) !== formatFingerprint(state.saved.rules);
+  const sourceChange = state.source !== null && inputSideChanged(state.saved.rules, rules);
   return {
     ...state,
     rules,
     exceptions,
     edited,
     formatChange,
+    sourceChange,
     dirty: !sameSnapshot({ rules, exceptions }, state.saved),
     rev: state.rev + 1,
   };
@@ -62,6 +64,8 @@ export function createEditorState(rules: EditableRules, options: EditorOptions =
     dirty: false,
     formatChange: false,
     format,
+    source: options.source ?? null,
+    sourceChange: false,
     rev: 0,
     baseline: rules,
     baseEdited: base,
@@ -193,6 +197,11 @@ export function markSaved(state: EditorState, rules: EditableRules = state.rules
 /** The conversion belongs to a format (or no longer does): the format-change flag follows. Not an edit: `rev` and the history stay. */
 export function withFormat(state: EditorState, format: FormatInfo | null): EditorState {
   return { ...state, format, formatChange: format !== null && formatFingerprint(state.rules) !== formatFingerprint(state.saved.rules) };
+}
+
+/** The conversion's source is known (or no longer is): the source-change flag follows. Not an edit: `rev` and the history stay. */
+export function withSource(state: EditorState, source: SourceInfo | null): EditorState {
+  return { ...state, source, sourceChange: source !== null && inputSideChanged(state.saved.rules, state.rules) };
 }
 
 /** Start over from other rules (a different conversion, or rules the server sent back after a save). */

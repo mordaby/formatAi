@@ -10,8 +10,7 @@
     "eval": "pnpm --filter @formatai/eval run eval",
     "learn": "pnpm --filter @formatai/eval run learn",
     "convert": "pnpm --filter @formatai/eval run convert",
-    "dev": "pnpm --parallel --filter @formatai/api --filter @formatai/web run dev",
-    "migrate:sources": "pnpm --filter @formatai/api run migrate:sources"
+    "dev": "pnpm --parallel --filter @formatai/api --filter @formatai/web run dev"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

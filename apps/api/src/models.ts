@@ -151,11 +151,10 @@ export interface ConversionDoc {
   _id?: ObjectId;
   ownerId: ObjectId;
   formatId: ObjectId;
-  /** The source this conversion reads (SPEC 8.15). Optional only for documents written before sources existed - see
-   * `pnpm migrate:sources`; every conversion the API creates has one. */
-  sourceId?: ObjectId;
-  /** A copy of the source's name, kept for display only (SPEC 13): the source's own name wins. */
-  sourceName: string;
+  /** The source this conversion reads (SPEC 8.15, 13): required - a conversion is a link between a source and a format. The
+   * source's own name is the only name (DECISION: no copy is kept here; `rules.meta.sourceName` inside the rules file is
+   * informational and follows a rename). */
+  sourceId: ObjectId;
   schemaVersion: number;
   rules: unknown;
   inputSignature: { columns: InputColumnSignature[] };

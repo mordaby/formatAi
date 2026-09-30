@@ -1,5 +1,5 @@
 // Builders for the registry screens' tests: a saved format, its sources, and a stored conversion with real rules.
-import type { ConversionDetail, ConversionSummary, CreateFormatResponse, FormatDetail, FormatSummary, GetFormatResponse, Rules, SourceDetail, SourceSummary } from '@formatai/shared';
+import type { ConversionDetail, ConversionSummary, CreateFormatResponse, FormatDetail, FormatSummary, GetFormatResponse, Rules, SourceSummary } from '@formatai/shared';
 import { ordersRules } from '../../src/editor/testkit';
 
 export function formatSummary(over: Partial<FormatSummary> & { id: string; name: string }): FormatSummary {
@@ -21,6 +21,7 @@ export function formatSummary(over: Partial<FormatSummary> & { id: string; name:
 export function conversionSummary(over: Partial<ConversionSummary> & { id: string }): ConversionSummary {
   return {
     formatId: 'F1',
+    sourceId: 'S1',
     sourceName: 'Supplier A',
     status: 'verified',
     acceptedDifferences: 0,
@@ -57,17 +58,18 @@ export function conversionDetail(over: Partial<ConversionDetail> & { id: string 
     exampleExceptions: [],
     masking: true,
     inputSignature: { columns: [] },
+    sourceFormats: 1,
     ...over,
   };
 }
 
-/** POST /api/formats 201 body (SPEC 8.15): the format, its conversion, and the source the conversion belongs to. */
-export function createFormatResponse(over: { format?: FormatSummary; conversion?: ConversionSummary; source?: { id: string; name: string }; sourceReused?: { id: string; name: string } } = {}): CreateFormatResponse {
+/** POST /api/formats 201 body (SPEC 8.15): the format, its conversion, and the source the conversion belongs to (`formats`: how many it feeds). */
+export function createFormatResponse(over: { format?: FormatSummary; conversion?: ConversionSummary; source?: { id: string; name: string; formats?: number }; sourceReused?: { id: string; name: string } } = {}): CreateFormatResponse {
   const conversion = over.conversion ?? conversionSummary({ id: 'C1', formatId: 'F1' });
   return {
     format: over.format ?? formatSummary({ id: 'F1', name: 'Orders report' }),
     conversion,
-    source: over.source ?? { id: conversion.sourceId ?? 'S1', name: conversion.sourceName },
+    source: { id: over.source?.id ?? conversion.sourceId, name: over.source?.name ?? conversion.sourceName, formats: over.source?.formats ?? 1 },
     ...(over.sourceReused ? { sourceReused: over.sourceReused } : {}),
   };
 }
@@ -87,15 +89,4 @@ export function sourceSummary(over: Partial<SourceSummary> & { id: string; name:
     updatedAt: '2026-08-01T10:00:00.000Z',
     ...over,
   };
-}
-
-/** A source with its structure (GET /api/sources/:id): the columns of the given headers, all text, and the default reading. */
-export function sourceDetail(over: Partial<SourceDetail> & { id: string; name: string }, headers: string[] = ['Code', 'Name', 'Price']): SourceDetail {
-  return {
-    ...sourceSummary({ ...over }),
-    inputSignature: { columns: headers.map((header) => ({ header, aliases: [], type: 'text' as const, required: true })) },
-    inputReading: { sheet: { pick: 'first' }, headerRow: 'auto' },
-    inputValidations: [],
-    ...over,
-  } as SourceDetail;
 }

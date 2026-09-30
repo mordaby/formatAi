@@ -128,14 +128,14 @@ describe('error mapping', () => {
   });
 });
 
-// SPEC 8.15: the registry client - a source is chosen or detected when a conversion is saved, and the company's sources are listed, renamed
-// and deleted on their own.
+// SPEC 8.15: the registry client - a conversion's source is decided by the server when it is saved (the source objects have no screen in the
+// MVP: only the list of their names is read, for Add a source).
 describe('registry: sources', () => {
   const conversion = { id: 'C1', formatId: 'F1', sourceId: 'S1', sourceName: 'Supplier A' };
   const call = (fetchMock: ReturnType<typeof vi.fn>, n = 0): [string, RequestInit] => fetchMock.mock.calls[n]! as [string, RequestInit];
 
   it('attachSource(): POSTs the source choice and the example input\'s headers, and answers with the WHOLE response (source, sourceReused)', async () => {
-    const answer = { conversion, source: { id: 'S1', name: 'Supplier A' }, sourceReused: { id: 'S1', name: 'Supplier A' } };
+    const answer = { conversion, source: { id: 'S1', name: 'Supplier A', formats: 1 }, sourceReused: { id: 'S1', name: 'Supplier A' } };
     const { api, fetchMock } = apiWith(() => json(answer, { status: 201 }));
     const body = { rules, status: 'verified', acceptedDifferences: 0, exampleExceptions: [], learnPath: 'local', masking: true, sourceId: 'S1', inputHeaders: ['Code', 'Name'] } as unknown as Parameters<typeof api.registry.attachSource>[1];
     await expect(api.registry.attachSource('F 1', body)).resolves.toEqual(answer);
@@ -146,7 +146,7 @@ describe('registry: sources', () => {
   });
 
   it('createFormat(): passes newSource and inputHeaders through, and the answer names the source', async () => {
-    const answer = { format: { id: 'F1' }, conversion, source: { id: 'S1', name: 'Supplier A' } };
+    const answer = { format: { id: 'F1' }, conversion, source: { id: 'S1', name: 'Supplier A', formats: 1 } };
     const { api, fetchMock } = apiWith(() => json(answer, { status: 201 }));
     const body = { name: 'Orders', rules, status: 'verified', acceptedDifferences: 0, exampleExceptions: [], learnPath: 'local', masking: true, newSource: { name: 'Supplier A' }, inputHeaders: ['Code'] } as unknown as Parameters<typeof api.registry.createFormat>[0];
     await expect(api.registry.createFormat(body)).resolves.toEqual(answer);
@@ -154,35 +154,13 @@ describe('registry: sources', () => {
     expect(sentBody(fetchMock)).toMatchObject({ newSource: { name: 'Supplier A' }, inputHeaders: ['Code'] });
   });
 
-  it('listSources() and getSource(): GET, unwrapped', async () => {
+  it('listSources(): GET, unwrapped - and the client has no other call on the source objects (no screen for them in the MVP)', async () => {
     const source = { id: 'S1', name: 'Supplier A', conversions: [] };
-    const { api, fetchMock } = apiWith((url) => json(url.endsWith('/api/sources') ? { sources: [source] } : { source }));
+    const { api, fetchMock } = apiWith(() => json({ sources: [source] }));
     await expect(api.registry.listSources()).resolves.toEqual([source]);
-    await expect(api.registry.getSource('S/1')).resolves.toEqual(source);
     expect(call(fetchMock, 0)[0]).toBe('https://api.test/api/sources');
     expect(call(fetchMock, 0)[1].method).toBe('GET');
-    expect(call(fetchMock, 1)[0]).toBe('https://api.test/api/sources/S%2F1');
-  });
-
-  it('updateSource(): PATCHes the rename and answers with the whole response', async () => {
-    const answer = { source: { id: 'S1', name: 'Master' }, structureChanged: false, affectedConversions: 0, needsReview: [] };
-    const { api, fetchMock } = apiWith(() => json(answer));
-    await expect(api.registry.updateSource('S1', { name: 'Master' })).resolves.toEqual(answer);
-    expect(call(fetchMock)[0]).toBe('https://api.test/api/sources/S1');
-    expect(call(fetchMock)[1].method).toBe('PATCH');
-    expect(sentBody(fetchMock)).toEqual({ name: 'Master' });
-  });
-
-  it('deleteSource(): DELETE, and a source that still feeds a format is refused as sourceInUse', async () => {
-    const { api, fetchMock } = apiWith(() => json({ deleted: true }));
-    await expect(api.registry.deleteSource('S1')).resolves.toBeUndefined();
-    expect(call(fetchMock)[0]).toBe('https://api.test/api/sources/S1');
-    expect(call(fetchMock)[1].method).toBe('DELETE');
-
-    const refused = apiWith(() => json({ error: 'sourceInUse' }, { status: 409 }));
-    const err = (await refused.api.registry.deleteSource('S1').catch((e: unknown) => e)) as ApiError;
-    expect(err.code).toBe('sourceInUse');
-    expect(err.status).toBe(409);
+    expect(Object.keys(api.registry).filter((k) => /source/i.test(k)).sort()).toEqual(['attachSource', 'listSources']);
   });
 
   it('a 422 sourceMismatch keeps its problems (the source lock\'s findings), a 409 nameTaken maps to its code', async () => {
@@ -193,6 +171,6 @@ describe('registry: sources', () => {
     expect(err.problems).toEqual(problems);
 
     const taken = apiWith(() => json({ error: 'nameTaken' }, { status: 409 }));
-    expect(((await taken.api.registry.updateSource('S1', { name: 'X' }).catch((e: unknown) => e)) as ApiError).code).toBe('nameTaken');
+    expect(((await taken.api.registry.attachSource('F1', {} as never).catch((e: unknown) => e)) as ApiError).code).toBe('nameTaken');
   });
 });

@@ -105,6 +105,13 @@ describe('matching', () => {
     expect(downloaded).toHaveBeenCalledWith(expect.stringContaining('jan (converted).csv'), expect.any(ArrayBuffer), 'text/csv');
   });
 
+  it('never advertises one source feeding several formats: the lead speaks of "its format"', async () => {
+    const api = fakeConvertApi();
+    renderConvert(<ConvertPage />, { api, engine: fakeEngine().engine });
+    expect(await screen.findByText('Drop a file. We find which of your sources it is and make it into its format.')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/or formats|several formats|feeds/i);
+  });
+
   it('several sources fit and none clearly wins: the top 3 are offered, with scores in plain words, and the pick is used', async () => {
     const entries = [
       entry({ conversionId: 'c1', sourceName: 'Supplier A' }),

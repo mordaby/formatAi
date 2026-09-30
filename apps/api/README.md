@@ -77,11 +77,11 @@ checks ownership (someone else's id is a `404 notFound`); ids are 24-hex ObjectI
 
 | Route | What |
 |---|---|
-| `POST /api/formats` | create the format (`formatOf(rules)`), its **source** and the conversion between them. The source is chosen by `sourceId` (reuse that one), `newSource: { name }` (always a new one), or - neither - by matching `inputHeaders` (the example input's headers, structure only) against the caller's sources with flow C's matching and threshold: a match is **reused** and the answer carries `sourceReused: { id, name }`; otherwise a new source (legacy `sourceName`, default the first free "Source N") |
+| `POST /api/formats` | create the format (`formatOf(rules)`), its **source** and the conversion between them. The source is chosen by `sourceId` (reuse that one), `newSource: { name }` (always a new one), or - neither - by matching `inputHeaders` (the example input's headers, structure only) against the caller's sources with flow C's matching and threshold: a match is **reused** and the answer carries `sourceReused: { id, name }` (the web app does not show it: sources are created and reused silently in the MVP); otherwise a new source (named by the optional `sourceName`, default the first free "Source N"). The answer names `source: { id, name, formats }` (`formats`: how many formats it feeds now) |
 | `GET /api/formats`, `GET /api/formats/:id` | list (sources, statuses, runs) / a format with its output side and its conversions |
 | `PATCH /api/formats/:id`, `DELETE /api/formats/:id` | rename / delete with its conversions (frees a slot, never refunds learns or this month's new-format count) |
 | `POST /api/formats/:id/conversions` | attach a conversion: the rules must pass the format lock, else `422 formatMismatch { problems }`; the source is chosen as above (a source that already feeds this format is never reused automatically); an explicit `sourceId` the rules don't fit answers `422 sourceMismatch { problems }` |
-| `GET /api/conversions/:id`, `DELETE /api/conversions/:id` | the conversion with its rules / delete (the format stays) |
+| `GET /api/conversions/:id`, `DELETE /api/conversions/:id` | the conversion with its rules and `sourceFormats` (how many formats its source feeds) / delete (the format stays) |
 | `PATCH /api/conversions/:id` | rename the conversion's **source** (`sourceName`), and/or save edited rules as a new version (`{ rules, status, acceptedDifferences, exampleExceptions?, baseVersion? }`); if the output side changed it is a **format edit**: the format gets a new version and every other conversion of the format is rebuilt around it (`needsReview` when its references no longer resolve); if the input side changed it is a **source edit** (SPEC 8.15): the source gets a new version and every other conversion of it, whatever format it feeds, is rebuilt (`sourceChanged`, `affectedConversions`); the response says how many were affected |
 | `GET /api/conversions/:id/versions`, `POST /api/conversions/:id/restore/:version` | history (newest first) / restore an older version as a new one (send `{}`); refused with `formatMismatch` / `sourceMismatch` when the format / source changed since (the source's aliases are brought over, the rest must match) |
 | `POST /api/conversions/:id/runs` | `{ rows, flagged }` - counts only - bumps `runCount` / `lastRunAt` |
@@ -92,8 +92,7 @@ checks ownership (someone else's id is a `404 notFound`); ids are 24-hex ObjectI
 | `DELETE /api/sources/:id` | only when it feeds no format (`409 sourceInUse` otherwise). Deleting a conversion or a format leaves its source in place |
 | `POST /api/sources/:id/aliases` | `{ header, alias }` - a confirmed column mapping, saved **once** on the source; every conversion of it learns it (no new versions) |
 
-Sources are the company's (SPEC 8.15). Existing data is migrated once with `pnpm migrate:sources` (`-- --dry-run` prints the plan and writes nothing;
-idempotent; never touches a rules file; grouping rules in `src/registry/migrate.ts`) - run it before starting this version of the API on a database written by an earlier one.
+Sources are the company's (SPEC 8.15), and every conversion belongs to one: `sourceId` is required on the stored conversion and in every answer, and the source's own `name` is the only name (there is no copy on the conversion). There is no migration: a development database written before sources existed is cleared of the conversions (and their formats) that have no `sourceId`, not converted.
 
 Tier limits (SPEC 11) answer `403 limitHit` with `limit: savedFormats | sourcesPerFormat | rulesPerFormat`,
 or `429 limitHit` with `limit: newFormatsPerMonth` (paid, DECISION 9). Other refusals: `422 invalidRules

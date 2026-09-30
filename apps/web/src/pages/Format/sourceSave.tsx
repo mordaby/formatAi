@@ -96,7 +96,11 @@ export interface SourceMessagesProps {
   onSignIn(): void;
 }
 
-/** Between the header and the live check: the format-change warning, what stopped the last save, and what the last save did. */
+/**
+ * Between the header and the live check: the format-change warning, the source-change warning, what stopped the last save, and what the last
+ * save did. The source-change warning is said only when the source feeds MORE THAN ONE format (SPEC 8.15): with one format, an edit of the input
+ * side changes nothing anyone else uses, and there is nothing extra to say.
+ */
 export function SourceMessages({ info, saver, notice, formatId, onReload, onSignIn }: SourceMessagesProps) {
   const { t } = useI18n();
   return (
@@ -104,6 +108,11 @@ export function SourceMessages({ info, saver, notice, formatId, onReload, onSign
       {info.formatChange && (
         <div data-testid="format-change-warning">
           <InlineMessage tone="warn">{t(info.sourceCount === 1 ? 'edit.formatChange.warn.one' : 'edit.formatChange.warn.other', { n: info.sourceCount })}</InlineMessage>
+        </div>
+      )}
+      {info.sourceChange && info.sourceFormats > 1 && (
+        <div data-testid="source-change-warning">
+          <InlineMessage tone="warn">{t('edit.sourceChange.warn', { n: info.sourceFormats })}</InlineMessage>
         </div>
       )}
       {saver.conflict ? (

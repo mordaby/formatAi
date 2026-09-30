@@ -1,10 +1,10 @@
-// My formats (SPEC 16.1 screen 5) with the company's sources under the list (SPEC 8.15), one format and its sources, and Home for a
-// signed-in user who has formats. A fake API.
+// My formats (SPEC 16.1 screen 5) - the formats only: the company's Source objects (SPEC 8.15) have no screen in the MVP - one format and its
+// sources, and Home for a signed-in user who has formats. A fake API.
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
 import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
-import { conversionSummary, formatSummary, getFormatResponse, sourceDetail, sourceSummary } from './helpers/registryKit';
+import { conversionSummary, formatSummary, getFormatResponse } from './helpers/registryKit';
 import { fakeApi, renderApp, USER } from './helpers/renderApp';
 
 beforeEach(() => {
@@ -151,7 +151,7 @@ describe('My formats', () => {
       await screen.findByTestId('format-list');
       fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Delete' }));
       const dialog = await screen.findByRole('dialog', { name: 'Delete "Supplier price list"?' });
-      expect(dialog.textContent).toContain('This deletes the format. Its 3 sources stay in your sources.');
+      expect(dialog.textContent).toContain('This deletes the format and its 3 sources.');
       expect(dialog.textContent).toContain('It frees a saved-format slot, but it does not give back any AI formats you used.');
       expect(deleteFormat).not.toHaveBeenCalled();
 
@@ -184,275 +184,43 @@ describe('My formats', () => {
   });
 });
 
-describe('the company\'s sources on My formats (SPEC 8.15)', () => {
-  const sectionCards = (): HTMLElement[] => screen.queryAllByTestId('source-card');
-  const feedsOne = { conversionId: 'C1', formatId: 'F1', formatName: 'Supplier price list', status: 'verified' as const };
-  const MASTER = sourceSummary({
-    id: 'S1',
-    name: 'Master prices',
-    columns: 9,
-    conversions: [feedsOne, { conversionId: 'C9', formatId: 'F2', formatName: 'Contacts export', status: 'needsReview' }],
-    runCount: 3,
-    lastRunAt: '2026-09-15T08:30:00.000Z',
-  });
-  const IDLE = sourceSummary({ id: 'S2', name: 'Old supplier', columns: 1 });
-  const listSources = (...list: ReturnType<typeof sourceSummary>[]) => vi.fn(async () => list);
-
-  it('lists each source with its name, the formats it feeds (as links), its statuses and how big it is', async () => {
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER, CONTACTS]), listSources: listSources(MASTER, IDLE) } });
-    renderApp({ api, route: '/formats' });
-    const section = await screen.findByTestId('sources-section');
-    expect(within(section).getByRole('heading', { level: 2, name: 'Sources' })).toBeTruthy();
-    expect(sectionCards()).toHaveLength(2);
-
-    const master = sectionCards()[0]!;
-    expect(within(master).getByRole('heading', { name: 'Master prices' })).toBeTruthy();
-    expect(master.textContent).toContain('Feeds 2 formats');
-    expect(within(master).getByRole('link', { name: 'Supplier price list' }).getAttribute('href')).toBe('/formats/F1');
-    expect(within(master).getByRole('link', { name: 'Contacts export' }).getAttribute('href')).toBe('/formats/F2');
-    // What needs a look comes first, as on a format's card.
-    expect(within(master).getByText('1 need review')).toBeTruthy();
-    expect(within(master).getByText('1 verified')).toBeTruthy();
-    expect(master.textContent).toContain('9 columns');
-    expect(master.textContent).toContain('Run 3 times');
-    expect(master.textContent).toContain('Last run');
-
-    const idle = sectionCards()[1]!;
-    expect(idle.textContent).toContain('Feeds no format yet');
-    expect(idle.textContent).toContain('1 column');
-    expect(idle.textContent).toContain('Not run yet');
+describe('the company\'s Source objects have no screen on My formats (SPEC 8.15: MVP)', () => {
+  it('shows the formats only: no Sources section, no list of sources is even read, and nothing says which formats share a source', async () => {
+    const listSources = vi.fn(async () => []);
+    const getFormat = vi.fn(async () =>
+      getFormatResponse({
+        id: 'F1',
+        name: 'Supplier price list',
+        // the second conversion's source feeds another format too - which My formats does not say
+        sources: [conversionSummary({ id: 'C1', sourceId: 'S1', sourceName: 'Supplier A' }), conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' })],
+      }),
+    );
+    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources, getFormat } }), route: '/formats' });
+    await screen.findByTestId('format-list');
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: /3 sources/ }));
+    await screen.findByText('Supplier B');
+    expect(screen.queryByTestId('sources-section')).toBeNull();
+    expect(screen.queryByTestId('source-card')).toBeNull();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Sources' })).toBeNull();
+    expect(screen.queryByText(/Also feeds/)).toBeNull();
+    expect(listSources).not.toHaveBeenCalled();
   });
 
-  it('says "Feeds 1 format" for one, and is under the format list', async () => {
-    const one = sourceSummary({ id: 'S3', name: 'Supplier A', conversions: [feedsOne] });
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: listSources(one) } }), route: '/formats' });
-    const section = await screen.findByTestId('sources-section');
-    expect(section.textContent).toContain('Feeds 1 format');
-    expect(screen.getByTestId('format-list').compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it('is not there when the company has no sources', async () => {
+  it('deleting a format says it goes with its sources, and never mentions a list of the company\'s sources', async () => {
     renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) } }), route: '/formats' });
     await screen.findByTestId('format-list');
-    await act(async () => {});
-    expect(screen.queryByTestId('sources-section')).toBeNull();
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('This deletes the format and its 3 sources.');
+    expect(dialog.textContent).not.toMatch(/stay in your sources/);
   });
 
-  it('finds a source whose formats are all gone (with no format listed at all)', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { listSources: listSources(IDLE) } }), route: '/formats' });
-    expect(await screen.findByTestId('formats-empty')).toBeTruthy();
-    expect(await screen.findByTestId('sources-section')).toBeTruthy();
-    expect(within(sectionCards()[0]!).getByRole('heading', { name: 'Old supplier' })).toBeTruthy();
-  });
-
-  it('a list of sources that cannot be loaded says so and can be tried again', async () => {
-    const list = vi.fn().mockRejectedValueOnce(new ApiError('server', 500)).mockResolvedValue([IDLE]);
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: list } }), route: '/formats' });
-    expect(await screen.findByText("We couldn't load your sources.")).toBeTruthy();
-    // (the formats are there all the same)
-    expect(screen.getByTestId('format-list')).toBeTruthy();
-    fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]!);
-    await screen.findByTestId('sources-section');
-  });
-
-  it('a format\'s open list of sources hints at the OTHER formats a source also feeds', async () => {
-    const getFormat = vi.fn(async () => getFormatResponse({ id: 'F1', name: 'Supplier price list', sources: [conversionSummary({ id: 'C1', sourceName: 'Master prices' })] }));
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), getFormat, listSources: listSources(MASTER) } }), route: '/formats' });
-    await screen.findByTestId('sources-section');
-    fireEvent.click(within(cards()[0]!).getByRole('button', { name: /3 sources/ }));
-    const item = (await within(cards()[0]!).findByRole('link', { name: 'Master prices' })).closest('li')!;
-    expect(item.textContent).toContain('Also feeds:');
-    expect(item.textContent).toContain('Contacts export');
-    expect(item.textContent).not.toContain('Supplier price list');
-  });
-
-  describe('rename', () => {
-    it('renames through the source (PATCH name), shows the new name, and a name in use is refused in words', async () => {
-      const updateSource = vi
-        .fn()
-        .mockRejectedValueOnce(new ApiError('nameTaken', 409))
-        .mockImplementation(async (id: string, body: { name: string }) => ({
-          source: sourceDetail({ id, name: body.name, conversions: MASTER.conversions }),
-          structureChanged: false,
-          affectedConversions: 0,
-          needsReview: [],
-        }));
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: listSources(MASTER, IDLE), updateSource } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      fireEvent.click(within(sectionCards()[0]!).getByRole('button', { name: 'Rename' }));
-      fireEvent.change(screen.getByLabelText('Source name'), { target: { value: 'old SUPPLIER' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-      expect(await screen.findByText('You already have a source with that name. Choose a different name.')).toBeTruthy();
-      // the old name stays until it is saved
-      expect(updateSource).toHaveBeenCalledWith('S1', { name: 'old SUPPLIER' });
-
-      fireEvent.change(screen.getByLabelText('Source name'), { target: { value: 'Price master' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-      await waitFor(() => expect(within(sectionCards()[0]!).getByRole('heading', { name: 'Price master' })).toBeTruthy());
-      expect(updateSource).toHaveBeenLastCalledWith('S1', { name: 'Price master' });
-      expect(screen.queryByLabelText('Source name')).toBeNull();
-      // what else it is stays: the formats it feeds
-      expect(within(sectionCards()[0]!).getByRole('link', { name: 'Contacts export' })).toBeTruthy();
-    });
-
-    it('an unchanged or empty name just closes, and another failure says so plainly', async () => {
-      const updateSource = vi.fn(async () => Promise.reject(new ApiError('server', 500)));
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: listSources(MASTER), updateSource } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      fireEvent.click(within(sectionCards()[0]!).getByRole('button', { name: 'Rename' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-      expect(updateSource).not.toHaveBeenCalled();
-      expect(screen.queryByLabelText('Source name')).toBeNull();
-
-      fireEvent.click(within(sectionCards()[0]!).getByRole('button', { name: 'Rename' }));
-      fireEvent.change(screen.getByLabelText('Source name'), { target: { value: 'Another' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-      expect(await screen.findByText("We couldn't rename it. Try again.")).toBeTruthy();
-      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-      expect(within(sectionCards()[0]!).getByRole('heading', { name: 'Master prices' })).toBeTruthy();
-    });
-
-    it('a rename made here is read by the format cards that are open (they name the source)', async () => {
-      const getFormat = vi.fn(async () => getFormatResponse({ id: 'F1', name: 'Supplier price list', sources: [conversionSummary({ id: 'C1', sourceName: 'Master prices' })] }));
-      const updateSource = vi.fn(async (id: string, body: { name: string }) => ({ source: sourceDetail({ id, name: body.name, conversions: MASTER.conversions }), structureChanged: false, affectedConversions: 0, needsReview: [] }));
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), getFormat, listSources: listSources(MASTER), updateSource } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      fireEvent.click(within(cards()[0]!).getByRole('button', { name: /3 sources/ }));
-      await within(cards()[0]!).findByRole('link', { name: 'Master prices' });
-      expect(getFormat).toHaveBeenCalledTimes(1);
-
-      fireEvent.click(within(sectionCards()[0]!).getByRole('button', { name: 'Rename' }));
-      fireEvent.change(screen.getByLabelText('Source name'), { target: { value: 'Price master' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-      await waitFor(() => expect(getFormat).toHaveBeenCalledTimes(2));
-    });
-
-    it('the other way round: a rename of the source from a format\'s page renames the source (PATCH conversion { sourceName }) and is what My formats shows next', async () => {
-      // (one API, two screens: the format page's rename, then My formats read again)
-      let name = 'Master prices';
-      const updateConversion = vi.fn(async (id: string, body: { sourceName: string }) => {
-        name = body.sourceName;
-        return { conversion: conversionSummary({ id, sourceName: name }), formatChanged: false, affectedSources: 0, needsReview: [] };
-      });
-      const api = fakeApi({
-        user: USER,
-        registry: {
-          getFormat: vi.fn(async () => getFormatResponse({ id: 'F1', name: 'Supplier price list', sources: [conversionSummary({ id: 'C1', sourceName: name })] })),
-          listSources: vi.fn(async () => [sourceSummary({ id: 'S1', name, conversions: [feedsOne] })]),
-          listFormats: vi.fn(async () => [SUPPLIER]),
-          updateConversion,
-        },
-      });
-      const { unmount } = renderApp({ api, route: '/formats/F1' });
-      await screen.findByTestId('source-rows');
-      fireEvent.click(screen.getByRole('button', { name: 'Rename source' }));
-      fireEvent.change(screen.getByLabelText('Source name'), { target: { value: 'Price master' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-      await waitFor(() => expect(updateConversion).toHaveBeenCalledWith('C1', { sourceName: 'Price master' }));
-      unmount();
-
-      renderApp({ api, route: '/formats' });
-      const section = await screen.findByTestId('sources-section');
-      expect(within(section).getByRole('heading', { name: 'Price master' })).toBeTruthy();
-    });
-  });
-
-  describe('delete', () => {
-    it('is offered only for a source that feeds no format (the others say why not)', async () => {
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: listSources(MASTER, IDLE) } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      const [master, idle] = sectionCards() as [HTMLElement, HTMLElement];
-      expect(within(master).queryByRole('button', { name: 'Delete' })).toBeNull();
-      expect(master.textContent).toContain('To delete it, first remove it from its formats.');
-      expect(within(idle).getByRole('button', { name: 'Delete' })).toBeTruthy();
-      expect(idle.textContent).not.toContain('To delete it');
-    });
-
-    it('asks first, then removes the source (its formats are not touched)', async () => {
-      const deleteSource = vi.fn(async () => undefined);
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: listSources(MASTER, IDLE), deleteSource } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      fireEvent.click(within(sectionCards()[1]!).getByRole('button', { name: 'Delete' }));
-      const dialog = await screen.findByRole('dialog', { name: 'Delete the source "⁨Old supplier⁩"?' });
-      expect(dialog.textContent).toContain('This source feeds no format, so no format changes.');
-      expect(deleteSource).not.toHaveBeenCalled();
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete source' }));
-      await waitFor(() => expect(sectionCards()).toHaveLength(1));
-      expect(deleteSource).toHaveBeenCalledWith('S2');
-      expect(screen.queryByRole('dialog')).toBeNull();
-      expect(within(sectionCards()[0]!).getByRole('heading', { name: 'Master prices' })).toBeTruthy();
-      expect(cards()).toHaveLength(1);
-    });
-
-    it('"Keep it" leaves the source as it was', async () => {
-      const deleteSource = vi.fn(async () => undefined);
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: listSources(IDLE), deleteSource } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      fireEvent.click(within(sectionCards()[0]!).getByRole('button', { name: 'Delete' }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Keep it' }));
-      expect(deleteSource).not.toHaveBeenCalled();
-      expect(sectionCards()).toHaveLength(1);
-    });
-
-    it('the last source going takes the section with it', async () => {
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: listSources(IDLE) } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      fireEvent.click(within(sectionCards()[0]!).getByRole('button', { name: 'Delete' }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Delete source' }));
-      await waitFor(() => expect(screen.queryByTestId('sources-section')).toBeNull());
-    });
-
-    it('a source that turns out to feed a format (the list was old) is refused with the server\'s sentence, and the list is read again', async () => {
-      const deleteSource = vi.fn(async () => Promise.reject(new ApiError('sourceInUse', 409)));
-      const list = vi.fn().mockResolvedValueOnce([IDLE]).mockResolvedValue([{ ...IDLE, conversions: [feedsOne], statuses: { verified: 1 } }]);
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: list, deleteSource } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      fireEvent.click(within(sectionCards()[0]!).getByRole('button', { name: 'Delete' }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Delete source' }));
-      const dialog = await screen.findByRole('dialog');
-      expect(await within(dialog).findByText('This source still feeds a format. Remove it from its formats first.')).toBeTruthy();
-      expect(sectionCards()).toHaveLength(1);
-      // read again: it now feeds a format, so it can't be deleted from here
-      await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Keep it' }));
-      await waitFor(() => expect(within(sectionCards()[0]!).queryByRole('button', { name: 'Delete' })).toBeNull());
-      expect(sectionCards()[0]!.textContent).toContain('Feeds 1 format');
-    });
-
-    it('any other failure says so and keeps the source', async () => {
-      const deleteSource = vi.fn(async () => Promise.reject(new ApiError('server', 500)));
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: listSources(IDLE), deleteSource } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      fireEvent.click(within(sectionCards()[0]!).getByRole('button', { name: 'Delete' }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Delete source' }));
-      expect(await screen.findByText("We couldn't delete the source. Try again.")).toBeTruthy();
-      expect(sectionCards()).toHaveLength(1);
-    });
-
-    it('a deleted FORMAT leaves its sources: the list is read again, and a source that now feeds nothing can be deleted', async () => {
-      const deleteFormat = vi.fn(async () => undefined);
-      const list = vi
-        .fn()
-        .mockResolvedValueOnce([sourceSummary({ id: 'S5', name: 'Only supplier', conversions: [feedsOne] })])
-        .mockResolvedValue([sourceSummary({ id: 'S5', name: 'Only supplier' })]);
-      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: list, deleteFormat } }), route: '/formats' });
-      await screen.findByTestId('sources-section');
-      expect(within(sectionCards()[0]!).queryByRole('button', { name: 'Delete' })).toBeNull();
-      fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Delete' }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Delete format' }));
-      await waitFor(() => expect(cards()).toHaveLength(0));
-      await waitFor(() => expect(within(sectionCards()[0]!).getByRole('button', { name: 'Delete' })).toBeTruthy());
-      expect(sectionCards()[0]!.textContent).toContain('Feeds no format yet');
-    });
-  });
-
-  it('says it in Hebrew', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources: listSources(MASTER, IDLE) } }), route: '/formats', lang: 'he' });
-    const section = await screen.findByTestId('sources-section');
-    expect(within(section).getByRole('heading', { level: 2, name: 'מקורות' })).toBeTruthy();
-    expect(sectionCards()[0]!.textContent).toContain('מזין 2 פורמטים');
-    expect(sectionCards()[0]!.textContent).toContain('כדי למחוק אותו, קודם הסירו אותו מהפורמטים שלו.');
-    expect(sectionCards()[1]!.textContent).toContain('עוד לא מזין פורמט');
+  it('there is no Sources entry in the header either', async () => {
+    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) } }), route: '/formats' });
+    await screen.findByTestId('format-list');
+    const header = document.querySelector('.app-header') as HTMLElement;
+    expect(within(header).getByRole('link', { name: 'My formats' })).toBeTruthy();
+    expect(within(header).queryByRole('link', { name: 'Sources' })).toBeNull();
   });
 });
 
@@ -505,7 +273,7 @@ describe('one format', () => {
     fireEvent.click(within(screen.getAllByTestId('source-row')[1]!).getByRole('button', { name: 'Delete source' }));
     const dialog = await screen.findByRole('dialog', { name: 'Delete the source "Supplier B"?' });
     expect(dialog.textContent).toContain('The format and its other sources stay.');
-    expect(dialog.textContent).toContain('The source itself stays in your sources');
+    expect(dialog.textContent).not.toMatch(/your sources/);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete source' }));
     await waitFor(() => expect(screen.getAllByTestId('source-row')).toHaveLength(1));
     expect(deleteConversion).toHaveBeenCalledWith('C2');

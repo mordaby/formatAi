@@ -76,13 +76,13 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RegistryContext)
 
     const sources = await d.sources.find({ ownerId: caller.ownerId }).sort({ createdAt: 1, _id: 1 }).limit(limits.registry.maxSourcesListed).toArray();
     const conversions = await d.conversions
-      .find({ ownerId: caller.ownerId, sourceId: { $exists: true } }, { projection: { sourceId: 1, formatId: 1, status: 1, runCount: 1, lastRunAt: 1 } })
+      .find({ ownerId: caller.ownerId }, { projection: { sourceId: 1, formatId: 1, status: 1, runCount: 1, lastRunAt: 1 } })
       .sort({ createdAt: 1, _id: 1 })
       .toArray();
     const names = await formatNamesOf(d, caller.ownerId, conversions);
     const bySource = new Map<string, typeof conversions>();
     for (const c of conversions) {
-      const key = c.sourceId!.toHexString();
+      const key = c.sourceId.toHexString();
       const list = bySource.get(key);
       if (list) list.push(c);
       else bySource.set(key, [c]);

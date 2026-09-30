@@ -7,7 +7,7 @@
 export const convertEn = {
   // ----- the Convert screen -----
   'conv.title': 'Convert a file',
-  'conv.lead': 'Drop a file. We find which of your sources it is and make it into the format (or formats) that source feeds.',
+  'conv.lead': 'Drop a file. We find which of your sources it is and make it into its format.',
   'conv.onlyFormat': 'Only the sources of {format}.',
   'conv.allFormats': 'Use all my formats',
   'conv.drop.label': 'File to convert',
@@ -155,7 +155,6 @@ export const convertEn = {
   'batch.what.1': 'Files from different sources can be mixed. Each one finds its own source.',
   'batch.what.2': 'Files that clearly match a source are converted one at a time on your computer.',
   'batch.what.3': 'You get a zip with the converted files, grouped by format, and a summary sheet of every flag.',
-  'batch.what.4': 'A source that feeds several formats converts the file into all of them.',
   'batch.wall.title': 'Sign in to run a batch',
   'batch.wall.text': 'Batch uses your saved formats, so it needs an account.',
   'batch.paid.title': 'Batch is part of the paid plan',
@@ -225,7 +224,7 @@ export const convertEn = {
 export const convertHe: Record<keyof typeof convertEn, string> = {
   // ----- the Convert screen -----
   'conv.title': 'המרת קובץ',
-  'conv.lead': 'גררו קובץ. אנחנו מזהים מאיזה מקור הוא ומכינים אותו בפורמט (או בפורמטים) שהמקור הזה מזין.',
+  'conv.lead': 'גררו קובץ. אנחנו מזהים מאיזה מקור הוא ומכינים אותו בפורמט שלו.',
   'conv.onlyFormat': 'רק המקורות של {format}.',
   'conv.allFormats': 'להשתמש בכל הפורמטים שלי',
   'conv.drop.label': 'קובץ להמרה',
@@ -373,7 +372,6 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'batch.what.1': 'אפשר לערבב קבצים ממקורות שונים. כל קובץ מוצא את המקור שלו.',
   'batch.what.2': 'קבצים שמתאימים בבירור למקור מומרים בזה אחר זה במחשב שלכם.',
   'batch.what.3': 'מקבלים zip עם הקבצים שהומרו, מקובצים לפי פורמט, וגיליון סיכום של כל הסימונים.',
-  'batch.what.4': 'מקור שמזין כמה פורמטים ממיר את הקובץ לכולם.',
   'batch.wall.title': 'התחברו כדי להריץ אצווה',
   'batch.wall.text': 'אצווה משתמשת בפורמטים השמורים שלכם, ולכן צריך חשבון.',
   'batch.paid.title': 'אצווה היא חלק מהתוכנית בתשלום',

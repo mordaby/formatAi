@@ -187,6 +187,12 @@ export interface FormatInfo {
   sourceCount: number;
 }
 
+/** What the editor knows about the SOURCE the conversion reads (SPEC 8.15). */
+export interface SourceInfo {
+  /** How many formats the source feeds (this conversion's included): "This changes the source for N formats" is said only when it is more than 1. */
+  formats: number;
+}
+
 export interface EditorState {
   rules: EditableRules;
   history: { past: Snapshot[]; future: Snapshot[] };
@@ -200,6 +206,10 @@ export interface EditorState {
   formatChange: boolean;
   /** Set when the conversion belongs to a format. */
   format: FormatInfo | null;
+  /** Set when the conversion's source is known (a saved conversion). */
+  source: SourceInfo | null;
+  /** The source is known and the input side has changed (SPEC 8.15): an edit of it is an edit of the source, for every format it feeds. */
+  sourceChange: boolean;
   /** Bumped by every change of rules or exceptions: a cheap "is this result still current" key. */
   rev: number;
   // ----- bookkeeping -----
@@ -216,6 +226,8 @@ export interface EditorOptions {
   exceptions?: number[];
   /** The format this conversion belongs to. Default: `{ sourceCount: 1 }` when `rules.meta.formatId` is set, else none. */
   format?: FormatInfo | null;
+  /** The source this conversion reads (SPEC 8.15). Default: none known. */
+  source?: SourceInfo | null;
   /** Lines already known to be edited (from an earlier session). */
   edited?: readonly LineId[];
   historyCap?: number;

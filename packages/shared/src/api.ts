@@ -180,7 +180,7 @@ export interface SourceChoice {
    * sources. Without it the headers the rules declare are used, which is usually a subset of the file's.
    */
   inputHeaders?: string[];
-  /** Legacy: the name of a NEW source when neither `sourceId` nor `newSource` is given (default: the first free "Source N"). */
+  /** The name of the source to CREATE when neither `sourceId` nor `newSource` is given and no existing source matches (default: the first free "Source N"). */
   sourceName?: string;
 }
 
@@ -260,9 +260,9 @@ export interface FormatSummary {
 export interface ConversionSummary {
   id: string;
   formatId: string;
-  /** The source it belongs to (SPEC 8.15). Absent only on data not yet migrated (`pnpm migrate:sources`). */
-  sourceId?: string;
-  /** The SOURCE's name (it wins over any copy kept on the conversion). */
+  /** The source it belongs to (SPEC 8.15, 13): every conversion has one. */
+  sourceId: string;
+  /** The SOURCE's name: the only name there is (a conversion keeps no copy of it). */
   sourceName: string;
   status: ConversionStatus;
   acceptedDifferences: number;
@@ -284,6 +284,8 @@ export interface ConversionDetail extends ConversionSummary {
   model?: string;
   promptVersion?: string;
   inputSignature: { columns: SignatureColumn[] };
+  /** How many formats its source feeds, this one included (SPEC 8.15): an edit of the input side is said to change the source for all of them when this is more than 1. */
+  sourceFormats: number;
 }
 
 /** The format side (SPEC 8.12) - `Format` in format.ts, kept opaque here to keep this file type-light. */
@@ -304,12 +306,19 @@ export interface GetFormatResponse {
   conversions: ConversionSummary[];
 }
 
+/** The source a save put the conversion in. `formats`: how many formats it feeds now, this save included. */
+export interface SavedSourceRef {
+  id: string;
+  name: string;
+  formats: number;
+}
+
 /** POST /api/formats 201 body. */
 export interface CreateFormatResponse {
   format: FormatSummary;
   conversion: ConversionSummary;
   /** The source the conversion belongs to. */
-  source: { id: string; name: string };
+  source: SavedSourceRef;
   /** Present when an existing source was used instead of creating one (SPEC 8.15 "Saving"). */
   sourceReused?: SourceReused;
 }
@@ -317,7 +326,7 @@ export interface CreateFormatResponse {
 /** POST /api/formats/:id/conversions 201 body. */
 export interface AttachSourceResponse {
   conversion: ConversionSummary;
-  source: { id: string; name: string };
+  source: SavedSourceRef;
   sourceReused?: SourceReused;
 }
 

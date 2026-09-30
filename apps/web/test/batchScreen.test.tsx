@@ -266,7 +266,8 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
     const api = fakeConvertApi({ user: PAID, entries: [feeds, other], rulesById });
     renderConvert(<BatchPage />, { api, engine, route: '/batch' });
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x'), csvFile('x.csv', 'x')]);
-    expect(screen.getByText('A source that feeds several formats converts the file into all of them.')).toBeTruthy();
+    // (working, but never advertised: the page's text does not mention sources that feed several formats)
+    expect(document.body.textContent).not.toMatch(/feeds several formats|all of them/);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 3 files' }));
     const results = await screen.findByTestId('batch-results');
 

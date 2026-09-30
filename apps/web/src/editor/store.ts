@@ -11,8 +11,9 @@ import {
   resetEditor,
   undo,
   withFormat,
+  withSource,
 } from './model';
-import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, ExampleInputColumn, FormatInfo } from './types';
+import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, ExampleInputColumn, FormatInfo, SourceInfo } from './types';
 
 export interface ApplyActionOptions {
   /**
@@ -86,6 +87,11 @@ export class EditorStore {
    */
   setFormat = (format: FormatInfo | null): void => {
     this.set(withFormat(this.state, format));
+  };
+
+  /** The conversion's source is now known (a learn that has just been saved): an edit of the input side is a change to the source (SPEC 8.15). */
+  setSource = (source: SourceInfo | null): void => {
+    this.set(withSource(this.state, source));
   };
 
   /** Start over from other rules. */

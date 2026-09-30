@@ -305,7 +305,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
           conversionId: conv.conversionId,
           formatId: detail.formatId,
           formatName: conv.formatName,
-          sourceName: detail.sourceName || job.source.name,
+          sourceName: detail.sourceName,
           rules: withAliases(detail.rules, job.mapping),
         };
         setPhase({ kind: 'running', target });

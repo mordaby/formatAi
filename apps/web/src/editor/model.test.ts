@@ -10,6 +10,7 @@ import {
   canUndo,
   createEditorState,
   formatFingerprint,
+  inputSideChanged,
   lineIdsOf,
   markSaved,
   readColumnMethod,
@@ -17,6 +18,7 @@ import {
   sourceOptions,
   undo,
   withFormat,
+  withSource,
   type ColumnMethod,
   type EditAction,
   type EditorState,
@@ -1212,5 +1214,104 @@ describe('every accepted edit leaves rules the engine accepts', () => {
     for (let i = steps.length - 1; i >= 0; i--) s = undo(s);
     expect(s.rules).toEqual(ordersRules());
     expect(s.dirty).toBe(false);
+  });
+});
+
+// ---------- the source side: editing the input side changes the SOURCE (SPEC 8.15) ----------
+
+describe('sourceChange (SPEC 8.15)', () => {
+  const inSource = (rules: Rules = ordersRules(), formats = 2) => start(rules, { source: { formats } });
+  const withInput = (edit: (r: Rules) => void): Rules => {
+    const rules = ordersRules();
+    edit(rules);
+    return rules;
+  };
+
+  it('inputSideChanged: the reading options, the input checks and what a declared column says are the input side', () => {
+    const base = ordersRules();
+    expect(inputSideChanged(base, ordersRules())).toBe(false);
+    const changes: [string, (r: Rules) => void][] = [
+      ['a column\'s header', (r) => void (r.input.columns[1]!.header = 'Vendor')],
+      ['a column\'s type', (r) => void (r.input.columns[2]!.type = 'decimal')],
+      ['a column\'s padding', (r) => void (r.input.columns[0]!.padLeft = 8)],
+      ['a column\'s date formats', (r) => void (r.input.columns[5]!.inputFormats = ['YYYY-MM-DD'])],
+      ['a column\'s aliases', (r) => void (r.input.columns[1]!.aliases = ['Vendor name'])],
+      ['the sheet', (r) => void (r.input.sheet = { pick: 'name', name: 'Data' })],
+      ['the header row', (r) => void (r.input.headerRow = 3)],
+      ['where the file stops', (r) => void (r.input.stopAt = { when: 'firstCellEquals', values: ['Total'] } as never)],
+      ['an input check', (r) => void r.validations.push({ column: 'qty', rule: 'required', severity: 'flag' })],
+      ['a column the rules did not declare', (r) => void r.input.columns.push({ id: 'extra', header: 'Extra', type: 'text' })],
+    ];
+    for (const [what, edit] of changes) expect([what, inputSideChanged(base, withInput(edit))]).toEqual([what, true]);
+  });
+
+  it('inputSideChanged: what is not the source is not a change - the output side, row filters, how a column is made; `required`; a column no longer declared', () => {
+    const base = ordersRules();
+    const same: [string, (r: Rules) => void][] = [
+      ['the output side', (r) => void (r.output.columns[0]!.header = 'SKU')],
+      ['a row filter (which rows a FORMAT wants, not how the file is read)', (r) => void r.input.rowFilters!.push({ column: 'qty', op: 'notEmpty' })],
+      ['a computed column', (r) => void (r.transform.computed[0]!.id = 'total2')],
+      ['an output check', (r) => void r.validations.push({ on: 'output', column: 'Qty', rule: 'required', severity: 'flag' })],
+      ['a column being required', (r) => void (r.input.columns[1]!.required = true)],
+      ['the order of the aliases', (r) => void (r.input.columns[1]!.aliases = ['b', 'a'])],
+      // A source keeps its columns: a conversion may read a subset, so a column the rules stop declaring leaves the source as it was.
+      ['a column the rules no longer declare', (r) => void r.input.columns.pop()],
+    ];
+    for (const [what, edit] of same) {
+      const edited = withInput(edit);
+      if (what === 'the order of the aliases') {
+        // (aliases are a set: the same two in another order is nothing)
+        const before = withInput((r) => void (r.input.columns[1]!.aliases = ['a', 'b']));
+        expect([what, inputSideChanged(before, edited)]).toEqual([what, false]);
+      } else {
+        expect([what, inputSideChanged(base, edited)]).toEqual([what, false]);
+      }
+    }
+    // `on: "input"` written out is the same as not written (SPEC 8.8)
+    const plain = withInput((r) => void r.validations.push({ column: 'qty', rule: 'required', severity: 'flag' }));
+    const explicit = withInput((r) => void r.validations.push({ on: 'input', column: 'qty', rule: 'required', severity: 'flag' }));
+    expect(inputSideChanged(plain, explicit)).toBe(false);
+  });
+
+  it('is set by an edit of the input side, for a conversion whose source is known; undoing it takes it back', () => {
+    const s0 = inSource();
+    expect(s0.source).toEqual({ formats: 2 });
+    expect(s0.sourceChange).toBe(false);
+    const s = ok(s0, { type: 'addValidation', validation: { column: 'qty', rule: 'required', severity: 'flag' } });
+    expect(s.sourceChange).toBe(true);
+    expect(undo(s).sourceChange).toBe(false);
+    // (the same edit also changes nothing of the format)
+    expect(s.formatChange).toBe(false);
+  });
+
+  it('is not set by an edit of the output side or of the filters, and never without a known source', () => {
+    const s0 = inSource();
+    for (const a of [
+      { type: 'setColumnHeader', index: 0, header: 'SKU' },
+      { type: 'addFilter', filter: { column: 'status', op: 'notEmpty' } },
+      { type: 'setDedupe', enabled: true },
+    ] as EditAction[]) expect([a.type, ok(s0, a).sourceChange]).toEqual([a.type, false]);
+    const withoutSource = start();
+    expect(withoutSource.source).toBeNull();
+    expect(ok(withoutSource, { type: 'addValidation', validation: { column: 'qty', rule: 'required', severity: 'flag' } }).sourceChange).toBe(false);
+  });
+
+  it('a save writes the change out; a source that becomes known later (a learn just saved) joins without touching rev or history', () => {
+    let s = ok(inSource(), { type: 'addValidation', validation: { column: 'qty', rule: 'required', severity: 'flag' } });
+    expect(s.sourceChange).toBe(true);
+    s = markSaved(s);
+    expect([s.dirty, s.sourceChange]).toEqual([false, false]);
+
+    let learned = ok(start(), { type: 'addValidation', validation: { column: 'qty', rule: 'required', severity: 'flag' } });
+    learned = markSaved(learned);
+    const { rev, history } = learned;
+    const joined = withSource(learned, { formats: 3 });
+    expect(joined.source).toEqual({ formats: 3 });
+    expect([joined.sourceChange, joined.rev]).toEqual([false, rev]);
+    expect(joined.history).toBe(history);
+    const edited = ok(joined, { type: 'removeValidation', index: 0 });
+    expect(edited.sourceChange).toBe(true);
+    // ... and it is forgotten when the source is no longer known
+    expect(withSource(edited, null).sourceChange).toBe(false);
   });
 });

@@ -151,8 +151,8 @@ export function mergeFromEdit(source: SourceStructure, after: LearnResult | Rule
     }
     const s = columns[at]!;
     // DECISION: a header that differs from the source's only as the engine ignores (case, spacing, quote marks) is the same column
-    // spelled another way, not a rename: the source's spelling stays, and the conversion is brought to it (a migrated source is
-    // built from conversions that may spell a header differently, and one of them being saved must not re-spell it for the rest).
+    // spelled another way, not a rename: the source's spelling stays, and the conversion is brought to it (a source is built from
+    // conversions that may spell a header differently, and one of them being saved must not re-spell it for the rest).
     const header = sourceHeaderKey(s.header) === sourceHeaderKey(mine.header) ? s.header : mine.header;
     if (s.header !== header) renames.set(s.header, header);
     const next: SourceColumn = {

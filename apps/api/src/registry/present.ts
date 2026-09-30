@@ -27,16 +27,16 @@ export const NO_SOURCES: SourceStats = { sources: 0, statuses: {}, runCount: 0 }
 const iso = (d: Date | undefined): string | undefined => (d ? d.toISOString() : undefined);
 
 /**
- * `sourceName` is the SOURCE's name when it is known (SPEC 13: the conversion's own copy is a display fallback only - the source's
- * name wins); `fromSource` is that name, read from the source document by the route.
+ * `sourceName` is the SOURCE's name (SPEC 13: the source's own name is the only name - a conversion keeps no copy), read from the
+ * source document by the route.
  */
-export function conversionSummary(doc: ConversionDoc, fromSource?: string): ConversionSummary {
+export function conversionSummary(doc: ConversionDoc, sourceName: string): ConversionSummary {
   const lastRunAt = iso(doc.lastRunAt);
   return {
     id: doc._id!.toHexString(),
     formatId: doc.formatId.toHexString(),
-    ...(doc.sourceId ? { sourceId: doc.sourceId.toHexString() } : {}),
-    sourceName: fromSource ?? doc.sourceName,
+    sourceId: doc.sourceId.toHexString(),
+    sourceName,
     status: doc.status,
     acceptedDifferences: doc.acceptedDifferences,
     learnPath: doc.learnPath,
@@ -49,9 +49,11 @@ export function conversionSummary(doc: ConversionDoc, fromSource?: string): Conv
   };
 }
 
-export function conversionDetail(doc: ConversionDoc, fromSource?: string): ConversionDetail {
+/** `sourceFormats`: how many formats the conversion's source feeds (this one included) - the browser warns before an edit of the input side when it is more than one. */
+export function conversionDetail(doc: ConversionDoc, sourceName: string, sourceFormats: number): ConversionDetail {
   return {
-    ...conversionSummary(doc, fromSource),
+    ...conversionSummary(doc, sourceName),
+    sourceFormats,
     rules: doc.rules as Rules,
     exampleExceptions: doc.exampleExceptions,
     masking: doc.masking,
