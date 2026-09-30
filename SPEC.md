@@ -762,7 +762,7 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
 | Saved formats | none | up to 3 | up to 50 new per month (DECISION 9) |
 | Sources per format | none | 3 | unlimited |
 | Rules per format (8.14) | 30 | 30 | 300 |
-| Learns that reach the LLM | 2 per day | 10 per month | 150 per month |
+| AI learns (reach the LLM; count only when they succeed, see 21 v5) | none — sign in to use AI (the local result is shown first) | 3 per month (config: count + period lifetime | month | day) | 150 per month |
 | Fast-path learns | unlimited | unlimited | unlimited |
 | Edit rules | view only | yes | yes |
 
@@ -1012,7 +1012,7 @@ Stop after each milestone and report.
   - the rules editor (8.11), with the live match counter and one-off exceptions;
   - the masking switch with its explanation, and "See what we send";
   - anonymous limits, Turnstile, budgets and cache.
-- **M3: Accounts.**
+- **M3: Accounts.** (Also build the v5 changes in section 21.)
   - Google and Microsoft sign-in, and the sign-in wall;
   - the registry: formats with their sources, add a source (flow A2), convert a file with automatic matching (flow C), format edits that propagate (8.12);
   - tier config and usage counters;
@@ -1107,3 +1107,11 @@ What changed:
 ### v4 change: generic summary rows
 
 `output.grandTotal` and `transform.group.subtotal` (8.1: sum-only, one label, ids) are replaced by generic `summaryRows` (8.6, 8.12): any number of rows, each naming, by OUTPUT HEADER, the aggregate (`sum`, `count`, `min`, `max`, `average`, `first`, `last`) that fills each cell - so a summary row belongs to the format like the rest of `output`, with no id translation (8.12). A summary-output column's own `agg` (8.6) gains `average`/`last` too, for the same set either way. Each `summaryRows` entry counts as one rule (8.14). Stored rules files keep `grandTotal`/`subtotal` loading and running byte-identical; the LLM (`learn-v4`) only ever writes `summaryRows`.
+
+### v5 changes (owner decisions, 2026-09-30) — build in M3
+
+1. **AI only for signed-in users.** Free (not signed in) users get everything that runs locally — pair analysis, pre-flight, the fast path, the editor, converting — but never an LLM call. When their example needs the AI step, show the **local result first**: the rules map with every column code could explain (verified against the example) and the columns that need the AI step marked "Needs the AI step", with a popup: "We worked out N of M columns on your computer. K need the AI step — sign in free to finish (3 AI formats a month included)." The learned local rules survive sign-in (5 E). `POST /api/learn` answers 403 `{ error: 'signInForAi' }` for anonymous callers.
+2. **AI learn quota in config** per tier: `aiLearns: { count, period: 'lifetime' | 'month' | 'day' | 'unlimited' }` (registered default 3 per month, paid 150 per month; anonymous 0). Changing the numbers or the period is config only.
+3. **What counts as one AI learn:** a learn counts **once, when it succeeds** (the result verifies against the example, or the user saves it with accepted differences). A failed attempt doesn't count — but after **3 failed attempts on the same example pair** (config `maxFailedAiAttempts`) the app stops, counts it as one learn, and tells the user plainly what was tried and what to change. Repairs inside a learn never count separately.
+4. **AI readiness gate before any LLM call.** The AI step is the critical, costly path, so code must first be confident the call can succeed. In addition to 6.3, stop before the LLM — with a specific message and what to fix — when: rows between the two files can't be aligned (no "try anyway" into the LLM); fewer than 3 aligned data rows; more than 10% of output data rows can't be matched to an input row; a column's values mostly fail to read as its detected type (e.g. dates in two formats); every column the code couldn't explain is external data (the AI can't help — finish locally with those columns marked "needs your input", no LLM call); or the payload still exceeds its caps after trimming. None of these consume a learn.
+5. **Conversion-time review of unmatched rows (flow C/D, issue #36).** When a new file converts with flagged rows, show them before the output is written; per row the user picks: change the rule (opens the editor, converts again), fix this row only (a one-off value edit, not saved to the rules), skip the row, or keep it as is. The engine takes these per-run row decisions without modifying the saved rules, and lists them in the run summary.
