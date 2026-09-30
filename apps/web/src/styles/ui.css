@@ -502,6 +502,11 @@
   flex-direction: column;
   gap: var(--s-4);
 }
+.dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
 @keyframes dialog-in {
   from {
     opacity: 0;

@@ -1,7 +1,7 @@
 import { tiers, type LearnPayload, type LearnResult, type MeUser } from '@formatai/shared';
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
 import { vi } from 'vitest';
 import { App } from '../../src/app/App';
 import type { Api } from '../../src/api';
@@ -147,18 +147,20 @@ export interface RenderAppOptions {
   route?: string;
   engine?: EngineClient;
   api?: Api;
+  /** Use a data router like the real app does (only that kind of router can hold back a change of screen, e.g. "Unsaved changes"). */
+  dataRouter?: boolean;
 }
 
 /** The whole app, with fake engine and API (nothing real is spawned or sent). */
-export function renderApp({ lang = 'en', route = '/', engine = fakeEngine().engine, api = fakeApi() }: RenderAppOptions = {}) {
-  return renderWithProviders(<App />, { lang, route, engine, api });
+export function renderApp({ lang = 'en', route = '/', engine = fakeEngine().engine, api = fakeApi(), dataRouter = false }: RenderAppOptions = {}) {
+  return renderWithProviders(<App />, { lang, route, engine, api, dataRouter });
 }
 
-export function renderWithProviders(ui: ReactElement, { lang = 'en', route = '/', engine = fakeEngine().engine, api = fakeApi() }: RenderAppOptions = {}) {
+export function renderWithProviders(ui: ReactElement, { lang = 'en', route = '/', engine = fakeEngine().engine, api = fakeApi(), dataRouter = false }: RenderAppOptions = {}) {
   return render(
     <I18nProvider initial={lang}>
       <ServicesProvider engine={engine} api={api}>
-        <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>
+        {dataRouter ? <RouterProvider router={createMemoryRouter([{ path: '*', element: ui }], { initialEntries: [route] })} /> : <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>}
       </ServicesProvider>
     </I18nProvider>,
   );

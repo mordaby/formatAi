@@ -4,6 +4,7 @@ import { limits, promptVersion, tiers, type CreateFormatRequest, type CreateForm
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { aiLeftLabel } from '../../app/aiQuota';
+import { LeaveDialog } from '../../app/LeaveGuard';
 import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
 import { useSignIn } from '../../app/SignIn';
@@ -46,6 +47,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   const partial = result.path === 'partial' ? result.partial : undefined;
   const aiPending = partial?.reason === 'aiNotAllowed';
   const [popupOpen, setPopupOpen] = useState(false);
+  const [confirmStartOver, setConfirmStartOver] = useState(false);
   const popupShown = useRef(false);
   useEffect(() => {
     if (aiPending && me.status === 'ready' && !me.user && !popupShown.current) {
@@ -75,6 +77,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       persist: () => api.registry.createFormat(body),
       // SPEC 21 v5 item 3: saving with accepted differences is what makes an AI learn that did not verify count.
       afterSaved: () => {
+        // What is on screen is what was saved: "Unsaved changes" goes, and leaving no longer asks.
+        info.editor.markSaved();
         if (info.metaStatus === 'differencesAccepted' && ai?.learnId) {
           api.registry
             .learnOutcome(ai.learnId, 'accepted')
@@ -165,6 +169,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       <Workbench
         stepper
         store={saved.store}
+        trackUnsaved={save.state.status !== 'saved'}
         exampleId={result.exampleId}
         exampleInput={result.exampleInput}
         inputFile={session.input}
@@ -187,14 +192,27 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
               variant="ghost"
               size="sm"
               onClick={() => {
-                session.startOver();
-                navigate('/');
+                // Starting over throws the edits away: ask first when there are unsaved ones.
+                if (saved.store.getState().dirty && save.state.status !== 'saved') setConfirmStartOver(true);
+                else {
+                  session.startOver();
+                  navigate('/');
+                }
               }}
             >
               {t('result.startOver')}
             </Button>
           </div>
         }
+      />
+      <LeaveDialog
+        open={confirmStartOver}
+        onStay={() => setConfirmStartOver(false)}
+        onLeave={() => {
+          setConfirmStartOver(false);
+          // (The screen goes home by itself once there is no result: see ResultRoute.)
+          session.startOver();
+        }}
       />
       {partial && aiPending && !me.user && (
         <PartialSignInDialog open={popupOpen} partial={partial} totalColumns={rules.output.columns.length} onClose={() => setPopupOpen(false)} />

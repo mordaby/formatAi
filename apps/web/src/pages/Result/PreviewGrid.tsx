@@ -1,5 +1,6 @@
 // The preview grid (SPEC 8.11 "Live check", 16.1 screen 4): the converted example in the SHEET's direction, mismatching rows
-// first with the differing cells in amber, one-off exceptions, flagged cells, and the free tier's 20 rows.
+// first with the differing cells in amber, what doesn't match said per column above the table (with "Fix the rule"), flagged
+// cells, and the free tier's 20 rows.
 import type { Flag } from '@formatai/engine';
 import type { PayloadCell } from '@formatai/shared';
 import { Fragment, useMemo, type ReactElement } from 'react';
@@ -7,9 +8,11 @@ import { Cell } from '../../components/Cell';
 import { SheetDirection } from '../../components/SheetDirection';
 import type { EditableRules } from '../../editor';
 import { useI18n, type Direction } from '../../i18n';
-import { Button, Spinner } from '../../ui';
+import { Button, Icon, Spinner } from '../../ui';
 import type { LiveCheckResult, PreviewRow } from '../../worker/editorApi';
 import { formatPreview } from './formatPreview';
+import { columnMismatches } from './helpers';
+import { FixRuleButton, MismatchMessage } from './MismatchNotice';
 
 export interface PreviewGridProps {
   live: LiveCheckResult | null | undefined;
@@ -18,11 +21,10 @@ export interface PreviewGridProps {
   flags: readonly Flag[];
   /** Rows shown on screen; `null` = as many as the check returned. */
   limit: number | null;
-  exceptions: readonly number[];
   /** The UI's direction (notes and buttons follow it; the cells follow the sheet). */
   uiDir: Direction;
-  onException(row: number): void;
-  onUnexception(row: number): void;
+  /** "Fix the rule": opens the editor of this output column. */
+  onFixRule(header: string): void;
   onSignIn(): void;
 }
 
@@ -32,7 +34,7 @@ export function flagColumn(rules: EditableRules, flag: Flag): number {
   return byFrom >= 0 ? byFrom : rules.output.columns.findIndex((c) => c.header === flag.column);
 }
 
-export function PreviewGrid({ live, rules, flags, limit, exceptions, uiDir, onException, onUnexception, onSignIn }: PreviewGridProps) {
+export function PreviewGrid({ live, rules, flags, limit, uiDir, onFixRule, onSignIn }: PreviewGridProps) {
   const { t, code, lang } = useI18n();
   const direction = rules.output.direction;
   const language = rules.output.language;
@@ -62,10 +64,11 @@ export function PreviewGrid({ live, rules, flags, limit, exceptions, uiDir, onEx
 
   const columns = live.perColumn.map((c, i) => ({ ...c, i })).filter((c) => c.inExample);
   const rows = limit === null ? live.preview : live.preview.slice(0, limit);
-  const totalRows = live.total + exceptions.length;
+  const totalRows = live.total;
   const hiddenColumns = live.perColumn.some((c) => !c.inExample);
   const number = (n: number): string => n.toLocaleString(lang === 'he' ? 'he-IL' : 'en-US');
   const differing = rows.filter((r) => !r.ok).length;
+  const issues = columnMismatches(live, rules);
 
   const show = (v: PayloadCell | undefined, index: number): string => formatPreview(rules.output.columns[index]?.format, v, language);
   const isNumber = (v: PayloadCell | undefined): boolean => typeof v === 'number';
@@ -90,6 +93,20 @@ export function PreviewGrid({ live, rules, flags, limit, exceptions, uiDir, onEx
         <h2 className="preview__title">{t('preview.title')}</h2>
         <p className="muted">{differing > 0 ? t('preview.differFirst') : t('preview.allMatch')}</p>
       </header>
+
+      {issues.length > 0 && (
+        <ul className="pv__issues" data-testid="column-issues">
+          {issues.map((m) => (
+            <li key={m.index} data-column={m.header} data-failing={m.failing || undefined}>
+              <Icon name="alert" size={16} />
+              <span>
+                <MismatchMessage mismatch={m} named />
+              </span>
+              <FixRuleButton header={m.header} onFix={() => onFixRule(m.header)} />
+            </li>
+          ))}
+        </ul>
+      )}
 
       <SheetDirection direction={direction} className="pv__scroll">
         <table className="pv" data-testid="preview-table">
@@ -129,9 +146,6 @@ export function PreviewGrid({ live, rules, flags, limit, exceptions, uiDir, onEx
                             </Fragment>
                           ))}
                         </span>
-                        <Button variant="link" onClick={() => onException(row.exampleRow)}>
-                          {t('preview.fixedByHand')}
-                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -166,23 +180,6 @@ export function PreviewGrid({ live, rules, flags, limit, exceptions, uiDir, onEx
       ) : totalRows > rows.length ? (
         <p className="muted">{t('preview.showingFirst', { shown: number(rows.length), n: number(totalRows) })}</p>
       ) : null}
-
-      {exceptions.length > 0 && (
-        <div className="exceptions" data-testid="exceptions">
-          <p className="exceptions__title">{t(exceptions.length === 1 ? 'preview.exceptions.one' : 'preview.exceptions.other', { n: exceptions.length })}</p>
-          <ul>
-            {exceptions.map((row) => (
-              <li key={row}>
-                <span className="tabular">{t('preview.rowN', { row })}</span>
-                <Button variant="link" onClick={() => onUnexception(row)}>
-                  {t('preview.countAgain')}
-                </Button>
-              </li>
-            ))}
-          </ul>
-          <p className="field__hint">{t('preview.exceptions.hint')}</p>
-        </div>
-      )}
     </section>
   );
 }

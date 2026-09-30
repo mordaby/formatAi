@@ -190,6 +190,33 @@ describe('an edit that changes the format (the output side)', () => {
     expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('says "Unsaved changes" next to "Save changes" from the first edit until the save, and asks before leaving with them', async () => {
+    const updateConversion = vi.fn(async () => ({ conversion: conversionSummary({ id: 'C1', version: 5 }), formatChanged: false, affectedSources: 0, needsReview: [] }));
+    renderApp({ api: apiFor({ updateConversion }), engine: fakeEngine().engine, route: ROUTE, dataRouter: true });
+    await screen.findByTestId('rules-map');
+    const flag = (): string => screen.getByTestId('unsaved-changes').textContent ?? '';
+    expect(flag()).toBe('');
+    expect(screen.getByRole('button', { name: 'Save changes' }).classList.contains('btn--primary')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a filter' }));
+    await waitFor(() => expect(flag()).toBe('Unsaved changes'));
+    expect(document.querySelectorAll('.btn--primary')).toHaveLength(1);
+    // Leaving now asks first.
+    fireEvent.click(screen.getByRole('link', { name: 'Privacy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Leave without saving?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    expect(screen.getByTestId('rules-map')).toBeTruthy();
+
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Saved as version 5.')).toBeTruthy();
+    expect(flag()).toBe('');
+    // Saved: nothing to ask about.
+    fireEvent.click(screen.getByRole('link', { name: 'Privacy' }));
+    await waitFor(() => expect(screen.queryByTestId('rules-map')).toBeNull());
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('a save that lost to another edit says so and offers to reload', async () => {
     const updateConversion = vi.fn(async () => Promise.reject(new ApiError('versionConflict', 409)));
     const api = apiFor({ updateConversion });

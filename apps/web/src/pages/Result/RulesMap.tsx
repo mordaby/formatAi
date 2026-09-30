@@ -5,8 +5,10 @@ import { localize, useI18n, type MessageKey } from '../../i18n';
 import type { Line, LineStatus, RulesMapModel, Section, SectionId } from '../../rulesText';
 import { Button, Icon, type IconName } from '../../ui';
 import type { ColumnCheck } from '../../worker/editorApi';
-import { canKeep, type AddKind } from './helpers';
+import { canKeep, type AddKind, type ColumnMismatch } from './helpers';
+import { FixRuleButton, MismatchMessage } from './MismatchNotice';
 import { Sentence } from './Sentence';
+import type { AppliedNote } from './useApplied';
 
 export interface RulesMapProps {
   model: RulesMapModel;
@@ -14,6 +16,8 @@ export interface RulesMapProps {
   selectedId: string | null;
   /** Per output column, from the live check (position in `rules.output.columns`). */
   columnChecks: readonly ColumnCheck[] | undefined;
+  /** Where a column's rule doesn't reproduce the example: said on its line, with "Fix the rule". */
+  mismatches?: readonly ColumnMismatch[] | undefined;
   /** The lines are filling in one by one (learning has just finished). */
   intro: boolean;
   onSelect(line: Line): void;
@@ -27,6 +31,8 @@ export interface RulesMapProps {
   aiStep?: { columns: ReadonlySet<string>; parts: readonly AiStepPartCode[] } | undefined;
   /** No example is in memory (a saved source opened for editing): a tick says "no problem found", not "matches your example". */
   noExample?: boolean | undefined;
+  /** "Applied · now matches X of Y rows": said for a few seconds on the lines the last edit changed. */
+  applied?: AppliedNote | null | undefined;
 }
 
 const STATUS_ICON: Record<LineStatus, IconName> = { matches: 'check', check: 'alert', needsInput: 'alert', edited: 'pencil' };
@@ -76,7 +82,7 @@ interface DragState {
   edge: 'before' | 'after';
 }
 
-export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSelect, onKeep, onReorder, onAdd, aiStep, noExample }: RulesMapProps) {
+export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, intro, onSelect, onKeep, onReorder, onAdd, aiStep, noExample, applied }: RulesMapProps) {
   const { t, lang } = useI18n();
   const [drag, setDrag] = useState<DragState | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -106,8 +112,10 @@ export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSele
                 keepable={canKeep(rules, line)}
                 selected={selectedId === line.id}
                 check={isColumn && !needsAi ? columnChecks?.[line.target.index!] : undefined}
+                mismatch={isColumn && !needsAi && line.status !== 'needsInput' ? mismatches?.find((m) => m.index === line.target.index) : undefined}
                 needsAi={needsAi}
                 noExample={noExample === true}
+                applied={applied?.ids.has(line.id) ? applied : undefined}
                 intro={intro}
                 order={n}
                 draggable={isColumn}
@@ -201,9 +209,12 @@ interface MapLineProps {
   keepable: boolean;
   selected: boolean;
   check: ColumnCheck | undefined;
+  /** This column's rule doesn't reproduce some rows (or most) of the example. */
+  mismatch: ColumnMismatch | undefined;
   /** The AI step still has to work this column out (SPEC 21 v5). */
   needsAi: boolean;
   noExample: boolean;
+  applied: AppliedNote | undefined;
   intro: boolean;
   order: number;
   draggable: boolean;
@@ -218,12 +229,13 @@ interface MapLineProps {
   onMove(delta: number): void;
 }
 
-function MapLine({ line, keepable, selected, check, needsAi, noExample, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
+function MapLine({ line, keepable, selected, check, mismatch, needsAi, noExample, applied, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
   const { t } = useI18n();
   const index = line.target.index ?? 0;
   const name = line.target.header ?? '';
   const differs = check !== undefined && check.inExample && check.matched < check.total;
   const showCount = check !== undefined && check.inExample && check.total > 0;
+  // Rows of the example this column's rule doesn't reproduce: said on the line (with how to fix it) whatever the line's other status is.
   const attention = line.status === 'check' || line.status === 'needsInput' || needsAi;
   const statusLabel = needsAi ? t('partial.section') : noExample && line.status === 'matches' ? t('map.status.unchecked') : t(STATUS_TEXT[line.status]);
   const reason = needsAi ? t('partial.line.reason') : line.statusReason;
@@ -299,7 +311,28 @@ function MapLine({ line, keepable, selected, check, needsAi, noExample, intro, o
           )}
         </button>
       </div>
-      {attention && reason && (
+      {applied && (
+        <p className="map-line__applied" role="status" data-fading={applied.fading || undefined} data-testid="applied">
+          <Icon name="check" size={14} />
+          <span>{applied.text}</span>
+        </p>
+      )}
+      {mismatch && (
+        <div className="map-line__note" data-mismatch={mismatch.failing ? 'failing' : 'some'} data-testid="column-mismatch">
+          <p>
+            <MismatchMessage mismatch={mismatch} />
+          </p>
+          <div className="map-line__actions">
+            {keepable && (
+              <Button variant="secondary" size="sm" onClick={() => onKeep(line)}>
+                {t('map.keep')}
+              </Button>
+            )}
+            <FixRuleButton header={name} variant="secondary" onFix={() => onSelect(line)} />
+          </div>
+        </div>
+      )}
+      {!mismatch && attention && reason && (
         <div className="map-line__note">
           <p>
             <span className="map-line__notelabel">{statusLabel}</span> {reason}

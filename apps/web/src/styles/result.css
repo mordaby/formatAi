@@ -56,6 +56,23 @@
   display: flex;
   gap: var(--s-1);
 }
+/* "Unsaved changes": sits to the inline-start of Save, level with the button. Empty (and gone) when everything is saved. */
+.result-head__unsaved {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--s-2);
+  min-block-size: 42px;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 500;
+}
+.result-head__unsaved:empty {
+  display: none;
+}
+.result-head__unsaved .icon {
+  color: var(--ink-2);
+}
 .result-head__save {
   display: flex;
   flex-direction: column;
@@ -119,6 +136,20 @@
 }
 .strip[data-tone='diff'] {
   border-inline-start-color: var(--diff);
+}
+/* The number just changed: the strip is tinted for a moment (colour only, so reduced motion has nothing to switch off). */
+.strip {
+  transition:
+    background-color var(--dur-3) var(--ease),
+    border-color var(--dur-3) var(--ease);
+}
+.strip[data-changed] {
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+}
+.strip[data-changed][data-tone='diff'] {
+  background: var(--diff-tint);
+  color: var(--on-diff-tint);
 }
 .strip__main {
   display: flex;
@@ -334,6 +365,38 @@
 }
 .map-line:has(.map-line__grip) .map-line__note {
   margin-inline-start: calc(28px + var(--s-2));
+}
+/* "Applied · now matches X of Y rows": fades out after a few seconds (the CSS's reduced-motion rule turns the fade into a plain removal). */
+.map-line__applied {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0 var(--s-2) var(--s-3);
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  opacity: 1;
+  transition: opacity var(--dur-3) var(--ease);
+  animation: applied-in var(--dur-2) var(--ease) both;
+}
+.map-line:has(.map-line__grip) .map-line__applied {
+  margin-inline-start: calc(28px + var(--s-2));
+}
+.map-line__applied[data-fading] {
+  opacity: 0;
+}
+@keyframes applied-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .map-line__notelabel {
   font-weight: 500;
@@ -784,6 +847,36 @@
   color: var(--on-diff-tint);
   font-weight: 500;
 }
+/* Where a column's rule doesn't reproduce the example: said once per column, above the table. */
+.pv__issues {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.pv__issues li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s-1) var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--diff-tint);
+  color: var(--on-diff-tint);
+  font-size: var(--fs-small);
+}
+.pv__issues .icon {
+  flex: none;
+  margin-block-start: 2px;
+  color: var(--diff-icon);
+}
+.pv__issues li > span {
+  flex: 1 1 18ch;
+  min-inline-size: 0;
+}
+.pv__issues .btn--link {
+  color: var(--on-diff-tint);
+  font-weight: 500;
+}
 .pv__row--example > * {
   border-block-end: 0;
 }
@@ -821,27 +914,6 @@
 .preview__more {
   font-size: var(--fs-small);
 }
-.exceptions {
-  padding: var(--s-3) var(--s-4);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-sm);
-}
-.exceptions__title {
-  font-weight: 500;
-}
-.exceptions ul {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-1);
-  margin-block: var(--s-2);
-}
-.exceptions li {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s-4);
-  font-size: var(--fs-small);
-}
-
 /* ---------- Flagged rows ---------- */
 .flags {
   display: flex;

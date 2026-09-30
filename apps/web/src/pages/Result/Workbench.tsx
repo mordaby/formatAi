@@ -5,6 +5,7 @@
 import type { AiStepPartCode, Format, Tier } from '@formatai/shared';
 import type { PartialInfo } from '@formatai/engine';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { LeaveGuard } from '../../app/LeaveGuard';
 import { availableInputs, lineIds, useEditor, useLiveCheck, metaStatusOf, differencesOf, type ApplyActionOptions, type EditableRules, type EditAction, type EditorStore, type ExampleInputColumn, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';
 import { normalizeHeader } from '../../editor/rulesUtil';
 import { useI18n } from '../../i18n';
@@ -15,11 +16,12 @@ import type { LiveCheckResult } from '../../worker/editorApi';
 import { EditorEmpty, EditorPanel } from './EditorPanel';
 import type { EditorCtx } from './fields';
 import { FlagsList } from './FlagsList';
-import { assumptionIndexes, planAdd, type AddKind } from './helpers';
+import { assumptionIndexes, columnMismatches, planAdd, type AddKind } from './helpers';
 import { LiveCheckStrip } from './LiveCheckStrip';
 import { PreviewGrid } from './PreviewGrid';
 import { ResultHeader, StatusBadge } from './ResultHeader';
 import { RulesMap } from './RulesMap';
+import { useApplied } from './useApplied';
 import { useRunFlags } from './useRunFlags';
 
 /** How long the map takes to fill in line by line after learning (the screen's one orchestrated motion). */
@@ -85,6 +87,11 @@ export interface WorkbenchProps {
   stepper?: boolean;
   /** Where "This changes the format for all N sources" is said: in the editor panel (default), or only by the caller's banners. */
   formatChangeNote?: 'panel' | 'banner';
+  /**
+   * "Unsaved changes" next to Save, and a question before leaving the page, while the rules differ from the saved (or learned) ones
+   * (default: true). A screen that has already saved and can't save again turns it off.
+   */
+  trackUnsaved?: boolean;
 }
 
 export function Workbench(props: WorkbenchProps) {
@@ -114,8 +121,16 @@ export function Workbench(props: WorkbenchProps) {
     return positions;
   }, [partialPending, needsInput, rules.output.columns]);
 
+  const unsaved = props.trackUnsaved !== false && editor.state.dirty;
+
   const check = useLiveCheck({ engine, exampleId, editor: editor.state, tier, ...(format ? { format } : {}), ...(onlyColumns ? { onlyColumns } : {}) });
   const live = check.state.live;
+
+  // What the last edit did, said on the line it changed for a few seconds.
+  const applied = useApplied({ rules, rev: editor.state.rev, check, hasExample: exampleId !== undefined });
+
+  // Where a column's rule doesn't reproduce the example (on its line, and above the preview).
+  const mismatches = useMemo(() => columnMismatches(live, rules), [live, rules]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(false);
@@ -265,6 +280,7 @@ export function Workbench(props: WorkbenchProps) {
 
   return (
     <main id="main" className="page page--result" tabIndex={-1}>
+      <LeaveGuard when={unsaved} />
       <section className="tool result">
         {props.stepper ? <Stepper current={3} /> : null}
         <div className="view result__view">
@@ -277,6 +293,7 @@ export function Workbench(props: WorkbenchProps) {
             canRedo={editor.canRedo}
             onUndo={editor.undo}
             onRedo={editor.redo}
+            unsaved={unsaved}
             actions={props.actions(info)}
           />
 
@@ -291,6 +308,7 @@ export function Workbench(props: WorkbenchProps) {
                 rules={rules}
                 selectedId={selectedId}
                 columnChecks={live?.perColumn}
+                mismatches={mismatches}
                 intro={intro}
                 onSelect={(line) => open(line.id)}
                 onKeep={keep}
@@ -298,6 +316,7 @@ export function Workbench(props: WorkbenchProps) {
                 onAdd={add}
                 aiStep={aiStep}
                 noExample={noExample}
+                applied={applied}
               />
               <p className="workbench__advanced">
                 <Button
@@ -349,10 +368,8 @@ export function Workbench(props: WorkbenchProps) {
               rules={rules}
               flags={run.flags}
               limit={previewLimit}
-              exceptions={editor.state.exceptions}
               uiDir={dir}
-              onException={(row) => void editor.apply({ type: 'markException', row })}
-              onUnexception={(row) => void editor.apply({ type: 'unmarkException', row })}
+              onFixRule={(header) => open(lineIds.col(header))}
               onSignIn={props.onSignIn}
             />
           )}

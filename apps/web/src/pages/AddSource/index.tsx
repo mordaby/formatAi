@@ -362,6 +362,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
     void save.run({
       persist: () => api.registry.attachSource(format.id, body),
       afterSaved: () => {
+        info.editor.markSaved();
         if (info.metaStatus === 'differencesAccepted' && ai?.learnId) {
           api.registry
             .learnOutcome(ai.learnId, 'accepted')
@@ -412,6 +413,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
   return (
     <Workbench
       store={store}
+      trackUnsaved={save.state.status !== 'saved'}
       exampleId={result.exampleId}
       exampleInput={result.exampleInput}
       inputFile={input}
