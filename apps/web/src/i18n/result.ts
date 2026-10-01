@@ -144,6 +144,7 @@ export const resultEn = {
   'problem.schema': 'The rules are not valid.',
   'problem.reference': 'The rules refer to something that does not exist.',
   'problem.rule': 'This change breaks a rule of the format.',
+  'problem.locked': 'The deep analysis is working on this part right now. You can change it when it is done.',
 
   // ----- the editor panel -----
   'editor.empty.title': 'Edit a rule',
@@ -539,6 +540,7 @@ export const resultHe: Record<keyof typeof resultEn, string> = {
   'problem.schema': 'הכללים לא תקינים.',
   'problem.reference': 'הכללים מפנים למשהו שלא קיים.',
   'problem.rule': 'השינוי הזה שובר כלל של הפורמט.',
+  'problem.locked': 'הניתוח המעמיק עובד כרגע על החלק הזה. אפשר לשנות אותו כשהוא מסיים.',
 
   'editor.empty.title': 'עריכת כלל',
   'editor.empty.text': 'בחרו שורה מהרשימה כדי לראות איך היא נבנית ולשנות אותה. כל שינוי נבדק מול הדוגמה שלכם ברגע שעושים אותו.',

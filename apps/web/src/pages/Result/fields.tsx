@@ -45,6 +45,7 @@ const PROBLEM_KEYS: Record<EditProblem['code'], MessageKey> = {
   schema: 'problem.schema',
   reference: 'problem.reference',
   rule: 'problem.rule',
+  locked: 'problem.locked',
 };
 
 /** Problems whose plain sentence is not enough: the checker's own (English) words follow, as a detail. */

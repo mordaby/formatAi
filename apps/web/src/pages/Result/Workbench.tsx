@@ -2,11 +2,11 @@
 // preview grid and the flagged rows. It does not know where the rules came from - a fresh learn, a source being added to a
 // format, or a saved source opened for editing - or what "save" means there: the caller passes the header's actions, banners
 // and (when there is no example in memory) what replaces the preview.
-import type { AiStepPartCode, Format, SourceStructure, Tier } from '@formatai/shared';
+import { missingParts, type AiStepPartCode, type Format, type SourceStructure, type Tier } from '@formatai/shared';
 import type { PartialInfo } from '@formatai/engine';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LeaveGuard } from '../../app/LeaveGuard';
-import { availableInputs, lineIds, useEditor, useLiveCheck, metaStatusOf, differencesOf, type ApplyActionOptions, type EditableRules, type EditAction, type EditorStore, type ExampleInputColumn, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';
+import { availableInputs, lineIds, lockProblem, useEditor, useLiveCheck, metaStatusOf, differencesOf, type ApplyActionOptions, type EditLock, type EditableRules, type EditAction, type EditorStore, type ExampleInputColumn, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';
 import { normalizeHeader } from '../../editor/rulesUtil';
 import { useI18n } from '../../i18n';
 import { describeRules, type Line, type VerificationLike } from '../../rulesText';
@@ -72,6 +72,12 @@ export interface WorkbenchProps {
   source?: SourceStructure | undefined;
   /** SPEC 21 v5 item 1: the local partial result (columns the AI step still has to work out are marked, and only the built ones are checked). */
   partial?: PartialInfo | undefined;
+  /**
+   * The deep analysis with AI is working on these fields (output column headers, layout parts): they say so on the map and cannot be edited
+   * until it is done - nor can the shape of the columns, nor undo - while the rest of the page stays usable (`EditorStore.setLock`).
+   * `whole`: it is a whole learn, so nothing can be edited.
+   */
+  analysing?: { columns: ReadonlySet<string>; parts: readonly AiStepPartCode[]; whole?: boolean } | undefined;
   /** The learn's own verification, shown in the map until the live check answers. */
   verification?: VerificationLike | null | undefined;
   name: string;
@@ -103,7 +109,7 @@ export interface WorkbenchProps {
 export function Workbench(props: WorkbenchProps) {
   const { t, lang, dir } = useI18n();
   const { engine } = useServices();
-  const { store, exampleId, exampleInput, inputFile, tier, format, source, partial, verification, previewLimit } = props;
+  const { store, exampleId, exampleInput, inputFile, tier, format, source, partial, verification, previewLimit, analysing } = props;
   const editor = useEditor(store);
   const rules = editor.state.rules;
 
@@ -150,6 +156,16 @@ export function Workbench(props: WorkbenchProps) {
     const timer = setTimeout(() => setIntro(false), INTRO_MS);
     return () => clearTimeout(timer);
   }, []);
+
+  // Read-only while the deep analysis works (see `analysing`): the store refuses what would touch it.
+  const lock = useMemo<EditLock | null>(
+    () => (analysing ? { columns: analysing.columns, parts: new Set(analysing.parts), ...(analysing.whole ? { whole: true } : {}) } : null),
+    [analysing],
+  );
+  useEffect(() => {
+    store.setLock(lock);
+    return () => store.setLock(null);
+  }, [store, lock]);
 
   // Undo and redo from the keyboard, except inside a field (where the browser's own undo belongs to the text).
   const { undo, redo } = editor;
@@ -237,14 +253,27 @@ export function Workbench(props: WorkbenchProps) {
   // ----- the columns and parts that still need the AI step (SPEC 21 v5 item 1) -----
 
   const aiStep = useMemo(() => {
-    if (!partial || partial.reason !== 'aiNotAllowed') return undefined;
-    // A column the user has filled in since is no longer waiting for the AI step.
+    const pending = partial !== undefined && partial.reason === 'aiNotAllowed' ? partial : undefined;
+    if (!pending && !analysing) return undefined;
+    // A column the user has filled in since is no longer waiting for the AI step, and neither is a layout part they have built.
     const stillEmpty = (h: string): boolean => rules.output.columns.some((c) => c.header === h && c.from === null);
-    const columns = new Set(partial.needsAi.filter(stillEmpty));
-    const external = new Set(partial.external.filter(stillEmpty));
-    const parts: AiStepPartCode[] = [...partial.needsAiParts];
-    return { columns, external, parts };
-  }, [partial, rules.output.columns]);
+    const columns = new Set((pending?.needsAi ?? []).filter(stillEmpty));
+    const external = new Set((pending?.external ?? []).filter(stillEmpty));
+    const parts: AiStepPartCode[] = pending ? missingParts(rules, pending.needsAiParts) : [];
+    if (!analysing) return { columns, external, parts };
+    const running = { columns: new Set([...analysing.columns].filter(stillEmpty)), parts: missingParts(rules, analysing.parts) };
+    for (const h of running.columns) columns.add(h);
+    for (const code of running.parts) if (!parts.includes(code)) parts.push(code);
+    return { columns, external, parts, running };
+  }, [partial, analysing, rules]);
+  // An "Add ..." button whose edit the deep analysis is working on is not offered meanwhile.
+  const addLocked = useMemo(() => {
+    if (!lock) return undefined;
+    return (kind: AddKind): boolean => {
+      const plan = planAdd(rules, kind, { column: '', title: '', total: '' });
+      return plan ? lockProblem(plan.action, rules, lock) !== null : false;
+    };
+  }, [lock, rules]);
 
   // ----- the badge -----
 
@@ -294,8 +323,8 @@ export function Workbench(props: WorkbenchProps) {
             onRename={props.onRename}
             badge={<StatusBadge tone={badge.tone} text={badge.text} {...(badge.busy ? { busy: true } : {})} />}
             learnedNote={props.learnedNote}
-            canUndo={editor.canUndo}
-            canRedo={editor.canRedo}
+            canUndo={editor.canUndo && !lock}
+            canRedo={editor.canRedo && !lock}
             onUndo={editor.undo}
             onRedo={editor.redo}
             unsaved={unsaved}
@@ -320,6 +349,7 @@ export function Workbench(props: WorkbenchProps) {
                 onReorder={reorder}
                 onAdd={add}
                 aiStep={aiStep}
+                addLocked={addLocked}
                 noExample={noExample}
                 applied={applied}
               />

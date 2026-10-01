@@ -3,6 +3,7 @@ import type { AiStepPartCode, LearnResult, Rules, Tier } from '@formatai/shared'
 import { useLearnFlow, type UseLearnFlow } from '../flow/useLearnFlow';
 import { peekResultSession, seedResultSession } from '../pages/Result/session';
 import { webConfig } from '../config';
+import { readDeepAnalysis, writeDeepAnalysis } from './deepAnalysisPref';
 import { useMe } from './Me';
 import { fileOf, getPendingStore, storeFile, type PendingLearn, type PendingResult } from './pendingLearn';
 import { useSignIn } from './SignIn';
@@ -26,16 +27,19 @@ export interface LearnSession {
   setInput(file: File | null): void;
   setOutput(file: File | null): void;
   setMasking(masking: boolean): void;
+  /** Home's "Deep analysis with AI if needed" (signed in): when on, the AI step starts by itself after the free result, if fields are missing. Remembered in this browser. */
+  deepAnalysis: boolean;
+  setDeepAnalysis(on: boolean): void;
   /**
-   * Starts (or restarts) a learn from the two files in the session. No-op while a file is missing. The learn waits until who is signed
-   * in is known (`/api/me`): a signed-in user always gets the AI step when the fast path is not enough, a visitor the local result
-   * (SPEC 21 v5 item 1). `opts.ai` says it outright.
+   * Starts (or restarts) a learn from the two files in the session. No-op while a file is missing. EVERY learn is the free engine only
+   * (owner decision: the AI step never runs unless the user chooses it - signed in or not); the learn waits until who is signed in is
+   * known (`/api/me`) so its tier's limits are right. `opts.ai` says it outright (only "Re-run all with AI" does).
    */
   begin(opts?: { ai?: 'allowed' | 'notAllowed' }): void;
   /** The whole learn again, with the AI step allowed (signed in): "Re-run all with AI". It replaces the result on screen. */
   finishWithAi(): void;
   /**
-   * "Finish with the AI step" (completion mode, LEARN_PROMPT "Completing a partial rules file"): the AI step produces only what is
+   * "Run deep analysis with AI" (completion mode, LEARN_PROMPT "Completing a partial rules file"): the AI step produces only what is
    * missing from `fixedRules` (the rules as they are on screen). It runs in `completion`, a flow of its own, so the Result screen
    * and its rules stay as they are until an answer has passed the fixed lock and the verification.
    */
@@ -63,8 +67,9 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   meRef.current = me;
   // Read at the start of every learn, so a sign-in never replaces the flow (and with it a result on screen).
   const getTier = useCallback((): Tier => meRef.current.tier, []);
-  // A signed-in user's learn always runs with the AI step allowed, a visitor's never does: read once `/api/me` has answered.
-  const getAi = useCallback((): 'allowed' | 'notAllowed' => (meRef.current.user ? 'allowed' : 'notAllowed'), []);
+  // The AI step never runs by itself, whoever is signed in: a learn is the free engine, and the AI step is the user's choice on the
+  // Result screen ("Run deep analysis with AI", or Home's "Deep analysis with AI if needed", which that screen acts on).
+  const getAi = useCallback((): 'allowed' | 'notAllowed' => 'notAllowed', []);
   // ... and a learn started before that answer is waiting for it (it would otherwise run as a visitor's - tier, limits and all).
   const meAnswered = useRef<{ promise: Promise<void>; resolve(): void } | null>(null);
   if (meAnswered.current === null) {
@@ -81,13 +86,18 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
     () => Promise.race([meAnswered.current!.promise, new Promise<void>((resolve) => setTimeout(resolve, webConfig.meReadyTimeoutMs))]),
     [],
   );
-  // No anti-bot widget here: a visitor never reaches the AI step (the one thing Turnstile guarded), so the learn asks for no token.
+  // No anti-bot widget here: the free learn never reaches the AI step (the one thing Turnstile guarded), so it asks for no token.
   // (The Turnstile code stays: the lead form will use it.)
   const flow = useLearnFlow({ getTier, ready: whenMeKnown, getAi });
   const completion = useLearnFlow({ getTier, ready: whenMeKnown });
   const [input, setInput] = useState<File | null>(null);
   const [output, setOutput] = useState<File | null>(null);
   const [masking, setMasking] = useState(true);
+  const [deepAnalysis, setDeepAnalysisState] = useState(readDeepAnalysis);
+  const setDeepAnalysis = useCallback((on: boolean) => {
+    setDeepAnalysisState(on);
+    writeDeepAnalysis(on);
+  }, []);
   const [restoring, setRestoring] = useState(true);
   // The latest of everything a callback below needs to read at the moment it runs (not when it was made).
   const latest = useRef({ input, output, masking, state: flow.state });
@@ -98,7 +108,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const begin = useCallback(
     (opts?: { ai?: 'allowed' | 'notAllowed' }) => {
       if (!input || !output) return;
-      // (no `ai` given: the flow decides after `/api/me` has answered, see `getAi`)
+      // (no `ai` given: the free engine only, see `getAi`)
       void start({ input, output, masking, ...(opts?.ai ? { ai: opts.ai } : {}) });
     },
     [input, output, masking, start],
@@ -193,7 +203,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       setMasking(record.masking);
       if (record.result && i && o) {
         seed.current = record.result;
-        // The local analysis only: the AI step is the user's next click ("Finish with the AI step"), never automatic.
+        // The local analysis only: the AI step is the user's choice on the Result screen (never started here).
         void startRef.current({ input: i, output: o, masking: record.masking, ai: 'notAllowed', ...(record.tryAnyway ? { tryAnyway: true } : {}) });
       } else {
         restored();
@@ -240,8 +250,8 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   }, [quota, setQuota]);
 
   const value = useMemo<LearnSession>(
-    () => ({ flow, completion, input, output, masking, setInput, setOutput, setMasking, begin, finishWithAi, completeWithAi, startOver, restoring }),
-    [flow, completion, input, output, masking, begin, finishWithAi, completeWithAi, startOver, restoring],
+    () => ({ flow, completion, input, output, masking, deepAnalysis, setDeepAnalysis, setInput, setOutput, setMasking, begin, finishWithAi, completeWithAi, startOver, restoring }),
+    [flow, completion, input, output, masking, deepAnalysis, setDeepAnalysis, begin, finishWithAi, completeWithAi, startOver, restoring],
   );
   return <LearnSessionContext.Provider value={value}>{children}</LearnSessionContext.Provider>;
 }

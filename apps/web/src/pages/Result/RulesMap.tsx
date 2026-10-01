@@ -3,7 +3,7 @@ import { useId, useState, type CSSProperties, type DragEvent, type KeyboardEvent
 import type { EditableRules } from '../../editor';
 import { localize, useI18n, type MessageKey } from '../../i18n';
 import type { Line, LineStatus, RulesMapModel, Section, SectionId } from '../../rulesText';
-import { Button, Icon, type IconName } from '../../ui';
+import { Button, Icon, Spinner, type IconName } from '../../ui';
 import type { ColumnCheck } from '../../worker/editorApi';
 import { canKeep, type AddKind, type ColumnMismatch } from './helpers';
 import { FixRuleButton, MismatchMessage } from './MismatchNotice';
@@ -29,7 +29,17 @@ export interface RulesMapProps {
    * not work out. The columns are marked "Needs the AI step" in the map; the parts are listed in a section of their own.
    * `external` (a subset of `columns`): columns whose values code could not find in the input file - the line adds "may come from another source".
    */
-  aiStep?: { columns: ReadonlySet<string>; external?: ReadonlySet<string>; parts: readonly AiStepPartCode[] } | undefined;
+  aiStep?:
+    | {
+        columns: ReadonlySet<string>;
+        external?: ReadonlySet<string>;
+        parts: readonly AiStepPartCode[];
+        /** The deep analysis with AI is working on these right now (a subset of `columns` / `parts`): they say so, and cannot be edited meanwhile. */
+        running?: { columns: ReadonlySet<string>; parts: readonly AiStepPartCode[] };
+      }
+    | undefined;
+  /** An "Add ..." button that cannot be used right now (the deep analysis is working on what it adds). */
+  addLocked?: ((kind: AddKind) => boolean) | undefined;
   /** No example is in memory (a saved source opened for editing): a tick says "no problem found", not "matches your example". */
   noExample?: boolean | undefined;
   /** "Applied · now matches X of Y rows": said for a few seconds on the lines the last edit changed. */
@@ -83,7 +93,7 @@ interface DragState {
   edge: 'before' | 'after';
 }
 
-export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, intro, onSelect, onKeep, onReorder, onAdd, aiStep, noExample, applied }: RulesMapProps) {
+export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, intro, onSelect, onKeep, onReorder, onAdd, aiStep, addLocked, noExample, applied }: RulesMapProps) {
   const { t, lang } = useI18n();
   const [drag, setDrag] = useState<DragState | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -101,12 +111,13 @@ export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, i
         {announce}
       </p>
       {model.sections.map((section) => (
-        <MapSection key={section.id} section={section} add={addButtons(section.id, rules)} onAdd={onAdd}>
+        <MapSection key={section.id} section={section} add={addButtons(section.id, rules)} addLocked={addLocked} onAdd={onAdd}>
           {section.lines.map((line) => {
             const n = lineNumber++;
             const isColumn = line.target.kind === 'column' && line.target.index !== undefined;
             const needsAi = isColumn && aiStep?.columns.has(line.target.header ?? '') === true;
             const mayBeExternal = needsAi && aiStep?.external?.has(line.target.header ?? '') === true;
+            const running = needsAi && aiStep?.running?.columns.has(line.target.header ?? '') === true;
             return (
               <MapLine
                 key={line.id}
@@ -117,6 +128,7 @@ export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, i
                 mismatch={isColumn && !needsAi && line.status !== 'needsInput' ? mismatches?.find((m) => m.index === line.target.index) : undefined}
                 needsAi={needsAi}
                 mayBeExternal={mayBeExternal}
+                running={running}
                 noExample={noExample === true}
                 applied={applied?.ids.has(line.id) ? applied : undefined}
                 intro={intro}
@@ -149,9 +161,12 @@ export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, i
           <p className="muted">{t('partial.section.lead')}</p>
           <ul className="ai-parts">
             {aiStep.parts.map((code) => (
-              <li key={code} data-part={code}>
-                <Icon name="alert" size={16} />
-                <span>{localize(lang, aiStepPartMessages[code])}</span>
+              <li key={code} data-part={code} data-ai-running={aiStep.running?.parts.includes(code) || undefined}>
+                {aiStep.running?.parts.includes(code) ? <Spinner size={16} /> : <Icon name="alert" size={16} />}
+                <span>
+                  {localize(lang, aiStepPartMessages[code])}
+                  {aiStep.running?.parts.includes(code) ? <> <span className="muted">{t('deep.running')}</span></> : null}
+                </span>
               </li>
             ))}
           </ul>
@@ -178,11 +193,13 @@ export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, i
 function MapSection({
   section,
   add,
+  addLocked,
   onAdd,
   children,
 }: {
   section: Section;
   add: { kind: AddKind; label: MessageKey }[];
+  addLocked: ((kind: AddKind) => boolean) | undefined;
   onAdd(kind: AddKind): void;
   children: ReactNode;
 }) {
@@ -197,7 +214,7 @@ function MapSection({
       {add.length > 0 && (
         <div className="map-section__add">
           {add.map((a) => (
-            <Button key={a.kind} variant="ghost" size="sm" icon="plus" onClick={() => onAdd(a.kind)}>
+            <Button key={a.kind} variant="ghost" size="sm" icon="plus" disabled={addLocked?.(a.kind) === true} onClick={() => onAdd(a.kind)}>
               {t(a.label)}
             </Button>
           ))}
@@ -218,6 +235,8 @@ interface MapLineProps {
   needsAi: boolean;
   /** With `needsAi`: code found no trace of this column's values in the input file, so it may come from another source (the AI step still tries it). */
   mayBeExternal: boolean;
+  /** With `needsAi`: the deep analysis is working on this column right now. */
+  running: boolean;
   noExample: boolean;
   applied: AppliedNote | undefined;
   intro: boolean;
@@ -234,7 +253,7 @@ interface MapLineProps {
   onMove(delta: number): void;
 }
 
-function MapLine({ line, keepable, selected, check, mismatch, needsAi, mayBeExternal, noExample, applied, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
+function MapLine({ line, keepable, selected, check, mismatch, needsAi, mayBeExternal, running, noExample, applied, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
   const { t } = useI18n();
   const index = line.target.index ?? 0;
   const name = line.target.header ?? '';
@@ -242,8 +261,8 @@ function MapLine({ line, keepable, selected, check, mismatch, needsAi, mayBeExte
   const showCount = check !== undefined && check.inExample && check.total > 0;
   // Rows of the example this column's rule doesn't reproduce: said on the line (with how to fix it) whatever the line's other status is.
   const attention = line.status === 'check' || line.status === 'needsInput' || needsAi;
-  const statusLabel = needsAi ? t('partial.section') : noExample && line.status === 'matches' ? t('map.status.unchecked') : t(STATUS_TEXT[line.status]);
-  const reason = needsAi ? t(mayBeExternal ? 'partial.line.reason.external' : 'partial.line.reason') : line.statusReason;
+  const statusLabel = running ? t('deep.running') : needsAi ? t('partial.section') : noExample && line.status === 'matches' ? t('map.status.unchecked') : t(STATUS_TEXT[line.status]);
+  const reason = running ? t('deep.running.reason') : needsAi ? t(mayBeExternal ? 'partial.line.reason.external' : 'partial.line.reason') : line.statusReason;
 
   const edgeOf = (e: DragEvent<HTMLElement>): 'before' | 'after' => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -263,6 +282,7 @@ function MapLine({ line, keepable, selected, check, mismatch, needsAi, mayBeExte
       data-line-id={line.id}
       data-status={line.status}
       data-ai-step={needsAi || undefined}
+      data-ai-running={running || undefined}
       data-selected={selected || undefined}
       data-dragging={dragging || undefined}
       data-drop={drag}
@@ -348,9 +368,13 @@ function MapLine({ line, keepable, selected, check, mismatch, needsAi, mayBeExte
                 {t('map.keep')}
               </Button>
             )}
-            <Button variant="secondary" size="sm" onClick={() => onSelect(line)}>
-              {t(line.status === 'needsInput' || needsAi ? 'map.fill' : 'map.change')}
-            </Button>
+            {running ? (
+              <Spinner size={14} />
+            ) : (
+              <Button variant="secondary" size="sm" onClick={() => onSelect(line)}>
+                {t(line.status === 'needsInput' || needsAi ? 'map.fill' : 'map.change')}
+              </Button>
+            )}
           </div>
         </div>
       )}

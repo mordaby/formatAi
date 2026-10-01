@@ -1,6 +1,6 @@
 // SPEC 5 E "The learned rules survive sign-in": before the browser leaves for the provider what has been learned is kept (in IndexedDB,
 // never sent); when the app starts again the LOCAL analysis is re-run on the kept files, the kept edits are put back on top, and the
-// Result screen comes back as it was - with "Finish with the AI step" for a user who is now signed in. A memory store stands in for
+// Result screen comes back as it was - with "Run deep analysis with AI" for a user who is now signed in. A memory store stands in for
 // IndexedDB here (its own round trip is in pendingLearn.test.ts).
 import type { Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
@@ -89,14 +89,14 @@ describe('coming back after signing in', () => {
     expect(skuLine.getAttribute('data-status')).toBe('edited');
     expect(document.querySelector('[data-line-id="col:Item"]')).toBeNull();
 
-    // Signed in: no sign-in popup, and "Finish with the AI step" is the next click.
+    // Signed in: no sign-in popup, and "Run deep analysis with AI" is the next click.
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Finish with the AI step' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Run deep analysis with AI' })).toBeTruthy();
     // It is used once: the kept copy is gone.
     expect(await store.load()).toBeNull();
   });
 
-  it('"Finish with the AI step" then asks the AI step (allowed) for what is missing, on the kept files', async () => {
+  it('"Run deep analysis with AI" then asks the AI step (allowed) for what is missing, on the kept files', async () => {
     await store.save(await kept());
     const results = [
       partialOutput(),
@@ -104,7 +104,7 @@ describe('coming back after signing in', () => {
     ];
     const { engine, learn } = fakeEngine(async () => results.shift()!);
     renderApp({ api: fakeApi({ user: USER }), engine, route: '/result' });
-    fireEvent.click(await screen.findByRole('button', { name: 'Finish with the AI step' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Run deep analysis with AI' }));
     await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
     const second = learn.mock.calls[1]![0] as { input: { name: string }; ai: string; masking: boolean; complete?: { columns: number[] } };
     expect(second).toMatchObject({ ai: 'allowed', masking: false, complete: { columns: [3, 4, 5] } });
@@ -201,6 +201,6 @@ describe('the whole trip: learn, sign in, come back', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Vendor orders');
     expect(document.querySelector('[data-line-id="col:Vendor"]')).toBeTruthy();
     expect(document.querySelector('[data-line-id="col:Supplier"]')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Finish with the AI step' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Run deep analysis with AI' })).toBeTruthy();
   });
 });

@@ -4,7 +4,7 @@
 // source's own, the example files stay in the worker for the live check, and every further save is a new version of the source.
 import { limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
 import { completionPlan, fixedColumnShare, isCompletable } from '@formatai/shared';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { aiLeftLabel } from '../../app/aiQuota';
 import { LeaveDialog } from '../../app/LeaveGuard';
@@ -21,8 +21,8 @@ import { Button, Dialog, InlineMessage } from '../../ui';
 import type { LearnOutput } from '../../worker/engineApi';
 import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
 import { Versions } from '../Format/Versions';
-import { CompletionNotice } from './CompletionNotice';
-import { PartialBanner, PartialSignInDialog } from './PartialResult';
+import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
+import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
 import { defaultFormatName, getResultSession, sourcePath, type SavedSource } from './session';
 import { useCompletion } from './useCompletion';
@@ -101,8 +101,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // Starting over throws the edits away: ask first when there are unsaved ones.
   const startOver = (): void => (kept.store.getState().dirty ? setConfirmStartOver(true) : goHome());
 
-  // "Finish with the AI step" (completion mode): the AI step produces only what is missing and the rules on screen stay as they are; an
-  // answer that passes the fixed lock and the verification replaces them (see useCompletion).
+  // "Run deep analysis with AI" (completion mode): the AI step produces only what is missing and the rules on screen stay as they are; an
+  // answer that passes the fixed lock and the verification replaces them (see useCompletion). It never runs unless the user chose it: the
+  // panel's button, or Home's "Deep analysis with AI if needed" (acted on below, once per result).
   const completion = useCompletion(kept.store, result.exampleId);
   const completed = completion.completed;
   const [confirmRerun, setConfirmRerun] = useState(false);
@@ -114,9 +115,42 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     if (quotaNow) setQuota(quotaNow);
   }, [quotaNow, setQuota]);
 
-  // SPEC 21 v5 item 1: the local result, shown before the AI step. Once the AI step has completed it, it is an ordinary result.
+  // SPEC 21 v5 item 1: the free engine's own result, shown before the AI step. Once the AI step has completed it, it is an ordinary result.
   const partial = result.path === 'partial' && !completed ? result.partial : undefined;
   const aiPending = partial?.reason === 'aiNotAllowed';
+
+  // What the AI step would be asked for, from the rules as they are on screen right now: EVERY output column with no rule (also one code found
+  // no trace of in the input: that is not certainty) and the layout parts the free result could not build and the rules still lack.
+  const liveRules = useSyncExternalStore(kept.store.subscribe, () => kept.store.getState().rules);
+  const missing = useMemo(() => {
+    const plan = completionPlan(liveRules, { parts: partial?.needsAiParts ?? [] });
+    const external = new Set(partial?.external ?? []);
+    const columns: MissingColumn[] = plan.columns.map((index) => {
+      const header = liveRules.output.columns[index]!.header;
+      return { index, header, external: external.has(header) };
+    });
+    // Completion mode needs something to ask for, rules that still line up with the example (no column added or removed), and enough already
+    // solved (under limits.learn.completionMinFixedShare of the columns a 'complete the rest' request is just a worse-shaped full learn: first
+    // Haiku eval). Otherwise the deep analysis is the whole learn again, which replaces the rules.
+    const aligned = result.exampleOutputColumns === undefined || liveRules.output.columns.length === result.exampleOutputColumns;
+    const enoughFixed = fixedColumnShare(liveRules) >= limits.learn.completionMinFixedShare;
+    const any = columns.length > 0 || plan.parts.length > 0;
+    return { columns, parts: plan.parts, any, completable: any && aligned && enoughFixed && isCompletable(liveRules) };
+  }, [liveRules, partial, result.exampleOutputColumns]);
+  // The free result with fields missing and nothing from the AI step yet. A visitor cannot save it (sign in first); a signed-in user still can deliver
+  // it - download it, or save it with those fields as "needs your input" - while the panel offers the deep analysis.
+  const incomplete = aiPending && (!me.user || missing.any);
+  const guestWaiting = aiPending && !me.user;
+  // The ticks of the panel: what the user took out of the request (everything else is asked for).
+  const [unticked, setUnticked] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (key: string, ticked: boolean): void =>
+    setUnticked((prev) => {
+      const next = new Set(prev);
+      if (ticked) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
   const [popupOpen, setPopupOpen] = useState(false);
   const [confirmStartOver, setConfirmStartOver] = useState(false);
   const popupShown = useRef(false);
@@ -128,7 +162,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   }, [aiPending, me.status, me.user]);
 
   const save = useSave<CreateFormatResponse>();
-  const match = useFormatMatch(me.user !== null && !aiPending && !source, rules);
+  const match = useFormatMatch(me.user !== null && !incomplete && !source, rules);
 
   const doSave = (info: WorkbenchInfo): void => {
     const file = session.input;
@@ -193,62 +227,49 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     }
   };
 
-  // What the AI step would be asked for, from the rules as they are on screen right now: EVERY output column with no rule (also one code found
-  // no trace of in the input: that is not certainty) and the layout parts the local result could not build and the rules still lack. `usable` is false when there is nothing
-  // to ask for, or the rules no longer line up with the example (columns added or removed) - then only a whole learn makes sense.
-  const planFor = (rules: WorkbenchInfo['rules']) => {
-    const plan = completionPlan(rules, { parts: partial?.needsAiParts ?? [] });
-    const aligned = result.exampleOutputColumns === undefined || rules.output.columns.length === result.exampleOutputColumns;
-    // Too little fixed (under limits.learn.completionMinFixedShare of the columns): a 'complete the rest' request is just a worse-shaped
-    // full learn (first Haiku eval), so the whole learn runs instead.
-    const enoughFixed = fixedColumnShare(rules) >= limits.learn.completionMinFixedShare;
-    return { ...plan, usable: aligned && enoughFixed && isCompletable(rules) && (plan.columns.length > 0 || plan.parts.length > 0) };
-  };
   const rerunAll = (): void => {
     // The user has said the rules may go: leaving this screen for the new learn is not "leaving with unsaved changes".
     kept.store.markSaved();
+    kept.deepRun = true;
     session.finishWithAi();
   };
-  const hasEdits = (info: WorkbenchInfo): boolean => info.dirty || info.editor.state.edited.size > 0;
+  const hasEdits = (): boolean => kept.store.getState().dirty || kept.store.getState().edited.size > 0;
   /**
-   * "Finish with the AI step" / "Try these columns with AI": completion mode when it can be, the whole learn when not (after asking, when there
-   * are edits). DECISION: nothing missing (the local rules cover every column and part, yet the strict fast path would not accept them - rows
-   * that change shape go to the AI step) or rules that no longer line up with the example's output columns (columns added or removed) leave
-   * nothing to complete, so the button runs the whole learn instead.
+   * "Run deep analysis with AI": completion mode for the ticked fields when it can be, the whole learn when not (after asking, when there are
+   * edits). DECISION: nothing missing (the free rules cover every column and part, yet the strict fast path would not accept them - rows that
+   * change shape go to the AI step) or rules that no longer line up with the example's output columns (columns added or removed) leave nothing
+   * to complete, so the button runs the whole learn instead.
    */
-  const finish = (info: WorkbenchInfo): void => {
-    const plan = planFor(info.rules);
-    if (plan.usable) completion.start({ fixedRules: info.rules, columns: plan.columns, parts: plan.parts });
-    else if (hasEdits(info)) setConfirmRerun(true);
+  const runDeep = (): void => {
+    if (missing.completable) {
+      const columns = missing.columns.filter((c) => !unticked.has(columnKey(c))).map((c) => c.index);
+      const parts = missing.parts.filter((code) => !unticked.has(partKey(code)));
+      if (columns.length + parts.length === 0) return;
+      kept.deepRun = true;
+      completion.start({ fixedRules: kept.store.getState().rules, columns, parts });
+    } else if (hasEdits()) setConfirmRerun(true);
     else rerunAll();
   };
-  const aiBusy = completion.running || completion.exhausted;
+  // Home's "Deep analysis with AI if needed" (signed in): the AI step starts by itself right after the free result, once per result, when
+  // fields are missing - the same completion / whole-learn logic as the button. A whole learn that would replace edits waits for the user.
+  const runRef = useRef(runDeep);
+  runRef.current = runDeep;
+  const autoStart =
+    session.deepAnalysis && me.user !== null && aiPending && !source && missing.any && me.quota?.remaining !== 0 && (missing.completable || !hasEdits());
+  useEffect(() => {
+    if (!autoStart || kept.deepRun) return;
+    runRef.current();
+  }, [autoStart, kept]);
+  // What the deep analysis is working on right now (read-only on the map and in the editor until it is done).
+  const analysing = useMemo(
+    () => (completion.running && completion.asked ? { columns: new Set(completion.asked.columns), parts: completion.asked.parts } : undefined),
+    [completion.running, completion.asked],
+  );
 
   const actions = (info: WorkbenchInfo) => {
-    if (aiPending) {
-      return (
-        <>
-          {me.status === 'loading' ? (
-            <Button variant="primary" loading disabled>
-              {t('partial.checking')}
-            </Button>
-          ) : me.user ? (
-            <>
-              <Button variant="primary" loading={completion.running} disabled={aiBusy} onClick={() => finish(info)}>
-                {t('partial.finish')}
-              </Button>
-              <Button variant="secondary" disabled={aiBusy} onClick={() => setConfirmRerun(true)}>
-                {t('partial.rerun')}
-              </Button>
-            </>
-          ) : (
-            <Button variant="primary" onClick={() => setPopupOpen(true)}>
-              {t('partial.banner.signIn')}
-            </Button>
-          )}
-          <p className="muted">{t('partial.saveHint')}</p>
-        </>
-      );
+    if (guestWaiting) {
+      // Nothing to save yet: the one action is in the panel below (sign in).
+      return <p className="muted">{t('partial.saveHint')}</p>;
     }
     if (source) {
       const file = session.input;
@@ -269,35 +290,53 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     const label =
       info.differences && info.differences > 0 ? t(info.differences === 1 ? 'save.differences.one' : 'save.differences.other', { n: info.differences }) : t('result.save');
     const saving = save.state.status === 'saving';
-    // A signed-in user whose result still has columns with no rule: the AI step can try just those (completion mode).
-    const tryColumns = me.user !== null && planFor(info.rules).columns.length > 0 && planFor(info.rules).usable;
     return (
       <>
         <Button
-          variant="primary"
+          // (while the panel asks for the deep analysis, that is the one primary action)
+          variant={incomplete ? 'secondary' : 'primary'}
           loading={saving}
-          // A visitor is asked to sign in (SPEC 5 E); a signed-in user needs rules that can be saved right now.
-          disabled={me.user ? info.metaStatus === null : info.status.kind === 'blocked'}
+          // A visitor is asked to sign in (SPEC 5 E); a signed-in user needs rules that can be saved right now - and the AI step not at work on them.
+          disabled={completion.running || (me.user ? info.metaStatus === null : info.status.kind === 'blocked')}
           onClick={() => (me.user ? doSave(info) : signIn.open('save'))}
         >
           {label}
         </Button>
-        {tryColumns && (
-          <>
-            <Button variant="secondary" loading={completion.running} disabled={aiBusy || saving} onClick={() => finish(info)}>
-              {t('complete.try')}
-            </Button>
-            <p className="muted">{t('complete.tryNote')}</p>
-          </>
-        )}
         {!me.user && tierLimits.previewRows !== null ? <p className="muted">{t('result.freeHint', { n: tierLimits.previewRows })}</p> : null}
       </>
     );
   };
 
+  // The panel: whenever the free result has fields missing, while the deep analysis works, and after it (what it solved, what still needs input).
+  const panelVisible = !source && (aiPending || completion.running || completion.outcome !== null || (me.user !== null && missing.columns.length > 0));
+
+
   const banners = (info: WorkbenchInfo) => (
     <>
-      {partial && <PartialBanner partial={partial} totalColumns={rules.output.columns.length} />}
+      {panelVisible && (
+        <DeepAnalysisPanel
+          free={aiPending}
+          total={liveRules.output.columns.length}
+          columns={missing.columns}
+          parts={missing.parts}
+          who={me.status === 'loading' ? 'checking' : me.user ? 'user' : 'guest'}
+          quota={me.quota}
+          completion={completion}
+          unticked={unticked}
+          onToggle={toggle}
+          whole={!missing.completable}
+          primary={incomplete}
+          onRun={runDeep}
+          onRerunAll={() => setConfirmRerun(true)}
+          onSignIn={() => setPopupOpen(true)}
+          onDownload={() => {
+            const file = session.input;
+            if (!me.user) signIn.open('save'); // (a visitor keeps the preview; the file itself is for signed-in users)
+            else if (file) downloadFile(file, kept.store.getState().rules);
+          }}
+          downloading={download === 'busy'}
+        />
+      )}
       {match.format && !match.dismissed && (
         <InlineMessage
           tone="info"
@@ -316,7 +355,6 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           {t('match.text')}
         </InlineMessage>
       )}
-      <CompletionNotice completion={completion} />
       {aiInfo && <AiNote ai={aiInfo} verified={(completed ? completed.verification : result.verification)?.verified === true} />}
       {/* What the first save said, until a later save has something to say. */}
       {!laterSave && save.state.status === 'saved' && (
@@ -344,6 +382,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         inputFile={session.input}
         tier={me.tier}
         partial={partial}
+        analysing={analysing}
         verification={completed ? completed.verification : result.verification}
         name={name}
         // A saved format is renamed from its own page (the name was saved with it).
@@ -358,7 +397,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         learnedNote={
           source
             ? t('edit.note', { format: name })
-            : t(partial ? (aiPending ? 'partial.note' : 'flow.path.local') : completed || result.path !== 'local' ? 'flow.path.llm' : 'flow.path.local')
+            : t(partial ? (incomplete ? 'partial.note' : 'flow.path.local') : completed || result.path !== 'local' ? 'flow.path.llm' : 'flow.path.local')
         }
         previewLimit={tierLimits.previewRows}
         onSignIn={() => signIn.open('save')}

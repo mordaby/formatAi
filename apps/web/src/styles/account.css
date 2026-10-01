@@ -177,6 +177,94 @@
 .map-line[data-ai-step] {
   background: var(--diff-tint);
 }
+/* ---------- Deep analysis with AI: the one place for the AI step on the Result screen ---------- */
+.deep {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-inline-start: 3px solid var(--brand);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.deep[data-tone='warn'] {
+  border-inline-start-color: var(--diff);
+}
+.deep__title {
+  font-size: var(--fs-section);
+  font-weight: 500;
+}
+.deep__lead {
+  font-weight: 500;
+}
+.deep__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.deep__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.deep__field {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.deep__field .icon {
+  color: var(--diff-icon);
+}
+.deep__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+.deep__note {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+/* A long label wraps inside the panel on a phone instead of running out of it. */
+.deep__actions .btn {
+  max-inline-size: 100%;
+  white-space: normal;
+  text-align: start;
+}
+.deep__running {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-weight: 500;
+}
+.deep__notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+}
+.deep[data-tone='warn'] .deep__notice {
+  background: var(--diff-tint);
+  color: var(--on-diff-tint);
+}
+.deep__notice .muted {
+  color: inherit;
+  opacity: 0.85;
+}
+.deep__notice-title {
+  font-weight: 500;
+}
+.map-line[data-ai-running] .spinner {
+  flex: none;
+}
+.deep-pref {
+  max-inline-size: 68ch;
+}
+
 .ai-note {
   display: flex;
   flex-direction: column;

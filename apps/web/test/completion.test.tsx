@@ -1,7 +1,7 @@
-// "Finish with the AI step" as completion mode (LEARN_PROMPT "Completing a partial rules file"): the AI step produces ONLY what is missing,
+// "Run deep analysis with AI" as completion mode (LEARN_PROMPT "Completing a partial rules file"): the AI step produces ONLY what is missing,
 // the rules on screen (code-solved columns and the user's edits) are the fixed part, and an answer replaces them only when it passed the
 // fixed lock and the verification. "Re-run all with AI" is the whole learn again, behind "This replaces your current rules". And the
-// regression tests of the owner's bug: a signed-in user's partial result shows "Finish with the AI step" however they got there.
+// regression tests of the owner's bug: a signed-in user's partial result shows "Run deep analysis with AI" however they got there.
 import type { LearnPayload, LearnResult, Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -113,9 +113,9 @@ async function renameSupplier() {
   await waitFor(() => expect(document.querySelector('[data-line-id="col:Vendor"]')).toBeTruthy());
 }
 
-const finishButton = () => screen.getByRole('button', { name: 'Finish with the AI step' });
+const finishButton = () => screen.getByRole('button', { name: 'Run deep analysis with AI' });
 
-describe('"Finish with the AI step" completes only what is missing', () => {
+describe('"Run deep analysis with AI" completes only what is missing', () => {
   it('sends the rules on screen (with the user\'s edits) as the fixed part, and only the missing columns and parts', async () => {
     const seen: CompletionArgs[] = [];
     const { engine, learn } = engineWith(async (args) => {
@@ -151,7 +151,7 @@ describe('"Finish with the AI step" completes only what is missing', () => {
     expect(document.querySelector('[data-line-id="col:Supplier"]')).toBeNull();
     // It is an ordinary result now: there is something to save, and nothing waits for the AI step.
     expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Finish with the AI step' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull();
     expect(screen.queryByTestId('ai-step-parts')).toBeNull();
     expect(screen.getByText('Everything you had was kept as it was.', { exact: false })).toBeTruthy();
   });
@@ -162,8 +162,11 @@ describe('"Finish with the AI step" completes only what is missing', () => {
     await start(engine);
     fireEvent.click(finishButton());
     const running = await screen.findByTestId('completion-running');
-    expect(running.textContent).toContain('The AI step is working on what is missing');
-    expect(screen.getByText('Working on 3 columns.')).toBeTruthy();
+    expect(running.textContent).toContain('Running deep analysis…');
+    expect(screen.getByText('Working on 3 fields.')).toBeTruthy();
+    // The missing fields say so on the map, the rest of the page is still there.
+    for (const header of ['Total', 'Shipped', 'Remarks']) expect(line('col:' + header).getAttribute('data-ai-running')).toBe('true');
+    expect(line('col:Item').getAttribute('data-ai-running')).toBeNull();
     expect(line('col:Total').getAttribute('data-ai-step')).toBe('true'); // nothing replaced yet
     expect(finishButton().getAttribute('aria-busy')).toBe('true');
     expect((screen.getByRole('button', { name: 'Re-run all with AI' }) as HTMLButtonElement).disabled).toBe(true);
@@ -198,8 +201,8 @@ describe('"Finish with the AI step" completes only what is missing', () => {
     expect(screen.getByText('Your rules were kept as they were')).toBeTruthy();
     expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
     expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
-    expect(screen.queryByRole('button', { name: 'Save format and download' })).toBeNull();
-    // ... and it can be tried again.
+    // The result can still be delivered as it is (the missing fields are saved as "needs your input"), and the AI step can be tried again.
+    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
     expect(finishButton().hasAttribute('disabled')).toBe(false);
   });
 
@@ -261,17 +264,38 @@ describe('"Finish with the AI step" completes only what is missing', () => {
     await screen.findByTestId('completion-done');
   });
 
-  it('rules edited while the AI step was working are not overwritten by its (older) answer', async () => {
+  it('what the user edits meanwhile (another field) is merged into the answer, not lost, and the answer is not thrown away', async () => {
     let release!: () => void;
     const { engine } = engineWith((args) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(args)))));
     await start(engine);
     fireEvent.click(finishButton());
     await screen.findByTestId('completion-running');
-    await renameSupplier();
+    await renameSupplier(); // the page stays usable while it works
     await act(async () => release());
-    expect((await screen.findByTestId('completion-kept')).textContent).toContain('You changed the rules while the AI step was working');
+    expect((await screen.findByTestId('completion-done')).textContent).toContain('The deep analysis finished');
+    expect(screen.getByText('What you changed while it worked was kept too.')).toBeTruthy();
     expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
-    expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
+    expect(document.querySelector('[data-line-id="col:Supplier"]')).toBeNull();
+    expect(line('col:Total').getAttribute('data-ai-step')).toBeNull(); // ... and what the AI step made is there
+  });
+
+  it('the fields it works on are read-only meanwhile (and so is the shape of the columns): the editor says so, and nothing changes', async () => {
+    let release!: () => void;
+    const { engine } = engineWith((args) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(args)))));
+    await start(engine);
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-running');
+    fireEvent.click(document.querySelector('[data-line-id="col:Total"] .map-line__main') as HTMLElement);
+    fireEvent.change(screen.getByLabelText('Column name'), { target: { value: 'Grand total' } });
+    expect((await screen.findByRole('alert')).textContent).toContain('The deep analysis is working on this part right now');
+    expect(document.querySelector('[data-line-id="col:Grand total"]')).toBeNull();
+    expect(document.querySelector('[data-line-id="col:Total"]')).toBeTruthy();
+    // The map's "Add a column" is not offered while it works, and a layout part it is asked for cannot be added either.
+    expect((screen.getByRole('button', { name: /Add a column/ }) as HTMLButtonElement).disabled).toBe(true);
+    // Done: editable again.
+    await act(async () => release());
+    await screen.findByTestId('completion-done');
+    expect((screen.getByRole('button', { name: /Add a column/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('failures are plain: the server says it is exhausted (3 failed attempts) and the AI buttons stop', async () => {
@@ -283,7 +307,9 @@ describe('"Finish with the AI step" completes only what is missing', () => {
     const text = (await screen.findByTestId('completion-error')).textContent!;
     expect(text.length).toBeGreaterThan(20);
     expect(screen.getByText('Your rules were kept as they were')).toBeTruthy();
-    await waitFor(() => expect(finishButton().hasAttribute('disabled')).toBe(true));
+    // The AI step is not called for this pair any more: no run button, and the panel says honestly where that leaves the fields (never as an error).
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull());
+    expect(screen.getByTestId('deep-best').textContent).toContain("This is the best we can do for now: 3 fields need a rule we can't build yet.");
     expect((screen.getByRole('button', { name: 'Re-run all with AI' }) as HTMLButtonElement).disabled).toBe(true);
     expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
   });
@@ -328,7 +354,7 @@ describe('"Re-run all with AI" is the whole learn again, behind a confirmation',
     expect(document.querySelector('[data-line-id="col:Vendor"]')).toBeNull(); // the user's edit went with the old rules
   });
 
-  it('with nothing missing (the local rules cover everything) "Finish with the AI step" is the whole learn, and asks only when there are edits', async () => {
+  it('with nothing missing (the local rules cover everything) "Run deep analysis with AI" is the whole learn, and asks only when there are edits', async () => {
     const covered = (): LearnOutput => {
       const rules = partialRules();
       rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' ? { ...c, from: 'sku' } : c.header === 'Shipped' ? { ...c, from: 'shipped' } : c.header === 'Remarks' ? { ...c, from: 'sku' } : c));
@@ -356,7 +382,7 @@ describe('"Re-run all with AI" is the whole learn again, behind a confirmation',
   });
 });
 
-describe('"Try these columns with AI" on a result that still has columns with no rule', () => {
+describe('"Run deep analysis with AI" on a result that still has columns with no rule', () => {
   /** An AI result where Shipped could not be worked out (ambiguous) and Remarks is external data. */
   function leftovers(): LearnOutput {
     const rules = ordersRules();
@@ -377,8 +403,13 @@ describe('"Try these columns with AI" on a result that still has columns with no
     );
     await start(engine);
     expect(screen.getByRole('button', { name: /Save/ })).toBeTruthy();
-    expect(screen.getByText(/Only the columns with no rule go to the AI step/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Try these columns with AI' }));
+    // ... in the panel (the one place for the AI action), with a tick per field, and no separate button next to Save.
+    const panel = screen.getByTestId('deep-panel');
+    expect(within(panel).getByText('4 of 6 fields are solved.')).toBeTruthy();
+    expect(within(panel).getByTestId('deep-fields').textContent).toContain('Shipped');
+    expect(within(panel).getByTestId('deep-fields').textContent).toContain('Remarks');
+    expect(screen.getAllByRole('button', { name: 'Run deep analysis with AI' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Run deep analysis with AI' }));
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]!.complete!.columns).toEqual([4, 5]); // Shipped and Remarks (externalData is not certainty: it may be tried again)
     expect(seen[0]!.complete!.parts).toEqual([]);
@@ -387,17 +418,17 @@ describe('"Try these columns with AI" on a result that still has columns with no
   it('is not offered to a visitor', async () => {
     const { engine } = engineWith(async (args) => completionOutput(args), leftovers);
     await start(engine, fakeApi());
-    expect(screen.queryByRole('button', { name: 'Try these columns with AI' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull();
   });
 
   it('is not offered when nothing is left to ask for', async () => {
     const { engine } = engineWith(async (args) => completionOutput(args), () => learnResult({ path: 'llm' }));
     await start(engine);
-    expect(screen.queryByRole('button', { name: 'Try these columns with AI' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull();
   });
 });
 
-describe('the owner\'s bug: a signed-in user\'s partial result shows "Finish with the AI step"', () => {
+describe('the owner\'s bug: a signed-in user\'s partial result shows "Run deep analysis with AI"', () => {
   /** The record the app keeps just before it goes to the provider. */
   async function kept(over: Partial<PendingLearn> = {}): Promise<PendingLearn> {
     return {
@@ -421,7 +452,7 @@ describe('the owner\'s bug: a signed-in user\'s partial result shows "Finish wit
     expect(finishButton()).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Re-run all with AI' })).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByText('AI formats left this month: 3', { exact: false })).toBeTruthy();
+    expect(screen.getByTestId('deep-uses').textContent).toBe('Uses 1 AI format (3 left this month), and only if it succeeds.');
     expect(learn).toHaveBeenCalledTimes(1);
     expect(learn.mock.calls[0]![0]).toMatchObject({ ai: 'notAllowed', tier: 'registered' });
     expect(api.learn).not.toHaveBeenCalled();
@@ -442,7 +473,7 @@ describe('the owner\'s bug: a signed-in user\'s partial result shows "Finish wit
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('signed in first, files dropped afterwards: the learn runs with the AI step allowed, as the user\'s tier - even when /api/me was still on its way at the click', async () => {
+  it('signed in first, files dropped afterwards: the learn is the free engine only, as the user\'s tier - even when /api/me was still on its way at the click', async () => {
     let answer!: (u: typeof USER) => void;
     const me = vi.fn(() => new Promise<typeof USER>((resolve) => (answer = resolve)));
     const { engine, learn } = fakeEngine(async () => partialOutput());
@@ -457,16 +488,17 @@ describe('the owner\'s bug: a signed-in user\'s partial result shows "Finish wit
     expect(learn).not.toHaveBeenCalled(); // waiting for "who is signed in"
     await act(async () => answer(USER));
     await waitFor(() => expect(learn).toHaveBeenCalledTimes(1));
-    expect(learn.mock.calls[0]![0]).toMatchObject({ ai: 'allowed', tier: 'registered' });
-    // (this fake engine answers a partial result even to a signed-in user: the button is there to finish it)
+    expect(learn.mock.calls[0]![0]).toMatchObject({ ai: 'notAllowed', tier: 'registered' });
+    // (the panel's button is there to run the deep analysis)
     await screen.findByTestId('rules-map');
     expect(finishButton()).toBeTruthy();
   });
 
-  it('signed in first, /api/me already answered: the learn is allowed the AI step at once', async () => {
+  it('signed in first, /api/me already answered: the learn is the free engine only, and nothing calls the API', async () => {
     const { engine, learn } = fakeEngine(async () => partialOutput());
-    await start(engine);
-    expect(learn.mock.calls[0]![0]).toMatchObject({ ai: 'allowed', tier: 'registered' });
+    const api = await start(engine);
+    expect(learn.mock.calls[0]![0]).toMatchObject({ ai: 'notAllowed', tier: 'registered' });
+    expect(api.learn).not.toHaveBeenCalled();
     expect(finishButton()).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -476,7 +508,7 @@ describe('the owner\'s bug: a signed-in user\'s partial result shows "Finish wit
     await start(engine, fakeApi());
     expect(await screen.findByRole('dialog', { name: 'Sign in to finish' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
-    expect(screen.queryByRole('button', { name: 'Finish with the AI step' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Sign in free to finish' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Re-run all with AI' })).toBeNull();
   });
@@ -495,7 +527,7 @@ describe('the owner\'s bug: a signed-in user\'s partial result shows "Finish wit
     await act(async () => {
       window.dispatchEvent(new Event('focus'));
     });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Finish with the AI step' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Run deep analysis with AI' })).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'Sign in free to finish' })).toBeNull();
   });
 
@@ -622,7 +654,7 @@ describe('a column composed from three input columns reaches the AI buttons (the
     expect(line('col:Label').textContent).toContain('it may come from another source');
   });
 
-  it('the owner\'s case, signed in, on a non-partial result with the column empty: "Try these columns with AI" is offered for it', async () => {
+  it('the owner\'s case, signed in, on a non-partial result with the column empty: "Run deep analysis with AI" is offered for it', async () => {
     const res = await analysed('reformatted');
     const seen: CompletionArgs[] = [];
     const { engine } = engineWith(
@@ -637,12 +669,12 @@ describe('a column composed from three input columns reaches the AI buttons (the
       },
     );
     await start(engine);
-    fireEvent.click(screen.getByRole('button', { name: 'Try these columns with AI' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run deep analysis with AI' }));
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]!.complete!.columns).toEqual([1]);
   });
 
-  it('partial result, signed in: "Finish with the AI step" is there and asks the AI step for the composed column', async () => {
+  it('partial result, signed in: "Run deep analysis with AI" is there and asks the AI step for the composed column', async () => {
     const res = await analysed('composed');
     const seen: CompletionArgs[] = [];
     const { engine } = engineWith(
@@ -658,7 +690,7 @@ describe('a column composed from three input columns reaches the AI buttons (the
     expect(seen[0]!.complete!.columns).toEqual([1]); // Label, by position
   });
 
-  it('a result that left the composed column without a rule, signed in: "Try these columns with AI" is offered for it', async () => {
+  it('a result that left the composed column without a rule, signed in: "Run deep analysis with AI" is offered for it', async () => {
     const res = await analysed('composed');
     const rules: LearnResult = { ...res.rules!, unsupported: [{ outputColumn: 'Label', reasonCode: 'ambiguous' }] };
     const seen: CompletionArgs[] = [];
@@ -670,18 +702,18 @@ describe('a column composed from three input columns reaches the AI buttons (the
       () => learnResult({ path: 'llm', rules, unsupported: rules.unsupported, preflight: res.preflight, verification: { verified: false, matched: 24, total: 24, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } }),
     );
     await start(engine);
-    fireEvent.click(screen.getByRole('button', { name: 'Try these columns with AI' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run deep analysis with AI' }));
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]!.complete!.columns).toEqual([1]);
   });
 
-  it('even a column the pair analysis called external is offered: nothing is excluded from "Try these columns with AI"', async () => {
+  it('even a column the pair analysis called external is offered: nothing is excluded from "Run deep analysis with AI"', async () => {
     const res = await analysed('external');
     const rules: LearnResult = { ...res.rules!, unsupported: [{ outputColumn: 'Label', reasonCode: 'externalData' }] };
     const { engine } = engineWith(async (args) => completionOutput(args), () =>
       learnResult({ path: 'llm', rules, unsupported: rules.unsupported, preflight: res.preflight, verification: { verified: false, matched: 24, total: 24, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } }),
     );
     await start(engine);
-    expect(screen.getByRole('button', { name: 'Try these columns with AI' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Run deep analysis with AI' })).toBeTruthy();
   });
 });

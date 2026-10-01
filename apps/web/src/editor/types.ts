@@ -72,7 +72,9 @@ export type EditProblemCode =
   | 'json'
   | 'schema'
   | 'reference'
-  | 'rule';
+  | 'rule'
+  /** The deep analysis with AI is working on this part of the rules: it can't be edited until that is done. */
+  | 'locked';
 
 export interface EditProblem {
   code: EditProblemCode;

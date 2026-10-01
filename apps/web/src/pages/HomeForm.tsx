@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
 import { SendPanel } from '../app/SendPanel';
 import { useLearnSession } from '../app/LearnSession';
+import { useMe } from '../app/Me';
 import { useFileInfo } from '../app/useFileInfo';
 import { webConfig } from '../config';
 import { useI18n } from '../i18n';
@@ -16,12 +17,15 @@ export interface HomeFormProps {
 export function HomeForm({ busy }: HomeFormProps) {
   const { t } = useI18n();
   const session = useLearnSession();
+  const me = useMe();
   const { input, output, masking } = session;
   const inputInfo = useFileInfo(input, 'input');
   const outputInfo = useFileInfo(output, 'output');
   const [sendOpen, setSendOpen] = useState(false);
   const sendId = useId();
   const hintId = useId();
+  const deepId = useId();
+  const deepHintId = useId();
 
   const ready = input !== null && output !== null && inputInfo?.status !== 'unreadable' && outputInfo?.status !== 'unreadable';
 
@@ -59,6 +63,27 @@ export function HomeForm({ busy }: HomeFormProps) {
       </div>
 
       <HomeMasking masking={masking} onChange={session.setMasking} disabled={busy} />
+
+      {/* Signed in: the AI step is the user's choice. Off, the free engine's result is shown and the Result screen offers the AI step; on, it starts by itself when fields are missing. */}
+      {me.user ? (
+        <div className="check deep-pref" data-testid="deep-analysis-pref">
+          <input
+            id={deepId}
+            type="checkbox"
+            className="check__box"
+            checked={session.deepAnalysis}
+            disabled={busy}
+            aria-describedby={deepHintId}
+            onChange={(e) => session.setDeepAnalysis(e.target.checked)}
+          />
+          <label htmlFor={deepId} className="check__label">
+            {t('deep.pref')}
+          </label>
+          <p className="field__hint" id={deepHintId}>
+            {t('deep.pref.hint')}
+          </p>
+        </div>
+      ) : null}
 
       <div className="privacy">
         <p className="privacy__line">

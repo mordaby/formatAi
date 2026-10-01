@@ -1,12 +1,11 @@
-// The local result before the AI step (SPEC 21 v5 item 1): what code alone could work out is shown with everything the AI
-// step still has to do marked, and a visitor is asked - once, in a popup - to sign in free to finish. Every column code could not
+// The free result before the AI step (SPEC 21 v5 item 1): what code alone could work out is shown with everything the AI
+// step still has to do marked (the panel next to it is DeepAnalysisPanel), and a visitor is asked - once, in a popup - to sign in free to finish. Every column code could not
 // explain needs the AI step, including those it found no trace of in the input (those say "may come from another source").
 import type { PartialInfo } from '@formatai/engine';
-import { aiLeftLabel, includedLabel } from '../../app/aiQuota';
-import { useMe } from '../../app/Me';
+import { includedLabel } from '../../app/aiQuota';
 import { SignInButtons } from '../../app/SignIn';
 import { useI18n } from '../../i18n';
-import { Button, Dialog, InlineMessage } from '../../ui';
+import { Button, Dialog } from '../../ui';
 
 /** The counts the popup and the banner say: "N of M columns" worked out, K need the AI step (every column code could not explain). */
 export function partialCounts(partial: PartialInfo, totalColumns: number) {
@@ -39,20 +38,5 @@ export function PartialSignInDialog({ open, partial, totalColumns, onClose }: { 
         {t('signIn.kept')} {t('signIn.keptLocal')}
       </p>
     </Dialog>
-  );
-}
-
-/** The message above the map of a local result: what was worked out, what waits for the AI step, and how many AI formats are left. */
-export function PartialBanner({ partial, totalColumns }: { partial: PartialInfo; totalColumns: number }) {
-  const { t } = useI18n();
-  const me = useMe();
-  const c = partialCounts(partial, totalColumns);
-
-  return (
-    <InlineMessage tone="info" title={t('partial.section')} todo={t('partial.finishNote')}>
-      <p>{me.user ? t('partial.banner.signedIn') : t('partial.banner.anon', { solved: c.solved, total: c.total })}</p>
-      {me.user ? <p className="muted">{t('complete.finishNote')}</p> : null}
-      {me.user && me.quota ? <p className="tabular">{aiLeftLabel(t, me.quota)}</p> : null}
-    </InlineMessage>
   );
 }

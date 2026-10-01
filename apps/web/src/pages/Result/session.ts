@@ -23,6 +23,8 @@ export interface ResultSession {
   name: string;
   /** Set once the learn has been saved as a format and its first source: saving again writes a new version of that source. */
   source?: SavedSource | undefined;
+  /** The deep analysis with AI has been started for this result (by the user, or by Home's "Deep analysis with AI if needed"): it is never started by itself twice. */
+  deepRun?: boolean | undefined;
 }
 
 const sessions = new WeakMap<LearnOutput, ResultSession>();

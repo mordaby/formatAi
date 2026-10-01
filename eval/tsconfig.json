@@ -6,6 +6,7 @@
     ]
   },
   "include": [
+    "catalogue",
     "*.ts",
     "cases",
     "lib",
