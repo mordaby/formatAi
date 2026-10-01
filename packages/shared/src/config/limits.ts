@@ -101,6 +101,13 @@ export const limits = {
   learn: {
     fastPathMode: 'strict',
     /**
+     * 'Finish with the AI step' completes only what's missing when at least this share of the output
+     * columns already has a rule; below it the whole learn runs instead. First Haiku eval (2026-10-01):
+     * completion was far cheaper and as accurate with most columns fixed, but failed where nothing was
+     * fixed (a summary output with 0 of 5 columns solved), which the full learn verified.
+     */
+    completionMinFixedShare: 0.5,
+    /**
      * SPEC 21 v5 item 3: after this many failed AI attempts on the same example pair (same owner, same
      * structure hash) the app stops calling the AI for that pair and counts it as ONE AI learn.
      */

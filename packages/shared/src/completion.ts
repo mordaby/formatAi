@@ -81,6 +81,23 @@ export interface CompletionPlanOptions {
 }
 
 /**
+ * The share of the output columns that already have a rule, counting only columns a rule could fill
+ * (not `skipColumns`, not external data). 1 when there is nothing to count.
+ */
+export function fixedColumnShare(rules: LearnResult | Rules, options: CompletionPlanOptions = {}): number {
+  const skip = new Set(options.skipColumns ?? []);
+  const external = new Set(rules.unsupported.filter((u) => u.reasonCode === 'externalData').map((u) => u.outputColumn));
+  let fillable = 0;
+  let fixed = 0;
+  rules.output.columns.forEach((col, i) => {
+    if (skip.has(i) || external.has(col.header)) return;
+    fillable++;
+    if (col.from !== null) fixed++;
+  });
+  return fillable === 0 ? 1 : fixed / fillable;
+}
+
+/**
  * What is missing from `rules`, for a completion call: every output column with no `from` (and not external data:
  * a column the pair analysis or the AI step called `externalData` is data no rule can produce), and the layout
  * parts of `options.parts` the rules still lack. The plan is empty when nothing is missing.

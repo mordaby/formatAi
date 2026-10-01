@@ -26,3 +26,21 @@ Variance: `insurer-commission-control` and `stock-count-warehouse-report` each m
 **Usage via the dev CLI is not representative of API cost.** Averages per LLM learn: 1.78 calls, ~48k cached input tokens, ~18k output tokens, ~162 s. Our own prompt + schema + payload is ~12k tokens; the rest is Claude Code's own session overhead and (likely) thinking tokens. Measure real per-learn cost with `--provider anthropic` (API key) before setting budgets.
 
 Next: run Sonnet 5 on the same set (escalation slot), `--runs 3`, and an API-key run for true cost.
+
+## 2026-10-01 — learn-v6: full learn vs "complete what's missing"
+
+- **Provider:** `claude-cli` (dev, subscription), **Haiku 4.5**, masking on, 1 run, no escalation, `--mode both`. 17 cases (8 need the AI step).
+
+| | full | complete |
+|---|---|---|
+| Expectation met | 94% | 94% |
+| AI learns verified 1st call / after repair | 75% / 88% | 75% / 88% |
+| Hold-out correct | 100% | 93% |
+| Avg AI calls per learn | 1.75 | 1.62 |
+| Avg output tokens per learn (CLI, incl. thinking) | 17.5k | 15.3k |
+
+- Completion shines when most columns are already fixed: `budget-columns-to-rows` 1.5k vs 16.3k output tokens, `registry-supplier-a` 1.2k vs 20k, both verified on the 1st call.
+- It is the wrong tool when nothing is fixed: `purchase-orders-supplier-summary` (summary output, 0 of 5 columns solved) failed after 3 calls in completion mode and verified in full mode.
+- Misses differ by mode (full missed `stock-count-warehouse-report`, completion verified it) — partly run-to-run variance at 1 run per case.
+- learn-v6 did not regress full learns (94%, in line with learn-v5).
+- **Change made:** "Finish with the AI step" uses completion only when ≥ 50% of the fillable output columns already have a rule (`limits.learn.completionMinFixedShare`), otherwise the full learn.

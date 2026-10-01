@@ -3,7 +3,7 @@
 // Once the learn is saved (a format and its first source) the SAME screen becomes the editor of that source: its address is the
 // source's own, the example files stay in the worker for the live check, and every further save is a new version of the source.
 import { limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
-import { completionPlan, isCompletable } from '@formatai/shared';
+import { completionPlan, fixedColumnShare, isCompletable } from '@formatai/shared';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { aiLeftLabel } from '../../app/aiQuota';
@@ -199,7 +199,10 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   const planFor = (rules: WorkbenchInfo['rules']) => {
     const plan = completionPlan(rules, { parts: partial?.needsAiParts ?? [], skipColumns: result.preflight.skipColumns });
     const aligned = result.exampleOutputColumns === undefined || rules.output.columns.length === result.exampleOutputColumns;
-    return { ...plan, usable: aligned && isCompletable(rules) && (plan.columns.length > 0 || plan.parts.length > 0) };
+    // Too little fixed (under limits.learn.completionMinFixedShare of the columns): a 'complete the rest' request is just a worse-shaped
+    // full learn (first Haiku eval), so the whole learn runs instead.
+    const enoughFixed = fixedColumnShare(rules, { skipColumns: result.preflight.skipColumns }) >= limits.learn.completionMinFixedShare;
+    return { ...plan, usable: aligned && enoughFixed && isCompletable(rules) && (plan.columns.length > 0 || plan.parts.length > 0) };
   };
   const rerunAll = (): void => {
     // The user has said the rules may go: leaving this screen for the new learn is not "leaving with unsaved changes".
