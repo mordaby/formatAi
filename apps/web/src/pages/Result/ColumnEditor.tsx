@@ -1,4 +1,4 @@
-// The column editor (SPEC 8.11): a name, "How is it made?" with seven ways, and the output format with a live preview.
+// The column editor (SPEC 8.11): a name, "How is it made?" with eight ways, and the output format with a live preview.
 import { COLUMN_TYPES, type ColumnType, type PayloadCell } from '@formatai/shared';
 import { Fragment, useState } from 'react';
 import {
@@ -22,7 +22,7 @@ import { formatPreview } from './formatPreview';
 
 type Kind = ColumnMethod['kind'];
 
-const KINDS: readonly Kind[] = ['copy', 'calculate', 'join', 'partOfText', 'translate', 'fixed', 'empty'];
+const KINDS: readonly Kind[] = ['copy', 'calculate', 'join', 'partOfText', 'translate', 'fixed', 'runningSum', 'empty'];
 const KIND_LABEL: Record<Kind, MessageKey> = {
   copy: 'editor.col.kind.copy',
   calculate: 'editor.col.kind.calculate',
@@ -30,6 +30,7 @@ const KIND_LABEL: Record<Kind, MessageKey> = {
   partOfText: 'editor.col.kind.partOfText',
   translate: 'editor.col.kind.translate',
   fixed: 'editor.col.kind.fixed',
+  runningSum: 'editor.col.kind.runningSum',
   empty: 'editor.col.kind.empty',
   formula: 'editor.col.kind.formula',
 };
@@ -61,6 +62,9 @@ function starter(kind: Kind, sources: readonly SourceOption[], current: ColumnMe
       return { kind, source: pick((s) => isTextLike(s.type)), pairs: [], onMissing: 'keep' };
     case 'fixed':
       return { kind, value: '' };
+    case 'runningSum':
+      // Adds up the column they were already using when it is a number; the file's own order until they choose another.
+      return { kind, column: pick((s) => isNumeric(s.type)), orderBy: 'file' };
     case 'empty':
       return { kind };
     case 'formula':
@@ -167,7 +171,7 @@ export function ColumnEditor({ ctx, index, line, live, onRenamed, onRemoved, onM
   );
 }
 
-// ---------- the seven forms ----------
+// ---------- the eight forms ----------
 
 interface MethodFormProps {
   ctx: EditorCtx;
@@ -265,6 +269,8 @@ function MethodForm({ ctx, draft, sources, setMethod }: MethodFormProps) {
       return <TranslateForm ctx={ctx} draft={draft} sources={sources} setMethod={setMethod} />;
     case 'fixed':
       return <FixedForm draft={draft} setMethod={setMethod} />;
+    case 'runningSum':
+      return <RunningSumForm ctx={ctx} draft={draft} sources={sources} setMethod={setMethod} />;
     case 'empty':
       return <p className="muted">{t('editor.col.emptyNote')}</p>;
     case 'formula':
@@ -437,6 +443,54 @@ function TranslateForm({ ctx, draft, sources, setMethod }: MethodFormProps & { d
         ]}
         onChange={(onMissing) => setMethod({ ...draft, onMissing })}
       />
+    </FormSection>
+  );
+}
+
+// ---------- Running total ----------
+
+const NO_GROUP = '#none';
+const FILE_ORDER = '#file';
+
+function RunningSumForm({ ctx, draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'runningSum' }> }) {
+  const { t } = useI18n();
+  // The column to add up is a number (the one already chosen stays in the list, whatever it is, so the form never lies about it).
+  const numeric = sources.filter((s) => isNumeric(s.type) || s.id === draft.column);
+  const everything = sourceChoices(sources);
+  const order = draft.orderBy;
+  // The rules remove duplicates before the total is calculated, so a total never counts a copy that is not in the file made.
+  const removesDuplicates = ctx.rules.transform.dedupe?.action === 'remove';
+  const withGroup = (groupBy: string | undefined): ColumnMethod => ({ kind: 'runningSum', column: draft.column, ...(groupBy === undefined ? {} : { groupBy }), orderBy: draft.orderBy });
+  return (
+    <FormSection>
+      <SourceField ctx={ctx} label={t('editor.col.running.column')} value={draft.column} options={sourceChoices(numeric)} onChange={(column) => setMethod({ ...draft, column })} />
+      <SourceField
+        ctx={ctx}
+        label={t('editor.col.running.groupBy')}
+        value={draft.groupBy ?? NO_GROUP}
+        options={[{ value: NO_GROUP, label: t('editor.col.running.noGroup') }, ...everything]}
+        onChange={(v) => setMethod(withGroup(v === NO_GROUP ? undefined : v))}
+      />
+      <SourceField
+        ctx={ctx}
+        valuePrefix="col:"
+        label={t('editor.col.running.orderBy')}
+        value={order === 'file' ? FILE_ORDER : `col:${order.column}`}
+        options={[{ value: FILE_ORDER, label: t('editor.col.running.fileOrder') }, ...sources.map((s): Option => ({ value: `col:${s.id}`, label: s.label }))]}
+        onChange={(v) => setMethod({ ...draft, orderBy: v === FILE_ORDER ? 'file' : { column: v.slice(4), dir: order === 'file' ? 'asc' : order.dir } })}
+      />
+      {order !== 'file' && (
+        <ChoiceGroup
+          label={t('editor.col.running.direction')}
+          value={order.dir}
+          options={[
+            { value: 'asc', label: t('editor.col.running.asc') },
+            { value: 'desc', label: t('editor.col.running.desc') },
+          ]}
+          onChange={(dir) => setMethod({ ...draft, orderBy: { column: order.column, dir } })}
+        />
+      )}
+      {removesDuplicates && <p className="muted">{t('editor.col.running.dedupeNote')}</p>}
     </FormSection>
   );
 }

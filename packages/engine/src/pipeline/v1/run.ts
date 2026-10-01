@@ -13,6 +13,7 @@ import { colNorm, mapHeaders, newIssue, normalizeCell, type ColNorm, type NormIs
 import { flagOrigin, slotOrThrow, type Row, type RunCtx, type SlotPlan } from './rows';
 import { applySort } from './sort';
 import { applyComputed, applyValueMaps } from './transform';
+import { countWindows } from './window';
 import { applyOutputValidations, applyValidations } from './validate';
 import type { Val } from './values';
 
@@ -87,7 +88,8 @@ export function planSlots(rules: LearnResult): SlotPlan {
     }
   }
   for (const c of rules.transform.computed) add(c.id, c.type);
-  return { slotOf, types, width: types.length };
+  const windowBase = types.length;
+  return { slotOf, types, width: windowBase + countWindows(rules.transform.computed), windowBase };
 }
 
 interface MemoEntry {
@@ -303,6 +305,9 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
   // (buildSheet only ever aggregates the `rows` it's handed; see validate.ts).
   const outCols = planColumns(ctx, rules, rows);
   rows = applyOutputValidations(ctx, rows, outCols, rules.validations, summary);
+  // Across-row (window) values were calculated over the rows of step 6, blocked ones included (validations run after, and may read
+  // those very values), so a total or running balance counts rows the output leaves out. Say so, as a count.
+  if (plan.width > plan.windowBase && summary.blockedRows.length > 0) summary.blockedInWindows = summary.blockedRows.length;
 
   // Flags, for the rows that reach the output, in input-row order: a row
   // dropped by an output-severity block (kept out of `rows` above) drops its

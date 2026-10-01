@@ -1,5 +1,6 @@
 // The capabilities the rules language does not have today, as the catalogue found them. (Resolved ones are removed: weekday, makeDate, toDate with month names,
-// date("...") literals, keepChars, titleCase and find were added after learn-v6; see SPEC 8.3.) A type that cannot be
+// date("...") literals, keepChars, titleCase and find were added after learn-v6, and the across-row "window" functions - runningSum, groupSum,
+// groupCount, previous, next, fillDown, rowNumber, rank ... - after that; see SPEC 8.3.) A type that cannot be
 // expressed points at exactly one of these (`CatalogueType.missing.capability`); the report groups the
 // non-expressible types by capability and counts how many types adding it would unlock (the "language gaps" list).
 //
@@ -7,6 +8,8 @@
 // (an operation or a rules field, with the formula spelling) - it is what a language change would start from.
 
 export type CapabilityFamily = 'crossRow' | 'text' | 'date' | 'shape';
+// ('crossRow' has no entry today: every across-row type is expressible with the window functions. It stays a family so a new gap can be filed
+// under it - e.g. values over rows a filter removes, a rolling N-row window, anything across files.)
 
 export interface Capability {
   family: CapabilityFamily;
@@ -18,38 +21,6 @@ export interface Capability {
 }
 
 export const CAPABILITIES = {
-  // ---- across rows: every expression sees exactly one row today (SPEC 8.3 - "pure ... no row context") ----
-  rowLookback: {
-    family: 'crossRow',
-    title: 'Previous / next row access',
-    gap: 'An expression sees one row only; there is no way to read the value of the row above (or below), or the last non-empty value above.',
-    proposal: 'prev(col [, n]) / next(col), fillDown(col) - evaluated after sort, before output',
-  },
-  runningAggregate: {
-    family: 'crossRow',
-    title: 'Running (cumulative) aggregates',
-    gap: 'No cumulative sum/count over the rows so far (optionally per group).',
-    proposal: 'running(sum|count, col [, by])',
-  },
-  windowAggregate: {
-    family: 'crossRow',
-    title: 'Group / whole-column aggregate on every row',
-    gap: 'Aggregates exist only as summary rows (an extra row per group / at the end), never as a value repeated on every detail row.',
-    proposal: 'groupSum(col, by) / groupCount(by) / total(col)',
-  },
-  rank: {
-    family: 'crossRow',
-    title: 'Rank among the rows',
-    gap: 'No ordering-aware function: the position of a value among all the rows (optionally per group).',
-    proposal: 'rank(col [, by] [, dir])',
-  },
-  rowIndex: {
-    family: 'crossRow',
-    title: 'Row number',
-    gap: 'No access to the position of the row (1..n); only expand has an index (`indexId`), and only for split cells.',
-    proposal: 'rowNumber() (after sort)',
-  },
-
   // ---- text ----
   positionSearch: {
     family: 'text',

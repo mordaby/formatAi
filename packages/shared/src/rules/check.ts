@@ -12,7 +12,7 @@
 // Engine pipeline order (SPEC 8.2 / LEARN_PROMPT "Operations"):
 //   read -> rowFilters -> dedupe -> expand -> computed -> valueMaps -> sort -> group -> output -> validations
 import { limits } from '../config/limits';
-import type { Expr, ExprNode, LearnResult, Rules, SummaryRow, TableCellValue } from './schema';
+import { WINDOW_FNS, type Expr, type ExprNode, type LearnResult, type Rules, type SummaryRow, type TableCellValue } from './schema';
 
 export type RuleProblemKind = 'reference' | 'depth' | 'duplicateId' | 'arity';
 
@@ -21,6 +21,16 @@ export interface RuleProblem {
   /** Dotted/bracketed path to the offending field, e.g. "transform.computed[0].expr". */
   path: string;
   message: string;
+}
+
+export interface CheckRulesOptions {
+  /**
+   * Reject a `transform.functions` name that is one of the formula language's across-row function names (rank, next,
+   * previous, ...): printed as formula text and read back, such a function would be taken for the built-in. For NEW rules
+   * only (what the AI writes, what the editor adds): a stored file is never refused for it, so `call` nodes already saved
+   * keep running (`runRules` does not pass this).
+   */
+  rejectBuiltinFunctionNames?: boolean;
 }
 
 /** SPEC 8.3 (v3): depth 8 per expression. Read from config (SPEC non-negotiable #8),
@@ -100,6 +110,8 @@ function exprChildren(e: Expr): Expr[] {
       return e.args;
     case 'dateLiteral':
       return [];
+    case 'window':
+      return e.arg === undefined ? [] : [e.arg];
   }
 }
 
@@ -182,6 +194,9 @@ interface ExprCheckScope {
   /** Set to the function's own index while checking that function's body, so `call`
    * can enforce "defined above it". Omitted for top-level exprs. */
   callerFunctionIndex?: number;
+  /** True only for `transform.computed[].expr`: window functions (runningSum, ...) run in that step, over all rows, so
+   * nowhere else (row filters and fan-out values run before it, function bodies are pure) may contain one. */
+  allowWindow?: boolean;
 }
 
 /** Walks an expression tree, checking depth once for the whole tree plus, per node:
@@ -257,6 +272,29 @@ function checkExprTree(
       return;
     }
 
+    if (node.op === 'window') {
+      if (!scope.allowWindow) {
+        problems.push({
+          kind: 'reference',
+          path: p,
+          message: `${node.fn}() is an across-row function and works only in a computed column's formula`,
+        });
+      }
+      if (node.arg !== undefined && !('col' in node.arg)) {
+        problems.push({
+          kind: 'reference',
+          path: `${p}.arg`,
+          message: `${node.fn}() reads a column id; make a computed column first for anything calculated`,
+        });
+      }
+      if (scope.colIds) {
+        node.by?.forEach((id, i) => checkRef(id, scope.colIds as ReadonlySet<string>, `${p}.by[${i}]`, problems));
+        node.order?.forEach((k, i) => checkRef(k.column, scope.colIds as ReadonlySet<string>, `${p}.order[${i}].column`, problems));
+      }
+      if (node.arg !== undefined) walk(node.arg, `${p}.arg`);
+      return;
+    }
+
     if (node.op === 'lookup') {
       const table = ctx.tablesByName.get(node.table);
       if (!table) {
@@ -285,10 +323,18 @@ function checkExprTree(
 function checkFunctionsAndTables(
   rules: LearnResult | Rules,
   problems: RuleProblem[],
+  opts: CheckRulesOptions,
 ): ExprCheckContext {
   const functionsByName = new Map<string, { index: number; paramCount: number }>();
   const functions = rules.transform.functions ?? [];
   functions.forEach((fn, i) => {
+    if (opts.rejectBuiltinFunctionNames === true && (WINDOW_FNS as readonly string[]).includes(fn.name)) {
+      problems.push({
+        kind: 'duplicateId',
+        path: `transform.functions[${i}].name`,
+        message: `function name "${fn.name}" is a built-in function of the formula language; choose another name`,
+      });
+    }
     if (functionsByName.has(fn.name)) {
       problems.push({
         kind: 'duplicateId',
@@ -376,11 +422,11 @@ function checkFunctionsAndTables(
  * it does not re-check shapes zod already enforces, static types (engine typeCheck)
  * or size/count limits (engine checkLimits).
  */
-export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
+export function checkRules(rules: LearnResult | Rules, opts: CheckRulesOptions = {}): RuleProblem[] {
   const problems: RuleProblem[] = [];
 
   // ----- Step -1: functions and tables (SPEC 8.14), independent of the row pipeline -----
-  const ctx = checkFunctionsAndTables(rules, problems);
+  const ctx = checkFunctionsAndTables(rules, problems, opts);
 
   // ----- Step 0: input column ids must be unique -----
   const inputIds = new Set<string>();
@@ -480,7 +526,7 @@ export function checkRules(rules: LearnResult | Rules): RuleProblem[] {
   rules.transform.computed.forEach((c, i) => {
     checkExprTree(
       c.expr,
-      { colIds: availableForComputed },
+      { colIds: availableForComputed, allowWindow: true },
       ctx,
       `transform.computed[${i}].expr`,
       problems,

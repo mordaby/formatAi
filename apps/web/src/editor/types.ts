@@ -50,6 +50,12 @@ export type ColumnMethod =
   | { kind: 'partOfText'; source: string; part: 'first' | 'last'; n: number }
   | { kind: 'translate'; source: string; pairs: TranslatePair[]; onMissing: 'flag' | 'keep' }
   | { kind: 'fixed'; value: string | number | boolean }
+  /**
+   * A running total (the across-row function `runningSum`): add up `column`, from the first row to this one, optionally starting again
+   * for each value of `groupBy`. `orderBy` is required: 'file' adds the rows up as they appear in the input file, or in the order of a column.
+   * Every other across-row function is written in Advanced (`formula`).
+   */
+  | { kind: 'runningSum'; column: string; groupBy?: string; orderBy: 'file' | { column: string; dir: 'asc' | 'desc' } }
   | { kind: 'empty' }
   /** Advanced: any formula text (`round(amount * 0.17, 2)`, `if(...)`). `type` is the result type of the column. */
   | { kind: 'formula'; formula: string; type?: ColumnType };

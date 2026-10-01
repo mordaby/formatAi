@@ -13,7 +13,7 @@
 // LLM-answer check would keep rejecting an op the model was told to use).
 import { describe, expect, it } from 'vitest';
 import { LEARN_SYSTEM_PROMPT_V6 } from '@formatai/shared';
-import { OP_SIGNATURES, type SigOp } from '../../src/check/signatures';
+import { OP_SIGNATURES, WINDOW_SIGNATURES, type SigOp } from '../../src/check/signatures';
 
 /** The "# Operations" section of LEARN_PROMPT §2 (learn-v6): from "# Operations" to the
  * "# Example" heading that follows it. Also documents functions/tables/rowFilters/
@@ -59,7 +59,17 @@ describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3,
   });
 
   it('the ops held back from the prompt are exactly the ones added after learn-v6', () => {
-    expect(notInPrompt.sort()).toEqual(['dateLiteral', 'find', 'keepChars', 'makeDate', 'titleCase', 'toDate', 'weekday']);
+    expect(notInPrompt.sort()).toEqual(['dateLiteral', 'find', 'keepChars', 'makeDate', 'titleCase', 'toDate', 'weekday', 'window']);
+  });
+
+  // The across-row functions are one op (`window`) with eleven names. Until learn-v7 documents them the prompt must not mention
+  // them (and the API reads them as unknown functions); the day it does, the flag goes and every name must be there as `name(`.
+  it('the eleven across-row function names are in the prompt exactly when the window op is flagged in', () => {
+    const names = Object.keys(WINDOW_SIGNATURES);
+    expect(names).toHaveLength(11);
+    const documented = names.filter((n) => section.includes(`${n}(`));
+    if (OP_SIGNATURES.window.inPrompt === false) expect(documented).toEqual([]);
+    else expect(documented).toEqual(names);
   });
 
   it('the six comparison symbols and four arithmetic symbols are all documented', () => {

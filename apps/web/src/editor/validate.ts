@@ -9,6 +9,8 @@ import { layoutTypeProblems } from './typeChecks';
 // Rules are never mutated, so a check of one rules object stays true: the rules an edit produces are the next edit's
 // "before", and are checked only once.
 const referenceCache = new WeakMap<object, RuleProblem[]>();
+/** What the editor checks for a NEW edit: also that no function is named like a built-in (a stored file is never refused for it). */
+const checkEdited = (r: EditableRules): RuleProblem[] => checkRules(r, { rejectBuiltinFunctionNames: true });
 const typeCache = new WeakMap<object, EditProblem[]>();
 function cached<T>(cache: WeakMap<object, T>, rules: EditableRules, compute: (r: EditableRules) => T): T {
   let hit = cache.get(rules);
@@ -32,12 +34,12 @@ export function schemaProblems(rules: EditableRules): EditProblem[] {
 /** `checkRules` findings in `after` that `before` did not already have (so an old problem never blocks an unrelated edit). */
 export function newReferenceProblems(before: EditableRules, after: EditableRules): EditProblem[] {
   const prior = new Map<string, number>();
-  for (const p of cached(referenceCache, before, checkRules)) {
+  for (const p of cached(referenceCache, before, checkEdited)) {
     const key = `${p.kind}|${p.message}`;
     prior.set(key, (prior.get(key) ?? 0) + 1);
   }
   const out: EditProblem[] = [];
-  for (const p of cached(referenceCache, after, checkRules)) {
+  for (const p of cached(referenceCache, after, checkEdited)) {
     const key = `${p.kind}|${p.message}`;
     const n = prior.get(key) ?? 0;
     if (n > 0) prior.set(key, n - 1);

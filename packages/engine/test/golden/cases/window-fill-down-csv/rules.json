@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "name": "Fill the category down",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "category", "header": "Category", "type": "text" },
+      { "id": "item", "header": "Item", "type": "text", "required": true },
+      { "id": "qty", "header": "Qty", "type": "integer", "required": true }
+    ]
+  },
+  "transform": {
+    "computed": [
+      { "id": "filled", "type": "text", "expr": { "op": "window", "fn": "fillDown", "arg": { "col": "category" } } },
+      { "id": "before", "type": "integer", "expr": { "op": "window", "fn": "previous", "arg": { "col": "qty" } } }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Items",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "columns": [
+      { "header": "Category", "from": "filled" },
+      { "header": "Item", "from": "item" },
+      { "header": "Qty", "from": "qty" },
+      { "header": "Previous qty", "from": "before" }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

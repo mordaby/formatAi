@@ -25,7 +25,7 @@ import type {
   SummaryRow,
   Validation,
 } from '@formatai/shared';
-import { fits, OP_SIGNATURES, unify, type ArgSpec, type ResultSpec, type SigType } from './signatures';
+import { fits, OP_SIGNATURES, unify, WINDOW_SIGNATURES, windowShapeProblem, type ArgSpec, type ResultSpec, type SigType } from './signatures';
 
 export interface TypeProblem {
   kind: 'type';
@@ -307,6 +307,43 @@ function inferType(
     // validated by the schema/parser, not here.
     case 'dateLiteral':
       return resolveResult(OP_SIGNATURES.dateLiteral.result, []);
+
+    // An across-row function (docs/proposals/window-operations.md): its column must suit the function (a number to add up, a number or a
+    // date for min/max, anything to carry down); the group and order columns can be of any type. Stored JSON gets the same shape check
+    // the formula parser gives text (a column where one is needed, no order on a group total, rank needs an order).
+    case 'window': {
+      const shape = windowShapeProblem(expr);
+      if (shape !== undefined) {
+        problems.push({ kind: 'type', path, message: shape });
+        return undefined;
+      }
+      const sig = WINDOW_SIGNATURES[expr.fn];
+      let argType: SigType | undefined;
+      if (expr.arg !== undefined) {
+        if (!('col' in expr.arg)) {
+          problems.push({ kind: 'type', path: `${path}.arg`, message: `${expr.fn}() reads a column id; make a computed column first for anything calculated` });
+          return undefined;
+        }
+        argType = inferType(expr.arg, scope, ctx, `${path}.arg`, problems);
+        if (argType !== undefined && sig.argType === 'numeric' && !fits(argType, 'decimal')) {
+          const hint = argType === 'text' || argType === 'idLike' ? '; use toNumber in a computed column first' : '';
+          problems.push({ kind: 'type', path: `${path}.arg`, message: `expected decimal, got ${argType}${hint}` });
+        } else if (argType !== undefined && sig.argType === 'numericOrDate' && !fits(argType, 'decimal') && argType !== 'date') {
+          const hint = argType === 'text' || argType === 'idLike' ? '; use toNumber or a date column first (in a computed column)' : '';
+          problems.push({ kind: 'type', path: `${path}.arg`, message: `expected decimal or date, got ${argType}${hint}` });
+        }
+      }
+      switch (sig.result) {
+        case 'numericPreserve':
+          return argType === 'integer' ? 'integer' : 'decimal';
+        case 'decimal':
+          return 'decimal';
+        case 'integer':
+          return 'integer';
+        case 'argType':
+          return argType;
+      }
+    }
 
     case 'if': {
       const condType = inferType(expr.cond, scope, ctx, `${path}.cond`, problems);

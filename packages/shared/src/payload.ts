@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { AI_STEP_PART_CODES, type AiStepPartCode } from './aiReadiness';
 import { limits } from './config/limits';
 import type { Format } from './format';
-import type { OutputFile } from './rules/schema';
+import type { OutputFile, WindowFn, WindowTies } from './rules/schema';
 
 /** A sample cell. Numbers are JSON numbers; real Excel dates are ISO "YYYY-MM-DD" strings; text dates stay as written. */
 export type PayloadCell = string | number | boolean | null;
@@ -171,6 +171,25 @@ export type ColumnHint = HintBase & { out: number } & (
   // each `in` column is inside the output cell on the coverage's share of the rows; `in` is ordered by where
   // the value first appears in the output text. The fixed text around the values is not sent: the samples show it.
   | { rel: 'contains'; in: number[] }
+  // learn-v7 (docs/proposals/window-operations.md): the column is an ACROSS-ROW (window) function of the input rows - a running
+  // total, a group's total on every row, the previous row's value, a rank, a row number ... Computed on all rows, in the input's
+  // row order. Not sent until learn-v7 documents window functions in the system prompt (`limits.learn.window.hintsEnabled`).
+  | {
+      rel: 'window';
+      fn: WindowFn;
+      /** The column the function reads; absent for `rowNumber`, `rank` and `groupCount()`. */
+      in?: [number];
+      /** Columns that split the rows into groups; absent: all rows are one group. */
+      by?: number[];
+      /**
+       * 'file': the input's row order (no `order:` argument). 'output': only the order the example output shows fits (copy the
+       * output's sort into `order:`). Or the exact keys (`rank`, or `order:` known).
+       */
+      order?: 'file' | 'output' | { in: number; dir: 'asc' | 'desc' }[];
+      ties?: WindowTies;
+      /** Other columns that fit equally well (at most 3): the model picks the real key or amount. */
+      alt?: { in?: [number]; by?: number[] }[];
+    }
 );
 
 export type RowHint = HintBase &

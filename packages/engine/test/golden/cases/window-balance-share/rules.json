@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "name": "Running balance and share per account",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "acct", "header": "Account", "type": "text", "required": true },
+      { "id": "date", "header": "Date", "type": "date", "required": true },
+      { "id": "amount", "header": "Amount", "type": "decimal", "required": true }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "balance",
+        "type": "decimal",
+        "expr": { "op": "window", "fn": "runningSum", "arg": { "col": "amount" }, "by": ["acct"], "order": [ { "column": "date", "dir": "asc" } ] }
+      },
+      {
+        "id": "share",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "digits": 1,
+          "arg": {
+            "op": "mul",
+            "args": [
+              { "op": "div", "args": [ { "col": "amount" }, { "op": "window", "fn": "groupSum", "arg": { "col": "amount" }, "by": ["acct"] } ] },
+              { "const": 100 }
+            ]
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Balances",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "columns": [
+      { "header": "Account", "from": "acct" },
+      { "header": "Date", "from": "date", "format": "DD/MM/YYYY" },
+      { "header": "Amount", "from": "amount", "format": "#,##0.00" },
+      { "header": "Balance", "from": "balance", "format": "#,##0.00" },
+      { "header": "Share %", "from": "share", "format": "0.0" }
+    ],
+    "headerStyle": { "bold": true }
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

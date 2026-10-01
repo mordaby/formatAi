@@ -1,0 +1,33 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "דירוג",
+  "direction": "rtl",
+  "columns": [
+    { "header": "מס\"ד", "numeric": true },
+    { "header": "מוכר" },
+    { "header": "אזור" },
+    { "header": "מכירות", "format": "#,##0", "numeric": true },
+    { "header": "דירוג", "numeric": true },
+    { "header": "דירוג באזור", "numeric": true },
+    { "header": "מס\"ד באזור", "numeric": true }
+  ],
+  "merges": [],
+  "rows": [
+    { "kind": "header", "bold": true, "cells": ["מס\"ד", "מוכר", "אזור", "מכירות", "דירוג", "דירוג באזור", "מס\"ד באזור"] },
+    { "kind": "data", "sourceRow": 2, "cells": [1, "דנה", "צפון", 300, 3, 2, 1] },
+    { "kind": "data", "sourceRow": 3, "cells": [2, "יוסי", "דרום", 500, 1, 1, 1] },
+    { "kind": "data", "sourceRow": 4, "cells": [3, "מאיה", "צפון", 300, 3, 2, 2] },
+    { "kind": "data", "sourceRow": 5, "cells": [4, "עומר", "דרום", 100, 6, 3, 2] },
+    { "kind": "data", "sourceRow": 6, "cells": [5, "שירה", "צפון", 500, 1, 1, 3] },
+    { "kind": "data", "sourceRow": 7, "cells": [6, "אבי", "דרום", 200, 5, 2, 3] }
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 6,
+    "rowsOut": 6,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

@@ -198,3 +198,39 @@ describe('runChecks: operations the prompt does not document yet (weekday, find,
     expect(problems).toEqual([]);
   });
 });
+
+describe('runChecks: the across-row (window) functions are not in the prompt yet', () => {
+  function withComputed(expr: LearnResult['transform']['computed'][number]['expr'], extra: Partial<LearnResult['transform']> = {}): unknown {
+    const rules = correctRules();
+    const extended: LearnResult = {
+      ...rules,
+      transform: { ...rules.transform, ...extra, computed: [...rules.transform.computed, { id: 'run', type: 'decimal', expr }] },
+    };
+    return toWire(formulaRulesToWire(extended) as unknown as LearnResult);
+  }
+
+  it('reads runningSum(...) in an LLM answer as an unknown function, like any operation the prompt never documented', () => {
+    // The printed formula has a named argument, which no function call can carry: a formula problem for the repair call, not a run.
+    const named = withComputed({ op: 'window', fn: 'runningSum', arg: { col: 'amount' }, by: ['id'] });
+    const { problems, rules } = runChecks(named, basicPayload(), { tier: 'registered' });
+    expect(rules).toBeNull();
+    expect(problems.some((p) => p.kind === 'formula')).toBe(true);
+    // without named arguments the name is simply not a function that exists
+    const bare = withComputed({ op: 'window', fn: 'rowNumber' });
+    const second = runChecks(bare, basicPayload(), { tier: 'registered' });
+    expect(second.problems.some((p) => p.kind === 'reference' && p.message.includes('rowNumber'))).toBe(true);
+  });
+
+  it('refuses a function the AI names like a built-in across-row function (it would be read as the built-in)', () => {
+    const rules = correctRules();
+    const named: LearnResult = {
+      ...rules,
+      transform: {
+        ...rules.transform,
+        functions: [{ name: 'rank', params: [{ name: 'x', type: 'decimal' }], returns: 'decimal', body: { param: 'x' } }],
+      },
+    };
+    const { problems } = runChecks(toWire(formulaRulesToWire(named) as unknown as LearnResult), basicPayload(), { tier: 'registered' });
+    expect(problems.some((p) => p.kind === 'reference' && p.message.includes('"rank"') && p.message.includes('built-in'))).toBe(true);
+  });
+});

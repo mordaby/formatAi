@@ -86,6 +86,11 @@ export interface CompileEnv {
   functions?: ReadonlyMap<string, Fn>;
   /** `transform.tables`, compiled once and shared the same way, for `lookup`. */
   tables?: ReadonlyMap<string, CompiledTable>;
+  /**
+   * Across-row (window) functions: the hidden row slot each window node's result is read from. The values are filled
+   * column-major by `transform.ts` before the column's expression runs (step 6); absent everywhere a window cannot run.
+   */
+  windowSlots?: ReadonlyMap<ExprNode, number>;
 }
 
 function constVal(c: string | number | boolean | null): Val {
@@ -98,11 +103,12 @@ function constVal(c: string | number | boolean | null): Val {
 function depth(e: Expr): number {
   if ('col' in e || 'const' in e || 'param' in e) return 1;
   let max = 0;
-  for (const ch of children(e)) max = Math.max(max, depth(ch));
+  for (const ch of exprChildren(e)) max = Math.max(max, depth(ch));
   return 1 + max;
 }
 
-function children(e: ExprNode): Expr[] {
+/** The direct child expressions of a node (a window's `by` / `order` columns are ids, not children). */
+export function exprChildren(e: ExprNode): Expr[] {
   switch (e.op) {
     case 'if':
       return [e.cond, e.then, e.else];
@@ -114,6 +120,8 @@ function children(e: ExprNode): Expr[] {
       return e.args;
     case 'dateLiteral':
       return [];
+    case 'window':
+      return e.arg === undefined ? [] : [e.arg];
     case 'add':
     case 'sub':
     case 'mul':
@@ -642,6 +650,12 @@ function compile(e: Expr, env: CompileEnv): Fn {
       };
     }
 
+    // The value is computed for every row before the column runs (transform.ts, window.ts); here it is just read from its hidden slot.
+    case 'window': {
+      const slot = env.windowSlots?.get(e);
+      if (slot === undefined) throw new InternalRulesError(`${e.fn}() is an across-row function and works only in a computed column`);
+      return (r) => r[slot] ?? null;
+    }
     case 'switch': {
       const cases = e.cases.map((cs) => ({ when: c(cs.when), then: c(cs.then) }));
       const els = c(e.else);

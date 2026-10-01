@@ -71,6 +71,7 @@ const leftN = defineType({
   `capability` is an id from `capabilities.ts` (each has the gap and a sketch of what would unlock it; the report groups the gaps by it and
   counts the types each would unlock). `workaround` documents a partial way for a restricted form, when there is one. Types that cannot
   be expressed still get an output (from the oracle), so the fast layer is measured on them too.
+- **Across rows** (running total, group total, rank, previous row ...): use the window functions in the formula (`runningSum(amount, by: acct, order: date)`, `groupSum(amount, by: dept)`, `rank(order: sales desc)`); the oracle computes them in plain TypeScript over the rows the output sees, in file order unless the rule says `order:`.
 - **Row operations** (filter, dedupe, split, unpivot, group, sort): `reshape(rows)` turns the input rows into the rows the output columns see
   (it must mirror what the rule does); `finalize(out, rows)` adds summary rows; `table(rows)` replaces the column model when the headers come
   from the data (a pivot); `titles(rows)` writes title lines above the header.

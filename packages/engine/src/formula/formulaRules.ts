@@ -106,9 +106,11 @@ function rowFiltersFromWire(rowFilters: unknown, base: FormulaParseContext, prob
 
 function computedFromWire(computed: unknown, base: FormulaParseContext, problems: RepairProblem[]): unknown {
   if (!Array.isArray(computed)) return computed;
+  // The one position where across-row (window) functions can run (step 6); everywhere else they are a parse error.
+  const ctx: FormulaParseContext = { ...base, allowWindows: true };
   return computed.map((c, i) => {
     if (!isRecord(c)) return c;
-    return { ...c, expr: parseAt(c.expr, `transform.computed[${i}].expr`, base, problems) };
+    return { ...c, expr: parseAt(c.expr, `transform.computed[${i}].expr`, ctx, problems) };
   });
 }
 

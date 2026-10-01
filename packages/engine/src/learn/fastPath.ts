@@ -586,6 +586,20 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
     // (the shape check above already rejects them).
     case 'aggregate':
       return fail('columnNotFullyExplained', { column: outHeader });
+    // Across rows, order-independent only (docs/proposals/window-operations.md): a group's total on every row, or a count per group.
+    // Nothing that depends on the order of the rows (a running total, a row number, previous / next, a rank) is ever built here.
+    case 'window': {
+      rel.in.forEach(use);
+      rel.by.forEach(use);
+      const by: string[] = rel.by.map(input);
+      const x = rel.in[0];
+      // The sum of an integer column is an integer; anything else is a decimal (the example's own cells are not the type: next month's may differ).
+      const type: ColumnType = rel.fn === 'groupCount' ? 'integer' : declaredType(ctx, x as number) === 'integer' ? 'integer' : 'decimal';
+      const expr: Expr = { op: 'window', fn: rel.fn, ...(x === undefined ? {} : { arg: { col: input(x) } }), by };
+      const id = newComputedId(ctx, outHeader);
+      ctx.computed.push({ id, type, expr });
+      return id;
+    }
   }
 }
 
@@ -857,7 +871,7 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
 
 /** A relation can be written as a rule: it has a Hint equivalent (SPEC 6.5), or it is a `split`, which only the formula `split(x, sep, n)` says. */
 function hasRuleForm(rel: Relation): boolean {
-  return rel.rel === 'split' || relationHasHint(rel);
+  return rel.rel === 'split' || rel.rel === 'window' || relationHasHint(rel);
 }
 
 /** Groups a relation into an "ambiguity bucket": relations in the same bucket
@@ -872,6 +886,8 @@ function hasRuleForm(rel: Relation): boolean {
 function ambiguityBucket(r: Relation): string {
   if (r.rel === 'copy' || r.rel === 'normalize') return `text:${r.in[0]}`;
   if (r.rel === 'template') return `template:${JSON.stringify(r.parts)}`;
+  // Two readings of an across-row column (another amount, another group column) are different rules next month.
+  if (r.rel === 'window') return `window:${r.fn}:${r.in.join(',')}:${r.by.join(',')}`;
   return `${r.rel}:${r.in.join(',')}`;
 }
 
@@ -894,8 +910,16 @@ function ambiguityBucket(r: Relation): string {
  * solid, competing interpretations.
  */
 export function chooseColumnRelation(analysis: PairAnalysis, ca: ColumnAnalysis): Relation | FastPathFailure {
-  const c1 = ca.relations.filter((r) => r.coverage === 1);
+  let c1 = ca.relations.filter((r) => r.coverage === 1);
   if (c1.length === 0) return fail('columnNotFullyExplained', { column: ca.out });
+  // An across-row relation (a group's total, a count per group) ranks above the lookalikes the same cells also fit (a value map of the
+  // group key, a constant): only the across-row readings compete with each other.
+  if (c1.some((r) => r.rel === 'window')) c1 = c1.filter((r) => r.rel === 'window');
+  // An across-row pattern that holds on every row but is not one the free engine writes (a running total, a row number, a rank ...) is
+  // the truth about this column: a lookalike (a value map of the key, a constant) must not be built in its place. The AI step gets it.
+  if (ca.windows?.some((w) => w.coverage === 1 && !w.built) === true && !c1.some((r) => r.rel === 'window')) {
+    return fail('columnNotFullyExplained', { column: ca.out });
+  }
   const buckets = new Set(c1.map(ambiguityBucket));
   if (buckets.size >= 2) {
     for (const r of c1) {

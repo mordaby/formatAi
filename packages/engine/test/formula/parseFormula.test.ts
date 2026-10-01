@@ -6,7 +6,7 @@ import { printFormula } from '../../src/formula/printFormula';
 import { OP_SIGNATURES, type SigOp } from '../../src/check/signatures';
 
 function ok(text: string, ctx?: { params?: string[] }): Expr {
-  const r = parseFormula(text, ctx);
+  const r = parseFormula(text, { allowWindows: true, ...ctx });
   if (!r.ok) throw new Error(`expected ok, got error: ${r.error.message} at ${r.error.offset}`);
   return r.expr;
 }
@@ -332,6 +332,7 @@ describe('parseFormula <-> printFormula: round trip for every op', () => {
     and: 'and(a, b)',
     or: 'or(a, b)',
     not: 'not(a)',
+    window: 'runningSum(a, by: b, order: (c, d desc))',
   };
 
   for (const op of Object.keys(CASES) as SigOp[]) {

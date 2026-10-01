@@ -71,6 +71,13 @@ export function RunDone({ target, finished, aliasNotSaved, onDownload, onAnother
           ))}
       </dl>
 
+      {(summary.blockedInWindows ?? 0) > 0 && (
+        // Across-row results (totals, running balances, ranks) were calculated over the rows a check later left out: counts only.
+        <p className="muted" data-testid="blocked-in-windows">
+          {t(summary.blockedInWindows === 1 ? 'conv.sum.blockedInWindows.one' : 'conv.sum.blockedInWindows.other', { n: nf.format(summary.blockedInWindows ?? 0) })}
+        </p>
+      )}
+
       <section className="flags" aria-label={t('conv.done.flags.title')} data-testid="run-flags">
         <h3 className="flags__title">{t('conv.done.flags.title')}</h3>
         {flags.length === 0 ? <p className="flags__none">{t('conv.done.flags.none')}</p> : null}

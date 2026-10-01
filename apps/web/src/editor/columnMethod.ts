@@ -1,4 +1,4 @@
-// "How is it made?" (SPEC 8.11 Column editor): the seven ways an output column is made, in both
+// "How is it made?" (SPEC 8.11 Column editor): the eight ways an output column is made, in both
 // directions. `applyColumnMethod` turns a choice into rules (computed columns with generated ids,
 // formula ASTs, value maps); `readColumnMethod` turns the rules back into the choice the editor
 // shows, and says `formula` (Advanced) for anything it would not build itself.
@@ -90,6 +90,17 @@ export function buildJoinExpr(
   });
   if (fixed.after) args.push({ const: fixed.after });
   return { op: 'concat', args };
+}
+
+/** `runningSum(amount, by: account, order: date)`: no `by` without a group, no `order` for the file's own order. */
+export function buildRunningSumExpr(m: Extract<ColumnMethod, { kind: 'runningSum' }>): Expr {
+  return {
+    op: 'window',
+    fn: 'runningSum',
+    arg: col(m.column),
+    ...(m.groupBy === undefined ? {} : { by: [m.groupBy] }),
+    ...(m.orderBy === 'file' ? {} : { order: [{ column: m.orderBy.column, dir: m.orderBy.dir }] }),
+  };
 }
 
 export function buildPartExpr(source: string, type: ValueType | undefined, part: 'first' | 'last', n: number): Expr {
@@ -225,6 +236,21 @@ function readCopyWithTransforms(e: Expr, typeOf: (id: string) => ValueType | und
   return sameExpr(buildCopyExpr(src.col, typeOf(src.col), { ...(padLeft === undefined ? {} : { padLeft }), trim }), e) ? method : undefined;
 }
 
+/** Exactly a running total of one column, with at most one group column and one order column: what the "Running total" method builds. */
+function readRunningSum(e: Expr): ColumnMethod | undefined {
+  if (!('op' in e) || e.op !== 'window' || e.fn !== 'runningSum' || e.ties !== undefined) return undefined;
+  if (e.arg === undefined || !isLeafCol(e.arg)) return undefined;
+  if ((e.by?.length ?? 0) > 1 || (e.order?.length ?? 0) > 1) return undefined;
+  const key = e.order?.[0];
+  const method: Extract<ColumnMethod, { kind: 'runningSum' }> = {
+    kind: 'runningSum',
+    column: e.arg.col,
+    ...(e.by?.[0] === undefined ? {} : { groupBy: e.by[0] }),
+    orderBy: key === undefined ? 'file' : { column: key.column, dir: key.dir },
+  };
+  return sameExpr(buildRunningSumExpr(method), e) ? method : undefined;
+}
+
 function pairsOf(vm: ValueMap): TranslatePair[] {
   return Object.entries(vm.map).map(([from, to]) => ({ from, to }));
 }
@@ -251,7 +277,7 @@ export function readColumnMethod(rules: EditableRules, index: number): ColumnMet
   if (!vm) {
     if ('const' in e && e.const !== null) return { kind: 'fixed', value: e.const };
     if (isLeafCol(e)) return { kind: 'copy', source: e.col };
-    const found = readCalc(e, typeOf) ?? readJoin(e, typeOf) ?? readPart(e, typeOf) ?? readCopyWithTransforms(e, typeOf);
+    const found = readCalc(e, typeOf) ?? readJoin(e, typeOf) ?? readPart(e, typeOf) ?? readRunningSum(e) ?? readCopyWithTransforms(e, typeOf);
     if (found) return found;
   }
   return { kind: 'formula', formula: printFormula(e), type: computed.type };
@@ -333,6 +359,18 @@ function validateMethod(m: ColumnMethod, infos: ReturnType<typeof idInfos>): Edi
         problems.push({ code: 'badValue', message: 'a fixed number must be finite', path: 'value' });
       }
       break;
+    case 'runningSum': {
+      const type = need(m.column, 'column');
+      if (type !== 'missing' && type !== undefined && !NUMERIC.has(type)) {
+        problems.push({ code: 'typeMismatch', message: `${mismatchMessage('decimal', type)} in a computed column first`, path: 'column', column: m.column });
+      }
+      if (m.groupBy !== undefined) need(m.groupBy, 'groupBy');
+      if (m.orderBy !== 'file') {
+        need(m.orderBy.column, 'orderBy.column');
+        if (m.orderBy.dir !== 'asc' && m.orderBy.dir !== 'desc') problems.push({ code: 'badValue', message: 'the direction is ascending or descending', path: 'orderBy.dir' });
+      }
+      break;
+    }
     case 'formula':
       break;
   }
@@ -397,6 +435,11 @@ export function applyColumnMethod(rules: EditableRules, index: number, method: C
       from = 'self';
       computed = { expr: buildPartExpr(method.source, typeOf(method.source), method.part, method.n), type: 'text' };
       break;
+    case 'runningSum':
+      from = 'self';
+      // The running total of a whole-number column is a whole number; anything else adds up to a decimal.
+      computed = { expr: buildRunningSumExpr(method), type: typeOf(method.column) === 'integer' ? 'integer' : 'decimal' };
+      break;
     case 'fixed':
       from = 'self';
       computed = { expr: { const: method.value }, type: constType(method.value) };
@@ -421,7 +464,8 @@ export function applyColumnMethod(rules: EditableRules, index: number, method: C
       break;
     }
     case 'formula': {
-      const parsed = parseFormula(method.formula);
+      // A computed column's formula: across-row functions (runningSum, rank ...) are read here (and nowhere else).
+      const parsed = parseFormula(method.formula, { allowWindows: true });
       if (!parsed.ok) {
         return fail({ code: 'formula', message: parsed.error.message, offset: parsed.error.offset, path: 'formula' });
       }
@@ -500,6 +544,8 @@ function prefixOf(kind: ColumnMethod['kind']): string {
       return 'tr';
     case 'copy':
       return 'copy';
+    case 'runningSum':
+      return 'running';
     default:
       return 'expr';
   }
@@ -520,8 +566,11 @@ export function methodSources(method: ColumnMethod): string[] {
       return [...method.columns];
     case 'calculate':
       return method.terms.flatMap((t) => ('column' in t ? [t.column] : []));
+    case 'runningSum':
+      return [method.column, ...(method.groupBy === undefined ? [] : [method.groupBy]), ...(method.orderBy === 'file' ? [] : [method.orderBy.column])];
     case 'formula': {
-      const parsed = parseFormula(method.formula);
+      // A computed column's formula: across-row functions (runningSum, rank ...) are read here.
+      const parsed = parseFormula(method.formula, { allowWindows: true });
       return parsed.ok ? [...colRefs(parsed.expr)] : [];
     }
     default:

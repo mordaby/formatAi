@@ -11,6 +11,7 @@ export type TokenType =
   | '('
   | ')'
   | ','
+  | ':'
   | '+'
   | '-'
   | '*'
@@ -81,6 +82,12 @@ export function tokenize(text: string): Token[] {
     }
     if (ch === ',') {
       tokens.push({ type: ',', text: ch, offset: start });
+      i++;
+      continue;
+    }
+    if (ch === ':') {
+      // Only the named arguments of an across-row function (`by: account`) use it.
+      tokens.push({ type: ':', text: ch, offset: start });
       i++;
       continue;
     }

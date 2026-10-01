@@ -99,6 +99,11 @@ function describeUnsolved(analysis: PairAnalysis, out: number, rowsBuilt: boolea
   const header = ca?.header ?? `column${out + 1}`;
   if (!ca) return { out, header, cls: 'external', hint: '', reason: 'noAnalysis', relations: [] };
   const relations = ca.relations.map(relationLabel);
+  // An across-row pattern the free engine found but does not write (a running total, a rank, a row number ...): the AI step gets it, with the hint.
+  const window = ca.windows?.[0];
+  if (window !== undefined && !ca.relations.some((r) => r.rel === 'window')) {
+    return { out, header, cls: 'derived', hint: `window:${window.fn}`, reason: 'columnNotFullyExplained', relations: [...relations, ...(ca.windows ?? []).map((w) => `window:${w.fn}@${w.coverage.toFixed(2)}`)] };
+  }
   if (ca.relations.length > 0) {
     const chosen = chooseColumnRelation(analysis, ca);
     const reason = 'reason' in chosen ? chosen.reason : rowsBuilt ? 'notBuilt' : 'rowsNotBuilt';

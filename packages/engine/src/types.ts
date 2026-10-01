@@ -218,6 +218,11 @@ export interface RunSummary {
   duplicatesFlagged: number;
   /** Rows left out by a validation with severity "block". */
   blockedRows: { rowNumber: number; rule: string; column: string }[];
+  /**
+   * Present only when the rules hold an across-row (window) function and a row was left out by a `block` validation: how many
+   * such rows are still counted in the window results (group totals, running sums, ranks). Counts only; the rows are in `blockedRows`.
+   */
+  blockedInWindows?: number;
   // The three lists below are present only when the run was given `rowDecisions` (SPEC 21 v5
   // item 5), in input-row order. Skipped rows still count in `rowsIn`, so
   // rowsIn = rowsOut + rowsFiltered + duplicatesRemoved + blockedRows + skippedByUser (plain rows).

@@ -105,6 +105,30 @@ describe('matching', () => {
     expect(downloaded).toHaveBeenCalledWith(expect.stringContaining('jan (converted).csv'), expect.any(ArrayBuffer), 'text/csv');
   });
 
+  it('says how many blocked rows are still counted in totals (counts only), and only when there are some', async () => {
+    const blocked = { rowNumber: 3, rule: 'range', column: 'c_qty' };
+    const { engine } = fakeEngine({ run: () => written({ summary: summary({ rowsIn: 4, rowsOut: 3, blockedRows: [blocked], blockedInWindows: 1 }) }) });
+    renderConvert(<ConvertPage />, { api: fakeConvertApi(), engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    expect(screen.getByTestId('blocked-in-windows').textContent).toBe('1 blocked row is included in calculated totals');
+    cleanup();
+
+    const two = fakeEngine({ run: () => written({ summary: summary({ rowsIn: 5, rowsOut: 3, blockedRows: [blocked, { ...blocked, rowNumber: 4 }], blockedInWindows: 2 }) }) });
+    renderConvert(<ConvertPage />, { api: fakeConvertApi(), engine: two.engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    expect(screen.getByTestId('blocked-in-windows').textContent).toBe('2 blocked rows are included in calculated totals');
+    cleanup();
+
+    // no across-row function in the rules: no notice
+    const plain = fakeEngine({ run: () => written({ summary: summary({ rowsIn: 4, rowsOut: 3, blockedRows: [blocked] }) }) });
+    renderConvert(<ConvertPage />, { api: fakeConvertApi(), engine: plain.engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    expect(screen.queryByTestId('blocked-in-windows')).toBeNull();
+  });
+
   it('never advertises one source feeding several formats: the lead speaks of "its format"', async () => {
     const api = fakeConvertApi();
     renderConvert(<ConvertPage />, { api, engine: fakeEngine().engine });

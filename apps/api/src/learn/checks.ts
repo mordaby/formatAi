@@ -199,7 +199,7 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
   const problems: RepairProblem[] = [];
 
   // ----- Layer 2: references -----
-  problems.push(...checkRules(rules).map(ruleProblemToRepairProblem));
+  problems.push(...checkRules(rules, { rejectBuiltinFunctionNames: true }).map(ruleProblemToRepairProblem));
   problems.push(...extraReferenceProblems(rules, payload));
 
   // ----- Layer 3: types -----

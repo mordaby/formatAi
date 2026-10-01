@@ -33,7 +33,10 @@ export interface SlotPlan {
   slotOf: Map<string, number>;
   /** Declared type per slot, when known (fixedFanOut-created ids have none). */
   types: (ColumnType | undefined)[];
+  /** Slots per row: the declared ones, then one hidden slot per across-row (window) function call. */
   width: number;
+  /** The first hidden slot (= the number of declared slots). Hidden slots have no id; `window.ts` fills them. */
+  windowBase: number;
 }
 
 export interface RunCtx {

@@ -88,6 +88,9 @@ export const limits = {
      * (200-node budget per output column) while still being a trivially cheap check.
      */
     maxFormulaChars: 4000,
+    /** Across-row (window) functions per rules file, and columns in one `by:` / `order:` (docs/proposals/window-operations.md). Each window node also counts as one rule. */
+    maxWindowOps: 8,
+    maxWindowKeys: 3,
   },
   /**
    * SPEC 6.5: the local fast path.
@@ -137,6 +140,19 @@ export const limits = {
     compositionMinCoverage: 0.9,
     /** ...and a value shorter than this (in characters) never counts, so a 1-character code ("1", "A") is not a composition. */
     compositionMinValueLength: 2,
+    /**
+     * Across-row (window) patterns (docs/proposals/window-operations.md). The free engine builds only the ORDER-INDEPENDENT ones
+     * (a group's total on every row, a count per group); `minRows` aligned rows are needed to trust one.
+     */
+    window: {
+      minRows: 4,
+      /**
+       * Whether the learn payload carries `rel: 'window'` hints for the patterns the free engine does not build (previous / next /
+       * fillDown / rank / running sum / group average, min, max / row number). OFF until learn-v7 documents window functions in the
+       * system prompt: the AI is not told about them before that, so a hint would only confuse it.
+       */
+      hintsEnabled: false,
+    },
   },
   /**
    * SPEC 8.11 / 8.12 / 11 / 13: the registry (saved formats and their conversions).

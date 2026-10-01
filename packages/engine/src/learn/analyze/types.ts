@@ -23,6 +23,8 @@ import type {
   SummaryAgg,
   SummaryRowLayout,
   TitleRowLayout,
+  WindowFn,
+  WindowTies,
 } from '@formatai/shared';
 import type { DelimitedSniffResult } from '../../io/detectFileSpec';
 import type { OutputFileSpec, RawCell, RawSheet, TableDetection, TableIssue } from '../../types';
@@ -324,9 +326,45 @@ export type RelationBody =
   | ({ rel: 'add' | 'sub' | 'mul' | 'div'; in: [number, number] } & Round)
   | ({ rel: 'sum'; in: number[] } & Round)
   /** Summary shapes: the output value is this aggregate of the group's input rows. */
-  | { rel: 'aggregate'; in: [number]; fn: SummaryAgg };
+  | { rel: 'aggregate'; in: [number]; fn: SummaryAgg }
+  /**
+   * Across rows, and ORDER-INDEPENDENT (the only window patterns the free engine writes): every row shows its group's total of
+   * `in[0]` (`groupSum`), or how many rows its group has (`groupCount`, `in` empty). The group is the rows with the same value
+   * of the `by` column. Exact on every aligned row (coverage 1) or not built; see windows.ts. The order-dependent and other window
+   * patterns are `WindowFinding`s (hints only).
+   */
+  | { rel: 'window'; fn: 'groupSum' | 'groupCount'; in: number[]; by: [number] };
 
 export type RelationKind = RelationBody['rel'];
+
+/** What a window finding orders its rows by: the input's row order, the order the output shows, or exact sort keys. */
+export type WindowOrder = 'file' | 'output' | { in: number; dir: 'asc' | 'desc' }[];
+
+/**
+ * An across-row (window) pattern one output column follows (docs/proposals/window-operations.md): `fn` of `in` over the groups of
+ * `by`, in `order`. Computed on all aligned rows with exact decimal arithmetic, in the INPUT's row order (what the engine will run), so a
+ * finding at coverage 1 is a fact. `built`: the free engine writes it as a rule (a group's total, a count per group); every other
+ * finding is a hint for the AI step and is only sent once learn-v7 documents window functions (`limits.learn.window.hintsEnabled`).
+ */
+export interface WindowFinding {
+  out: number;
+  fn: WindowFn;
+  /** The column read: `[x]`, none for `rowNumber`, `rank` and `groupCount`. */
+  in: number[];
+  /** The group columns (one); none = all rows are one group. */
+  by: number[];
+  order: WindowOrder;
+  ties?: WindowTies;
+  coverage: number;
+  matched: number;
+  total: number;
+  /** Aligned-row indices where it fails, ascending, capped. */
+  failing: number[];
+  failCount: number;
+  built: boolean;
+  /** Other (column, group) readings that fit just as well, at most 3: the pattern is exact on the example but ambiguous. */
+  alt?: { in?: number[]; by?: number[] }[];
+}
 
 export type Relation = RelationStats & RelationBody;
 
@@ -371,6 +409,11 @@ export interface ColumnAnalysis {
    * (SPEC 6.4: wording only, the AI step still tries it) - see `isExternalColumn`.
    */
   derived: Derivation | null;
+  /**
+   * Across-row (window) patterns this column follows, best first: a built one (see `Relation` `window`) and/or hint-only ones. Only
+   * set when found; the free engine builds the order-independent ones from `relations`, never from here.
+   */
+  windows?: WindowFinding[];
 }
 
 // ---------- Dropped rows ----------

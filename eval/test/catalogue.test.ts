@@ -65,21 +65,24 @@ describe('language layer: the reference rules', () => {
 describe('measurement records', () => {
   it('measures a solvable type, a language gap and a layout case, and renders the report', async () => {
     const records = [];
-    for (const id of ['extraction.left-n', 'acrossRows.running-total', 'rowOps.sort-by-column']) {
+    for (const id of ['extraction.left-n', 'acrossRows.running-total', 'extraction.after-first-sep-rest', 'rowOps.sort-by-column']) {
       const t = CATALOGUE.find((x) => x.id === id)!;
       for (const seed of [1, 2]) records.push(await measure(t, seed));
     }
     const left = records.filter((r) => r.type === 'extraction.left-n');
     expect(left.every((r) => r.language.expressible && r.language.reproduces && r.fast.status === 'solved' && r.fast.holdOut === 'pass')).toBe(true);
     const running = records.filter((r) => r.type === 'acrossRows.running-total');
-    expect(running.every((r) => !r.language.expressible && r.language.capability === 'runningAggregate')).toBe(true);
-    expect(running.every((r) => r.fast.status === 'partial' && r.fast.unsolved.length === 1)).toBe(true);
+    expect(running.every((r) => r.language.expressible && r.language.reproduces)).toBe(true);
+    // a running total depends on the order of the rows: the free engine never builds it, and says the AI step gets it (as a window pattern)
+    expect(running.every((r) => r.fast.status === 'partial' && r.fast.unsolved.length === 1 && r.fast.unsolved[0]!.hint === 'window:runningSum')).toBe(true);
+    const gap = records.filter((r) => r.type === 'extraction.after-first-sep-rest');
+    expect(gap.every((r) => !r.language.expressible && r.language.capability === 'positionSearch')).toBe(true);
     const sort = records.filter((r) => r.type === 'rowOps.sort-by-column');
     expect(sort.every((r) => r.fast.status === 'partial' && r.fast.needsAiParts.includes('sort'))).toBe(true);
 
     const summary = summarize(records);
-    expect(summary.totals.types).toBe(3);
-    expect(summary.gaps.map((g) => g.capability)).toEqual(['runningAggregate']);
+    expect(summary.totals.types).toBe(4);
+    expect(summary.gaps.map((g) => g.capability)).toEqual(['positionSearch']);
     expect(renderMarkdown(summary)).toContain('Capability map');
     expect(renderCsv(records).split('\n')[0]).toContain('ai_model');
   }, 60_000);
@@ -122,4 +125,53 @@ describe('language layer: the date and text operations added after learn-v6', ()
     expect(t.rule).toBeNull();
     expect(t.missing?.capability).toBe('positionSearch');
   });
+});
+
+describe('language layer: the across-row (window) functions', () => {
+  const ACROSS = CATALOGUE.filter((x) => x.topic === 'acrossRows');
+
+  it('every across-rows type is expressible, with a reference rule written with a window function', () => {
+    expect(ACROSS.length).toBeGreaterThanOrEqual(13);
+    for (const t of ACROSS) {
+      expect(t.rule, t.id).not.toBeNull();
+      expect(t.missing, t.id).toBeUndefined();
+      expect(t.outputs.some((o) => /\b(runningSum|groupSum|groupAvg|groupMin|groupMax|groupCount|previous|next|fillDown|rowNumber|rank)\(/.test(o.formula ?? '')), t.id).toBe(true);
+    }
+  });
+
+  it('the five capabilities the window functions resolved are gone', () => {
+    for (const gone of ['windowAggregate', 'rowLookback', 'runningAggregate', 'rank', 'rowIndex']) expect(Object.keys(CAPABILITIES)).not.toContain(gone);
+  });
+
+  it('parse, type-check and reproduce the expected output on the example and the next-month file, both seeds', async () => {
+    for (const t of ACROSS) {
+      for (const seed of [1, 2]) {
+        const { record } = await measureLanguage(await prepare(t, seed));
+        expect(record.problems ?? [], `${t.id} seed ${seed}`).toEqual([]);
+        expect(record.valid, `${t.id} seed ${seed}`).toBe(true);
+        expect(record.reproduces, `${t.id} seed ${seed}: ${record.mismatch}`).toBe(true);
+      }
+    }
+  }, 180_000);
+
+  it('the free engine builds a group total and a count per group (also with an unseen group next month), and no order-dependent window', async () => {
+    const built = ['acrossRows.group-total-each-row', 'acrossRows.count-per-group', 'acrossRows.group-total-unseen-group'];
+    for (const id of built) {
+      const t = CATALOGUE.find((x) => x.id === id)!;
+      for (const seed of [1, 2]) {
+        const record = await measure(t, seed);
+        expect(record.fast.status, `${id} seed ${seed}`).toBe('solved');
+        expect(record.fast.holdOut, `${id} seed ${seed}`).toBe('pass');
+        expect(record.fast.how ?? '', id).toMatch(/group(Sum|Count)\(/);
+      }
+    }
+    for (const id of ACROSS.map((t) => t.id).filter((x) => !built.includes(x))) {
+      const t = CATALOGUE.find((x) => x.id === id)!;
+      const record = await measure(t, 1);
+      // never solved by building a window (and never "wrong"): the window column goes to the AI step
+      expect(record.fast.status, id).not.toBe('overfit');
+      expect(record.fast.status, id).not.toBe('unverified');
+      expect(record.fast.how ?? '', id).not.toMatch(/(runningSum|rowNumber|previous|next|fillDown|rank)\(/);
+    }
+  }, 180_000);
 });

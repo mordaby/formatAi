@@ -79,6 +79,9 @@ const RANK: Record<RelationBody['rel'], number> = {
   split: 3,
   concat: 4,
   template: 4.5,
+  // Across rows (windows.ts): a group's total, a count per group. Above a value map, a constant and the calculations: a figure of the group
+  // that happens to repeat per key looks like a lookup, and is not one (it is different next month).
+  window: 4.8,
   constant: 5,
   mulConst: 6,
   addConst: 6,
@@ -1178,7 +1181,12 @@ function relationKey(r: RelationBody): string {
   return `${rel}|${ins.join(',')}|${JSON.stringify(rest)}`;
 }
 
-function sortRelations(rels: Relation[]): Relation[] {
+/** The rank a relation kind has in the best-first order (lower is simpler): what a newly found relation has to beat. */
+export function relationRank(rel: RelationBody['rel']): number {
+  return RANK[rel];
+}
+
+export function sortRelations(rels: Relation[]): Relation[] {
   const rank = (r: Relation): number =>
     RANK[r.rel] + (r.rel === 'concat' && r.skipEmpty ? 0.5 : 0) + ('round' in r && r.round !== undefined ? 0.25 : 0);
   return rels.sort(

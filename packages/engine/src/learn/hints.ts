@@ -19,8 +19,8 @@
 // can (a) make sure at least one of them becomes a sample/dropped row and (b)
 // translate it into the final `failsOn` before the Hint is sent.
 
-import type { ColumnHint, ExpandHint, Hint, RowHint } from '@formatai/shared';
-import type { ColumnAnalysis, DedupeRelation, Derivation, FilterRelation, PairAnalysis, Relation } from './analyze';
+import { limits, type ColumnHint, type ExpandHint, type Hint, type RowHint } from '@formatai/shared';
+import type { ColumnAnalysis, DedupeRelation, Derivation, FilterRelation, PairAnalysis, Relation, WindowFinding } from './analyze';
 import type { PreflightResult } from './preflight';
 
 /** A Hint plus the real-data row indices it fails on (coverage < 1 only),
@@ -71,6 +71,10 @@ function columnHintBody(rel: Relation): ColumnHintBody | null {
       return { rel: 'sum', in: rel.in, ...(rel.round !== undefined ? { round: rel.round } : {}) };
     case 'aggregate':
       return { rel: 'aggregate', in: rel.in, fn: rel.fn };
+    // An across-row relation is hinted through its WindowFinding (`windowHintCandidate`), and only when
+    // `limits.learn.window.hintsEnabled` (learn-v7): the fast path writes it, but it has no column hint of this kind.
+    case 'window':
+      return null;
   }
 }
 
@@ -99,6 +103,30 @@ function derivedHintCandidate(out: number, d: Derivation): HintCandidate {
   if (d.kind === 'bands') return { rel: 'bands', in: d.in, bands: d.bands, ...base };
   if (d.kind === 'composition') return { rel: 'contains', in: d.in, ...base };
   return { rel: 'dependsOn', in: d.in, ...base };
+}
+
+/**
+ * The `rel: 'window'` hint of an across-row finding (docs/proposals/window-operations.md section 6): a fact at coverage 1, a hint with
+ * `failsOn` below. `order` is only said where the order matters (not for a group's total or count): `'file'` for the input's row order,
+ * `'output'` when only the order the example output shows fits, or the exact keys of a `rank`.
+ */
+export function windowHintCandidate(f: WindowFinding): HintCandidate {
+  const groupFn = f.fn === 'groupSum' || f.fn === 'groupAvg' || f.fn === 'groupMin' || f.fn === 'groupMax' || f.fn === 'groupCount';
+  const failingRows = f.coverage < 1 && f.failing.length > 0 ? f.failing : undefined;
+  return {
+    out: f.out,
+    rel: 'window',
+    fn: f.fn,
+    ...(f.in.length > 0 ? { in: [f.in[0] as number] as [number] } : {}),
+    ...(f.by.length > 0 ? { by: f.by } : {}),
+    ...(groupFn ? {} : { order: f.order }),
+    ...(f.ties !== undefined ? { ties: f.ties } : {}),
+    ...(f.alt !== undefined && f.alt.length > 0
+      ? { alt: f.alt.slice(0, 3).map((a) => ({ ...(a.in !== undefined ? { in: [a.in[0] as number] as [number] } : {}), ...(a.by !== undefined ? { by: a.by } : {}) })) }
+      : {}),
+    coverage: f.coverage,
+    ...(failingRows ? { failingRows } : {}),
+  } as HintCandidate;
 }
 
 function toColumnHintCandidate(rel: Relation): HintCandidate {
@@ -189,6 +217,18 @@ export function relationsToHints(analysis: PairAnalysis, preflight: PreflightRes
 
   for (const ca of analysis.columns) {
     if (skip.has(ca.out)) continue;
+    // Across rows. With the switch on (learn-v7), the window finding is the column's hint and the lookalikes it beat (a value map of the
+    // group key, a constant) are not sent. With it off the AI is not told about window functions: a column the free engine knows to be a
+    // group's total or count gets no hint at all rather than the misleading value map; any other column is hinted as before.
+    if (limits.learn.window.hintsEnabled) {
+      const finding = ca.windows?.[0];
+      if (finding !== undefined) {
+        hints.push(windowHintCandidate(finding));
+        continue;
+      }
+    } else if (ca.relations.some((r) => r.rel === 'window')) {
+      continue;
+    }
     const rel = bestHintableRelation(ca);
     if (rel) hints.push(toColumnHintCandidate(rel));
     else if (ca.derived) hints.push(derivedHintCandidate(ca.out, ca.derived));

@@ -195,7 +195,7 @@ export interface UnsolvedColumn {
   /** derived = the input determines it (dependsOn/bands/contains hint); related = relations were found but the fast path declined
    * to use them; external = nothing in the input explains it. */
   cls: 'derived' | 'related' | 'external';
-  /** dependsOn | bands | contains for derived; the best relation kind for related; '' for external. */
+  /** dependsOn | bands | contains | window:<fn> (an across-row pattern the free engine sees but does not write) for derived; the best relation kind for related; '' for external. */
   hint: string;
   /** Why the strict path declined it (columnNotFullyExplained | ambiguousColumn | thinEvidence | rowsNotBuilt). */
   reason: string;

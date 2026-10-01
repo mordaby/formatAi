@@ -86,6 +86,35 @@ export function isIsoDateLiteral(s: string): boolean {
   return d <= days;
 }
 
+/**
+ * Across-row ("window") functions (SPEC 8.3, docs/proposals/window-operations.md): one node, `window`, whose `fn`
+ * names one of these. Allowed only inside `transform.computed[].expr`; evaluated in step 6 over the rows that remain
+ * after filters, duplicates and expand.
+ */
+export const WINDOW_FNS = [
+  'runningSum',
+  'groupSum',
+  'groupAvg',
+  'groupMin',
+  'groupMax',
+  'groupCount',
+  'previous',
+  'next',
+  'fillDown',
+  'rowNumber',
+  'rank',
+] as const;
+export type WindowFn = (typeof WINDOW_FNS)[number];
+
+export const WINDOW_TIES = ['min', 'dense'] as const;
+export type WindowTies = (typeof WINDOW_TIES)[number];
+
+/** One `order:` key of a window. Named `column`, not `col`: generic expression walkers treat any object with `col` as an Expr leaf. */
+export interface WindowOrderKey {
+  column: string;
+  dir: 'asc' | 'desc';
+}
+
 /** `param` is a leaf usable only inside a `transform.functions[].body` (SPEC 8.14);
  * `checkRules` rejects it everywhere else, and rejects `col` inside a function body. */
 export type ExprLeaf = { col: string } | { const: ExprConstValue } | { param: string };
@@ -150,6 +179,12 @@ export type ExprNode =
   | { op: 'titleCase'; arg: Expr }
   /** 1-based position of the first occurrence of `search` (literal text), 0 when absent. */
   | { op: 'find'; arg: Expr; search: string }
+  /**
+   * Across-row function (formula: `runningSum(amount, by: account, order: date)`). `arg` is a column id (`{col}`) in v1;
+   * `by` partitions the rows (none = all rows); `order` sorts each partition (none = file order); `ties` is for `rank`.
+   * Which of the fields each function takes is in the engine's WINDOW_SIGNATURES.
+   */
+  | { op: 'window'; fn: WindowFn; arg?: Expr; by?: string[]; order?: WindowOrderKey[]; ties?: WindowTies }
   | { op: 'if'; cond: Expr; then: Expr; else: Expr }
   | { op: 'switch'; cases: { when: Expr; then: Expr }[]; else: Expr }
   | { op: 'coalesce'; args: Expr[] }
@@ -292,6 +327,20 @@ export function buildExprSchema(child: z.ZodType<Expr>): z.ZodType<Expr> {
       z.strictObject({ op: z.literal('keepChars'), arg: child, chars: z.enum(KEEP_CHARS_CLASSES) }),
       z.strictObject({ op: z.literal('titleCase'), arg: child }),
       z.strictObject({ op: z.literal('find'), arg: child, search: z.string().min(1) }),
+      z.strictObject({
+        op: z.literal('window'),
+        fn: z.enum(WINDOW_FNS),
+        // v1: the argument is a column id. (The type says Expr, so allowing more later changes no stored file.)
+        arg: child
+          .refine((e) => 'col' in e, 'a window function reads a column id; make a computed column first for anything calculated')
+          .optional(),
+        by: z.array(z.string().min(1)).min(1).optional(),
+        order: z
+          .array(z.strictObject({ column: z.string().min(1), dir: z.enum(['asc', 'desc']) }))
+          .min(1)
+          .optional(),
+        ties: z.enum(WINDOW_TIES).optional(),
+      }),
       z.strictObject({
         op: z.literal('if'),
         cond: child,

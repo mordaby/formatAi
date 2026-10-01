@@ -153,3 +153,67 @@ describe('performance', () => {
     expect(warmMs).toBeLessThan(1000);
   });
 });
+
+// Across-row (window) functions: four of them over the whole table (a running balance per account in date order, a group total, a global
+// rank, a row number per account). Each window is a single pass over cached partitions and sorted indexes (see pipeline/v1/window.ts).
+describe('performance: window functions', () => {
+  function windowTable(rows: number) {
+    const out: CellInput[][] = [];
+    for (let i = 0; i < rows; i++) {
+      out.push([
+        `ACC-${(i * 7919) % 97}`, // account: ~97 partitions, interleaved in the file
+        dateCell(45000 + ((i * 31) % 900)), // date: many ties
+        ((i * 104729) % 100000) / 100, // amount
+      ]);
+    }
+    return table(['account', 'date', 'amount'], out);
+  }
+
+  function windowRules(withWindows: boolean) {
+    return rules({
+      columns: [col('account', 'text'), col('date', 'date'), col('amount', 'decimal')],
+      transform: {
+        computed: withWindows
+          ? [
+              { id: 'balance', type: 'decimal', expr: { op: 'window', fn: 'runningSum', arg: { col: 'amount' }, by: ['account'], order: [{ column: 'date', dir: 'asc' }] } },
+              { id: 'total', type: 'decimal', expr: { op: 'window', fn: 'groupSum', arg: { col: 'amount' }, by: ['account'] } },
+              { id: 'rank', type: 'integer', expr: { op: 'window', fn: 'rank', order: [{ column: 'amount', dir: 'desc' }] } },
+              { id: 'n', type: 'integer', expr: { op: 'window', fn: 'rowNumber', by: ['account'] } },
+            ]
+          : [],
+        valueMaps: [],
+        sort: [],
+      },
+      out: withWindows ? ['account', 'date', 'amount', 'balance', 'total', 'rank', 'n'] : ['account', 'date', 'amount'],
+    });
+  }
+
+  function time(r: ReturnType<typeof windowRules>, t: ReturnType<typeof windowTable>): { cold: number; warm: number } {
+    let t0 = performance.now();
+    const first = runRules(r, t);
+    const cold = performance.now() - t0;
+    expect(first.ok).toBe(true);
+    const warm: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      t0 = performance.now();
+      runRules(r, t);
+      warm.push(performance.now() - t0);
+    }
+    return { cold, warm: Math.min(...warm) };
+  }
+
+  it.each([5000, 20000])('%i rows: four windows (running balance by account in date order, group total, global rank, row number)', (rows) => {
+    const t = windowTable(rows);
+    const plain = time(windowRules(false), t);
+    const windows = time(windowRules(true), t);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[perf] ${rows} rows, 4 window functions: cold ${windows.cold.toFixed(1)} ms, warm ${windows.warm.toFixed(1)} ms (the same table with no window: warm ${plain.warm.toFixed(1)} ms; the four windows add ${(windows.warm - plain.warm).toFixed(1)} ms)`,
+    );
+    // The live check's budget is 300 ms on 5,000 rows (SPEC 8.11): the whole run, windows included.
+    if (rows === 5000) expect(windows.warm).toBeLessThan(300);
+    expect(windows.cold).toBeLessThan(2000);
+    // 4x the rows must cost about 4x (plus the sort's log factor), not 16x
+    expect(windows.warm).toBeLessThan(Math.max(60, plain.warm) * 40);
+  });
+});

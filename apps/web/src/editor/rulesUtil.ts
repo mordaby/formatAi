@@ -149,10 +149,16 @@ export function exprChildren(expr: Expr): Expr[] {
   return out;
 }
 
-/** Every column id an expression reads. */
+/** Every column id an expression reads (an across-row function also reads its `by` and `order` columns). */
 export function colRefs(expr: Expr, into: Set<string> = new Set()): Set<string> {
   if ('col' in expr) into.add(expr.col);
-  else for (const child of exprChildren(expr)) colRefs(child, into);
+  else {
+    if ('op' in expr && expr.op === 'window') {
+      for (const id of expr.by ?? []) into.add(id);
+      for (const key of expr.order ?? []) into.add(key.column);
+    }
+    for (const child of exprChildren(expr)) colRefs(child, into);
+  }
   return into;
 }
 

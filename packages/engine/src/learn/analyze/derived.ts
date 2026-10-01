@@ -50,12 +50,13 @@ const MAX_PAIR_TABLE = 1_000_000;
  * else (SPEC 6.4). An internal class for wording and hints only: it is NOT skipped, the AI step tries it like any other column.
  */
 export function isExternalColumn(ca: ColumnAnalysis): boolean {
-  return ca.unknown && ca.derived === null;
+  // A column that follows an across-row pattern (a running total, a rank ...) is determined by the input too: the AI step can solve it.
+  return ca.unknown && ca.derived === null && (ca.windows === undefined || ca.windows.length === 0);
 }
 
 /** An unknown column the input determines: the AI can solve it (see the file header). */
 export function isDerivedColumn(ca: ColumnAnalysis): boolean {
-  return ca.unknown && ca.derived !== null;
+  return ca.unknown && (ca.derived !== null || (ca.windows !== undefined && ca.windows.length > 0));
 }
 
 // ---------- integer coding ----------

@@ -15,6 +15,10 @@
 //   primary      := NUMBER | STRING | 'true' | 'false' | 'null'
 //                 | IDENT ( '(' ( expression (',' expression)* )? ')' )?
 //                 | '(' expression ')'
+//   windowCall   := WINDOWFN '(' [ IDENT ] ( ',' NAME ':' value )* ')'     -- across rows, hand-parsed (see parseWindowCall)
+//   by: value    := IDENT | '(' IDENT (',' IDENT)* ')'
+//   order: value := key | '(' key (',' key)* ')'          key := IDENT [ 'asc' | 'desc' ]
+//   ties: value  := 'min' | 'dense'
 //
 // - A bare NUMBER is always non-negative; a leading '-' is unary minus (see below).
 // - A bare IDENT (not followed by '(') is a column id (`{col}`), or - only while
@@ -47,8 +51,18 @@
 // from the input is ever used to index a plain JS object - only `Map`/`Array.includes`
 // lookups - so `__proto__`/`constructor`/`toString` used as a column id, function name
 // or table name behave as ordinary (if unusual) strings, nothing more.
-import { isIsoDateLiteral, limits, type Expr, type ExprConstValue, type ExprNode, type KeepCharsClass } from '@formatai/shared';
-import { OP_SIGNATURES, type FormulaParam, type SigOp } from '../check/signatures';
+import {
+  isIsoDateLiteral,
+  limits,
+  type Expr,
+  type ExprConstValue,
+  type ExprNode,
+  type KeepCharsClass,
+  type WindowFn,
+  type WindowOrderKey,
+  type WindowTies,
+} from '@formatai/shared';
+import { OP_SIGNATURES, WINDOW_SIGNATURES, isWindowFn, windowShapeProblem, type FormulaParam, type SigOp } from '../check/signatures';
 import { LexError, tokenize, type Token, type TokenType } from './lexer';
 
 export interface FormulaParseError {
@@ -69,6 +83,12 @@ export interface FormulaParseContext {
    * every other reader leave it off and get the full language.
    */
   promptOpsOnly?: boolean;
+  /**
+   * Across-row functions (runningSum, rank, ...) are read only where they can run: a computed column's formula. Off by default, so a row
+   * filter, a fan-out value or a function body that contains one is a parse error; the computed-column readers (`formulaRulesFromWire`'s
+   * computed columns, the editor's formula field) turn it on. Ignored with `promptOpsOnly`, where these names are not built-ins at all.
+   */
+  allowWindows?: boolean;
 }
 
 class FormulaSyntaxError extends Error {
@@ -265,6 +285,7 @@ class Parser {
     }
 
     this.advance(); // '('
+    if (!this.ctx.promptOpsOnly && isWindowFn(name)) return this.parseWindowCall(name, t);
     const args: ParsedArg[] = [];
     if (!this.check(')')) {
       for (;;) {
@@ -288,6 +309,117 @@ class Parser {
       return { op: 'call', fn: name, args: args.map((a) => a.expr) };
     }
     return assembleCall(form, args, t.offset);
+  }
+
+  /**
+   * `fn(column, by: ..., order: ..., ties: ...)` - the across-row functions (docs/proposals/window-operations.md). Hand-parsed: the column
+   * comes first and is a bare column id, everything else is a NAMED argument (`by`, `order`, `ties`). Positional extras are rejected on
+   * purpose: with two optional keys they could not say which is the group and which the order, nor leave one out, nor say `desc`.
+   */
+  private parseWindowCall(name: WindowFn, t: Token): Expr {
+    if (!this.ctx.allowWindows) {
+      fail(`${name}() is an across-row function and works only in a computed column's formula`, t.offset);
+    }
+    const sig = WINDOW_SIGNATURES[name];
+    let arg: Expr | undefined;
+    let by: string[] | undefined;
+    let order: WindowOrderKey[] | undefined;
+    let ties: WindowTies | undefined;
+    let first = true;
+    if (!this.check(')')) {
+      for (;;) {
+        const tok = this.peek();
+        const after = this.tokens[this.pos + 1];
+        if (tok.type === 'ident' && after !== undefined && after.type === ':') {
+          this.advance();
+          this.advance();
+          if (tok.text === 'by') {
+            if (by !== undefined) fail(`${name}() has by: twice at ${tok.offset}`, tok.offset);
+            by = this.parseColumnList('by');
+          } else if (tok.text === 'order') {
+            if (order !== undefined) fail(`${name}() has order: twice at ${tok.offset}`, tok.offset);
+            if (sig.order === 'none') fail(`${name}() does not take order: the order does not change a group's value (at ${tok.offset})`, tok.offset);
+            order = this.parseOrderKeys();
+          } else if (tok.text === 'ties') {
+            if (ties !== undefined) fail(`${name}() has ties: twice at ${tok.offset}`, tok.offset);
+            if (!sig.ties) fail(`${name}() does not take ties: (only rank() does) at ${tok.offset}`, tok.offset);
+            const v = this.expect('ident', '"min" or "dense"');
+            if (v.text !== 'min' && v.text !== 'dense') fail(`ties: must be min or dense at ${v.offset}`, v.offset);
+            ties = v.text;
+          } else {
+            fail(`unknown argument "${tok.text}:" in ${name}(); the named arguments are by:, order: and ties: (at ${tok.offset})`, tok.offset);
+          }
+        } else {
+          if (!first) {
+            fail(`${name}() takes one column, then named arguments: write by: ... or order: ... (at ${tok.offset})`, tok.offset);
+          }
+          if (sig.arg === 'none') {
+            fail(
+              `${name}() takes no column; it works on rows${sig.order === 'required' ? ' (say what to rank by with order: ...)' : ''} (at ${tok.offset})`,
+              tok.offset,
+            );
+          }
+          const e = this.parseExpression();
+          if (!('col' in e)) {
+            fail(`${name}() reads a column id, not an expression; make a computed column for the calculation first (at ${tok.offset})`, tok.offset);
+          }
+          arg = e;
+        }
+        first = false;
+        if (this.check(',')) {
+          this.advance();
+          continue;
+        }
+        break;
+      }
+    }
+    this.expect(')', '")"');
+    const node: Extract<ExprNode, { op: 'window' }> = {
+      op: 'window',
+      fn: name,
+      ...(arg === undefined ? {} : { arg }),
+      ...(by === undefined ? {} : { by }),
+      ...(order === undefined ? {} : { order }),
+      ...(ties === undefined ? {} : { ties }),
+    };
+    const problem = windowShapeProblem(node);
+    if (problem !== undefined) fail(`${problem} (at ${t.offset})`, t.offset);
+    return node;
+  }
+
+  /** `g` or `(g1, g2)`: one or more column ids. */
+  private parseColumnList(what: string): string[] {
+    if (!this.check('(')) return [this.expect('ident', `a column id after ${what}:`).text];
+    this.advance();
+    const ids: string[] = [this.expect('ident', 'a column id').text];
+    while (this.check(',')) {
+      this.advance();
+      ids.push(this.expect('ident', 'a column id').text);
+    }
+    this.expect(')', '")"');
+    return ids;
+  }
+
+  /** `k`, `k desc` or `(k1, k2 desc)`: sort keys. The first identifier of a key is its column; only a second `asc`/`desc` is a direction. */
+  private parseOrderKeys(): WindowOrderKey[] {
+    const key = (): WindowOrderKey => {
+      const column = this.expect('ident', 'a column id after order:').text;
+      const d = this.peek();
+      if (d.type === 'ident' && (d.text === 'asc' || d.text === 'desc')) {
+        this.advance();
+        return { column, dir: d.text };
+      }
+      return { column, dir: 'asc' };
+    };
+    if (!this.check('(')) return [key()];
+    this.advance();
+    const keys: WindowOrderKey[] = [key()];
+    while (this.check(',')) {
+      this.advance();
+      keys.push(key());
+    }
+    this.expect(')', '")"');
+    return keys;
   }
 }
 
