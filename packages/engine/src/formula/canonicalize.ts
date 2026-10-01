@@ -56,6 +56,11 @@ export function canonicalizeExpr(e: Expr): Expr {
     case 'dateFormat':
     case 'dateAdd':
     case 'endOfMonth':
+    case 'weekday':
+    case 'toDate':
+    case 'keepChars':
+    case 'titleCase':
+    case 'find':
     case 'isEmpty':
     case 'notEmpty':
     case 'not':
@@ -77,6 +82,10 @@ export function canonicalizeExpr(e: Expr): Expr {
     case 'lt':
     case 'lte':
       return { ...e, args: [canonicalizeExpr(e.args[0]), canonicalizeExpr(e.args[1])] } as Expr;
+    case 'makeDate':
+      return { ...e, args: [canonicalizeExpr(e.args[0]), canonicalizeExpr(e.args[1]), canonicalizeExpr(e.args[2])] } as Expr;
+    case 'dateLiteral':
+      return e;
     case 'min':
     case 'max':
     case 'concat':

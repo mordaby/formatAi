@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formulaRulesToWire } from '@formatai/engine';
 import { toWire, type LearnPayload, type LearnResult } from '@formatai/shared';
 import { runChecks } from '../../src/learn/index.js';
 import { allUnsupportedRules, basicPayload, correctRules, externalColumnPayload, externalColumnRules } from './fixtures.js';
@@ -172,5 +173,28 @@ describe('runChecks: an honest "cannot produce this column" (from: null AND an u
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatchObject({ kind: 'reference' });
     expect((problems[0] as { message: string }).message).toContain('no value at all');
+  });
+});
+
+describe('runChecks: operations the prompt does not document yet (weekday, find, ...) are unknown functions', () => {
+  function withExtraColumn(expr: LearnResult['transform']['computed'][number]['expr']): unknown {
+    const rules = correctRules();
+    const extended: LearnResult = {
+      ...rules,
+      // Not referenced by an output column, so only the check on the operation itself can react to it.
+      transform: { ...rules.transform, computed: [...rules.transform.computed, { id: 'pos', type: 'integer', expr }] },
+    };
+    return toWire(formulaRulesToWire(extended) as unknown as LearnResult);
+  }
+
+  it('rejects find(...) in an LLM answer as a reference to an unknown function', () => {
+    const { problems, rules } = runChecks(withExtraColumn({ op: 'find', arg: { col: 'id' }, search: 'A' }), basicPayload(), { tier: 'registered' });
+    expect(problems.some((p) => p.kind === 'reference' && p.message.includes('find'))).toBe(true);
+    expect(rules).not.toBeNull();
+  });
+
+  it('accepts the same rules while the answer only uses documented operations', () => {
+    const { problems } = runChecks(withExtraColumn({ op: 'length', arg: { col: 'id' } }), basicPayload(), { tier: 'registered' });
+    expect(problems).toEqual([]);
   });
 });

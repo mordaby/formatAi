@@ -238,15 +238,10 @@ const digitsOnly = defineType({
     }),
   outputs: [
     { header: 'Reference text', from: 'raw' },
-    { header: 'Reference number', value: (r) => String(r.raw).replace(/[^0-9]/g, '') },
+    { header: 'Reference number', formula: 'keepChars(raw, "digits")', value: (r) => String(r.raw).replace(/[^0-9]/g, '') },
     { header: 'Amount', from: 'amount', format: MONEY },
   ],
-  rule: null,
-  missing: {
-    capability: 'charClass',
-    detail: 'keep only the digits of arbitrary text: the junk characters are open-ended, replaceText can only remove one literal text at a time',
-    workaround: 'chain a replaceText per junk text, for a closed set of characters (see cleanup.remove-chars)',
-  },
+  rule: {},
 });
 
 const SPEC_WORDS = ['Heavy duty', '500g', 'Blue', 'Pro series', 'EU plug', '2 pack', 'Matte', 'Steel'];
@@ -292,7 +287,7 @@ const afterFirstSepRest = defineType({
   rule: null,
   missing: {
     capability: 'positionSearch',
-    detail: 'split cuts at every " - " and returns one part by number, so the rest after the FIRST separator cannot be said for an open number of parts',
+    detail: 'split cuts at every " - " and returns one part by number, so the rest after the FIRST separator cannot be said for an open number of parts; find(desc, " - ") now gives the position of the first one, but substr takes literal start/length and cannot cut at it',
     workaround: 'for a fixed maximum number of parts, one if(notEmpty(split(x, sep, n)), concat(sep, split(x, sep, n)), "") per extra part (see extraction.after-first-sep-bounded)',
   },
 });

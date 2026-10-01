@@ -96,23 +96,23 @@ function parseAt(value: unknown, path: string, ctx: FormulaParseContext, problem
   return value;
 }
 
-function rowFiltersFromWire(rowFilters: unknown, problems: RepairProblem[]): unknown {
+function rowFiltersFromWire(rowFilters: unknown, base: FormulaParseContext, problems: RepairProblem[]): unknown {
   if (!Array.isArray(rowFilters)) return rowFilters;
   return rowFilters.map((f, i) => {
     if (!isRecord(f) || !('expr' in f)) return f;
-    return { ...f, expr: parseAt(f.expr, `input.rowFilters[${i}].expr`, {}, problems) };
+    return { ...f, expr: parseAt(f.expr, `input.rowFilters[${i}].expr`, base, problems) };
   });
 }
 
-function computedFromWire(computed: unknown, problems: RepairProblem[]): unknown {
+function computedFromWire(computed: unknown, base: FormulaParseContext, problems: RepairProblem[]): unknown {
   if (!Array.isArray(computed)) return computed;
   return computed.map((c, i) => {
     if (!isRecord(c)) return c;
-    return { ...c, expr: parseAt(c.expr, `transform.computed[${i}].expr`, {}, problems) };
+    return { ...c, expr: parseAt(c.expr, `transform.computed[${i}].expr`, base, problems) };
   });
 }
 
-function expandFromWire(expand: unknown, problems: RepairProblem[]): unknown {
+function expandFromWire(expand: unknown, base: FormulaParseContext, problems: RepairProblem[]): unknown {
   if (!isRecord(expand) || expand.mode !== 'fixedFanOut' || !Array.isArray(expand.rows)) return expand;
   return {
     ...expand,
@@ -120,7 +120,7 @@ function expandFromWire(expand: unknown, problems: RepairProblem[]): unknown {
       if (!isRecord(row) || !isRecord(row.set)) return row;
       const set: Record<string, unknown> = {};
       for (const [id, v] of Object.entries(row.set)) {
-        set[id] = parseAt(v, `transform.expand.rows[${ri}].set.${id}`, {}, problems);
+        set[id] = parseAt(v, `transform.expand.rows[${ri}].set.${id}`, base, problems);
       }
       return { ...row, set };
     }),
@@ -139,11 +139,11 @@ function paramNamesOf(fn: Record<string, unknown>): string[] {
   return names;
 }
 
-function functionsFromWire(functions: unknown, problems: RepairProblem[]): unknown {
+function functionsFromWire(functions: unknown, base: FormulaParseContext, problems: RepairProblem[]): unknown {
   if (!Array.isArray(functions)) return functions;
   return functions.map((fn, i) => {
     if (!isRecord(fn)) return fn;
-    const ctx: FormulaParseContext = { params: paramNamesOf(fn) };
+    const ctx: FormulaParseContext = { ...base, params: paramNamesOf(fn) };
     return { ...fn, body: parseAt(fn.body, `transform.functions[${i}].body`, ctx, problems) };
   });
 }
@@ -155,19 +155,23 @@ function functionsFromWire(functions: unknown, problems: RepairProblem[]): unkno
  * zod-validated yet - the caller always follows this with `LearnResultSchema.safeParse`
  * (SPEC 9.2 layer 1), which is the real structural gate.
  */
-export function formulaRulesFromWire(json: unknown): { rules: unknown; problems: RepairProblem[] } {
+export function formulaRulesFromWire(
+  json: unknown,
+  opts: { promptOpsOnly?: boolean } = {},
+): { rules: unknown; problems: RepairProblem[] } {
   const problems: RepairProblem[] = [];
+  const base: FormulaParseContext = opts.promptOpsOnly ? { promptOpsOnly: true } : {};
   if (!isRecord(json)) return { rules: json, problems };
 
-  const input = isRecord(json.input) ? { ...json.input, rowFilters: rowFiltersFromWire(json.input.rowFilters, problems) } : json.input;
+  const input = isRecord(json.input) ? { ...json.input, rowFilters: rowFiltersFromWire(json.input.rowFilters, base, problems) } : json.input;
 
   let transform = json.transform;
   if (isRecord(transform)) {
     transform = {
       ...transform,
-      computed: computedFromWire(transform.computed, problems),
-      expand: transform.expand === undefined ? undefined : expandFromWire(transform.expand, problems),
-      functions: transform.functions === undefined ? undefined : functionsFromWire(transform.functions, problems),
+      computed: computedFromWire(transform.computed, base, problems),
+      expand: transform.expand === undefined ? undefined : expandFromWire(transform.expand, base, problems),
+      functions: transform.functions === undefined ? undefined : functionsFromWire(transform.functions, base, problems),
     };
   }
 

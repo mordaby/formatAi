@@ -84,3 +84,42 @@ describe('measurement records', () => {
     expect(renderCsv(records).split('\n')[0]).toContain('ai_model');
   }, 60_000);
 });
+
+describe('language layer: the date and text operations added after learn-v6', () => {
+  // type id -> the operation its reference rule must be written with (not a workaround)
+  const NOW_EXPRESSIBLE: Record<string, string> = {
+    'dates.weekday-name': 'dateFormat(date, "dddd")',
+    'dates.days-to-fixed-date': 'date("2026-12-31")',
+    'dates.parse-month-name': 'toDate(date, "D MMMM YYYY")',
+    'dates.date-from-parts': 'makeDate(year, month, day)',
+    'extraction.digits-only': 'keepChars(raw, "digits")',
+    'cleanup.proper-case': 'titleCase(name)',
+  };
+
+  it('are expressible, with a reference rule that uses the operation', () => {
+    for (const [id, formula] of Object.entries(NOW_EXPRESSIBLE)) {
+      const t = CATALOGUE.find((x) => x.id === id)!;
+      expect(t.rule, id).not.toBeNull();
+      expect(t.missing, id).toBeUndefined();
+      expect(t.outputs.some((o) => o.formula?.includes(formula)), `${id}: ${formula}`).toBe(true);
+    }
+  });
+
+  it('parse, type-check and reproduce the expected output on the example and the next-month file, both seeds', async () => {
+    for (const id of Object.keys(NOW_EXPRESSIBLE)) {
+      const t = CATALOGUE.find((x) => x.id === id)!;
+      for (const seed of [1, 2]) {
+        const { record } = await measureLanguage(await prepare(t, seed));
+        expect(record.problems ?? [], `${id} seed ${seed}`).toEqual([]);
+        expect(record.valid, `${id} seed ${seed}`).toBe(true);
+        expect(record.reproduces, `${id} seed ${seed}: ${record.mismatch}`).toBe(true);
+      }
+    }
+  }, 60_000);
+
+  it('"everything after the first separator" is still a gap: find gives the position but substr cannot cut at it', () => {
+    const t = CATALOGUE.find((x) => x.id === 'extraction.after-first-sep-rest')!;
+    expect(t.rule).toBeNull();
+    expect(t.missing?.capability).toBe('positionSearch');
+  });
+});

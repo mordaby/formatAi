@@ -1,4 +1,5 @@
-// The capabilities the rules language does not have today, as the catalogue found them. A type that cannot be
+// The capabilities the rules language does not have today, as the catalogue found them. (Resolved ones are removed: weekday, makeDate, toDate with month names,
+// date("...") literals, keepChars, titleCase and find were added after learn-v6; see SPEC 8.3.) A type that cannot be
 // expressed points at exactly one of these (`CatalogueType.missing.capability`); the report groups the
 // non-expressible types by capability and counts how many types adding it would unlock (the "language gaps" list).
 //
@@ -52,21 +53,9 @@ export const CAPABILITIES = {
   // ---- text ----
   positionSearch: {
     family: 'text',
-    title: 'Position search (indexOf) / split at the first occurrence',
-    gap: '`split` cuts at EVERY separator and `substr` takes literal positions, so "everything after the FIRST separator" (the rest may hold more separators) or "cut at the position of a marker" cannot be said.',
-    proposal: 'indexOf(text, find) returning a position, and substr with expression arguments; or splitFirst/afterFirst(text, sep)',
-  },
-  charClass: {
-    family: 'text',
-    title: 'Pattern / character-class operations',
-    gap: 'replaceText is literal-only and there is no regex (by design, SPEC 8.3), so "keep only the digits", "drop everything that is not a letter" or "the leading letters" cannot be said unless every character is listed.',
-    proposal: 'keepChars(text, "digits"|"letters"|"letters+digits") / stripChars(text, class) over a closed set of named classes (still no regex)',
-  },
-  perWordCase: {
-    family: 'text',
-    title: 'Per-word case (proper case)',
-    gap: '`upper` and `lower` change the whole text; capitalizing the first letter of each word needs a word-level operation.',
-    proposal: 'properCase(text)',
+    title: 'Cut at a computed position / split at the first occurrence',
+    gap: '`find(text, search)` gives the position of a marker, but `split` cuts at EVERY separator and `substr` takes literal start/length, so "everything after the FIRST separator" (the rest may hold more separators) or "cut at the position of a marker" still cannot be said.',
+    proposal: 'substr with expression start/length (so substr(t, find(t, sep) + n, 999) works); or splitFirst/afterFirst(text, sep)',
   },
   padRight: {
     family: 'text',
@@ -76,30 +65,6 @@ export const CAPABILITIES = {
   },
 
   // ---- dates ----
-  dateLiteral: {
-    family: 'date',
-    title: 'Date constants',
-    gap: 'An expression constant is a string, number, boolean or null - never a date - so "days until a fixed date" or "is before 2026-01-01" cannot be written (and there is no clock, by design).',
-    proposal: 'date("2026-01-01") literal, or a `dateConst` leaf',
-  },
-  weekday: {
-    family: 'date',
-    title: 'Weekday of a date',
-    gap: '`datePart` gives year, month and day only; the weekday (number or name) cannot be derived without a date constant to count from.',
-    proposal: 'datePart "weekday" (and "quarter"/"week"), with weekday names in the output language for dateFormat (dddd)',
-  },
-  monthNameParse: {
-    family: 'date',
-    title: 'Parsing dates written with month names',
-    gap: 'Input date formats are numeric tokens (D, M, YY ...); a text such as "5 September 2026" / "5 בספטמבר 2026" is never read as a date.',
-    proposal: 'MMMM / MMM tokens in `inputFormats`, in the file language',
-  },
-  makeDate: {
-    family: 'date',
-    title: 'Date from separate day / month / year parts',
-    gap: 'There is no constructor: three numeric columns can be joined into ISO TEXT, but the type checker rejects text where a date is declared (checked: with typeCheck bypassed, the runtime already coerces ISO text to a date and reproduces the output).',
-    proposal: 'toDate(text) (ISO), or let typeCheck accept ISO text for a computed column declared `date`; then makeDate = toDate(concat(year, "-", ...))',
-  },
 
   // ---- shape ----
   pivotOutput: {

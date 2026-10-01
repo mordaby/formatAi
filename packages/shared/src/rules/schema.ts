@@ -55,6 +55,37 @@ export const ValueTypeSchema = z.enum(VALUE_TYPES);
 
 export type ExprConstValue = string | number | boolean | null;
 
+/** `keepChars`' closed set of named character classes (Unicode-aware: Hebrew letters are letters). */
+export const KEEP_CHARS_CLASSES = ['digits', 'letters', 'lettersAndDigits'] as const;
+export type KeepCharsClass = (typeof KEEP_CHARS_CLASSES)[number];
+
+/**
+ * True for a real calendar date written YYYY-MM-DD, between 1900-01-01 and 9999-12-31 (the range
+ * the engine's dates can hold). Used by the `dateLiteral` schema and the formula parser; character
+ * checks only, no regular expression.
+ */
+export function isIsoDateLiteral(s: string): boolean {
+  if (s.length !== 10 || s[4] !== '-' || s[7] !== '-') return false;
+  const digits = (from: number, to: number): number | undefined => {
+    let n = 0;
+    for (let i = from; i < to; i++) {
+      const c = s.charCodeAt(i) - 48;
+      if (c < 0 || c > 9) return undefined;
+      n = n * 10 + c;
+    }
+    return n;
+  };
+  const y = digits(0, 4);
+  const m = digits(5, 7);
+  const d = digits(8, 10);
+  if (y === undefined || m === undefined || d === undefined) return false;
+  if (y < 1900 || m < 1 || m > 12 || d < 1) return false;
+  // 1900 counts as a leap year, like Excel (and the engine's own calendar).
+  const leap = y === 1900 || (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  const days = m === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31;
+  return d <= days;
+}
+
 /** `param` is a leaf usable only inside a `transform.functions[].body` (SPEC 8.14);
  * `checkRules` rejects it everywhere else, and rejects `col` inside a function body. */
 export type ExprLeaf = { col: string } | { const: ExprConstValue } | { param: string };
@@ -106,6 +137,19 @@ export type ExprNode =
     ))
   | { op: 'dateDiff'; args: [Expr, Expr]; unit: 'days' | 'months' | 'years' }
   | { op: 'endOfMonth'; arg: Expr }
+  // Added after learn-v6 (formula text only so far - see `inPrompt` in the engine's OP_SIGNATURES):
+  /** 1 = Sunday ... 7 = Saturday. */
+  | { op: 'weekday'; arg: Expr }
+  /** (year, month, day) -> a date; an impossible date is empty and flagged. */
+  | { op: 'makeDate'; args: [Expr, Expr, Expr] }
+  /** Text read with a date format (D, DD, M, MM, MMMM, MMM, YY, YYYY + literal separators). */
+  | { op: 'toDate'; arg: Expr; format: string }
+  /** A fixed date, written YYYY-MM-DD (formula: date("2026-01-31")). Has no Expr children. */
+  | { op: 'dateLiteral'; value: string }
+  | { op: 'keepChars'; arg: Expr; chars: KeepCharsClass }
+  | { op: 'titleCase'; arg: Expr }
+  /** 1-based position of the first occurrence of `search` (literal text), 0 when absent. */
+  | { op: 'find'; arg: Expr; search: string }
   | { op: 'if'; cond: Expr; then: Expr; else: Expr }
   | { op: 'switch'; cases: { when: Expr; then: Expr }[]; else: Expr }
   | { op: 'coalesce'; args: Expr[] }
@@ -238,6 +282,16 @@ export function buildExprSchema(child: z.ZodType<Expr>): z.ZodType<Expr> {
         unit: z.enum(['days', 'months', 'years']),
       }),
       z.strictObject({ op: z.literal('endOfMonth'), arg: child }),
+      z.strictObject({ op: z.literal('weekday'), arg: child }),
+      z.strictObject({ op: z.literal('makeDate'), args: z.tuple([child, child, child]) }),
+      z.strictObject({ op: z.literal('toDate'), arg: child, format: z.string().min(1) }),
+      z.strictObject({
+        op: z.literal('dateLiteral'),
+        value: z.string().refine(isIsoDateLiteral, 'must be a real date written YYYY-MM-DD'),
+      }),
+      z.strictObject({ op: z.literal('keepChars'), arg: child, chars: z.enum(KEEP_CHARS_CLASSES) }),
+      z.strictObject({ op: z.literal('titleCase'), arg: child }),
+      z.strictObject({ op: z.literal('find'), arg: child, search: z.string().min(1) }),
       z.strictObject({
         op: z.literal('if'),
         cond: child,

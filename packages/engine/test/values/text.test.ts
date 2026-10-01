@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { columnLetter, hebrewRatio, isHebrewText, normalizeText, padLeft } from '../../src/values/text';
+import { columnLetter, hebrewRatio, isHebrewText, keepCharsOfClass, normalizeText, padLeft, titleCaseText } from '../../src/values/text';
 
 describe('normalizeText', () => {
   it('trims and collapses internal whitespace, including NBSP', () => {
@@ -67,5 +67,44 @@ describe('columnLetter', () => {
     expect(columnLetter(27)).toBe('AB');
     expect(columnLetter(701)).toBe('ZZ');
     expect(columnLetter(702)).toBe('AAA');
+  });
+});
+
+describe('keepCharsOfClass', () => {
+  it('keeps only the characters of the class, in order', () => {
+    expect(keepCharsOfClass('Ref#A-77/2024', 'digits')).toBe('772024');
+    expect(keepCharsOfClass('Ref#A-77/2024', 'letters')).toBe('RefA');
+    expect(keepCharsOfClass('Ref#A-77/2024', 'lettersAndDigits')).toBe('RefA772024');
+  });
+
+  it('counts Hebrew letters as letters; niqqud, punctuation and spaces are not', () => {
+    expect(keepCharsOfClass("מס' 4521-ב", 'letters')).toBe('מסב');
+    expect(keepCharsOfClass("מס' 4521-ב", 'lettersAndDigits')).toBe('מס4521ב');
+    expect(keepCharsOfClass('בע"מ', 'letters')).toBe('בעמ');
+  });
+
+  it('is Unicode-aware for other scripts and digits, and never splits a surrogate pair', () => {
+    expect(keepCharsOfClass('Ünïcödé-1', 'letters')).toBe('Ünïcödé');
+    expect(keepCharsOfClass('١٢٣ abc', 'digits')).toBe('١٢٣');
+    expect(keepCharsOfClass('a\u{1F600}b', 'letters')).toBe('ab');
+  });
+});
+
+describe('titleCaseText', () => {
+  it('upper-cases the first letter of each word and lower-cases the rest', () => {
+    expect(titleCaseText('dana COHEN')).toBe('Dana Cohen');
+    expect(titleCaseText('ALL CAPS HERE')).toBe('All Caps Here');
+  });
+
+  it('starts a word after whitespace or a hyphen only', () => {
+    expect(titleCaseText('anne-marie o\'brien')).toBe('Anne-Marie O\'brien');
+    expect(titleCaseText('a_b c.d')).toBe('A_b C.d');
+  });
+
+  it('skips leading punctuation, keeps a leading digit as is, leaves Hebrew alone', () => {
+    expect(titleCaseText('"quoted" (x)')).toBe('"Quoted" (X)');
+    expect(titleCaseText('2ND FLOOR')).toBe('2nd Floor');
+    expect(titleCaseText('דנה כהן')).toBe('דנה כהן');
+    expect(titleCaseText('')).toBe('');
   });
 });

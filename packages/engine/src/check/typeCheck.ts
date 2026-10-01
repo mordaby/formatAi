@@ -233,6 +233,11 @@ function inferType(
     case 'dateFormat':
     case 'dateAdd':
     case 'endOfMonth':
+    case 'weekday':
+    case 'toDate':
+    case 'keepChars':
+    case 'titleCase':
+    case 'find':
     case 'isEmpty':
     case 'notEmpty':
     case 'oneOf':
@@ -247,9 +252,10 @@ function inferType(
       return resolveResult(sig.result, [argType]);
     }
 
-    // ---- Group B: a fixed two-element `args` tuple, homogeneous expected type ----
+    // ---- Group B: a fixed-length `args` tuple (2 or 3), homogeneous expected type ----
     case 'mod':
-    case 'dateDiff': {
+    case 'dateDiff':
+    case 'makeDate': {
       const sig = OP_SIGNATURES[expr.op];
       const argSpec = sig.args as Extract<ArgSpec, { shape: 'fixedSameType' }>;
       const types = expr.args.map((a, i) => inferType(a, scope, ctx, `${path}.args[${i}]`, problems));
@@ -297,6 +303,11 @@ function inferType(
     }
 
     // ---- Group E: irregular shapes ----
+    // A literal op with no Expr child: its type is fixed (date). The literal itself is
+    // validated by the schema/parser, not here.
+    case 'dateLiteral':
+      return resolveResult(OP_SIGNATURES.dateLiteral.result, []);
+
     case 'if': {
       const condType = inferType(expr.cond, scope, ctx, `${path}.cond`, problems);
       checkArgFits(condType, 'boolean', `${path}.cond`, problems);

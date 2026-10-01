@@ -70,6 +70,56 @@ export function padLeft(s: string, length: number, char = '0'): string {
   return rep + s;
 }
 
+const DIGIT_RE = /\p{Nd}/u;
+
+function isLetterChar(ch: string): boolean {
+  return LETTER_RE.test(ch);
+}
+function isDigitChar(ch: string): boolean {
+  return DIGIT_RE.test(ch);
+}
+
+/**
+ * Keeps only the characters of a named class, in order (`keepChars`, SPEC 8.3): `digits` = Unicode
+ * decimal digits, `letters` = Unicode letters (Hebrew letters included; niqqud, punctuation and
+ * spaces are not letters), `lettersAndDigits` = both. A closed set of classes, never a pattern.
+ */
+export function keepCharsOfClass(s: string, cls: 'digits' | 'letters' | 'lettersAndDigits'): string {
+  let out = '';
+  for (const ch of s) {
+    const keep = cls === 'digits' ? isDigitChar(ch) : cls === 'letters' ? isLetterChar(ch) : isLetterChar(ch) || isDigitChar(ch);
+    if (keep) out += ch;
+  }
+  return out;
+}
+
+/**
+ * Title case (`titleCase`, SPEC 8.3): a word starts at the beginning and after any whitespace or
+ * hyphen; its first letter becomes upper case and every other letter lower case. Leading
+ * punctuation does not count ("(israel)" -> "(Israel)"), a word that starts with a digit is left
+ * as it is apart from lower-casing ("3RD" -> "3rd"), and the letter after an apostrophe is lower
+ * ("o'neil" -> "O'neil"). Scripts without case (Hebrew) are unchanged.
+ */
+export function titleCaseText(s: string): string {
+  let out = '';
+  let inWord = false; // inside a word whose first letter/digit has been seen
+  for (const ch of s) {
+    if (ch === '-' || /\s/u.test(ch)) {
+      out += ch;
+      inWord = false;
+    } else if (inWord) {
+      out += ch.toLowerCase();
+    } else if (isLetterChar(ch)) {
+      out += ch.toUpperCase();
+      inWord = true;
+    } else {
+      out += ch;
+      if (isDigitChar(ch)) inWord = true;
+    }
+  }
+  return out;
+}
+
 /** 0-based column index to Excel column letters: 0 -> A, 25 -> Z, 26 -> AA. */
 export function columnLetter(index0: number): string {
   let n = index0 + 1; // switch to 1-based for the bijective base-26 conversion

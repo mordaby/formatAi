@@ -71,7 +71,7 @@ describe('OP_SIGNATURES: representative entries', () => {
     expect(ops).toContain('add');
     expect(ops).toContain('lookup');
     expect(ops).toContain('not');
-    expect(ops.length).toBe(48);
+    expect(ops.length).toBe(55);
   });
 
   it('mul takes variadic decimal-ish args', () => {

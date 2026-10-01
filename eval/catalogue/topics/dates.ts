@@ -176,10 +176,9 @@ const weekdayName = defineType({
   outputs: [
     { header: 'Delivery', from: 'delivery' },
     { header: 'Date', from: 'date', format: DMY },
-    { header: 'Weekday', value: (r) => WEEKDAYS_EN[weekdayOf(d(r.date))] ?? null },
+    { header: 'Weekday', formula: 'dateFormat(date, "dddd")', value: (r) => WEEKDAYS_EN[weekdayOf(d(r.date))] ?? null },
   ],
-  rule: null,
-  missing: { capability: 'weekday', detail: 'datePart has year/month/day only; counting days from a known Sunday needs a date constant, which expressions cannot hold' },
+  rule: {},
 });
 
 const daysToFixed = defineType({
@@ -196,14 +195,9 @@ const daysToFixed = defineType({
   outputs: [
     { header: 'חשבונית', from: 'inv' },
     { header: 'תאריך', from: 'date', format: DMY },
-    { header: 'ימים לסוף שנה', value: (r) => daysBetween(d(r.date), { y: 2026, m: 12, d: 31 }) },
+    { header: 'ימים לסוף שנה', formula: 'dateDiff(date, date("2026-12-31"), "days")', type: 'integer', value: (r) => daysBetween(d(r.date), { y: 2026, m: 12, d: 31 }) },
   ],
-  rule: null,
-  missing: {
-    capability: 'dateLiteral',
-    detail: 'dateDiff needs two date operands; a constant is a string, number, boolean or null, never a date, and there is no clock',
-    workaround: 'when the fixed date is also a column of the input file, dateDiff against that column',
-  },
+  rule: {},
 });
 
 const parseMonthName = defineType({
@@ -214,19 +208,15 @@ const parseMonthName = defineType({
   lang: 'en',
   input: [
     { id: 'event', header: 'Event', type: 'text' },
-    { id: 'date', header: 'Event date', type: 'date', dateAs: 'D MMMM YYYY' },
+    // The file holds TEXT ("5 September 2026"); the rule reads it with toDate.
+    { id: 'date', header: 'Event date', type: 'text', dateAs: 'D MMMM YYYY' },
   ],
   generate: (g) => rowsOf(g, (i) => ({ event: seqId('EV', 10 + i, 3), date: randDate(g.rng, 2025, 2026) })),
   outputs: [
     { header: 'Event', from: 'event' },
-    { header: 'Event date', from: 'date', format: DMY },
+    { header: 'Event date', formula: 'toDate(date, "D MMMM YYYY")', type: 'date', format: DMY, value: (r) => d(r.date) },
   ],
-  rule: null,
-  missing: {
-    capability: 'monthNameParse',
-    detail: 'input date formats are numeric tokens (D, M, YYYY ...); "September" is never read as a month (checked: inputFormats ["D MMMM YYYY"] leaves the text unparsed and flags it)',
-    workaround: 'a value map from the month name to its number, then concat into ISO text (text, not a date value)',
-  },
+  rule: {},
 });
 
 const dateFromParts = defineType({
@@ -248,14 +238,9 @@ const dateFromParts = defineType({
     }),
   outputs: [
     { header: 'מסמך', from: 'doc' },
-    { header: 'תאריך', format: DMY, value: (r) => ({ y: r.year as number, m: r.month as number, d: r.day as number }) },
+    { header: 'תאריך', formula: 'makeDate(year, month, day)', type: 'date', format: DMY, value: (r) => ({ y: r.year as number, m: r.month as number, d: r.day as number }) },
   ],
-  rule: null,
-  missing: {
-    capability: 'makeDate',
-    detail: 'three numbers can be joined into ISO text, but typeCheck rejects text where a date is declared (the runtime itself would coerce it: checked with typeCheck bypassed)',
-    workaround: 'concat(year, "-", padLeft(month, 2, "0"), "-", padLeft(day, 2, "0")) as TEXT',
-  },
+  rule: {},
 });
 
 export const DATES: CatalogueType[] = [addMonthsType, addDaysType, daysBetweenType, endOfMonthType, partsType, fiscalQuarter, ageYears, weekdayName, daysToFixed, parseMonthName, dateFromParts];

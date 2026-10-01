@@ -115,14 +115,9 @@ const properCase = defineType({
     }),
   outputs: [
     { header: 'Customer ID', from: 'cid' },
-    { header: 'Name', value: (r) => String(r.name).split(' ').map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ') },
+    { header: 'Name', formula: 'titleCase(name)', value: (r) => String(r.name).split(' ').map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ') },
   ],
-  rule: null,
-  missing: {
-    capability: 'perWordCase',
-    detail: 'upper/lower change the whole text; capitalizing only the first letter of each word needs a word-level operation',
-    workaround: 'a value map listing every name (closed set); for a fixed number of words, concat(upper(substr(w,1,1)), lower(substr(w,2,99))) per word, with the words cut by split',
-  },
+  rule: {},
 });
 
 const removeChars = defineType({

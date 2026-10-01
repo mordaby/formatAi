@@ -172,7 +172,14 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
   // invalid formulas); this attempt stops here, same as layer 1 below, since there's no
   // point running reference/type/limit checks against a tree that still has raw text
   // sitting where an Expr belongs.
-  const { rules: formulaDecoded, problems: formulaProblems } = formulaRulesFromWire(fromWire(rawJson));
+  // Operations the prompt does not document yet (`inPrompt: false` in the engine's OP_SIGNATURES:
+  // weekday, makeDate, toDate, date, keepChars, titleCase, find) are unknown functions here: the
+  // model was never told about them, so it cannot use them (until the prompt version that ships
+  // them). Completion mode is the one exception: `complete.fixed` is the user's own rules, which may
+  // already use them, and the answer must copy it unchanged.
+  const { rules: formulaDecoded, problems: formulaProblems } = formulaRulesFromWire(fromWire(rawJson), {
+    promptOpsOnly: payload.complete === undefined,
+  });
   if (formulaProblems.length > 0) {
     return { problems: formulaProblems, rules: null };
   }

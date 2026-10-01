@@ -443,6 +443,7 @@ Expressions are an AST that the engine interprets. There is no regex and no code
 - **Text:** `concat`, `substr{start,length}`, `trim`, `upper`, `lower`, `replaceText{find,with}` (literal text only), `padLeft{length,char}`, `split{separator,index}` (1-based; negative counts from the end), `length`
 - **Conversion:** `toNumber` (a value that doesn't parse raises a flag), `toText{format?}` (number or date format)
 - **Dates:** `datePart{year|month|day}`, `dateFormat{format}`, `dateAdd{days|months|years}`, `dateDiff{unit: days|months|years}`, `endOfMonth`
+- **Added after learn-v6** (editor and formula text only; see below): `weekday`, `makeDate`, `toDate{format}`, `dateLiteral{value}` (formula `date("YYYY-MM-DD")`), `keepChars{chars: digits|letters|lettersAndDigits}`, `titleCase`, `find{search}`
 - **Logic:** `if{cond,then,else}`, `switch{cases: [{when, then}], else}`, `coalesce`
 - **Lookup:** `lookup{table, key, return, onMissing: flag|empty|keep}` against a constant table in `transform.tables` (8.14)
 - **Calls:** `call{fn, args}` to a function in `transform.functions` (8.14)
@@ -454,9 +455,18 @@ Expressions are an AST that the engine interprets. There is no regex and no code
 
 If the provider's structured output doesn't support recursive schemas: since learn-v5, this no longer applies to expressions at all - they're formula text (a plain string) on the wire, not a nested schema of any depth. It would still apply to any other genuinely recursive field the rules language might grow later.
 
+**Added after learn-v6** (formula spelling in brackets). They are in the rules language, the formula parser, the type checker, the engine and the editor's Advanced view now; they are NOT in the AI prompt yet (`inPrompt: false` in `OP_SIGNATURES`) and ship with a later prompt version. Until then the API reads an LLM answer with `promptOpsOnly`, so these names are unknown functions there (a reference problem for the repair call); completion mode copies the user's own rules and allows them.
+- `weekday(date)` -> integer, 1 = Sunday ... 7 = Saturday (the Israeli week, Excel's default). Real calendar, so also right before 1900-03-01.
+- `makeDate(year, month, day)` -> date. Whole numbers only; an impossible date (month 13, 31 February, a 2-digit year, before 1900 or after 9999) is empty and flagged ("needs a date here"); an empty part is an empty result without a flag.
+- `toDate(text, "format")` -> date. The `inputFormats` tokens (`D`, `DD`, `M`, `MM`, `YY`, `YYYY`, literal separators) plus the month-name tokens `MMMM` and `MMM`, in Hebrew or English whichever the text uses (either token takes the full or the short name, English ignores case; Hebrew "מרס" and English "Sept" are accepted). A format with a month and a year but no day means the 1st (`"MMMM YYYY"`: "ינואר 2026" / "January 2026"). The whole text must match; no match, an unknown month name or an impossible date is empty and flagged. Hebrew "in <month>" is a literal: `"D בMMMM YYYY"`. `inputFormats` itself is unchanged (numeric tokens only).
+- `date("2026-01-31")` (op `dateLiteral`) -> date. A fixed date, ISO only, checked when the formula is read (a date that does not exist is a parse error). This is how a rule says "days until a fixed date" or "before 2026-06-01"; the engine still has no clock. A text constant never stands in for a date: text where a date is declared stays a type error, and only `makeDate`, `toDate` and `date()` build dates.
+- `keepChars(text, "digits" | "letters" | "lettersAndDigits")` -> text. A closed set of named classes, never a pattern (no regex): digits are Unicode decimal digits, letters are Unicode letters (Hebrew letters count; niqqud, punctuation and spaces do not). Nothing left is empty.
+- `titleCase(text)` -> text. A word starts at the beginning and after any whitespace or hyphen; its first letter becomes upper case and the rest lower case ("jean-luc PICARD" -> "Jean-Luc Picard", "o'neil" -> "O'neil", "3RD" -> "3rd"). Hebrew is unchanged.
+- `find(text, "search")` -> integer. The 1-based position (in characters) of the first occurrence of the literal text, 0 when it is not there; case-sensitive; empty text stays empty; an empty search is not allowed.
+
 **Row filters:** `{ column, op, value? }` for simple cases, or `{ expr }` where expr is any condition. op is one of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `isEmpty`, `notEmpty`, `oneOf` or `notOneOf` (value is an array). Several filters are ANDed.
 
-**Date format tokens:** `D`, `DD`, `M`, `MM`, `MMMM`, `YY`, `YYYY`. `MMMM` is the month name in `output.language`, e.g. ספטמבר or September.
+**Date format tokens:** `D`, `DD`, `M`, `MM`, `MMMM`, `YY`, `YYYY`. `MMMM` is the month name in `output.language`, e.g. ספטמבר or September. `MMM` is the short month name. Added after learn-v6: `ddd` and `dddd` (short and full weekday name in `output.language`: Thu / Thursday, "יום ה'" / "יום חמישי"; Saturday is שבת). In an output column's Excel number format `ddd`/`dddd` stay Excel's own weekday codes (with the Hebrew locale prefix for Hebrew).
 
 ### 8.4 Duplicates
 `transform.dedupe: { keys: [ids] | "all", keep: "first" | "last", action: "remove" | "flag" }`

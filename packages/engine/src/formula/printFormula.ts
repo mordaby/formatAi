@@ -153,6 +153,20 @@ function printCall(e: Exclude<ExprNode, { op: InfixOp }>): string {
       return callN('dateDiff', [printExpr(e.args[0]), printExpr(e.args[1]), printStringLiteral(e.unit)]);
     case 'endOfMonth':
       return call1('endOfMonth', e.arg);
+    case 'weekday':
+      return call1('weekday', e.arg);
+    case 'makeDate':
+      return callN('makeDate', e.args.map(printExpr));
+    case 'toDate':
+      return callN('toDate', [printExpr(e.arg), printStringLiteral(e.format)]);
+    case 'dateLiteral':
+      return callN('date', [printStringLiteral(e.value)]);
+    case 'keepChars':
+      return callN('keepChars', [printExpr(e.arg), printStringLiteral(e.chars)]);
+    case 'titleCase':
+      return call1('titleCase', e.arg);
+    case 'find':
+      return callN('find', [printExpr(e.arg), printStringLiteral(e.search)]);
     case 'if':
       return callN('if', [printExpr(e.cond), printExpr(e.then), printExpr(e.else)]);
     case 'switch': {

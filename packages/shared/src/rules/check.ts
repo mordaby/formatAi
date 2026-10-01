@@ -43,6 +43,7 @@ function exprChildren(e: Expr): Expr[] {
     case 'max':
       return e.args;
     case 'mod':
+    case 'makeDate':
     case 'eq':
     case 'ne':
     case 'gt':
@@ -70,6 +71,11 @@ function exprChildren(e: Expr): Expr[] {
     case 'dateFormat':
     case 'dateAdd':
     case 'endOfMonth':
+    case 'weekday':
+    case 'toDate':
+    case 'keepChars':
+    case 'titleCase':
+    case 'find':
     case 'isEmpty':
     case 'notEmpty':
     case 'not':
@@ -92,6 +98,8 @@ function exprChildren(e: Expr): Expr[] {
       return [e.key];
     case 'call':
       return e.args;
+    case 'dateLiteral':
+      return [];
   }
 }
 

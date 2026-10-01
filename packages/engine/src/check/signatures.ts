@@ -11,7 +11,7 @@
 // their types come from the column/param declaration or the literal's own JS type
 // (see `typeCheck.ts`'s `inferConstType`).
 import type { ValueType } from '@formatai/shared';
-import { VALUE_TYPES } from '@formatai/shared';
+import { KEEP_CHARS_CLASSES, VALUE_TYPES } from '@formatai/shared';
 
 export type SigType = ValueType;
 
@@ -86,6 +86,13 @@ export type SigOp =
   | 'dateAdd'
   | 'dateDiff'
   | 'endOfMonth'
+  | 'weekday'
+  | 'makeDate'
+  | 'toDate'
+  | 'dateLiteral'
+  | 'keepChars'
+  | 'titleCase'
+  | 'find'
   | 'if'
   | 'switch'
   | 'coalesce'
@@ -129,6 +136,8 @@ export type ResultSpec =
  * `round.digits`, `substr.start`/`length`, `padLeft.char`) are plain literals already
  * validated by the zod schema and have no entry here. */
 export type ArgSpec =
+  /** No Expr child at all: the op is written entirely from literal fields (`dateLiteral`). */
+  | { shape: 'none' }
   /** Exactly one Expr child (the `arg` field), of the given type. */
   | { shape: 'unary'; type: SigType | 'any' }
   /** A fixed-length tuple of Expr children (the `args` field), all the same type. */
@@ -202,6 +211,15 @@ export interface OpSignature {
   doc: string;
   /** The formula-text form of this op (see above). */
   formula: FormulaForm;
+  /**
+   * Whether the AI prompt (LEARN_PROMPT.md's "# Operations", `promptOpsSync.test.ts`) documents
+   * this op. Omitted means true. `false` marks an op the formula parser, the editor's Advanced
+   * view and the engine all support, but that the prompt does not mention yet (it ships with a
+   * later prompt version): the sync test then skips it, and the API's LLM-answer check parses
+   * formulas with `promptOpsOnly`, so such a name is an unknown function there. Delete the
+   * flag when the prompt documents the op.
+   */
+  inPrompt?: false;
 }
 
 function call(fn: string, params: FormulaParam[]): FormulaForm {
@@ -281,6 +299,33 @@ export const OP_SIGNATURES: Readonly<Record<SigOp, OpSignature>> = {
   dateAdd: { op: 'dateAdd', args: { shape: 'unary', type: 'date' }, result: dateResult, doc: '(date) -> date', formula: call('dateAdd', [arg, { name: 'amount', kind: 'int' }, { name: 'unit', kind: { enum: ['days', 'months', 'years'] } }]) },
   dateDiff: { op: 'dateDiff', args: { shape: 'fixedSameType', type: 'date', count: 2 }, result: integerResult, doc: '(date, date) -> integer', formula: call('dateDiff', [{ name: 'a', kind: 'expr' }, { name: 'b', kind: 'expr' }, { name: 'unit', kind: { enum: ['days', 'months', 'years'] } }]) },
   endOfMonth: { op: 'endOfMonth', args: { shape: 'unary', type: 'date' }, result: dateResult, doc: '(date) -> date', formula: call('endOfMonth', [arg]) },
+
+  // ---- Added after learn-v6: `inPrompt: false` = not in the AI prompt yet (see OpSignature.inPrompt) ----
+  // DECISION: weekday numbers follow the Israeli week: 1 = Sunday ... 7 = Saturday (also Excel's
+  // default WEEKDAY). Weekday NAMES are the `ddd`/`dddd` tokens of dateFormat/toText.
+  weekday: { op: 'weekday', args: { shape: 'unary', type: 'date' }, result: integerResult, doc: '(date) -> integer (1 = Sunday ... 7 = Saturday)', formula: call('weekday', [arg]), inPrompt: false },
+  // DECISION: the three parts are decimal-typed (integer widens): a numeric column read as decimal
+  // still works; a non-whole number, or a date that does not exist (month 13, 31 February, year
+  // before 1900), gives an empty result and a "not a date" flag. An empty part gives an empty result.
+  makeDate: { op: 'makeDate', args: { shape: 'fixedSameType', type: 'decimal', count: 3 }, result: dateResult, doc: '(year, month, day) -> date (an impossible date flags the row)', formula: call('makeDate', [{ name: 'year', kind: 'expr' }, { name: 'month', kind: 'expr' }, { name: 'day', kind: 'expr' }]), inPrompt: false },
+  // Reads TEXT (a text/idLike column or expression) with the same tokens as `inputFormats` (D, DD, M, MM,
+  // YY, YYYY, literal separators) plus the month names MMMM / MMM in Hebrew or English. No day in the
+  // format (`MMMM YYYY`) means the 1st. A text that does not match flags the row.
+  toDate: { op: 'toDate', args: { shape: 'unary', type: 'text' }, result: dateResult, doc: '(text) -> date (a text that does not match the format flags the row)', formula: call('toDate', [arg, { name: 'format', kind: 'string' }]), inPrompt: false },
+  // DECISION: a date constant is its own op, written `date("2026-01-31")` (ISO only, checked when the
+  // formula is read: a date that does not exist is a parse error) - rather than letting a text constant
+  // stand in for a date, which would loosen the "only integer->decimal and idLike->text widen" rule.
+  dateLiteral: { op: 'dateLiteral', args: { shape: 'none' }, result: dateResult, doc: '() -> date (a fixed date, YYYY-MM-DD)', formula: call('date', [{ name: 'value', kind: 'string' }]), inPrompt: false },
+  // `keepChars` classes (closed set, no patterns): digits = Unicode decimal digits; letters = Unicode
+  // letters (Hebrew letters count; niqqud, punctuation and spaces do not); lettersAndDigits = both.
+  keepChars: { op: 'keepChars', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text (only the characters of the class)', formula: call('keepChars', [arg, { name: 'chars', kind: { enum: KEEP_CHARS_CLASSES } }]), inPrompt: false },
+  // DECISION: a word starts at the beginning of the text and after a space (any whitespace) or a hyphen;
+  // its first letter is upper-cased, the rest lower-cased ("o'neil" -> "O'neil", "jean-luc" -> "Jean-Luc",
+  // "3rd" stays "3rd"). Hebrew has no case and is unchanged.
+  titleCase: { op: 'titleCase', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text (first letter of each word upper case, the rest lower)', formula: call('titleCase', [arg]), inPrompt: false },
+  // DECISION: 1-based, counted in characters (code points, like substr/length); 0 when `search` is not
+  // there; case-sensitive; literal text only. An empty text stays empty (like length).
+  find: { op: 'find', args: { shape: 'unary', type: 'text' }, result: integerResult, doc: '(text|idLike) -> integer (position of the first occurrence of the literal text, 0 when absent)', formula: call('find', [arg, { name: 'search', kind: 'string' }]), inPrompt: false },
 
   // ---- Logic (SPEC 8.3: "conditions -> boolean"; if/switch/coalesce unify branches) ----
   if: { op: 'if', args: { shape: 'if' }, result: unifyResult, doc: '(boolean, T, T) -> T', formula: call('if', [{ name: 'cond', kind: 'expr' }, { name: 'then', kind: 'expr' }, { name: 'else', kind: 'expr' }]) },

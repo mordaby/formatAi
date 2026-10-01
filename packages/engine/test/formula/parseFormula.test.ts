@@ -305,6 +305,13 @@ describe('parseFormula <-> printFormula: round trip for every op', () => {
     dateAdd: 'dateAdd(a, 30, "days")',
     dateDiff: 'dateDiff(a, b, "months")',
     endOfMonth: 'endOfMonth(a)',
+    weekday: 'weekday(a)',
+    makeDate: 'makeDate(a, b, c)',
+    toDate: 'toDate(a, "D MMMM YYYY")',
+    dateLiteral: 'date("2026-01-31")',
+    keepChars: 'keepChars(a, "digits")',
+    titleCase: 'titleCase(a)',
+    find: 'find(a, "-")',
     if: 'if(a = 1, "x", "y")',
     switch: 'switch(a = 1, "x", a = 2, "y", "z")',
     coalesce: 'coalesce(a, b, c)',
@@ -336,6 +343,20 @@ describe('parseFormula <-> printFormula: round trip for every op', () => {
       expect(reparsed).toEqual(parsed);
     });
   }
+
+  it('with promptOpsOnly, every op the prompt documents parses exactly as before and every held-back op becomes a call', () => {
+    for (const op of Object.keys(CASES) as SigOp[]) {
+      const sig = OP_SIGNATURES[op];
+      if (sig.formula.form !== 'call' || op === 'call') continue;
+      const text = CASES[op];
+      const normal = ok(text);
+      const llm = parseFormula(text, { promptOpsOnly: true });
+      expect(llm.ok, text).toBe(true);
+      if (!llm.ok) continue;
+      if (sig.inPrompt === false) expect(llm.expr, text).toMatchObject({ op: 'call' });
+      else expect(llm.expr, text).toEqual(normal);
+    }
+  });
 
   it('every op in OP_SIGNATURES has a round-trip case above', () => {
     const missing = (Object.keys(OP_SIGNATURES) as SigOp[]).filter((op) => !(op in CASES));
@@ -378,3 +399,50 @@ describe('parseFormula <-> printFormula: round trip for every op', () => {
     expect(ok(printFormula(parsed))).toEqual(parsed);
   });
 });
+
+describe('parseFormula: operations added after learn-v6 (inPrompt: false)', () => {
+  const NEW_OPS: [SigOp, string][] = [
+    ['weekday', 'weekday(d)'],
+    ['makeDate', 'makeDate(y, m, d)'],
+    ['toDate', 'toDate(t, "MMMM YYYY")'],
+    ['dateLiteral', 'date("2026-01-31")'],
+    ['keepChars', 'keepChars(t, "digits")'],
+    ['titleCase', 'titleCase(t)'],
+    ['find', 'find(t, "-")'],
+  ];
+
+  it('the editor / default reader parses all of them', () => {
+    for (const [op, text] of NEW_OPS) {
+      const e = ok(text);
+      expect('op' in e && e.op, text).toBe(op);
+    }
+  });
+
+  it('with promptOpsOnly (an LLM answer) they are unknown names: calls to functions that do not exist', () => {
+    for (const [, text] of NEW_OPS) {
+      const r = parseFormula(text, { promptOpsOnly: true });
+      expect(r.ok, text).toBe(true);
+      if (r.ok) expect(r.expr, text).toMatchObject({ op: 'call' });
+    }
+    expect(parseFormula('date("2026-01-31")', { promptOpsOnly: true })).toEqual({
+      ok: true,
+      expr: { op: 'call', fn: 'date', args: [{ const: '2026-01-31' }] },
+    });
+  });
+
+  it('with promptOpsOnly every op the prompt documents still parses as a built-in', () => {
+    expect(parseFormula('round(a, 2)', { promptOpsOnly: true })).toEqual({ ok: true, expr: { op: 'round', arg: { col: 'a' }, digits: 2 } });
+    expect(parseFormula('dateAdd(a, 1, "days")', { promptOpsOnly: true }).ok).toBe(true);
+  });
+
+  it('rejects malformed arguments with a message that says what is needed', () => {
+    expect(err('date("2026-02-30")').message).toContain('YYYY-MM-DD');
+    expect(err('toDate(t, "")').message).toContain('format');
+    expect(err('find(t, "")').message).toContain('search');
+    expect(err('keepChars(t, "symbols")').message).toContain('"digits"');
+    expect(err('makeDate(a, b)').message).toContain('makeDate()');
+    expect(err('weekday()').message).toContain('weekday()');
+    expect(err('titleCase(a, b)').message).toContain('titleCase()');
+  });
+});
+

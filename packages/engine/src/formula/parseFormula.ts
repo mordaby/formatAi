@@ -47,7 +47,7 @@
 // from the input is ever used to index a plain JS object - only `Map`/`Array.includes`
 // lookups - so `__proto__`/`constructor`/`toString` used as a column id, function name
 // or table name behave as ordinary (if unusual) strings, nothing more.
-import { limits, type Expr, type ExprConstValue, type ExprNode } from '@formatai/shared';
+import { isIsoDateLiteral, limits, type Expr, type ExprConstValue, type ExprNode, type KeepCharsClass } from '@formatai/shared';
 import { OP_SIGNATURES, type FormulaParam, type SigOp } from '../check/signatures';
 import { LexError, tokenize, type Token, type TokenType } from './lexer';
 
@@ -61,6 +61,14 @@ export type FormulaParseResult = { ok: true; expr: Expr } | { ok: false; error: 
 export interface FormulaParseContext {
   /** Present exactly when parsing a `transform.functions[].body` (SPEC 8.14). */
   params?: readonly string[];
+  /**
+   * Only the operations the AI prompt documents are built-ins; an op flagged `inPrompt: false` in
+   * `OP_SIGNATURES` (weekday, toDate, find, ...) is then an ordinary unknown name - a `call` to a
+   * function that does not exist, which `checkRules` rejects. Set by the API when it reads an LLM
+   * answer, so the model cannot use an operation its prompt never told it about; the editor and
+   * every other reader leave it off and get the full language.
+   */
+  promptOpsOnly?: boolean;
 }
 
 class FormulaSyntaxError extends Error {
@@ -83,16 +91,19 @@ interface CallFormEntry {
   params: readonly FormulaParam[];
 }
 
-const CALL_FORMS: ReadonlyMap<string, CallFormEntry> = (() => {
+function callForms(promptOnly: boolean): ReadonlyMap<string, CallFormEntry> {
   const m = new Map<string, CallFormEntry>();
   for (const op of Object.keys(OP_SIGNATURES) as SigOp[]) {
     const sig = OP_SIGNATURES[op];
-    if (sig.formula.form === 'call') {
+    if (sig.formula.form === 'call' && !(promptOnly && sig.inPrompt === false)) {
       m.set(sig.formula.fn, { op, fn: sig.formula.fn, params: sig.formula.params });
     }
   }
   return m;
-})();
+}
+
+const CALL_FORMS = callForms(false);
+const PROMPT_CALL_FORMS = callForms(true);
 
 const MAX_PARSE_DEPTH = limits.rules.maxExprDepth + 4;
 
@@ -270,7 +281,7 @@ class Parser {
 
     if (name === 'switch') return assembleSwitch(args, t.offset);
 
-    const form = CALL_FORMS.get(name);
+    const form = (this.ctx.promptOpsOnly ? PROMPT_CALL_FORMS : CALL_FORMS).get(name);
     if (!form) {
       // Not a built-in op: a call to a `transform.functions` entry (SPEC 8.14).
       // Validated against the rules file's actual functions later (checkRules).
@@ -452,6 +463,29 @@ function buildNode(op: SigOp, vals: Record<string, unknown>, callOffset: number)
       return { op: 'dateDiff', args: [vals.a as Expr, vals.b as Expr], unit: vals.unit as 'days' | 'months' | 'years' };
     case 'endOfMonth':
       return { op: 'endOfMonth', arg: vals.arg as Expr };
+    case 'weekday':
+      return { op: 'weekday', arg: vals.arg as Expr };
+    case 'makeDate':
+      return { op: 'makeDate', args: [vals.year as Expr, vals.month as Expr, vals.day as Expr] };
+    case 'toDate': {
+      const format = vals.format as string;
+      if (format === '') fail("toDate()'s \"format\" must not be empty", callOffset);
+      return { op: 'toDate', arg: vals.arg as Expr, format };
+    }
+    case 'dateLiteral': {
+      const value = vals.value as string;
+      if (!isIsoDateLiteral(value)) fail('date() needs a real date written YYYY-MM-DD, e.g. date("2026-01-31")', callOffset);
+      return { op: 'dateLiteral', value };
+    }
+    case 'keepChars':
+      return { op: 'keepChars', arg: vals.arg as Expr, chars: vals.chars as KeepCharsClass };
+    case 'titleCase':
+      return { op: 'titleCase', arg: vals.arg as Expr };
+    case 'find': {
+      const search = vals.search as string;
+      if (search === '') fail("find()'s \"search\" must not be empty", callOffset);
+      return { op: 'find', arg: vals.arg as Expr, search };
+    }
     case 'if':
       return { op: 'if', cond: vals.cond as Expr, then: vals.then as Expr, else: vals.else as Expr };
     case 'coalesce':

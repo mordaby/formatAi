@@ -369,3 +369,34 @@ describe('checkRules: output.summaryRows / group.summaryRows (SPEC 8.12 v4)', ()
     );
   });
 });
+
+describe('checkRules: operations added after learn-v6', () => {
+  const withExpr = (expr: Expr): LearnResult => {
+    const rules = baseRules();
+    rules.transform.computed.push({ id: 'c', type: 'date', expr });
+    return rules;
+  };
+
+  it('looks inside makeDate and the one-argument ops for column references', () => {
+    expect(checkRules(withExpr({ op: 'makeDate', args: [{ col: 'b' }, { const: 1 }, { const: 1 }] }))).toEqual([]);
+    expect(checkRules(withExpr({ op: 'makeDate', args: [{ col: 'b' }, { col: 'nope' }, { const: 1 }] }))).toContainEqual(
+      expect.objectContaining({ kind: 'reference', path: 'transform.computed[0].expr[1]', message: 'unknown column id "nope"' }),
+    );
+    expect(checkRules(withExpr({ op: 'toDate', arg: { col: 'nope' }, format: 'DD/MM/YYYY' }))).toContainEqual(
+      expect.objectContaining({ kind: 'reference', message: 'unknown column id "nope"' }),
+    );
+    expect(checkRules(withExpr({ op: 'find', arg: { col: 'nope' }, search: '-' }))).toHaveLength(1);
+  });
+
+  it('a date literal has no children and counts as a leaf for depth', () => {
+    expect(checkRules(withExpr({ op: 'dateLiteral', value: '2026-01-31' }))).toEqual([]);
+    // depth 8 is the limit: 7 nested ops around a literal is fine, 8 is too deep
+    const around = (n: number): Expr => {
+      let e: Expr = { op: 'dateLiteral', value: '2026-01-31' };
+      for (let i = 0; i < n; i++) e = { op: 'endOfMonth', arg: e };
+      return e;
+    };
+    expect(checkRules(withExpr(around(7)))).toEqual([]);
+    expect(checkRules(withExpr(around(8)))).toContainEqual(expect.objectContaining({ kind: 'depth' }));
+  });
+});

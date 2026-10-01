@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  compileDateParser,
   formatYmd,
   isExcelDateFormat,
   isValidYmd,
   MONTH_NAMES,
   parseDate,
+  parseDateWithFormat,
   serialToYmd,
   suggestDaySwap,
   toExcelDateFormat,
+  WEEKDAY_NAMES,
+  weekdayOfYmd,
   ymdToSerial,
   type Ymd,
 } from '../../src/values/dates';
@@ -213,5 +217,102 @@ describe('isExcelDateFormat', () => {
   it('rejects elapsed-time and plain time formats, even though they contain "m"', () => {
     expect(isExcelDateFormat('[h]:mm:ss')).toBe(false);
     expect(isExcelDateFormat('hh:mm:ss')).toBe(false);
+  });
+});
+
+describe('weekdayOfYmd (1 = Sunday ... 7 = Saturday)', () => {
+  it('numbers the Israeli week from Sunday', () => {
+    expect(weekdayOfYmd({ y: 2026, m: 1, d: 4 })).toBe(1);
+    expect(weekdayOfYmd({ y: 2026, m: 1, d: 1 })).toBe(5);
+    expect(weekdayOfYmd({ y: 2026, m: 1, d: 3 })).toBe(7);
+    expect(weekdayOfYmd({ y: 2000, m: 1, d: 1 })).toBe(7);
+  });
+
+  it('uses the real calendar, also before Excel\'s fake 1900-02-29', () => {
+    expect(weekdayOfYmd({ y: 1900, m: 1, d: 1 })).toBe(2); // a Monday in reality (Excel says Sunday)
+    expect(weekdayOfYmd({ y: 1900, m: 3, d: 1 })).toBe(5);
+  });
+});
+
+describe('formatYmd: ddd / dddd are weekday names', () => {
+  const thursday: Ymd = { y: 2026, m: 1, d: 1 };
+
+  it('formats full and short weekday names in English and Hebrew', () => {
+    expect(formatYmd(thursday, 'dddd', 'en')).toBe('Thursday');
+    expect(formatYmd(thursday, 'ddd', 'en')).toBe('Thu');
+    expect(formatYmd(thursday, 'dddd', 'he')).toBe(WEEKDAY_NAMES.he.full[4]);
+    expect(formatYmd(thursday, 'ddd', 'he')).toBe(WEEKDAY_NAMES.he.short[4]);
+    expect(formatYmd({ y: 2026, m: 1, d: 3 }, 'dddd', 'he')).toBe('שבת');
+  });
+
+  it('is case-insensitive like the other tokens, and dd / d are still the day', () => {
+    expect(formatYmd(thursday, 'DDDD', 'en')).toBe('Thursday');
+    expect(formatYmd(thursday, 'dd', 'en')).toBe('01');
+    expect(formatYmd(thursday, 'd', 'en')).toBe('1');
+    expect(formatYmd(thursday, 'dddd dd/mm/yyyy', 'en')).toBe('Thursday 01/01/2026');
+  });
+
+  it('quoted and escaped letters stay literal', () => {
+    expect(formatYmd(thursday, '"ddd" ddd', 'en')).toBe('ddd Thu');
+  });
+});
+
+describe('toExcelDateFormat / isExcelDateFormat with weekday tokens', () => {
+  it('keeps ddd / dddd and asks for the Hebrew locale like a month name does', () => {
+    expect(toExcelDateFormat('dddd', 'en')).toBe('dddd');
+    expect(toExcelDateFormat('DDD DD/MM', 'en')).toBe('ddd dd/mm');
+    expect(toExcelDateFormat('dddd', 'he')).toBe('[$-40D]dddd');
+    expect(isExcelDateFormat('dddd')).toBe(true);
+  });
+});
+
+describe('parseDateWithFormat: month-name tokens (MMMM / MMM), Hebrew and English', () => {
+  it('reads full and short names in both languages, any case', () => {
+    expect(parseDateWithFormat('5 September 2026', 'D MMMM YYYY')).toEqual({ y: 2026, m: 9, d: 5 });
+    expect(parseDateWithFormat('5 ספטמבר 2026', 'D MMMM YYYY')).toEqual({ y: 2026, m: 9, d: 5 });
+    expect(parseDateWithFormat('5 sep 2026', 'D MMM YYYY')).toEqual({ y: 2026, m: 9, d: 5 });
+    expect(parseDateWithFormat('5 ספט 2026', 'D MMM YYYY')).toEqual({ y: 2026, m: 9, d: 5 });
+    expect(parseDateWithFormat('1 מרס 2026', 'D MMMM YYYY')).toEqual({ y: 2026, m: 3, d: 1 });
+  });
+
+  it('knows all twelve months in both languages (the names the formatter writes)', () => {
+    for (let m = 1; m <= 12; m++) {
+      for (const lang of ['he', 'en'] as const) {
+        const text = formatYmd({ y: 2026, m, d: 15 }, 'D MMMM YYYY', lang);
+        expect(parseDateWithFormat(text, 'D MMMM YYYY'), text).toEqual({ y: 2026, m, d: 15 });
+        const short = formatYmd({ y: 2026, m, d: 15 }, 'D MMM YYYY', lang);
+        expect(parseDateWithFormat(short, 'D MMM YYYY'), short).toEqual({ y: 2026, m, d: 15 });
+      }
+    }
+  });
+
+  it('a format with no day means the 1st; a format with no month or year never matches', () => {
+    expect(parseDateWithFormat('ינואר 2026', 'MMMM YYYY')).toEqual({ y: 2026, m: 1, d: 1 });
+    expect(parseDateWithFormat('January 2026', 'MMMM YYYY')).toEqual({ y: 2026, m: 1, d: 1 });
+    expect(parseDateWithFormat('5 January', 'D MMMM')).toBeNull();
+    expect(parseDateWithFormat('5', 'D')).toBeNull();
+  });
+
+  it('is exact: an unknown name, trailing text or an impossible date is null', () => {
+    expect(parseDateWithFormat('5 Foo 2026', 'D MMMM YYYY')).toBeNull();
+    expect(parseDateWithFormat('5 January 2026 extra', 'D MMMM YYYY')).toBeNull();
+    expect(parseDateWithFormat('31 February 2026', 'D MMMM YYYY')).toBeNull();
+  });
+
+  it('keeps reading the numeric tokens exactly as parseDate does', () => {
+    expect(parseDateWithFormat('31/01/2026', 'DD/MM/YYYY')).toEqual(parseDate('31/01/2026', ['DD/MM/YYYY']));
+    expect(parseDateWithFormat('5.3.26', 'D.M.YY')).toEqual({ y: 2026, m: 3, d: 5 });
+    expect(parseDateWithFormat('2026-01-31', 'D/M/YYYY')).toBeNull();
+  });
+
+  it('compileDateParser is the same reader, compiled once', () => {
+    const read = compileDateParser('D MMMM YYYY');
+    expect(read('5 March 2026')).toEqual({ y: 2026, m: 3, d: 5 });
+    expect(read('6 מרץ 2026')).toEqual({ y: 2026, m: 3, d: 6 });
+    expect(read('nope')).toBeNull();
+  });
+
+  it('parseDate (inputFormats) still does NOT read month names', () => {
+    expect(parseDate('5 September 2026', ['D MMMM YYYY'])).toBeNull();
   });
 });

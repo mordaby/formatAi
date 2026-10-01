@@ -132,7 +132,7 @@ export function assembleWire(type: CatalogueType): FormulaWireResult<LearnResult
         header: c.header,
         type: c.type,
         ...(c.padLeft !== undefined ? { padLeft: c.padLeft } : {}),
-        ...(c.inputFormats !== undefined ? { inputFormats: c.inputFormats } : c.dateAs !== undefined && c.dateAs !== 'excel' ? { inputFormats: [c.dateAs] } : {}),
+        ...(c.inputFormats !== undefined ? { inputFormats: c.inputFormats } : c.type === 'date' && c.dateAs !== undefined && c.dateAs !== 'excel' ? { inputFormats: [c.dateAs] } : {}),
       })),
       ...(spec.input?.rowFilters ? { rowFilters: spec.input.rowFilters } : {}),
     },

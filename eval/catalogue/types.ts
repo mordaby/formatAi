@@ -78,8 +78,9 @@ export interface InCol {
   type: ColumnType;
   padLeft?: number;
   inputFormats?: string[];
-  /** Date columns only. 'excel' (default) = a real Excel date cell; any other string is a token format
-   * ("DD/MM/YYYY", "YYYY-MM-DD") the generated date is written as TEXT in (the reference rule then lists it in `inputFormats`). */
+  /** For a date value. 'excel' (default) = a real Excel date cell; any other string is a token format
+   * ("DD/MM/YYYY", "YYYY-MM-DD", "D MMMM YYYY") the date is written as TEXT in. On a `date` column the reference rule lists it in
+   * `inputFormats`; on a `text` column the rule reads it itself (`toDate(col, format)`). */
   dateAs?: string;
   /** Excel number format of the written cells (numbers), e.g. "#,##0.00". */
   format?: string;
