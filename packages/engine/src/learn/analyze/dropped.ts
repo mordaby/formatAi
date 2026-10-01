@@ -172,6 +172,22 @@ function roundness(x: number): number {
   return z;
 }
 
+/**
+ * The roundest number strictly between `lo` and `hi` - a multiple of the largest power of ten that has one in the gap
+ * (100 in 98.2..103.66) - or null. The data only says the threshold is somewhere in the gap; a round number is the
+ * likeliest place for a person to have put it.
+ */
+function roundestBetween(lo: number, hi: number): number | null {
+  if (!(hi > lo)) return null;
+  const top = Math.ceil(Math.log10(Math.max(Math.abs(lo), Math.abs(hi), 1))) + 1;
+  for (let e = top; e >= -4; e--) {
+    const step = 10 ** e;
+    const c = Number(((Math.floor(lo / step) + 1) * step).toFixed(Math.max(0, -e)));
+    if (c > lo && c < hi) return c;
+  }
+  return null;
+}
+
 function makeFilter(
   c: number,
   universe: number[],
@@ -281,15 +297,19 @@ function filtersOn(col: ColumnData, c: number, universe: number[], isDropped: Ui
   const hi = pts[best.i]!.v; // smallest value over the cut
   let op: 'lt' | 'lte' | 'gt' | 'gte';
   let value: number;
-  // DECISION: the threshold is reported on the "rounder" side of the gap (100
-  // rather than 87.5), and on 0 when the gap straddles it.
+  // DECISION: the threshold is reported on 0 when the gap straddles it; otherwise on the roundest number of the gap
+  // (100 in 98.2..103.66, rather than 103.66 - a value that happens to be in the file), at either edge or strictly inside.
+  const inside = isDate ? null : roundestBetween(lo, hi);
+  const insideRounder = inside !== null && roundness(inside) > Math.max(roundness(lo), roundness(hi));
   if (best.below) {
     if (lo < 0 && hi >= 0) [op, value] = ['lt', 0];
     else if (lo <= 0 && hi > 0) [op, value] = ['lte', 0];
+    else if (insideRounder) [op, value] = ['lt', inside!];
     else if (!isDate && roundness(lo) > roundness(hi)) [op, value] = ['lte', lo];
     else [op, value] = ['lt', hi];
   } else if (lo < 0 && hi >= 0) [op, value] = ['gte', 0];
   else if (lo <= 0 && hi > 0) [op, value] = ['gt', 0];
+  else if (insideRounder) [op, value] = ['gt', inside!];
   else if (!isDate && roundness(hi) > roundness(lo)) [op, value] = ['gte', hi];
   else [op, value] = ['gt', lo];
   const drops = (r: number): boolean => {

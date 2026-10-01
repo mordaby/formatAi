@@ -26,6 +26,7 @@ import {
   norms,
   numericShare,
   payloadCell,
+  significantDigits,
   ymdOfSerial,
   type ColumnData,
 } from './cells';
@@ -231,13 +232,19 @@ function stage1(env: RelationEnv, out: ColumnData): Cand[] {
     cands.push({ body: { rel: 'copy', in: [s] }, rank: RANK.copy, test: (k) => (eqTyped(a, out, k) ? 1 : 0) });
     if (nb !== null && kindShare(a, TEXT) > 0) {
       const na = norms(a);
+      // The texts match case-insensitively (norms), but the rule - trim, collapse, unify quotes, and the one case change
+      // all rows share - writes an exact text: where the output differs from that (a proper case, say) the relation
+      // does not hold, however alike the texts look.
+      const caseChange = normalizeCase(a, out, env.total);
       cands.push({
         body: { rel: 'normalize', in: [s] },
         rank: RANK.normalize,
         test: (k) => {
-          const x = na[k]!;
-          const y = nb[k]!;
-          return x === y ? 1 : 0;
+          if (na[k] !== nb[k]) return 0;
+          if (a.kind[k] !== TEXT || out.kind[k] === EMPTY) return 1;
+          const n = normFast(a.text[k]!);
+          const written = caseChange === 'upper' ? n.toUpperCase() : caseChange === 'lower' ? n.toLowerCase() : n;
+          return out.text[k]!.trim() === written ? 1 : 0;
         },
       });
     }
@@ -356,7 +363,8 @@ function substrCands(env: RelationEnv, out: ColumnData): Cand[] {
   return cands;
 }
 
-const SPLIT_SEPARATORS = [' ', '-', '/', '_', '.', ',', ';', '|'];
+/** The separators a `split` relation tries, in order of preference. */
+export const SPLIT_SEPARATORS = [' ', '-', '/', '_', '.', ',', ';', '|'];
 
 function splitCands(env: RelationEnv, out: ColumnData): Cand[] {
   if (kindShare(out, DATE) > 0.5) return [];
@@ -881,6 +889,29 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
     return n;
   };
 
+  /** The candidate "output = input * constant" or "input + constant" for source column `s`. */
+  const constCand = (a: ColumnData, s: number, rel: 'mulConst' | 'addConst', constText: string): Cand => {
+    const c = Number(constText);
+    const cd = new Decimal(constText);
+    return {
+      body: { rel, in: [s], const: c, constText },
+      rank: RANK[rel],
+      round: kOut,
+      pre: (k) => {
+        const x = fOp(a, k);
+        if (x === undefined) return matchF(ctx, k, NaN);
+        if (Number.isNaN(x)) return false;
+        return matchF(ctx, k, rel === 'mulConst' ? x * c : x + c);
+      },
+      test: (k) => {
+        const x = dOp(a, k);
+        if (x === undefined) return matchD(ctx, k, null);
+        if (x === null) return 0;
+        return matchD(ctx, k, rel === 'mulConst' ? x.times(cd) : x.plus(cd));
+      },
+    };
+  };
+
   for (const s of nums) {
     const a = env.src[s]!;
     // Rows with the largest |input| give the most precise ratio / difference.
@@ -893,6 +924,7 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
       if (top.length > 3) top.pop();
     }
     const mulConsts = new Set<string>();
+    const divConsts = new Set<string>();
     const addConsts = new Set<string>();
     for (const k of top) {
       const x = a.num[k]!;
@@ -904,12 +936,21 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
         if (c !== 0 && Number.isFinite(c)) mulConsts.add(canonNum(c));
       }
       if (Number.isFinite(r) && r !== 0) mulConsts.add(canonNum(r));
+      // The same factor read the other way round: the output is the input DIVIDED by a constant (x / 1.17), which is
+      // an exact, round number where the factor (0.854701...) is not.
+      const q = x / o;
+      for (let dp = 0; dp <= 8; dp++) {
+        const c = Number(q.toFixed(dp));
+        if (c !== 0 && Number.isFinite(c)) divConsts.add(canonNum(c));
+      }
+      if (Number.isFinite(q) && q !== 0) divConsts.add(canonNum(q));
       for (let dp = 0; dp <= kOut + 2; dp++) {
         const c = Number(d.toFixed(dp));
         if (c !== 0 && Number.isFinite(c)) addConsts.add(canonNum(c));
       }
     }
-    for (const [rel, consts] of [['mulConst', mulConsts], ['addConst', addConsts]] as const) {
+    /** The constant (of a set) that fits the most sample rows, the shortest among equals; null when none reaches `need`. */
+    const bestConst = (consts: Set<string>, apply: (x: number, c: number) => number): { text: string; hits: number } | null => {
       let best: { text: string; hits: number } | null = null;
       for (const text of consts) {
         const c = Number(text);
@@ -917,33 +958,46 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
           const x = fOp(a, k);
           if (x === undefined) return matchF(ctx, k, NaN);
           if (Number.isNaN(x)) return false;
-          return matchF(ctx, k, rel === 'mulConst' ? x * c : x + c);
+          return matchF(ctx, k, apply(x, c));
         };
         const hits = sampleHits(pre);
         if (hits >= need && (best === null || hits > best.hits || (hits === best.hits && text.length < best.text.length))) best = { text, hits };
       }
-      if (best === null) continue;
-      const constText = best.text;
-      const c = Number(constText);
-      const cd = new Decimal(constText);
+      return best;
+    };
+    const mulBest = bestConst(mulConsts, (x, c) => x * c);
+    const divBest = bestConst(divConsts, (x, c) => x / c);
+    const addBest = bestConst(addConsts, (x, c) => x + c);
+
+    // A factor and a divisor that both fit are the same rule written two ways (x * 0.854701 and x / 1.17): the one with
+    // the roundest constant (fewest significant digits) is the real one. A tie keeps the factor, and a divisor that
+    // fits fewer rows than the factor is a different rule, not a rounder way to say it.
+    if (divBest !== null && (mulBest === null || (divBest.hits >= mulBest.hits && significantDigits(divBest.text) < significantDigits(mulBest.text)))) {
+      const divisorText = divBest.text;
+      const d = Number(divisorText);
+      const dd = new Decimal(divisorText);
+      const factor = new Decimal(1).div(dd).toSignificantDigits(15);
       cands.push({
-        body: { rel, in: [s], const: c, constText },
-        rank: RANK[rel],
+        body: { rel: 'mulConst', in: [s], const: factor.toNumber(), constText: factor.toString(), divisor: d, divisorText },
+        rank: RANK.mulConst,
         round: kOut,
         pre: (k) => {
           const x = fOp(a, k);
           if (x === undefined) return matchF(ctx, k, NaN);
           if (Number.isNaN(x)) return false;
-          return matchF(ctx, k, rel === 'mulConst' ? x * c : x + c);
+          return matchF(ctx, k, x / d);
         },
         test: (k) => {
           const x = dOp(a, k);
           if (x === undefined) return matchD(ctx, k, null);
           if (x === null) return 0;
-          return matchD(ctx, k, rel === 'mulConst' ? x.times(cd) : x.plus(cd));
+          return matchD(ctx, k, x.div(dd));
         },
       });
+    } else if (mulBest !== null) {
+      cands.push(constCand(a, s, 'mulConst', mulBest.text));
     }
+    if (addBest !== null) cands.push(constCand(a, s, 'addConst', addBest.text));
   }
 
   // Two columns.

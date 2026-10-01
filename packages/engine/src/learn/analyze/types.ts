@@ -306,7 +306,21 @@ export type RelationBody =
   | { rel: 'dateFormat'; in: [number]; from: string; to: string }
   /** The output is the number rendered as text with this Excel-style format. */
   | { rel: 'numberFormat'; in: [number]; format: string }
-  | ({ rel: 'mulConst' | 'addConst'; in: [number]; const: number; /** exact decimal text of const */ constText: string } & Round)
+  | ({
+      rel: 'mulConst' | 'addConst';
+      in: [number];
+      const: number;
+      /** exact decimal text of const */
+      constText: string;
+      /**
+       * mulConst only: the output is the input DIVIDED by this constant (x / 1.17), `const` being its reciprocal (0.854701...).
+       * Set instead of a plain factor when the divisor has fewer significant digits than the factor: the roundest of the
+       * two readings is the real one (an exact rate), and it does not drift on next month's values.
+       */
+      divisor?: number;
+      /** exact decimal text of `divisor` */
+      divisorText?: string;
+    } & Round)
   | ({ rel: 'add' | 'sub' | 'mul' | 'div'; in: [number, number] } & Round)
   | ({ rel: 'sum'; in: number[] } & Round)
   /** Summary shapes: the output value is this aggregate of the group's input rows. */

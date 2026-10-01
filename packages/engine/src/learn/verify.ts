@@ -26,7 +26,7 @@ import type { LearnResult, PayloadCell, ProfileType, Rules, RepairProblem } from
 import { DEFAULT_OUTPUT_FILE } from '@formatai/shared';
 import { runRules } from '../pipeline/runRules';
 import type { InputTable, OutCell, OutRow, OutRowKind, OutputFileSpec, RawCell } from '../types';
-import { isoOfSerial, numericText } from './analyze/cells';
+import { isoOfSerial } from './analyze/cells';
 import type { OutputRowKind, PairAnalysis } from './analyze';
 import type { Masker } from './mask';
 
@@ -122,6 +122,20 @@ function actualCellValue(cell: OutCell | undefined): PayloadCell {
   return cell.v;
 }
 
+/** A cell as the user would see it: its value, and whether it is a real date (not text that reads as one). */
+interface Seen {
+  v: PayloadCell;
+  date: boolean;
+}
+
+function expectedSeen(cell: RawCell | null | undefined, date1904 = false): Seen {
+  return { v: toExpectedCell(cell, date1904), date: cell?.isDate === true && typeof cell.v === 'number' };
+}
+
+function actualSeen(cell: OutCell | undefined): Seen {
+  return { v: actualCellValue(cell), date: cell?.isDate === true && typeof cell.v === 'number' };
+}
+
 /** Numbers compare with a small epsilon (a decimal.js value that round-trips through
  * `Number` for `OutCell.v` can drift in the last bit); everything else compares exactly. */
 function valuesEqual(expected: PayloadCell, actual: PayloadCell): boolean {
@@ -129,33 +143,27 @@ function valuesEqual(expected: PayloadCell, actual: PayloadCell): boolean {
   return expected === actual;
 }
 
-const NUMERIC_PROFILE_TYPES: ReadonlySet<ProfileType> = new Set(['integer', 'decimal', 'currency', 'percent']);
-
-/** A numeric-looking string ("1,234.50", "₪100") parsed to its numeric value, or the
- * value itself when it's already a number. Null when it can't be read as a number. */
-function numericValueOf(v: PayloadCell): number | null {
-  if (typeof v === 'number') return v;
-  if (typeof v !== 'string') return null;
-  const canonical = numericText(v);
-  return canonical === null ? null : Number(canonical);
-}
+/** A number the way a delimited file writes it (no grouping, no symbol): digits with an optional fraction. */
+const PLAIN_NUMBER_TEXT = /^-?\d+(\.\d+)?$/;
 
 /**
- * The typed cell compare (SPEC 9.2 layer 7's "compare typed", mirrored here for the
- * full file): like `valuesEqual`, but for a declared numeric OUTPUT column it also
- * accepts a numeric-text/number mismatch on either side as equal. This matters for
- * csv/txt example outputs specifically - `RawCell.v` is always a string there (SPEC:
- * "CSV cells are always strings"), so a real "12" cell must compare equal to the
- * engine's own `OutCell.v: 12` for a column the rules correctly declare numeric. The
- * fallback is scoped to numeric columns only, never `idLike`/`text`, so it can never
- * paper over a genuine loss of meaningful leading zeros or formatting.
+ * The typed cell compare (SPEC 9.2 layer 7's "compare typed", mirrored here for the full file): what the user
+ * sees, cell by cell. Text compares as exact text, numbers numerically, dates as dates; a number is never equal
+ * to text that merely reads like it ("₪1,234.00" is not 1234, "1,234.00" is not either), and text that reads like
+ * a date is not a date.
+ *
+ * The one exception is a csv/txt example output: its cells are always strings (`RawCell.v`: "CSV cells are always
+ * strings"), so a real "12" cell matches the engine's own number 12, which the delimited writer writes as plain
+ * digits. Only such a plain digit string qualifies - never one with a currency sign, grouping or a percent sign,
+ * which the writer would not reproduce.
  */
-function cellsMatch(expected: PayloadCell, actual: PayloadCell, outputType: ProfileType | undefined): boolean {
-  if (valuesEqual(expected, actual)) return true;
-  if (!outputType || !NUMERIC_PROFILE_TYPES.has(outputType)) return false;
-  const en = numericValueOf(expected);
-  const an = numericValueOf(actual);
-  return en !== null && an !== null && Math.abs(en - an) < 1e-9;
+function cellsMatch(expected: Seen, actual: Seen, delimited: boolean): boolean {
+  if (expected.date !== actual.date && !(delimited && !expected.date)) return false;
+  if (valuesEqual(expected.v, actual.v)) return true;
+  if (delimited && typeof expected.v === 'string' && typeof actual.v === 'number') {
+    return PLAIN_NUMBER_TEXT.test(expected.v) && Math.abs(Number(expected.v) - actual.v) < 1e-9;
+  }
+  return false;
 }
 
 function rowToPayloadCells(row: (RawCell | null)[] | undefined, count: number, date1904 = false): PayloadCell[] {
@@ -243,6 +251,7 @@ interface LayoutIssue {
 const LAYOUT_CODE: Record<LayoutCategory, LayoutProblemCode> = { title: 'titleRow', header: 'headerRow', blank: 'blankRow', summary: 'summaryRow' };
 
 function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]): LayoutIssue[] {
+  const delimited = analysis.layout.file.type !== 'xlsx';
   // SPEC 8.13: a headerless output has no header row in the real file (rowKinds never
   // marks one), but the engine's own OutputSheet model always carries one structurally
   // (buildSheet writes it unconditionally - only the file WRITER skips it for
@@ -277,12 +286,12 @@ function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]
     const expectedRow = analysis.output.sheet.rows[exp.sheetRow] ?? [];
     const width = Math.max(expectedRow.length, act.row.cells.length);
     for (let c = 0; c < width; c++) {
-      const expectedVal = toExpectedCell(expectedRow[c]);
-      const actualVal = actualCellValue(act.row.cells[c]);
-      if (!cellsMatch(expectedVal, actualVal, analysis.output.profile[c]?.type)) {
+      const expectedVal = expectedSeen(expectedRow[c]);
+      const actualVal = actualSeen(act.row.cells[c]);
+      if (!cellsMatch(expectedVal, actualVal, delimited)) {
         issues.push({
           code: LAYOUT_CODE[exp.category],
-          message: `${exp.category} row (row ${exp.sheetRow + 1}), column ${c + 1}: expected ${JSON.stringify(expectedVal)}, the rules produce ${JSON.stringify(actualVal)}`,
+          message: `${exp.category} row (row ${exp.sheetRow + 1}), column ${c + 1}: expected ${JSON.stringify(expectedVal.v)}, the rules produce ${JSON.stringify(actualVal.v)}`,
         });
       }
     }
@@ -349,6 +358,7 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
     return true;
   };
 
+  const delimited = analysis.layout.file.type !== 'xlsx';
   const mismatches: Mismatch[] = [];
   let matched = 0;
   let total = 0;
@@ -393,14 +403,15 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
       const exampleRow = sheetRow + 1;
       if (exceptions.has(exampleRow)) continue;
 
-      const expectedCells = rowToPayloadCells(analysis.output.sheet.rows[sheetRow], analysis.output.columnCount);
+      const expectedRaw = analysis.output.sheet.rows[sheetRow];
+      const expectedCells = rowToPayloadCells(expectedRaw, analysis.output.columnCount);
       total++;
       let rowOk = true;
       for (let c = 0; c < analysis.output.columnCount; c++) {
         if (only !== null && !only.has(c)) continue;
         const expected = expectedCells[c] ?? null;
         const actual = actualCellValue(actualRow?.cells[c]);
-        if (!cellsMatch(expected, actual, analysis.output.profile[c]?.type)) {
+        if (!cellsMatch(expectedSeen(expectedRaw?.[c]), actualSeen(actualRow?.cells[c]), delimited)) {
           rowOk = false;
           const header = rules.output.columns[c]?.header ?? analysis.output.headers[c] ?? `column${c + 1}`;
           mismatches.push({ exampleRow, column: header, expected, actual });

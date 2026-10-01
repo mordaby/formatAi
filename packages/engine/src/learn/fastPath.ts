@@ -33,6 +33,8 @@ import type {
 } from '@formatai/shared';
 import type { OutputFileSpec } from '../types';
 import type { ColumnAnalysis, FilterRelation, PairAnalysis, Relation } from './analyze';
+import { significantDigits } from './analyze/cells';
+import { SPLIT_SEPARATORS } from './analyze/relations';
 import { relationHasHint } from './hints';
 import type { PreflightResult } from './preflight';
 import { maxDistinctValues, templateOperandForm, type OperandForm } from './templateOperands';
@@ -125,6 +127,12 @@ export interface Ctx {
    * templateOperands.ts), so no other column may later change how the engine reads them (zero padding).
    */
   templateCols: Set<number>;
+  /**
+   * Ids of the (input or family) columns an output column reads as they are (`from: id`). A value map changes its
+   * column's cells for every reader that runs after it (SPEC 8.2 step 7), so a map never goes on a column that is
+   * also read plainly, nor on a column another map already covers: it goes on a computed copy (see `mappedColumn`).
+   */
+  plainReads: Set<string>;
 }
 
 export function newCtx(): Ctx {
@@ -137,6 +145,7 @@ export function newCtx(): Ctx {
     usedInputCols: new Set(),
     createdIds: new Map(),
     templateCols: new Set(),
+    plainReads: new Set(),
   };
 }
 
@@ -151,6 +160,7 @@ export function snapshotCtx(ctx: Ctx): Ctx {
     usedInputCols: new Set(ctx.usedInputCols),
     createdIds: new Map(ctx.createdIds),
     templateCols: new Set(ctx.templateCols),
+    plainReads: new Set(ctx.plainReads),
   };
 }
 
@@ -163,6 +173,7 @@ export function restoreCtx(ctx: Ctx, snap: Ctx): void {
   ctx.usedInputCols = snap.usedInputCols;
   ctx.createdIds = snap.createdIds;
   ctx.templateCols = snap.templateCols;
+  ctx.plainReads = snap.plainReads;
 }
 
 export function ensureInputColumn(ctx: Ctx, analysis: PairAnalysis, i: number): string {
@@ -191,6 +202,40 @@ export function ensureInputColumn(ctx: Ctx, analysis: PairAnalysis, i: number): 
 
 function newComputedId(ctx: Ctx, outHeader: string): string {
   return freshId(outHeader, 'value', ctx.usedIds);
+}
+
+/** Declared type of an input column (a family column has none declared here: text). */
+function declaredType(ctx: Ctx, i: number): ColumnType {
+  return ctx.inputColumns.get(i)?.type ?? 'text';
+}
+
+/** A computed column that reads input column `i` as it is: the value as the input says, before any value map runs. */
+function copyColumn(ctx: Ctx, analysis: PairAnalysis, i: number, outHeader: string): string {
+  const id = newComputedId(ctx, outHeader);
+  ctx.computed.push({ id, type: declaredType(ctx, i), expr: { col: ensureInputColumn(ctx, analysis, i) } });
+  return id;
+}
+
+/** The id an output column reads when it shows input column `i` as it is: the column itself, unless a value map already translates it. */
+function plainRead(ctx: Ctx, analysis: PairAnalysis, i: number, outHeader: string): string {
+  const id = ensureInputColumn(ctx, analysis, i);
+  if (ctx.valueMaps.some((vm) => vm.column === id)) return copyColumn(ctx, analysis, i, outHeader);
+  ctx.plainReads.add(id);
+  return id;
+}
+
+/**
+ * The column a value map of input column `i` goes on: the column itself when nothing else reads it and its cells are
+ * text (the learned shape), otherwise a computed copy that only this output reads, so that maps never overwrite each
+ * other or a plain copy. A column with a number or date type gets the copy too: the map would leave text in it, and
+ * the input-side checks on that column (range) run after the maps.
+ */
+function mappedColumn(ctx: Ctx, analysis: PairAnalysis, i: number, outHeader: string): string {
+  const id = ensureInputColumn(ctx, analysis, i);
+  const type = declaredType(ctx, i);
+  const textLike = type === 'text' || type === 'idLike';
+  const shared = ctx.plainReads.has(id) || ctx.valueMaps.some((vm) => vm.column === id);
+  return shared || !textLike ? copyColumn(ctx, analysis, i, outHeader) : id;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,13 +290,91 @@ function valueMapHasRepeat(analysis: PairAnalysis, inCol: number): boolean {
   return false;
 }
 
+/** Whether the example's output cells of column `out` are real numbers or dates (not text): a value map can only write text. */
+function outputHoldsNonText(analysis: PairAnalysis, out: number): boolean {
+  for (const sheetRow of analysis.output.dataRows) {
+    const cell = analysis.output.sheet.rows[sheetRow]?.[out];
+    if (cell && cell.v !== null && (typeof cell.v === 'number' || cell.isDate === true)) return true;
+  }
+  return false;
+}
+
+/** A constant of a calculation that is only right after rounding must be this round (significant digits) to be taken as a rate. */
+const MAX_EXACT_CONST_DIGITS = 4;
+
+type SplitRelation = Extract<Relation, { rel: 'split' }>;
+
+/** The text of each aligned input cell that has a value (numbers as their plain text), with the parts a split makes of it. */
+function splitRows(analysis: PairAnalysis, rel: SplitRelation, separator = rel.separator): { k: number; text: string; parts: string[] }[] {
+  const rows: { k: number; text: string; parts: string[] }[] = [];
+  const K = analysis.alignment.rows.length;
+  for (let k = 0; k < K; k++) {
+    const v = alignedCellValue(analysis, k, rel.in[0]);
+    const text = typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '';
+    if (text.trim() === '') continue;
+    rows.push({ k, text, parts: text.trim().split(separator) });
+  }
+  return rows;
+}
+
+/** The example output's text (number as plain text) of aligned row `k`, column `out`. */
+function alignedOutputText(analysis: PairAnalysis, k: number, out: number): string {
+  const sheetRow = analysis.output.dataRows[analysis.alignment.rows[k]!.out];
+  const v = sheetRow === undefined ? undefined : analysis.output.sheet.rows[sheetRow]?.[out]?.v;
+  return typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '';
+}
+
+/** Whether another separator, cutting some part of every text, writes the whole example output as well. */
+function otherSeparatorFits(analysis: PairAnalysis, rel: SplitRelation): boolean {
+  return SPLIT_SEPARATORS.filter((sep) => sep !== rel.separator).some((sep) => {
+    const rows = splitRows(analysis, rel, sep);
+    if (rows.length === 0) return false;
+    for (const index of [1, -1, 2, -2, 3, -3]) {
+      if (rows.every(({ k, parts }) => (index > 0 ? parts[index - 1] : parts[parts.length + index])?.trim() === alignedOutputText(analysis, k, rel.out))) return true;
+    }
+    return false;
+  });
+}
+
+function splitPartsNeedTrim(analysis: PairAnalysis, rel: SplitRelation): boolean {
+  return splitRows(analysis, rel).some(({ parts }) => {
+    const part = rel.index > 0 ? parts[rel.index - 1] : parts[parts.length + rel.index];
+    return part !== undefined && part !== part.trim();
+  });
+}
+
+/**
+ * Evidence for a `split`: the separator really cuts the text on at least 3 different values (one that never occurs
+ * shows nothing), no other separator writes the same output (a space and a comma give the same last word until a
+ * text has both), and the part is told apart by its position. When every text has the same number of parts, "the
+ * 2nd" and "the last" (or "the 2nd from the end") give the same result on the example and a different one on a text
+ * with more parts, so the example cannot say which was meant - except for the first part, the natural reading.
+ */
+function splitEvidenceIssue(analysis: PairAnalysis, rel: SplitRelation): FastPathFailure | null {
+  const rows = splitRows(analysis, rel).filter(({ parts }) => parts.length >= 2);
+  if (new Set(rows.map((r) => r.text)).size < 3) return fail('thinEvidence', { column: rel.out, relation: rel.rel });
+  const sameCount = rows.every((r) => r.parts.length === rows[0]!.parts.length);
+  if ((sameCount && rel.index !== 1) || otherSeparatorFits(analysis, rel)) return fail('ambiguousColumn', { column: rel.out });
+  return null;
+}
+
 function thinEvidenceIssue(analysis: PairAnalysis, rel: Relation): FastPathFailure | null {
   if (rel.rel === 'mulConst' || rel.rel === 'addConst') {
     if (distinctNonZeroCount(analysis, rel.in[0]) < 3) return fail('thinEvidence', { column: rel.out, relation: rel.rel });
+    // A constant with many significant digits that only fits after rounding the result is an approximation of
+    // something else (a rate, its reciprocal), not a number anybody wrote: it would drift on next month's values.
+    if (rel.round !== undefined && significantDigits(rel.divisorText ?? rel.constText) > MAX_EXACT_CONST_DIGITS) {
+      return fail('thinEvidence', { column: rel.out, relation: rel.rel });
+    }
   }
   if (rel.rel === 'valueMap') {
     if (!valueMapHasRepeat(analysis, rel.in[0])) return fail('thinEvidence', { column: rel.out, relation: rel.rel });
+    // A value map writes text, so it cannot make the numbers (or dates) this column holds; and a number tied to a
+    // key may be a fixed rate - or a figure of the group (a total, a count) that is different next month. The
+    // example cannot tell them apart: the AI step decides (a lookup table gives a typed value).
+    if (outputHoldsNonText(analysis, rel.out)) return fail('thinEvidence', { column: rel.out, relation: rel.rel });
   }
+  if (rel.rel === 'split') return splitEvidenceIssue(analysis, rel);
   // A template whose every input column takes fewer than 3 different values is as likely a value map (or plain
   // fixed text): nothing shows that the columns really vary.
   if (rel.rel === 'template' && maxDistinctValues(analysis, rel.in, 3) < 3) {
@@ -264,6 +387,17 @@ function thinEvidenceIssue(analysis: PairAnalysis, rel: Relation): FastPathFailu
 // One output column's rule, from its chosen relation
 // ---------------------------------------------------------------------------
 
+/**
+ * A number format that may carry one quoted text in front and one behind (`"₪"#,##0.00`, `#,##0.00" ₪"`), split
+ * into the fixed texts and the number format between them. Null when a quote is anywhere else (a text with a quote
+ * in it, a text in the middle): not something the join below could say.
+ */
+function numberFormatParts(format: string): { prefix: string; core: string; suffix: string } | null {
+  const m = /^(?:"([^"]*)")?([^"]*)(?:"([^"]*)")?$/.exec(format);
+  if (m === null || m[2] === '') return null;
+  return { prefix: m[1] ?? '', core: m[2]!, suffix: m[3] ?? '' };
+}
+
 export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, rel: Relation): string | FastPathFailure {
   const input = (i: number): string => ensureInputColumn(ctx, analysis, i);
   const use = (i: number): void => void ctx.usedInputCols.add(i);
@@ -271,7 +405,7 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
   switch (rel.rel) {
     case 'copy': {
       use(rel.in[0]);
-      return input(rel.in[0]);
+      return plainRead(ctx, analysis, rel.in[0], outHeader);
     }
     case 'normalize': {
       use(rel.in[0]);
@@ -292,7 +426,7 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
           return fail('columnNotFullyExplained', { column: outHeader });
         }
         col.padLeft = rel.length;
-        return inputId;
+        return plainRead(ctx, analysis, rel.in[0], outHeader);
       }
       const id = newComputedId(ctx, outHeader);
       ctx.computed.push({ id, type: 'text', expr: { op: 'padLeft', arg: { col: inputId }, length: rel.length, char: rel.char } });
@@ -352,9 +486,9 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
     }
     case 'valueMap': {
       use(rel.in[0]);
-      const inputId = input(rel.in[0]);
-      ctx.valueMaps.push({ column: inputId, map: Object.fromEntries(rel.pairs), onMissing: 'flag' });
-      return inputId;
+      const column = mappedColumn(ctx, analysis, rel.in[0], outHeader);
+      ctx.valueMaps.push({ column, map: Object.fromEntries(rel.pairs), onMissing: 'flag' });
+      return column;
     }
     case 'constant': {
       const v = rel.value;
@@ -375,7 +509,7 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
         // Text/serial date -> real date output cell: a plain copy. The engine
         // parses it via input.columns[].inputFormats and writes it as a real
         // date, rendered with output.columns[].format (set by the caller).
-        return inputId;
+        return plainRead(ctx, analysis, rel.in[0], outHeader);
       }
       const id = newComputedId(ctx, outHeader);
       ctx.computed.push({ id, type: 'text', expr: { op: 'dateFormat', arg: { col: inputId }, format: rel.to } });
@@ -383,14 +517,37 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
     }
     case 'numberFormat': {
       use(rel.in[0]);
+      const parts = numberFormatParts(rel.format);
+      if (parts === null) return fail('columnNotFullyExplained', { column: outHeader });
+      let expr: Expr = { op: 'toText', arg: { col: input(rel.in[0]) }, format: parts.core };
+      if (parts.prefix !== '' || parts.suffix !== '') {
+        // `toText` renders the digits only, never a quoted text of the format ("₪"#,##0.00 would lose the ₪): the
+        // fixed text is joined on. That reads the same only when every row has a number (an empty cell would still
+        // get the symbol), and, for a symbol IN FRONT, only when no number is negative (the analysis writes -₪5.00,
+        // the join ₪-5.00). Anything else is left to the AI step.
+        const profile = analysis.input.profile[rel.in[0]];
+        if (profile === undefined || profile.emptyRate > 0) return fail('columnNotFullyExplained', { column: outHeader });
+        if (parts.prefix !== '' && (profile.range === undefined || typeof profile.range[0] !== 'number' || profile.range[0] < 0)) {
+          return fail('columnNotFullyExplained', { column: outHeader });
+        }
+        const args: Expr[] = [];
+        if (parts.prefix !== '') args.push({ const: parts.prefix });
+        args.push(expr);
+        if (parts.suffix !== '') args.push({ const: parts.suffix });
+        expr = { op: 'concat', args };
+      }
       const id = newComputedId(ctx, outHeader);
-      ctx.computed.push({ id, type: 'text', expr: { op: 'toText', arg: { col: input(rel.in[0]) }, format: rel.format } });
+      ctx.computed.push({ id, type: 'text', expr });
       return id;
     }
     case 'mulConst':
     case 'addConst': {
       use(rel.in[0]);
-      const inner: Expr = { op: rel.rel === 'mulConst' ? 'mul' : 'add', args: [{ col: input(rel.in[0]) }, { const: rel.const }] };
+      // "x / 1.17", not "x * 0.854701": the analysis found the output to be a division by a rounder constant.
+      const inner: Expr =
+        rel.divisor !== undefined
+          ? { op: 'div', args: [{ col: input(rel.in[0]) }, { const: rel.divisor }] }
+          : { op: rel.rel === 'mulConst' ? 'mul' : 'add', args: [{ col: input(rel.in[0]) }, { const: rel.const }] };
       const expr: Expr = rel.round !== undefined ? { op: 'round', digits: rel.round, arg: inner } : inner;
       const id = newComputedId(ctx, outHeader);
       ctx.computed.push({ id, type: 'decimal', expr });
@@ -416,11 +573,18 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
       ctx.computed.push({ id, type: 'decimal', expr });
       return id;
     }
+    case 'split': {
+      // One part of a text cut at a separator: the engine's `split` (1-based; negative counts from the end). The
+      // analysis compares the part trimmed, so a part with spaces around it needs `trim` too.
+      use(rel.in[0]);
+      const part: Expr = { op: 'split', arg: { col: input(rel.in[0]) }, separator: rel.separator, index: rel.index };
+      const id = newComputedId(ctx, outHeader);
+      ctx.computed.push({ id, type: 'text', expr: splitPartsNeedTrim(analysis, rel) ? { op: 'trim', arg: part } : part });
+      return id;
+    }
     // Unreachable in practice: 'aggregate' only appears for summary shapes
-    // (the shape check above already rejects them), and 'split' has no Hint
-    // equivalent, so bestHintableRelation/relationHasHint never choose it.
+    // (the shape check above already rejects them).
     case 'aggregate':
-    case 'split':
       return fail('columnNotFullyExplained', { column: outHeader });
   }
 }
@@ -433,11 +597,28 @@ function toFilterScalar(v: PayloadCell): FilterScalar {
   return v;
 }
 
+/**
+ * A row filter KEEPS the rows its condition holds for (SPEC 8.3, `input.rowFilters`), while the analysis reports the
+ * condition that DROPS rows (`droppedWhen`): the rule is its complement.
+ */
+const KEEP_OP = {
+  isEmpty: 'notEmpty',
+  notEmpty: 'isEmpty',
+  gt: 'lte',
+  gte: 'lt',
+  lt: 'gte',
+  lte: 'gt',
+} as const;
+
 export function buildRowFilter(fr: FilterRelation, column: string, assumptions: Assumption[]): RowFilter {
   if (fr.droppedWhen) {
     const { op, value } = fr.droppedWhen;
-    if (op === 'isEmpty' || op === 'notEmpty') return { column, op };
-    return { column, op, value: value! };
+    // Where exactly between the largest dropped and the smallest kept value the line was drawn is not forced by the
+    // data (LEARN_PROMPT step 4: say so).
+    if (op !== 'isEmpty' && op !== 'notEmpty') assumptions.push({ reasonCode: 'filterGuessed' });
+    const keep = KEEP_OP[op];
+    if (keep === 'isEmpty' || keep === 'notEmpty') return { column, op: keep };
+    return { column, op: keep, value: value! };
   }
   // Value-set filter (LEARN_PROMPT step 4 tie-break): prefer the reading that
   // removes fewer kinds of rows going forward - drop only the specifically
@@ -482,6 +663,12 @@ export function buildDropped(analysis: PairAnalysis, ctx: Ctx): { build: Dropped
       // there is no concrete list of values to write a rule with.
       return fail('droppedRowsUnexplained', { part: 'filterTooManyValues' });
     }
+    // A threshold "drop when above X" is kept as "X or below", and an empty cell is never above or below anything,
+    // so that rule would silently drop the rows whose cell is empty - rows the example kept (a coverage-1.0 threshold
+    // never drops an empty cell: it could not explain that row). What a future empty cell should get is not
+    // something the example shows: left to the AI step.
+    const thresholdOp = best.droppedWhen !== undefined && best.droppedWhen.op !== 'isEmpty' && best.droppedWhen.op !== 'notEmpty';
+    if (thresholdOp && analysis.input.profile[best.in[0]]!.emptyRate > 0) return fail('droppedRowsUnexplained', { part: 'filterKeepsEmpty' });
     const column = ensureInputColumn(ctx, analysis, best.in[0]);
     ctx.usedInputCols.add(best.in[0]);
     build.rowFilters.push(buildRowFilter(best, column, assumptions));
@@ -668,6 +855,11 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
   return { rules, assumptions };
 }
 
+/** A relation can be written as a rule: it has a Hint equivalent (SPEC 6.5), or it is a `split`, which only the formula `split(x, sep, n)` says. */
+function hasRuleForm(rel: Relation): boolean {
+  return rel.rel === 'split' || relationHasHint(rel);
+}
+
 /** Groups a relation into an "ambiguity bucket": relations in the same bucket
  * would produce the same value on any future row, so a tie between them isn't
  * a genuine ambiguity. `copy` and `normalize` (with no case change - see
@@ -686,10 +878,13 @@ function ambiguityBucket(r: Relation): string {
 /**
  * SPEC 6.5 eligibility for one output column, and which relation to build it
  * from: exactly one coverage-1.0 relation (after resolving the copy/normalize
- * non-ambiguity above), with a Hint equivalent (`relationHasHint`, since SPEC
- * 6.5 requires a *hint* at coverage 1.0, and `split` has none - see hints.ts),
- * and enough evidence (task: a mulConst/addConst seen on fewer than 3 distinct
- * non-zero values, or a valueMap whose every key appears only once).
+ * non-ambiguity above), with a rule form (a Hint equivalent, `relationHasHint`:
+ * SPEC 6.5 requires a *hint* at coverage 1.0; `split` has none - see hints.ts -
+ * but is written as the formula `split(x, sep, n)`, see `hasRuleForm`), and
+ * enough evidence (a mulConst/addConst seen on fewer than 3 distinct non-zero
+ * values, or with a long constant that only fits after rounding; a valueMap
+ * whose every key appears only once or that must write numbers; a split that
+ * cuts fewer than 3 different texts, or whose position the example cannot fix).
  *
  * DECISION: when several relations tie (genuine ambiguity, e.g. `mulConst` vs
  * `valueMap` on data with too few distinct values to tell them apart), thin
@@ -710,7 +905,7 @@ export function chooseColumnRelation(analysis: PairAnalysis, ca: ColumnAnalysis)
     return fail('ambiguousColumn', { column: ca.out });
   }
   const rel = c1.find((r) => r.rel === 'copy') ?? c1[0]!;
-  if (!relationHasHint(rel)) return fail('columnNotFullyExplained', { column: ca.out });
+  if (!hasRuleForm(rel)) return fail('columnNotFullyExplained', { column: ca.out });
   const thin = thinEvidenceIssue(analysis, rel);
   if (thin) return thin;
   return rel;
