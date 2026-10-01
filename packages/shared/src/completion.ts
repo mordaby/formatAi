@@ -55,12 +55,41 @@ export function missingParts(rules: LearnResult | Rules, candidates: readonly Ai
 }
 
 /**
+ * The output columns the answer honestly reports as unsupported: no `from` AND an `unsupported` entry for the header (any reason code).
+ * Such a column is left empty on purpose - "needs your input", not an error - so no check compares it with the example. A `from: null`
+ * column with no entry is something else (a reference problem for the API's checks), and a column with a `from` is never one of these.
+ */
+export function columnsReportedUnsupported(rules: LearnResult | Rules): number[] {
+  const headers = new Set(rules.unsupported.map((u) => u.outputColumn));
+  const out: number[] = [];
+  rules.output.columns.forEach((c, i) => {
+    if (c.from === null && headers.has(c.header)) out.push(i);
+  });
+  return out;
+}
+
+/**
+ * The output columns that have a rule (0-based positions): a `from`, and no `unsupported` entry saying the column cannot be produced.
+ * These are the columns a learn is checked on when some column has none (the same rule as the editor's live check): a partial, correct
+ * rules file beats a complete, wrong one (SPEC 4), so what is not produced is never counted as a mismatch.
+ */
+export function columnsWithRule(rules: LearnResult | Rules): number[] {
+  const headers = new Set(rules.unsupported.map((u) => u.outputColumn));
+  const out: number[] = [];
+  rules.output.columns.forEach((c, i) => {
+    if (c.from !== null && !headers.has(c.header)) out.push(i);
+  });
+  return out;
+}
+
+/**
  * DECISION: an answer that produced nothing of what was asked is no completion (and no success for the quota): it is a fixedMismatch for the
  * API's checks (so it is repaired), and the browser keeps the user's rules and reports the learn as failed.
  *
  * What an answer actually produced of what was asked: how many of the listed output columns got a rule, and how many of the listed layout
- * parts the answer has that the fixed rules lacked. An answer that reports every listed column as unsupported and builds no listed part
- * produced nothing - it is no completion, however clean its lock.
+ * parts the answer has that the fixed rules lacked. A listed column the answer reports as unsupported is ANSWERED (the fixed lock accepts
+ * it: it has an `unsupported` entry) but not PRODUCED, so it does not count here. An answer that reports every listed column as
+ * unsupported and builds no listed part produced nothing - it is no completion, however clean its lock.
  */
 export function completionProduced(
   result: LearnResult | Rules,

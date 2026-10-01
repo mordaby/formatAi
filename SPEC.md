@@ -704,7 +704,7 @@ A rules file is accepted only after it passes these layers, in order. Every fail
    - a condition that is true for exactly one sample row;
    - a `switch`, value map or table with one entry per sample row;
    - an expression far larger than needed by any other column.
-7. **Run on the samples** in the API, and diff.
+7. **Run on the samples** in the API, and diff. A column the answer honestly reports as `unsupported` (`from: null` with an `unsupported` entry) is left out of the diff here and in step 8: it is "needs your input", not a mismatch. An answer that produces no column at all is a failure.
 8. **Full verification** in the browser on every row of the real example (5 A step 6). The LLM saw at most 12 rows, so this is the hold-out test: rules that only memorized the samples fail here.
 
 The same layers 1–6 run in the browser on every save from the editor.

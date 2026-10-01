@@ -123,3 +123,46 @@ export function correctRulesWireJson(): unknown {
 export function wrongRoundingWireJson(): unknown {
   return toWire(formulaRulesToWire(wrongRoundingRules()) as unknown as LearnResult);
 }
+
+/** `basicPayload()` plus a third output column no input column explains (the values come from elsewhere): "Warehouse". */
+export function externalColumnPayload(overrides: Partial<LearnPayload> = {}): LearnPayload {
+  const base = basicPayload();
+  return {
+    ...base,
+    output: { ...base.output, columns: [...base.output.columns, { i: 2, header: 'Warehouse', type: 'text' }] },
+    samples: [
+      { in: ['A1', 10], out: ['A1', 20, 'North'] },
+      { in: ['A2', 5], out: ['A2', 10, 'South'] },
+    ],
+    ...overrides,
+  };
+}
+
+/** The honest answer for `externalColumnPayload()`: ID and Total built, Warehouse "from": null plus an unsupported entry (any reason code). */
+export function externalColumnRules(reasonCode: 'externalData' | 'hiddenByMasking' = 'externalData'): LearnResult {
+  const rules = correctRules();
+  return {
+    ...rules,
+    output: { ...rules.output, columns: [...rules.output.columns, { header: 'Warehouse', from: null }] },
+    unsupported: [{ outputColumn: 'Warehouse', reasonCode }],
+  };
+}
+
+export function externalColumnWireJson(reasonCode: 'externalData' | 'hiddenByMasking' = 'externalData'): unknown {
+  return toWire(formulaRulesToWire(externalColumnRules(reasonCode)) as unknown as LearnResult);
+}
+
+/** Every output column reported as unsupported: the rules produce no value at all. */
+export function allUnsupportedRules(): LearnResult {
+  const rules = externalColumnRules();
+  return {
+    ...rules,
+    transform: { ...rules.transform, computed: [] },
+    output: { ...rules.output, columns: rules.output.columns.map((c) => ({ header: c.header, from: null })) },
+    unsupported: rules.output.columns.map((c) => ({ outputColumn: c.header, reasonCode: 'externalData' as const })),
+  };
+}
+
+export function allUnsupportedWireJson(): unknown {
+  return toWire(formulaRulesToWire(allUnsupportedRules()) as unknown as LearnResult);
+}

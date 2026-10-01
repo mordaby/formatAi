@@ -9,6 +9,8 @@ import { formulaRulesToWire } from '../formula';
 import { maskRules, type Masker } from './mask';
 
 export {
+  columnsReportedUnsupported,
+  columnsWithRule,
   completionPlan,
   completionProduced,
   isCompletable,

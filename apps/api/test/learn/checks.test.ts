@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { toWire, type LearnPayload, type LearnResult } from '@formatai/shared';
 import { runChecks } from '../../src/learn/index.js';
-import { basicPayload, correctRules } from './fixtures.js';
+import { allUnsupportedRules, basicPayload, correctRules, externalColumnPayload, externalColumnRules } from './fixtures.js';
 
 describe('runChecks: structure (layer 1)', () => {
   it('reports schema problems and rules:null for an unknown op', () => {
@@ -129,5 +129,48 @@ describe('runChecks: layers 3-4 (types, limits) and layer 7 (run on samples)', (
     const { problems, rules } = runChecks(toWire(correctRules()), basicPayload(), { tier: 'registered' });
     expect(problems).toEqual([]);
     expect(rules).not.toBeNull();
+  });
+});
+
+describe('runChecks: an honest "cannot produce this column" (from: null AND an unsupported entry)', () => {
+  it('is left out of the sample diff: no problem at all, and the rules come back with the entry', () => {
+    const { problems, rules } = runChecks(toWire(externalColumnRules()), externalColumnPayload(), { tier: 'registered' });
+    expect(problems).toEqual([]);
+    expect(rules?.unsupported).toEqual([{ outputColumn: 'Warehouse', reasonCode: 'externalData' }]);
+  });
+
+  it('whatever the reason code is', () => {
+    for (const code of ['externalData', 'hiddenByMasking'] as const) {
+      const { problems } = runChecks(toWire(externalColumnRules(code)), externalColumnPayload(), { tier: 'registered' });
+      expect(problems).toEqual([]);
+    }
+  });
+
+  it('everything else is still compared: a wrong column next to it is still a diff', () => {
+    const rules = externalColumnRules();
+    const wrong: LearnResult = {
+      ...rules,
+      transform: { ...rules.transform, computed: [{ id: 'total', type: 'decimal', expr: { op: 'mul', args: [{ col: 'amount' }, { const: 3 }] } }] },
+    };
+    const { problems } = runChecks(toWire(wrong), externalColumnPayload(), { tier: 'registered' });
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.every((p) => p.kind === 'diff' && p.out === 1)).toBe(true);
+  });
+
+  it('a "from": null column WITHOUT an unsupported entry is still a reference problem (and is not hidden from the diff by it)', () => {
+    const rules = externalColumnRules();
+    const noEntry: LearnResult = { ...rules, unsupported: [] };
+    const { problems } = runChecks(toWire(noEntry), externalColumnPayload(), { tier: 'registered' });
+    expect(problems).toContainEqual({ kind: 'reference', message: 'output column "Warehouse" has "from": null but is not in skipColumns or unsupported' });
+    // (a reference problem is a gate: the samples are not run on top of it)
+    expect(problems.some((p) => p.kind === 'diff')).toBe(false);
+  });
+
+  it('every column unsupported is no verified learn: nothing is produced, so it is a problem (and no sample diff)', () => {
+    const { problems, rules } = runChecks(toWire(allUnsupportedRules()), externalColumnPayload(), { tier: 'registered' });
+    expect(rules).not.toBeNull();
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatchObject({ kind: 'reference' });
+    expect((problems[0] as { message: string }).message).toContain('no value at all');
   });
 });

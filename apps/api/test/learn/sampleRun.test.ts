@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LearnPayload, LearnResult } from '@formatai/shared';
 import { buildSampleInputTable, runOnSamples } from '../../src/learn/index.js';
-import { basicPayload, correctRules, wrongRoundingRules } from './fixtures.js';
+import { basicPayload, correctRules, externalColumnPayload, externalColumnRules, wrongRoundingRules } from './fixtures.js';
 
 describe('runOnSamples', () => {
   it('reports no problems when the rules exactly reproduce every sample', () => {
@@ -226,5 +226,26 @@ describe('buildSampleInputTable', () => {
     };
     const table = buildSampleInputTable(payload);
     expect(table.rows[0]![1]).toEqual({ v: '2024-03-15' });
+  });
+});
+
+describe('runOnSamples: a column reported as unsupported', () => {
+  it('is not compared with the samples (it would differ on every row): from null + an unsupported entry, any reason code', () => {
+    expect(runOnSamples(externalColumnRules(), externalColumnPayload())).toEqual([]);
+    expect(runOnSamples(externalColumnRules('hiddenByMasking'), externalColumnPayload())).toEqual([]);
+  });
+
+  it('does not hide a real difference in another column', () => {
+    const rules = externalColumnRules();
+    const wrong: LearnResult = { ...rules, transform: { ...rules.transform, computed: [{ id: 'total', type: 'decimal', expr: { op: 'mul', args: [{ col: 'amount' }, { const: 1 }] } }] } };
+    const problems = runOnSamples(wrong, externalColumnPayload());
+    expect(problems).toContainEqual({ kind: 'diff', out: 1, sample: 0, expected: 20, actual: 10 });
+    expect(problems.some((p) => p.kind === 'diff' && p.out === 2)).toBe(false);
+  });
+
+  it('is still compared when the answer does NOT report it (a column with no entry is a mismatch like any other)', () => {
+    const noEntry: LearnResult = { ...externalColumnRules(), unsupported: [] };
+    const problems = runOnSamples(noEntry, externalColumnPayload());
+    expect(problems).toContainEqual({ kind: 'diff', out: 2, sample: 0, expected: 'North', actual: null });
   });
 });

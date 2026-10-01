@@ -2,7 +2,7 @@
 // constants masked like the samples), and what is missing from rules (`completionPlan`).
 import type { LearnResult } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
-import { completePayloadOf, completionPlan, completionProduced, fixedLabelTexts, isCompletable, learnResultOf, missingParts } from '../../src/learn/complete';
+import { columnsReportedUnsupported, columnsWithRule, completePayloadOf, completionPlan, completionProduced, fixedLabelTexts, isCompletable, learnResultOf, missingParts } from '../../src/learn/complete';
 import { createMasker, maskRules, unmaskRules } from '../../src/learn/mask';
 import { partialRules } from '../../src/learn/partial';
 import { buildPayload } from '../../src/learn/payload';
@@ -158,6 +158,32 @@ describe('completionPlan: what is missing', () => {
     expect(completionProduced(rules, rules, { columns: [3, 4], parts: ['sort', 'group'] })).toEqual({ columns: 0, parts: 0 });
     // a part the fixed rules already had is not something the answer produced
     expect(completionProduced(answer, answer, { columns: [], parts: ['sort'] })).toEqual({ columns: 0, parts: 0 });
+  });
+
+  it('completionProduced: a listed column answered as unsupported is answered (the lock accepts it) but not produced; nothing produced at all stays nothing', () => {
+    const { rules } = setup();
+    const unsupported: LearnResult = { ...rules, unsupported: [{ outputColumn: 'Label', reasonCode: 'externalData' }, { outputColumn: 'Warehouse', reasonCode: 'externalData' }] };
+    // Both listed columns answered as unsupported: nothing produced, whatever the entries say.
+    expect(completionProduced(unsupported, rules, { columns: [3, 4], parts: [] })).toEqual({ columns: 0, parts: 0 });
+    // One produced, the other answered unsupported: only the produced one counts.
+    const one: LearnResult = {
+      ...unsupported,
+      unsupported: [{ outputColumn: 'Warehouse', reasonCode: 'externalData' }],
+      output: { ...unsupported.output, columns: unsupported.output.columns.map((c, i) => (i === 3 ? { ...c, from: rules.input.columns[0]!.id } : c)) },
+    };
+    expect(completionProduced(one, rules, { columns: [3, 4], parts: [] })).toEqual({ columns: 1, parts: 0 });
+  });
+
+  it('columnsWithRule / columnsReportedUnsupported: what is compared with the example, and what is left empty on purpose', () => {
+    const { rules } = setup();
+    // Label and Warehouse have no rule (from null). Only Warehouse is reported as unsupported.
+    const reported: LearnResult = { ...rules, unsupported: [{ outputColumn: 'Warehouse', reasonCode: 'externalData' }] };
+    expect(columnsWithRule(reported)).toEqual([0, 1, 2]);
+    expect(columnsReportedUnsupported(reported)).toEqual([4]);
+    // A column with a `from` is never "reported unsupported" and is not "with a rule" when an entry says otherwise.
+    const contradiction: LearnResult = { ...rules, unsupported: [{ outputColumn: 'Item', reasonCode: 'externalData' }] };
+    expect(columnsReportedUnsupported(contradiction)).toEqual([]);
+    expect(columnsWithRule(contradiction)).not.toContain(0);
   });
 
   it('isCompletable: rules the API can read back', () => {

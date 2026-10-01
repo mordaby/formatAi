@@ -47,6 +47,16 @@ function expectationFor(meta: CaseMeta, masking: boolean): ExpectClassification 
 }
 
 /**
+ * Everything the answer produced matches the example (a column it reports as unsupported is not compared, SPEC 4/8.10): a plain learn's own
+ * verification (which covers the columns that have a rule, and is never true when none has), or - in completion mode - the fixed lock held
+ * and the answer matched the example as far as the AI step is responsible for it.
+ */
+function producedMatches(result: LearnFromExamplesResult): boolean {
+  if (result.completion) return result.completion.fixedProblems.length === 0 && result.completion.matches;
+  return result.verification?.verified === true;
+}
+
+/**
  * Whether this run's outcome satisfies its case's expectation (SPEC 10's report
  * "expectation met" column).
  *
@@ -54,8 +64,12 @@ function expectationFor(meta: CaseMeta, masking: boolean): ExpectClassification 
  * the column in `unsupported` with that code (`externalData` for a column whose values are not in the input). Pre-flight no longer
  * routes a column code could not explain to `skipColumns`: "code found no relation" is not certainty, so the LLM is asked about
  * it like any other column, and a run that never reached the LLM does not meet this expectation.
+ *
+ * An honest "cannot produce this column" is the expected answer, not a failure: the expectation is met when the report is there AND
+ * everything else the answer produced matches the example (`producedMatches`) - a partial, correct rules file beats a complete, wrong one.
+ * An answer that reports every column as unsupported produced nothing, so it never meets it.
  */
-export function expectationMet(meta: CaseMeta, masking: boolean, _result: LearnFromExamplesResult, classification: Classification): boolean {
+export function expectationMet(meta: CaseMeta, masking: boolean, result: LearnFromExamplesResult, classification: Classification): boolean {
   const expect = expectationFor(meta, masking);
 
   if (expect === 'verified') return classification.kind === 'verified';
@@ -67,7 +81,7 @@ export function expectationMet(meta: CaseMeta, masking: boolean, _result: LearnF
 
   if (expect.startsWith('unsupported:')) {
     const code = expect.slice('unsupported:'.length);
-    return classification.kind === 'unsupported' && classification.codes.includes(code);
+    return classification.kind === 'unsupported' && classification.codes.includes(code) && producedMatches(result);
   }
 
   return false;

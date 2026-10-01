@@ -9,7 +9,7 @@ import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '
 import type { Identity } from '../../src/protection/identity.js';
 import { createMemoryStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
-import { basicPayload, correctRulesWireJson } from './fixtures.js';
+import { allUnsupportedWireJson, basicPayload, correctRulesWireJson, externalColumnPayload, externalColumnWireJson } from './fixtures.js';
 
 let app: FastifyInstance | undefined;
 
@@ -108,6 +108,34 @@ describe('POST /api/learn', () => {
       rowCount: 0,
       layout: 0,
     });
+  });
+});
+
+describe('POST /api/learn: an honest "cannot produce this column"', () => {
+  const learnOnce = async (payload: unknown, fake: FakeLlmProvider) => {
+    app = await buildServer({ env: devEnv(), db: null, logger: false, store: createMemoryStore(), identify: asUser, complete: (req: CompleteRequest) => fake.complete(req) });
+    return app.inject({ method: 'POST', url: '/api/learn', payload: JSON.stringify({ payload }), headers: { 'content-type': 'application/json' } });
+  };
+
+  it('is a success: one call, verified, and the learn counts against the quota (not a failed attempt)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: externalColumnWireJson() });
+    const res = await learnOnce(externalColumnPayload(), fake);
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(fake.calls).toHaveLength(1);
+    expect(body).toMatchObject({ verified: true, problems: [], counted: true, failedAttempts: 0 });
+    expect(body.rules.unsupported).toEqual([{ outputColumn: 'Warehouse', reasonCode: 'externalData' }]);
+  });
+
+  it('every column unsupported is a failed attempt: not verified, not counted, one failure recorded', async () => {
+    const fake = createFakeProvider();
+    for (let i = 0; i < 3; i++) fake.enqueue({ json: allUnsupportedWireJson() });
+    const res = await learnOnce(externalColumnPayload(), fake);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ verified: false, counted: false, failedAttempts: 1 });
   });
 });
 

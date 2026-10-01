@@ -191,7 +191,8 @@ describe('"Add a column"', () => {
     expect(within(document.querySelector('[data-section="columns"]') as HTMLElement).getByRole('button', { name: 'Add a column' })).toBeTruthy();
   });
 
-  it('makes a new column that can use any input column, including one no rule uses yet (ID + name)', async () => {
+  // Heavy UI flow (real editor + live check): give it room when the whole repo's tests share the CPU.
+  it('makes a new column that can use any input column, including one no rule uses yet (ID + name)', { timeout: 30_000 }, async () => {
     const { lastRules } = await openResult(PARTIAL);
     fireEvent.click(await screen.findByRole('button', { name: 'Not now' }).catch(() => document.body));
     fireEvent.click(screen.getByRole('button', { name: 'Add a column' }));

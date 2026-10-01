@@ -3,7 +3,7 @@
 // browser's job, SPEC 5 A step 6, the hold-out test since the LLM only saw up to 12
 // rows), run the candidate rules through the deterministic engine, and diff the result
 // against what the payload says each sample should produce.
-import { formatYmd, runRules, serialToYmd, ymdToSerial } from '@formatai/engine';
+import { columnsReportedUnsupported, formatYmd, runRules, serialToYmd, ymdToSerial } from '@formatai/engine';
 import type { InputTable, OutCell, OutRow } from '@formatai/engine';
 import type {
   LearnPayload,
@@ -169,19 +169,22 @@ function compareRow(
 }
 
 /**
- * Completion mode only: the output columns that are not compared with the samples. The AI step is answerable for the columns it was asked
- * to produce (`complete.columns`) and nothing else: the other columns are the user's own rules (checked against the whole example in the
- * browser, and kept by the fixed lock - they may depart from the example on purpose), and a listed column the answer reports as
- * unsupported is left empty on purpose (that the answer produced anything at all is the fixed lock's business). A plain learn compares every
- * column, as it always did.
+ * The output columns that are not compared with the samples.
  *
- * DECISION: this narrowing is completion-only. `skipColumns` now holds only columns the user explicitly marks to skip (a column code could
- * not explain goes to the AI step like any other: the answer may report it as unsupported `externalData`), and a plain learn still compares
- * every column - including one the answer reports as unsupported; changing that is a separate change.
+ * Plain learn: a column the answer honestly reports as unsupported (`from: null` AND an `unsupported` entry, any reason code - typically
+ * `externalData`: its values are not in the input) is left empty on purpose, so it is never a diff: SPEC 4/8.10, a partial, correct rules
+ * file beats a complete, wrong one, and "needs your input" is not an error. Every other column is compared, as it always was - a `from: null`
+ * column WITHOUT an entry never gets here (layer 2 rejects it), and a column with a `from` is compared even if the answer also lists it.
+ * (That the answer produced SOMETHING is `runChecks`' business, not a comparison.)
+ *
+ * Completion mode: the AI step is answerable for the columns it was asked to produce (`complete.columns`) and nothing else: the other
+ * columns are the user's own rules (checked against the whole example in the browser, and kept by the fixed lock - they may depart from
+ * the example on purpose), and a listed column the answer reports as unsupported is left empty on purpose (that the answer produced anything
+ * at all is the fixed lock's business).
  */
 function columnsNotCompared(rules: LearnResult | Rules, payload: LearnPayload): ReadonlySet<number> {
+  if (!payload.complete) return new Set(columnsReportedUnsupported(rules));
   const ignore = new Set<number>();
-  if (!payload.complete) return ignore;
   const produced = new Set(payload.complete.columns.filter((i) => rules.output.columns[i]?.from != null));
   for (let i = 0; i < payload.output.columns.length; i++) if (!produced.has(i)) ignore.add(i);
   return ignore;

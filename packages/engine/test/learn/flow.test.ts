@@ -326,14 +326,14 @@ describe('learnFromExamples: browser-triggered repair (SPEC 5 A step 6 / 9.3)', 
         direction: 'ltr',
         language: 'en',
         titleRows: [],
-        // "Name" wrongly set to null: unsupported.
+        // "Name" wrongly copied from the ID (a column that has a rule is compared with the example; one reported as unsupported is not - see flow.unsupported.test.ts).
         columns: [
-          { header: 'Name', from: null },
+          { header: 'Name', from: 'id' },
           { header: 'ID', from: 'id' },
         ],
       },
       validations: [],
-      unsupported: [{ outputColumn: 'Name', reasonCode: 'other' }],
+      unsupported: [],
       assumptions: [],
     };
     const fixed: LearnResult = { ...wrong, output: { ...wrong.output, columns: [{ header: 'Name', from: 'name' }, { header: 'ID', from: 'id' }] }, unsupported: [] };

@@ -4,9 +4,13 @@ import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
 import {
+  allUnsupportedWireJson,
   basicPayload,
   correctRules,
   correctRulesWireJson,
+  externalColumnPayload,
+  externalColumnRules,
+  externalColumnWireJson,
   schemaBrokenRulesJson,
   wrongRoundingWireJson,
 } from './fixtures.js';
@@ -152,6 +156,35 @@ describe('learn()', () => {
     expect(repairCall!.content[1]!.cache).toBeUndefined();
     expect(repairCall!.content[1]!.text).toContain('"mode":"repair"');
     expect(repairCall!.content[1]!.text.endsWith(REPAIR_INSTRUCTION)).toBe(true);
+  });
+});
+
+describe('learn(): an honest "cannot produce this column"', () => {
+  it('verifies on the first call: the column reported as unsupported is not compared, so there is nothing to repair or escalate (exactly 1 call)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: externalColumnWireJson() });
+
+    const outcome = await learn(externalColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(fake.calls).toHaveLength(1);
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn']);
+    expect(outcome.calls[0]).toMatchObject({ outcome: 'verified' });
+    expect(outcome.verified).toBe(true);
+    expect(outcome.problems).toEqual([]);
+    expect(outcome.rules).toEqual(externalColumnRules());
+  });
+
+  it('every column unsupported is no verified learn: it is repaired once and escalated like any failing attempt, and ends not verified', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: allUnsupportedWireJson() }); // learn
+    fake.enqueue({ json: allUnsupportedWireJson() }); // repair
+    fake.enqueue({ json: allUnsupportedWireJson() }); // escalation
+
+    const outcome = await learn(externalColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn', 'repair', 'escalation']);
+    expect(outcome.verified).toBe(false);
+    expect(outcome.problems.every((p) => p.kind === 'reference')).toBe(true);
   });
 });
 

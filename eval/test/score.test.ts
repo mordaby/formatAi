@@ -43,12 +43,13 @@ function verifiedResult(): LearnFromExamplesResult {
   };
 }
 
+/** The AI step reported `codes` as unsupported, and everything it produced matches the example (the learn is checked on the columns that have a rule). */
 function unsupportedResult(codes: string[]): LearnFromExamplesResult {
   return {
     path: 'llm',
     preflight: { status: 'ok', issues: [], skipColumns: [] },
     rules: { output: {} } as never,
-    verification: { verified: false, matched: 4, total: 5, mismatches: [], layoutProblems: [],
+    verification: { verified: true, matched: 5, total: 5, mismatches: [], layoutProblems: [],
     layoutIssues: [], repairProblems: [] },
     assumptions: [],
     unsupported: codes.map((reasonCode) => ({ outputColumn: 'x', reasonCode: reasonCode as never })),
@@ -78,11 +79,42 @@ function reportedExternalResult(): LearnFromExamplesResult {
     path: 'llm',
     preflight: { status: 'ok', issues: [{ code: 'unknownOutputColumns' as never, severity: 'info' }], skipColumns: [] },
     rules: { output: {} } as never,
-    verification: { verified: false, matched: 0, total: 5, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] },
+    verification: { verified: true, matched: 5, total: 5, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] },
     assumptions: [],
     unsupported: [{ outputColumn: 'Assigned Warehouse', reasonCode: 'externalData' }],
     calls: [],
+    stages: stages({ llmCalled: true, verifiedFirstCall: true, verifiedAfterRepair: true }),
+  };
+}
+
+/** Reported as unsupported, but a column it DID produce does not match the example: the rest does not verify. */
+function reportedExternalButWrongResult(): LearnFromExamplesResult {
+  return {
+    ...reportedExternalResult(),
+    verification: { verified: false, matched: 3, total: 5, mismatches: [{ exampleRow: 2, column: 'Qty', expected: 1, actual: 2 }], layoutProblems: [], layoutIssues: [], repairProblems: [] },
     stages: stages({ llmCalled: true }),
+  };
+}
+
+/** Every column reported as unsupported: nothing was produced, so nothing was checked (0 of 0, never verified). */
+function allUnsupportedResult(): LearnFromExamplesResult {
+  return {
+    ...reportedExternalResult(),
+    verification: { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] },
+    unsupported: [
+      { outputColumn: 'Assigned Warehouse', reasonCode: 'externalData' },
+      { outputColumn: 'Qty', reasonCode: 'externalData' },
+    ],
+  };
+}
+
+/** Completion mode: the AI step answered the listed column as unsupported externalData; the lock held and the rest matches. */
+function completionExternalResult(over: Partial<NonNullable<LearnFromExamplesResult['completion']>> = {}): LearnFromExamplesResult {
+  return {
+    ...reportedExternalResult(),
+    // (the full verification still differs on the column that has no rule: the completion verdict is what counts)
+    verification: { verified: false, matched: 0, total: 5, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] },
+    completion: { columns: [2], parts: [], fixedProblems: [], matches: true, produced: { columns: 0, parts: 0 }, ...over },
   };
 }
 
@@ -120,7 +152,7 @@ describe('classify', () => {
   it('classifies a verified result', () => {
     expect(classify(verifiedResult())).toEqual({ kind: 'verified' });
   });
-  it('classifies an unsupported column', () => {
+  it('classifies an unsupported column (the learn verified on what it produced)', () => {
     expect(classify(unsupportedResult(['externalData']))).toEqual({ kind: 'unsupported', codes: ['externalData'] });
   });
   it('classifies rules that never verified and declared nothing unsupported', () => {
@@ -181,6 +213,25 @@ describe('expectationMet: "unsupported:<code>"', () => {
     const r = reportedExternalResult();
     expect(r.preflight.skipColumns).toEqual([]);
     expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(true);
+  });
+  it('is NOT met when a column the AI step did produce does not match the example, however it reported the external one', () => {
+    const r = reportedExternalButWrongResult();
+    expect(classify(r)).toEqual({ kind: 'unsupported', codes: ['externalData'] });
+    expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(false);
+  });
+  it('is NOT met when EVERY column is reported unsupported: no value was produced', () => {
+    const r = allUnsupportedResult();
+    expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(false);
+  });
+  it('completion mode: met when the column is answered unsupported externalData, the lock held and the rest matches', () => {
+    const r = completionExternalResult();
+    expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(true);
+  });
+  it('completion mode: not met when the lock was broken, or the rest does not match', () => {
+    for (const over of [{ fixedProblems: [{ path: 'output.columns[0].from', message: 'changed' }] }, { matches: false }]) {
+      const r = completionExternalResult(over as never);
+      expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(false);
+    }
   });
   it('is NOT met by a skipColumns list alone: only the AI step\'s own report counts', () => {
     const r = skipColumnResult();

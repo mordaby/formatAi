@@ -251,12 +251,23 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
     }
   }
 
+  // ----- Layer 5c: something has to be produced (plain learn only; completion mode has its own, 5b above) -----
+  // A column honestly reported as unsupported is no problem (layer 7 leaves it out of the comparison), but a file in which EVERY column is
+  // is no learn: no value is produced at all. It is not "verified", however clean the rest.
+  if (!payload.complete && rules.output.columns.length > 0 && rules.output.columns.every((c) => c.from === null)) {
+    problems.push({
+      kind: 'reference',
+      message: 'every output column has "from": null (reported as unsupported), so the rules produce no value at all: give a "from" to every column that can be produced from the input, and report only what really cannot be produced as unsupported',
+    });
+  }
+
   // ----- Layer 6: overfitting lint (never a rejection) -----
   const lintAssumptions = overfitLint(rules, payload);
   const rulesWithLint: LearnResult =
     lintAssumptions.length > 0 ? { ...rules, assumptions: [...rules.assumptions, ...lintAssumptions] } : rules;
 
   // ----- Layer 7: run on the samples (only once every gate above is clean) -----
+  // (A column reported as unsupported - `from: null` plus an entry - is left out of the diff: nothing to compare, nothing to repair.)
   if (problems.length === 0) {
     problems.push(...runOnSamples(rulesWithLint, payload));
   }

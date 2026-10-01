@@ -15,7 +15,7 @@ import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
 import { analyzePair } from './analyze';
 import { checkFixedLock, type FixedProblem } from '../registry/checkFixedLock';
-import { completionProduced, isCompletable, type CompleteOptions } from './complete';
+import { columnsWithRule, completionProduced, isCompletable, type CompleteOptions } from './complete';
 import { fastPath } from './fastPath';
 import { createMasker, unmaskRules, type Masker } from './mask';
 import { partialRules, type PartialRulesResult } from './partial';
@@ -157,7 +157,8 @@ export interface LearnFromExamplesResult<Call = unknown> {
    * never returned anything usable even after repair. */
   rules: LearnResult | null;
   /** Full-file verification (SPEC 5 A step 6) of `rules` - or null when blocked or
-   * `rules` is null (nothing to verify). */
+   * `rules` is null (nothing to verify). On the LLM path (plain learn) a column the answer reports as unsupported is not compared: the
+   * verification covers the columns that have a rule, and `verified` means everything produced matches (never true when nothing was). */
   verification: VerifyResult | null;
   assumptions: LearnResult['assumptions'];
   unsupported: LearnResult['unsupported'];
@@ -327,7 +328,19 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   let rules: LearnResult = masker ? unmaskRules(maskedRules, masker) : maskedRules;
 
   // ---- SPEC 5 A step 6 / 9.2 layer 8: full verification on the real, unmasked data ----
-  let verification = verifyAgainstExample(rules, analysis, masker ? { masker } : {});
+  // DECISION (SPEC 4/8.10: a partial, correct rules file beats a complete, wrong one; an unsupported column is "needs your input", not an
+  // error): a plain learn is checked on the columns that have a rule - one the AI step honestly reported as unsupported (`from: null` plus
+  // an entry, typically `externalData`) would differ on every row and is left out, so the learn is `verified` when everything produced matches.
+  // Nothing produced at all checks nothing (`onlyColumns: []`: never verified). The same rule as the editor's live check. When every column has
+  // a rule this is the full verification (layout rows included). Completion mode keeps the full verification: its own `matchesExample` below
+  // already leaves out a column that has no rule.
+  const verifyAnswer = (r: LearnResult): VerifyResult => {
+    const base = masker ? { masker } : {};
+    if (opts.complete) return verifyAgainstExample(r, analysis, base);
+    const withRule = columnsWithRule(r);
+    return verifyAgainstExample(r, analysis, withRule.length < r.output.columns.length ? { ...base, onlyColumns: withRule } : base);
+  };
+  let verification = verifyAnswer(rules);
   // Completion mode: the answer must also still contain the user's rules, unchanged (the API checked this on the masked
   // copies; this is the same check on the real ones, before anything replaces what the user has).
   const fixedLock = (r: LearnResult): FixedProblem[] => (opts.complete ? checkFixedLock(r, opts.complete.fixedRules, { columns: opts.complete.columns, parts: opts.complete.parts }) : []);
@@ -355,15 +368,17 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   stages.verifiedFirstCall = passes(verification, rules, fixedProblems);
 
   // ---- SPEC 5 A step 6 / 9.3: at most one browser-triggered repair ----
-  if (!passes(verification, rules, fixedProblems) && opts.callRepair) {
+  // (Nothing to say to the AI step when there is no problem to name: an answer that produced no column at all is no verified learn, but
+  // there is nothing in the example it differs from - the API's own checks already asked for more.)
+  const problems: RepairProblem[] = [...fixedProblems.slice(0, MAX_FIXED_PROBLEMS), ...verification.repairProblems];
+  if (!passes(verification, rules, fixedProblems) && opts.callRepair && problems.length > 0) {
     stages.browserRepairUsed = true;
-    const problems: RepairProblem[] = [...fixedProblems.slice(0, MAX_FIXED_PROBLEMS), ...verification.repairProblems];
     const repaired = await opts.callRepair(payload, maskedRules, problems);
     calls.push(...repaired.calls);
     if (repaired.rules) {
       maskedRules = repaired.rules;
       rules = masker ? unmaskRules(maskedRules, masker) : maskedRules;
-      verification = verifyAgainstExample(rules, analysis, masker ? { masker } : {});
+      verification = verifyAnswer(rules);
       fixedProblems = fixedLock(rules);
     }
   }
