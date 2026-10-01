@@ -38,3 +38,6 @@ Thumbs.db
 
 # Excel lock files
 ~$*
+
+# owner sample files for local diagnosis (never committed)
+local-samples/
