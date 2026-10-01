@@ -39,8 +39,8 @@ describe('partialRules: a plain pair with a column that needs the AI step and an
   it('builds the explained columns and lists the others by kind', () => {
     expect(p.solved).toEqual(['Item', 'Ref', 'Total']);
     expect(p.solvedColumns).toEqual([0, 1, 2]);
-    expect(p.needsAi).toEqual(['Label']);
-    expect(p.external).toEqual(['Warehouse']);
+    expect(p.needsAi).toEqual(['Label', 'Warehouse']); // the unexplained column needs the AI step too
+    expect(p.external).toEqual(['Warehouse']); // ... and is marked: its values may come from another source
     expect(p.needsAiParts).toEqual([]);
     expect(p.rules.output.columns.map((c) => [c.header, c.from === null])).toEqual([
       ['Item', false],
@@ -51,8 +51,8 @@ describe('partialRules: a plain pair with a column that needs the AI step and an
     ]);
   });
 
-  it('marks external columns as unsupported (externalData); the column that needs the AI step is not', () => {
-    expect(p.rules.unsupported).toEqual([{ outputColumn: 'Warehouse', reasonCode: 'externalData' }]);
+  it('never marks a column unsupported: only the AI step may say a column cannot be produced', () => {
+    expect(p.rules.unsupported).toEqual([]);
   });
 
   it('gives rules that check, type-check and run: solved columns reproduce the example, the others stay empty', () => {
@@ -101,9 +101,9 @@ describe('partialRules: only an external column is left', () => {
   const { a, pf } = analyzeWithPreflight(externalOnlyPair());
   const p = partialOf(a, pf);
 
-  it('has nothing for the AI step: no columns, no parts', () => {
+  it('it is still the AI step\'s to try: needsAi lists it (and external marks it), no layout part', () => {
     expect(p.solved).toEqual(['Item', 'Ref', 'Total']);
-    expect(p.needsAi).toEqual([]);
+    expect(p.needsAi).toEqual(['Warehouse']);
     expect(p.external).toEqual(['Warehouse']);
     expect(p.needsAiParts).toEqual([]);
     expect(verifyPartial(a, p)).toMatchObject({ verified: true, matched: 20, total: 20 });
@@ -272,14 +272,14 @@ describe('partialRules on the eval cases that need the AI step', () => {
     expect(verifyPartial(a, p)).toMatchObject({ verified: true, matched: 29, total: 29 });
   });
 
-  it('fulfillment-external-column: one external column, nothing left for the AI step', async () => {
+  it('fulfillment-external-column: one column with no trace in the input - it needs the AI step (marked external), nothing else does', async () => {
     const { a, pf } = await loadCase('fulfillment-external-column');
     const p = partialOf(a, pf);
     expect(p.external).toEqual(['Assigned Warehouse']);
-    expect(p.needsAi).toEqual([]);
+    expect(p.needsAi).toEqual(['Assigned Warehouse']);
     expect(p.needsAiParts).toEqual([]);
     expect(p.solved).toEqual(['PO No', 'Supplier', 'Item', 'Qty', 'Requested Date']);
-    expect(p.rules.unsupported).toEqual([{ outputColumn: 'Assigned Warehouse', reasonCode: 'externalData' }]);
+    expect(p.rules.unsupported).toEqual([]);
     expect(verifyPartial(a, p)).toMatchObject({ verified: true, matched: 20, total: 20 });
   });
 

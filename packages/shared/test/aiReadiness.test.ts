@@ -7,7 +7,6 @@ const HEBREW = /[א-ת]/;
 
 /** The params each code carries (see the comment on `aiReadinessMessages`); a message may use only these. */
 const PARAMS: Record<(typeof AI_READINESS_ISSUE_CODES)[number], string[]> = {
-  onlyExternalColumns: ['count', 'columns'],
   noRowsMatched: [],
   inputColumnsTooMany: ['count', 'limit'],
   outputColumnsTooMany: ['count', 'limit'],

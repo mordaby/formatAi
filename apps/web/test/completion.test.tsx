@@ -2,7 +2,7 @@
 // the rules on screen (code-solved columns and the user's edits) are the fixed part, and an answer replaces them only when it passed the
 // fixed lock and the verification. "Re-run all with AI" is the whole learn again, behind "This replaces your current rules". And the
 // regression tests of the owner's bug: a signed-in user's partial result shows "Finish with the AI step" however they got there.
-import type { LearnResult, Rules } from '@formatai/shared';
+import type { LearnPayload, LearnResult, Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
@@ -28,10 +28,11 @@ afterEach(() => {
   setPendingStore(undefined);
 });
 
-/** The orders report as the local analysis leaves it: Total and Shipped have no rule (they need the AI step), Remarks is external data. */
+/** The orders report as the local analysis leaves it: Total and Shipped have no rule (they need the AI step), and neither has Remarks (no trace of it in the input: it needs the AI step too). */
 function partialRules(): Rules {
   const rules = ordersRules();
   rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' || c.header === 'Shipped' ? { header: c.header, from: null } : c));
+  rules.unsupported = []; // only the AI step reports a column as unsupported
   rules.output.summaryRows = [];
   rules.transform.computed = [];
   rules.validations = [];
@@ -42,7 +43,7 @@ function partialRules(): Rules {
 const PARTIAL = {
   reason: 'aiNotAllowed' as const,
   solved: ['Item', 'Supplier', 'Qty'],
-  needsAi: ['Total', 'Shipped'],
+  needsAi: ['Total', 'Shipped', 'Remarks'],
   external: ['Remarks'],
   solvedColumns: [0, 1, 2],
   needsAiParts: ['sort' as const, 'summaryRows' as const],
@@ -129,8 +130,8 @@ describe('"Finish with the AI step" completes only what is missing', () => {
     expect(learn).toHaveBeenCalledTimes(2);
     const args = seen[0]!;
     expect(args).toMatchObject({ ai: 'allowed', tier: 'registered', keepExampleId: 'ex1' });
-    // Total (3) and Shipped (4) have no rule; Remarks (5) is external data; the sort is there already, the summary row is not.
-    expect(args.complete!.columns).toEqual([3, 4]);
+    // Total (3), Shipped (4) and Remarks (5, no trace in the input) have no rule - the AI step is asked for all of them; the sort is there already, the summary row is not.
+    expect(args.complete!.columns).toEqual([3, 4, 5]);
     expect(args.complete!.parts).toEqual(['summaryRows']);
     expect(args.complete!.fixedRules.output.columns.map((c) => c.header)).toEqual(['Item', 'Vendor', 'Qty', 'Total', 'Shipped', 'Remarks']);
     expect(args.complete!.fixedRules.output.columns[1]!.from).toBe('supplier');
@@ -162,7 +163,7 @@ describe('"Finish with the AI step" completes only what is missing', () => {
     fireEvent.click(finishButton());
     const running = await screen.findByTestId('completion-running');
     expect(running.textContent).toContain('The AI step is working on what is missing');
-    expect(screen.getByText('Working on 2 columns.')).toBeTruthy();
+    expect(screen.getByText('Working on 3 columns.')).toBeTruthy();
     expect(line('col:Total').getAttribute('data-ai-step')).toBe('true'); // nothing replaced yet
     expect(finishButton().getAttribute('aria-busy')).toBe('true');
     expect((screen.getByRole('button', { name: 'Re-run all with AI' }) as HTMLButtonElement).disabled).toBe(true);
@@ -330,8 +331,8 @@ describe('"Re-run all with AI" is the whole learn again, behind a confirmation',
   it('with nothing missing (the local rules cover everything) "Finish with the AI step" is the whole learn, and asks only when there are edits', async () => {
     const covered = (): LearnOutput => {
       const rules = partialRules();
-      rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' ? { ...c, from: 'sku' } : c.header === 'Shipped' ? { ...c, from: 'shipped' } : c));
-      return partialOutput({ rules, partial: { ...PARTIAL, needsAi: [], needsAiParts: [] } });
+      rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' ? { ...c, from: 'sku' } : c.header === 'Shipped' ? { ...c, from: 'shipped' } : c.header === 'Remarks' ? { ...c, from: 'sku' } : c));
+      return partialOutput({ rules, partial: { ...PARTIAL, needsAi: [], external: [], needsAiParts: [] } });
     };
     const { engine, learn } = engineWith(async () => learnResult({ path: 'llm' }), covered);
     await start(engine);
@@ -343,8 +344,8 @@ describe('"Re-run all with AI" is the whole learn again, behind a confirmation',
   it('... and with edits it asks first', async () => {
     const covered = (): LearnOutput => {
       const rules = partialRules();
-      rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' ? { ...c, from: 'sku' } : c.header === 'Shipped' ? { ...c, from: 'shipped' } : c));
-      return partialOutput({ rules, partial: { ...PARTIAL, needsAi: [], needsAiParts: [] } });
+      rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' ? { ...c, from: 'sku' } : c.header === 'Shipped' ? { ...c, from: 'shipped' } : c.header === 'Remarks' ? { ...c, from: 'sku' } : c));
+      return partialOutput({ rules, partial: { ...PARTIAL, needsAi: [], external: [], needsAiParts: [] } });
     };
     const { engine, learn } = engineWith(async () => learnResult({ path: 'llm' }), covered);
     await start(engine);
@@ -364,7 +365,7 @@ describe('"Try these columns with AI" on a result that still has columns with no
     return learnResult({ path: 'llm', rules, unsupported: rules.unsupported, verification: { verified: false, matched: 30, total: 30, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } });
   }
 
-  it('is offered to a signed-in user (next to Save), for the columns the AI step left - never the external ones', async () => {
+  it('is offered to a signed-in user (next to Save), for EVERY column the AI step left without a rule - one it called externalData too', async () => {
     const seen: CompletionArgs[] = [];
     const { engine } = engineWith(
       async (args) => {
@@ -379,7 +380,7 @@ describe('"Try these columns with AI" on a result that still has columns with no
     expect(screen.getByText(/Only the columns with no rule go to the AI step/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Try these columns with AI' }));
     await waitFor(() => expect(seen).toHaveLength(1));
-    expect(seen[0]!.complete!.columns).toEqual([4]); // Shipped, not Remarks
+    expect(seen[0]!.complete!.columns).toEqual([4, 5]); // Shipped and Remarks (externalData is not certainty: it may be tried again)
     expect(seen[0]!.complete!.parts).toEqual([]);
   });
 
@@ -550,42 +551,95 @@ describe('the owner\'s bug: a signed-in user\'s partial result shows "Finish wit
 
 // A column COMPOSED from three input columns (`312345002 - Dana Cohen`) is beyond the light template, but the AI can write it: the pair
 // analysis calls it derived, not external, so the AI step is offered for it. These tests run the REAL pair analysis (the engine) on such an
-// example and feed what it said to the screen; an external column (nothing in the input explains it) is the control.
+// example and feed what it said to the screen. An external column (nothing in the input explains it) is NOT taken away from the AI step
+// either ("code found no relation" is not certainty): the owner's case - a column built from input values with a reformatted number that
+// no detector explains - reaches both AI buttons.
 describe('a column composed from three input columns reaches the AI buttons (the real pair analysis, not a fixture)', () => {
   const FIRSTS = ['Dana', 'Omer', 'Noa', 'Yael', 'Tamar', 'Eitan', 'Lior', 'Maya', 'Amit', 'Shira', 'Ron', 'Gal'];
   const LASTS = ['Cohen', 'Levi', 'Mizrahi', 'Katz', 'Peretz', 'Bar', 'Avraham', 'Dahan', 'Golan', 'Segal'];
   const enc = (rows: string[][]): Uint8Array => new TextEncoder().encode(`${rows.map((r) => r.join(',')).join('\n')}\n`);
 
   /** Ref + Cust + First + Last in; Ref + Label out, where Label is composed (or, for the control, a code the input does not explain). */
-  async function analysed(kind: 'composed' | 'external') {
-    const input: string[][] = [['Ref', 'Cust', 'First', 'Last']];
+  async function analysed(kind: 'composed' | 'external' | 'reformatted', ai: 'allowed' | 'notAllowed' = 'notAllowed') {
+    const payloads: LearnPayload[] = [];
+    const input: string[][] = [['Ref', 'Cust', 'First', 'Last', 'Amount']];
     const output: string[][] = [['Ref', 'Label']];
     for (let i = 0; i < 24; i++) {
       const [first, last, cust, ref] = [FIRSTS[i % FIRSTS.length]!, LASTS[(i * 3) % LASTS.length]!, String(312345002 + i * 7), `R-${1000 + i * 7}`];
-      input.push([ref, cust, first, last]);
-      output.push([ref, kind === 'composed' ? `${cust} - ${first} ${last}` : `Z${(i * 7919) % 8000}x`]);
+      const amount = 1234.5 + i * 311.25;
+      input.push([ref, cust, first, last, String(amount)]);
+      // 'reformatted': an ID and an amount rewritten in another form (`ID 312-345-002 total 1,234.50`), so no value of the input is inside the text.
+      const reformatted = `ID ${cust.slice(0, 3)}-${cust.slice(3, 6)}-${cust.slice(6)} total ${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).replace(',', ' ')}`;
+      output.push([ref, kind === 'composed' ? `${cust} - ${first} ${last}` : kind === 'reformatted' ? reformatted : `Z${(i * 7919) % 8000}x`]);
     }
     const res = await learnFromExamples({
       input: { bytes: enc(input), name: 'in.csv' },
       output: { bytes: enc(output), name: 'out.csv' },
       masking: false,
       tier: 'registered',
-      ai: 'notAllowed',
-      callLearn: async () => ({ rules: null, problems: [], calls: [] }),
+      ai,
+      callLearn: async (payload) => {
+        payloads.push(payload);
+        return { rules: null, problems: [], calls: [] };
+      },
     });
+    if (ai === 'allowed') return { ...res, payloads };
     if (res.path !== 'partial' || !res.rules || !res.partial) throw new Error(`unexpected path ${res.path}`);
-    return res;
+    return { ...res, payloads };
   }
 
-  it('the pair analysis: composed is "needs the AI step" and not skipped; the external control is skipped', async () => {
+  it('the pair analysis: composed is "needs the AI step", and so is an external column - neither is skipped', async () => {
     const composed = await analysed('composed');
     expect(composed.partial).toMatchObject({ solved: ['Ref'], needsAi: ['Label'], external: [] });
     expect(composed.preflight.skipColumns).toEqual([]);
-    // The control: a code nothing in the input explains is external data (skipped, "needs your input"), and with only external columns
-    // left the local result is final - there is no AI step to finish.
+    // The control: a code nothing in the input explains is "external" only for the wording ("may come from another source"): it still needs
+    // the AI step, and nothing is finished locally.
     const external = await analysed('external');
-    expect(external.partial).toMatchObject({ reason: 'onlyExternalColumns', needsAi: [], external: ['Label'] });
-    expect(external.preflight.skipColumns).toEqual([1]);
+    expect(external.partial).toMatchObject({ reason: 'aiNotAllowed', needsAi: ['Label'], external: ['Label'] });
+    expect(external.preflight.skipColumns).toEqual([]);
+  });
+
+  it('the owner\'s case, signed in: the learn calls the AI step with the column as a normal output column (not in skipColumns)', async () => {
+    const { payloads, path } = await analysed('reformatted', 'allowed');
+    expect(path).toBe('llm');
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]!.output.columns.map((c) => c.header)).toEqual(['Ref', 'Label']);
+    expect(payloads[0]!.skipColumns).toBeUndefined();
+  });
+
+  it('the owner\'s case, a visitor: the partial result lists the column as "Needs the AI step" (may come from another source); the popup counts it', async () => {
+    const res = await analysed('reformatted');
+    expect(res.partial).toMatchObject({ reason: 'aiNotAllowed', solved: ['Ref'], needsAi: ['Label'], external: ['Label'] });
+    const { engine } = engineWith(async (args) => completionOutput(args), () =>
+      learnResult({ path: 'partial', rules: res.rules, partial: res.partial, preflight: res.preflight, readiness: res.readiness }),
+    );
+    await start(engine, fakeApi());
+    const dialog = await screen.findByRole('dialog', { name: 'Sign in to finish' });
+    expect(within(dialog).getByTestId('partial-popup-text').textContent).toContain('1 needs the AI step');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Not now' }));
+    expect(line('col:Label').getAttribute('data-ai-step')).toBe('true');
+    expect(line('col:Label').textContent).toContain('Needs the AI step');
+    expect(line('col:Label').textContent).toContain('it may come from another source');
+  });
+
+  it('the owner\'s case, signed in, on a non-partial result with the column empty: "Try these columns with AI" is offered for it', async () => {
+    const res = await analysed('reformatted');
+    const seen: CompletionArgs[] = [];
+    const { engine } = engineWith(
+      async (args) => {
+        seen.push(args);
+        return completionOutput(args, {}, { produced: { columns: 1, parts: 0 } });
+      },
+      // An AI result that left the column without a rule and called it externalData (the AI step's own word, not skipColumns).
+      () => {
+        const rules: LearnResult = { ...res.rules!, unsupported: [{ outputColumn: 'Label', reasonCode: 'externalData' }] };
+        return learnResult({ path: 'llm', rules, unsupported: rules.unsupported, preflight: res.preflight, verification: { verified: false, matched: 24, total: 24, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } });
+      },
+    );
+    await start(engine);
+    fireEvent.click(screen.getByRole('button', { name: 'Try these columns with AI' }));
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0]!.complete!.columns).toEqual([1]);
   });
 
   it('partial result, signed in: "Finish with the AI step" is there and asks the AI step for the composed column', async () => {
@@ -621,14 +675,13 @@ describe('a column composed from three input columns reaches the AI buttons (the
     expect(seen[0]!.complete!.columns).toEqual([1]);
   });
 
-  it('a column that was skipped as external data (pre-flight skipColumns) is never offered', async () => {
-    const res = await analysed('composed');
-    // The same screen, but the pair analysis had called Label external (skipColumns [1]): nothing for the AI step to try.
-    const rules: LearnResult = { ...res.rules!, unsupported: [{ outputColumn: 'Label', reasonCode: 'ambiguous' }] };
+  it('even a column the pair analysis called external is offered: nothing is excluded from "Try these columns with AI"', async () => {
+    const res = await analysed('external');
+    const rules: LearnResult = { ...res.rules!, unsupported: [{ outputColumn: 'Label', reasonCode: 'externalData' }] };
     const { engine } = engineWith(async (args) => completionOutput(args), () =>
-      learnResult({ path: 'llm', rules, unsupported: rules.unsupported, preflight: { ...res.preflight, skipColumns: [1] }, verification: { verified: false, matched: 24, total: 24, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } }),
+      learnResult({ path: 'llm', rules, unsupported: rules.unsupported, preflight: res.preflight, verification: { verified: false, matched: 24, total: 24, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } }),
     );
     await start(engine);
-    expect(screen.queryByRole('button', { name: 'Try these columns with AI' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Try these columns with AI' })).toBeTruthy();
   });
 });

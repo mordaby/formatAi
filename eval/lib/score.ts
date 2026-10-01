@@ -50,14 +50,12 @@ function expectationFor(meta: CaseMeta, masking: boolean): ExpectClassification 
  * Whether this run's outcome satisfies its case's expectation (SPEC 10's report
  * "expectation met" column).
  *
- * DECISION: for `unsupported:<code>`, a column the LLM was never even asked about
- * because pre-flight already routed it to `skipColumns` (LEARN_PROMPT: "Do not list
- * them in unsupported; they are already reported") also counts, when `<code>` is
- * `externalData` - the one reasonCode SPEC 6.4 itself gives for why a column becomes a
- * skipColumn ("They probably come from another source"). This is exactly "the column
- * appears in unsupported/skipColumns with that code" from this milestone's build note.
+ * DECISION (SPEC 21 v7 note): for `unsupported:<code>`, only the AI step's own report counts - the answer lists
+ * the column in `unsupported` with that code (`externalData` for a column whose values are not in the input). Pre-flight no longer
+ * routes a column code could not explain to `skipColumns`: "code found no relation" is not certainty, so the LLM is asked about
+ * it like any other column, and a run that never reached the LLM does not meet this expectation.
  */
-export function expectationMet(meta: CaseMeta, masking: boolean, result: LearnFromExamplesResult, classification: Classification): boolean {
+export function expectationMet(meta: CaseMeta, masking: boolean, _result: LearnFromExamplesResult, classification: Classification): boolean {
   const expect = expectationFor(meta, masking);
 
   if (expect === 'verified') return classification.kind === 'verified';
@@ -69,9 +67,7 @@ export function expectationMet(meta: CaseMeta, masking: boolean, result: LearnFr
 
   if (expect.startsWith('unsupported:')) {
     const code = expect.slice('unsupported:'.length);
-    if (classification.kind === 'unsupported' && classification.codes.includes(code)) return true;
-    if (code === 'externalData' && result.preflight.skipColumns.length > 0) return true;
-    return false;
+    return classification.kind === 'unsupported' && classification.codes.includes(code);
   }
 
   return false;

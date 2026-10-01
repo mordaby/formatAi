@@ -132,16 +132,17 @@ export interface LearnStages {
   partialBuilt?: boolean;
 }
 
-/** v5 items 1 and 4: what the local partial result holds and why it was returned. */
+/** v5 item 1: what the local partial result holds and why it was returned. */
 export interface PartialInfo {
-  /** 'aiNotAllowed': the caller may not use the AI step (sign in to finish). 'onlyExternalColumns': the AI can't
-   * help - what is left is external data - so this IS the finished local result. */
-  reason: 'aiNotAllowed' | 'onlyExternalColumns';
+  /** The caller may not use the AI step (sign in to finish). It is the only reason: a result is never finished locally because the
+   * remaining columns "look external" - the AI step tries every column code couldn't explain (SPEC 6.4, 21 v7 note). */
+  reason: 'aiNotAllowed';
   /** Headers of the output columns code built (and `verification` counts). */
   solved: string[];
-  /** Headers of the output columns that need the AI step. */
+  /** Headers of EVERY output column that needs the AI step: the ones with a dependency or composition code couldn't turn into a rule,
+   * and the ones it found no relation to the input for at all (`external`). */
   needsAi: string[];
-  /** Headers of the output columns whose values aren't in the input file (marked "needs your input"). */
+  /** The subset of `needsAi` whose values code could not find in the input file: they "may come from another source" (wording only). */
   external: string[];
   /** Output column positions of `solved`. */
   solvedColumns: number[];
@@ -285,32 +286,28 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // (optionally masked, SPEC 7.2) payload, which the learn call below then uses as it is. ----
   const ai = opts.ai ?? 'allowed';
   const masker: Masker | undefined = opts.masking ? createMasker(opts.key!) : undefined;
-  const partial = opts.complete ? null : localPartial(analysis, pf);
+  // (The local partial result is only for a caller that may not use the AI step.)
+  const partial = opts.complete || ai !== 'notAllowed' ? null : localPartial(analysis, pf);
   const readiness = aiReadiness(analysis, pf, {
     ...(masker ? { masker } : {}),
     ...(opts.target ? { target: opts.target } : {}),
     ...(opts.complete ? { complete: opts.complete } : {}),
-    partial,
   });
   stages.readinessChecked = true;
   const shownReadiness: AiReadiness = readiness.ready ? { ready: true } : readiness;
-
-  // Only external columns are left: the AI can't help, so this IS the finished local result (SPEC 21 v5 item 4).
-  const onlyExternal = !readiness.ready && readiness.issues.every((i) => i.code === 'onlyExternalColumns');
-  if (partial && onlyExternal) return partialResult(analysis, pf, partial, 'onlyExternalColumns', shownReadiness, stages);
 
   // A block: the AI step can't succeed. Signed-out callers still get the local result unless it has no
   // example pairs at all (then signing in wouldn't help either).
   if (!readiness.ready) {
     const noPairs = readiness.issues.some((i) => i.code === 'noRowsMatched');
-    if (ai === 'notAllowed' && partial && !noPairs) return partialResult(analysis, pf, partial, 'aiNotAllowed', shownReadiness, stages);
+    if (partial && !noPairs) return partialResult(analysis, pf, partial, shownReadiness, stages);
     stages.readinessBlocked = true;
     return { path: 'notReady', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls: [], stages, readiness: shownReadiness };
   }
 
   // The AI step isn't available to this caller: the local partial result is what they get (SPEC 21 v5 item 1).
   if (ai === 'notAllowed') {
-    if (partial) return partialResult(analysis, pf, partial, 'aiNotAllowed', shownReadiness, stages);
+    if (partial) return partialResult(analysis, pf, partial, shownReadiness, stages);
     return blockedResult(pf);
   }
 
@@ -397,13 +394,12 @@ function localPartial(analysis: PairAnalysis, pf: PreflightResult): PartialRules
   }
 }
 
-/** The local partial result (SPEC 21 v5 items 1 and 4): built rules for what code explained, checked against the
+/** The local partial result (SPEC 21 v5 item 1): built rules for what code explained, checked against the
  * example on those columns only. */
 function partialResult<Call>(
   analysis: PairAnalysis,
   pf: PreflightResult,
   partial: PartialRulesResult,
-  reason: PartialInfo['reason'],
   readiness: AiReadiness,
   stages: LearnStages,
 ): LearnFromExamplesResult<Call> {
@@ -419,7 +415,7 @@ function partialResult<Call>(
     calls: [],
     stages,
     partial: {
-      reason,
+      reason: 'aiNotAllowed',
       solved: partial.solved,
       needsAi: partial.needsAi,
       external: partial.external,

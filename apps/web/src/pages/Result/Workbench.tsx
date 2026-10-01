@@ -239,9 +239,11 @@ export function Workbench(props: WorkbenchProps) {
   const aiStep = useMemo(() => {
     if (!partial || partial.reason !== 'aiNotAllowed') return undefined;
     // A column the user has filled in since is no longer waiting for the AI step.
-    const columns = new Set(partial.needsAi.filter((h) => rules.output.columns.some((c) => c.header === h && c.from === null)));
+    const stillEmpty = (h: string): boolean => rules.output.columns.some((c) => c.header === h && c.from === null);
+    const columns = new Set(partial.needsAi.filter(stillEmpty));
+    const external = new Set(partial.external.filter(stillEmpty));
     const parts: AiStepPartCode[] = [...partial.needsAiParts];
-    return { columns, parts };
+    return { columns, external, parts };
   }, [partial, rules.output.columns]);
 
   // ----- the badge -----

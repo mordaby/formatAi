@@ -91,8 +91,8 @@ describe('learnFromExamples with complete', () => {
     expect(c.parts).toEqual([]);
     const fixed = fixedOf(s.payloads[0]!);
     expect(fixed.output.columns.map((x) => [x.header, x.from === null])).toEqual([['Item', false], ['Ref', false], ['Total', false], ['Label', true], ['Warehouse', true]]);
-    expect(fixed.unsupported).toEqual([{ outputColumn: 'Warehouse', reasonCode: 'externalData' }]);
-    expect(s.payloads[0]!.skipColumns).toEqual([4]);
+    expect(fixed.unsupported).toEqual([]); // the local rules never call a column unsupported: only the AI step does
+    expect(s.payloads[0]!.skipColumns).toBeUndefined(); // an unexplained column is not skipped
     expect(r.stages).toMatchObject({ fastPathTried: false, llmCalled: true, partialBuilt: false, readinessBlocked: false });
   });
 

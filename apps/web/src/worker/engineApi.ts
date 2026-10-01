@@ -70,7 +70,8 @@ export interface LearnArgs {
 export type LearnProgress =
   | { phase: 'reading' }
   | { phase: 'checking'; stage: AnalysisStage; fraction: number }
-  | { phase: 'learning'; attempt: 'learn' | 'repair' }
+  /** `unexplained`: headers of the output columns code could not find in the input file (SPEC 6.4, informational: the AI step tries them); first try only. */
+  | { phase: 'learning'; attempt: 'learn' | 'repair'; unexplained?: string[] }
   | { phase: 'verifying' };
 
 /**

@@ -1,6 +1,7 @@
 // learnFromExamples, SPEC 21 v5 items 1 and 4: signed-out callers never reach the LLM and get the local
-// partial result; the AI readiness gate runs right before the payload/LLM call; "only external columns left"
-// finishes locally with no LLM call. `callLearn` is a spy: these tests are mostly about when it is NOT called.
+// partial result; the AI readiness gate runs right before the payload/LLM call; a column code could not explain
+// ("external") is NOT finished locally: the AI step is called for it (v7 note). `callLearn` is a spy: these tests
+// are mostly about when it is NOT called.
 import type { Format, LearnPayload, LearnResult } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { learnFromExamples, type LearnCallResult, type LearnFromExamplesOptions } from '../../src/learn/flow';
@@ -58,13 +59,13 @@ describe('learnFromExamples: a signed-out caller (ai: notAllowed) never reaches 
     expect(r.partial).toEqual({
       reason: 'aiNotAllowed',
       solved: ['Item', 'Ref', 'Total'],
-      needsAi: ['Label'],
-      external: ['Warehouse'],
+      needsAi: ['Label', 'Warehouse'], // the unexplained column needs the AI step too
+      external: ['Warehouse'], // ... and is marked "may come from another source"
       solvedColumns: [0, 1, 2],
       needsAiParts: [],
     });
     expect(r.rules?.output.columns.map((c) => c.from === null)).toEqual([false, false, false, true, true]);
-    expect(r.unsupported).toEqual([{ outputColumn: 'Warehouse', reasonCode: 'externalData' }]);
+    expect(r.unsupported).toEqual([]);
     expect(r.verification).toMatchObject({ verified: true, matched: 20, total: 20 });
     expect(r.readiness).toEqual({ ready: true });
     expect(r.stages).toMatchObject({ fastPathTried: true, fastPathSucceeded: false, readinessChecked: true, readinessBlocked: false, partialBuilt: true, llmCalled: false });
@@ -81,11 +82,12 @@ describe('learnFromExamples: a signed-out caller (ai: notAllowed) never reaches 
     if (run.ok) expect(run.summary.rowsOut).toBe(20);
   });
 
-  it('when only external columns are left, the partial result says so (nothing to sign in for)', async () => {
+  it('when only an unexplained (external) column is left, it still needs the AI step: not finished locally', async () => {
     const s = spy();
     const r = await learn(externalOnlyPair(), { ai: 'notAllowed', s });
     expect(r.path).toBe('partial');
-    expect(r.partial).toMatchObject({ reason: 'onlyExternalColumns', needsAi: [], external: ['Warehouse'] });
+    expect(r.partial).toMatchObject({ reason: 'aiNotAllowed', solved: ['Item', 'Ref', 'Total'], needsAi: ['Warehouse'], external: ['Warehouse'], needsAiParts: [] });
+    expect(r.unsupported).toEqual([]);
     expect(s.calls).toHaveLength(0);
   });
 
@@ -114,7 +116,7 @@ describe('learnFromExamples: the AI readiness gate (ai allowed)', () => {
     expect(r.path).toBe('llm');
     expect(r.readiness).toEqual({ ready: true });
     expect(r.stages).toMatchObject({ readinessChecked: true, readinessBlocked: false, llmCalled: true, partialBuilt: false });
-    expect(s.calls[0]!.skipColumns).toEqual([4]);
+    expect(s.calls[0]!.skipColumns).toBeUndefined(); // the unexplained column goes to the AI step like the others
   });
 
   it('is the default: leaving out `ai` means allowed', async () => {
@@ -123,19 +125,19 @@ describe('learnFromExamples: the AI readiness gate (ai allowed)', () => {
     expect(s.calls).toHaveLength(1);
   });
 
-  it('only external columns left: finishes locally with no LLM call, those columns "need your input"', async () => {
+  it('only an unexplained (external) column left: the AI step IS called, with that column as a normal output column (no skipColumns)', async () => {
     const s = spy();
     const r = await learn(externalOnlyPair(), { s });
-    expect(s.calls).toHaveLength(0);
-    expect(r.path).toBe('partial');
-    expect(r.partial).toMatchObject({ reason: 'onlyExternalColumns', solved: ['Item', 'Ref', 'Total'], needsAi: [], external: ['Warehouse'], needsAiParts: [] });
-    expect(r.unsupported).toEqual([{ outputColumn: 'Warehouse', reasonCode: 'externalData' }]);
-    expect(r.verification).toMatchObject({ verified: true, matched: 20, total: 20 });
-    expect(r.readiness).toEqual({ ready: false, issues: [{ code: 'onlyExternalColumns', params: { count: 1, columns: 'Warehouse' } }] });
-    expect(r.stages).toMatchObject({ llmCalled: false, partialBuilt: true, readinessBlocked: false });
+    expect(s.calls).toHaveLength(1);
+    expect(r.path).toBe('llm');
+    expect(r.partial).toBeUndefined();
+    expect(r.readiness).toEqual({ ready: true });
+    expect(s.calls[0]!.skipColumns).toBeUndefined();
+    expect(s.calls[0]!.output.columns.map((c) => c.header)).toEqual(['Item', 'Ref', 'Total', 'Warehouse']);
+    expect(r.stages).toMatchObject({ llmCalled: true, partialBuilt: false, readinessBlocked: false });
   });
 
-  it('attach mode keeps calling the AI step even when only external columns are left', async () => {
+  it('attach mode calls the AI step too when only external columns are left', async () => {
     const s = spy();
     const target: Format = formatOf({
       schemaVersion: 1,

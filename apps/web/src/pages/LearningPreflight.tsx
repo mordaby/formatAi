@@ -1,5 +1,4 @@
 import { blockView } from '../app/messages';
-import { Cell } from '../components/Cell';
 import type { LearnFlowState } from '../flow/learnFlow';
 import { useI18n } from '../i18n';
 import { Button, InlineMessage } from '../ui';
@@ -8,7 +7,7 @@ type PreflightState = Extract<LearnFlowState, { status: 'warn' | 'blocked' }>;
 
 export interface LearningPreflightProps {
   state: PreflightState;
-  /** Go ahead past a warning: "Continue" (leave unknown columns empty) or "Try anyway". */
+  /** Go ahead past the warning ("Try anyway": the rows couldn't be aligned). */
   onConfirm(): void;
   /** Stop and go back to the files. */
   onCancel(): void;
@@ -53,7 +52,6 @@ export function LearningPreflight({ state, onConfirm, onCancel, onSignIn }: Lear
     );
   }
 
-  const tryAnyway = state.reason === 'tryAnyway';
   return (
     <div className="view preflight">
       <header className="tool__head">
@@ -61,26 +59,14 @@ export function LearningPreflight({ state, onConfirm, onCancel, onSignIn }: Lear
       </header>
       <div className="preflight__list">
         {state.issues.map((issue, n) => (
-          <InlineMessage key={`${issue.code}-${n}`} tone="warn" {...(tryAnyway ? { todo: t('preflight.tryAnywayNote') } : {})}>
+          <InlineMessage key={`${issue.code}-${n}`} tone="warn" todo={t('preflight.tryAnywayNote')}>
             <p>{code({ kind: 'preflight', code: issue.code, ...(issue.params ? { params: issue.params } : {}) })}</p>
-            {state.columns.length > 0 && (
-              <div className="chips-block">
-                <p className="chips-block__lead">{t('preflight.columnsLead')}</p>
-                <ul className="chips">
-                  {state.columns.map((column, i) => (
-                    <li key={`${i}-${column}`}>
-                      <Cell value={column} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </InlineMessage>
         ))}
       </div>
       <div className="preflight__actions">
         <Button variant="primary" onClick={onConfirm}>
-          {t(tryAnyway ? 'flow.warn.tryAnyway' : 'flow.warn.continue')}
+          {t('flow.warn.tryAnyway')}
         </Button>
         <Button variant="ghost" onClick={onCancel}>
           {t('flow.cancel')}

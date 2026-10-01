@@ -49,7 +49,6 @@ export const en = {
   'flow.status.verified': 'Verified',
   'flow.status.notVerified': 'Not fully matching your example',
   'flow.blocked': "We can't learn from these files",
-  'flow.warn.continue': 'Continue',
   'flow.warn.tryAnyway': 'Try anyway',
   'flow.cancel': 'Cancel',
 
@@ -155,7 +154,7 @@ export const en = {
 
   // SPEC 16.1 screen 2: pre-flight
   'preflight.warnTitle': 'One thing to check first',
-  'preflight.columnsLead': 'Columns we will leave empty',
+  'learning.unexplained.lead': 'Columns we could not find in your input file',
   'preflight.tryAnywayNote': 'Trying anyway counts as a learn.',
   'preflight.changeFiles': 'Choose other files',
   'preflight.side.input': 'the example input',
@@ -221,7 +220,6 @@ export const he: Record<MessageKey, string> = {
   'flow.status.verified': 'מאומת',
   'flow.status.notVerified': 'לא תואם במלואו לדוגמה שלך',
   'flow.blocked': 'אי אפשר ללמוד מהקבצים האלה',
-  'flow.warn.continue': 'המשך',
   'flow.warn.tryAnyway': 'נסו בכל זאת',
   'flow.cancel': 'ביטול',
 
@@ -322,7 +320,7 @@ export const he: Record<MessageKey, string> = {
   'sendPanel.json': 'הנתונים שנשלחו (JSON)',
 
   'preflight.warnTitle': 'דבר אחד לבדוק קודם',
-  'preflight.columnsLead': 'עמודות שנשאיר ריקות',
+  'learning.unexplained.lead': 'עמודות שלא מצאנו בקובץ הקלט שלכם',
   'preflight.tryAnywayNote': 'ניסיון בכל זאת נחשב ללמידה.',
   'preflight.changeFiles': 'בחירת קבצים אחרים',
   'preflight.side.input': 'קובץ הקלט לדוגמה',

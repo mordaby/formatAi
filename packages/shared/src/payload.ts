@@ -243,7 +243,10 @@ export interface LearnPayload {
   /** Up to 5 input rows that don't appear in the output. */
   dropped?: PayloadCell[][];
   hints: Hint[];
-  /** Output column positions that can't be produced from the input. */
+  /**
+   * Output column positions the user explicitly marked to skip (they get `"from": null`). Absent in practice: a column code could not
+   * explain is NOT sent here - it goes to the AI step like any other (it may answer `unsupported` with `externalData`).
+   */
   skipColumns?: number[];
 }
 

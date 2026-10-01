@@ -197,12 +197,12 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
   });
   const solvedPartial = local.path === 'partial' && local.partial?.reason === 'aiNotAllowed' && local.rules !== null;
   if (!solvedPartial) {
-    // The local step finished it (fast path), blocked it, or found only external columns: nothing to complete.
-    return { result: local, mode: 'complete', payloadBytes, formulaErrorMessages, completion: { fixedColumns: local.partial?.solved.length ?? local.rules?.output.columns.length ?? 0, missingColumns: 0, missingParts: 0, skipped: local.path === 'partial' ? 'onlyExternalColumns' : local.path } };
+    // The local step finished it (fast path) or blocked it: nothing to complete.
+    return { result: local, mode: 'complete', payloadBytes, formulaErrorMessages, completion: { fixedColumns: local.partial?.solved.length ?? local.rules?.output.columns.length ?? 0, missingColumns: 0, missingParts: 0, skipped: local.path } };
   }
   // ... then the AI step on what is missing only, the local rules kept as the fixed part.
   const rules = local.rules!;
-  const plan = completionPlan(rules, { parts: local.partial!.needsAiParts, skipColumns: local.preflight.skipColumns });
+  const plan = completionPlan(rules, { parts: local.partial!.needsAiParts });
   const fixedColumns = rules.output.columns.length - plan.columns.length;
   if (plan.columns.length === 0 && plan.parts.length === 0) {
     // The local rules cover every column and part, yet the strict fast path would not accept them (rows that change shape go to the AI

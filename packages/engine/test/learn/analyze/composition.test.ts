@@ -179,14 +179,14 @@ describe('hints, pre-flight, readiness and the partial result', () => {
     expect(p.external).toEqual([]);
   });
 
-  it('one composed and one external column: only the external one is skipped', () => {
+  it('one composed and one external column: nothing is skipped (the external one is only noted)', () => {
     const r = rng(5);
     const withExternal: Pair = {
       input: pair.input,
       output: pair.output.map((row, i) => [...row, i === 0 ? 'Dock' : `D${100 + Math.floor(r() * 800)}`]),
     };
     const b = analyze(withExternal);
-    expect(preflight(b, 'paid').skipColumns).toEqual([2]);
+    expect(preflight(b, 'paid').skipColumns).toEqual([]);
     expect(isDerivedColumn(labelOf(b))).toBe(true);
     expect(isExternalColumn(labelOf(b, 'Dock'))).toBe(true);
   });

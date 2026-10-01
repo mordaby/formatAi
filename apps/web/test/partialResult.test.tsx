@@ -1,7 +1,7 @@
 // SPEC 21 v5 items 1 and 4: an example that needs the AI step shows the LOCAL result first - what code worked out, checked against
 // the example, with the rest marked "Needs the AI step" - and a popup asks a visitor to sign in free to finish. A signed-in user
-// gets "Finish with the AI step". When only external columns are left it is the finished local result, and when the AI can't
-// help at all the screen says what to fix. The worker is a fake; the API is never asked to learn for a visitor.
+// gets "Finish with the AI step". A column code could not explain at all (external) needs the AI step too ("may come from another
+// source"), and when the AI can't help at all the screen says what to fix. The worker is a fake; the API is never asked to learn for a visitor.
 import type { LearnResult, MeUser, Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,10 +23,11 @@ afterEach(() => {
   setPendingStore(undefined);
 });
 
-/** The orders report with two computed columns the local analysis could not build (`Total`, `Shipped`) and one that is external data (`Remarks`). */
+/** The orders report with two computed columns the local analysis could not build (`Total`, `Shipped`) and one it found no trace of in the input (`Remarks`). */
 function partialRules(): Rules {
   const rules = ordersRules();
   rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' || c.header === 'Shipped' ? { header: c.header, from: null } : c));
+  rules.unsupported = []; // only the AI step reports a column as unsupported
   rules.output.summaryRows = [];
   rules.transform.computed = [];
   rules.validations = [];
@@ -37,7 +38,7 @@ function partialRules(): Rules {
 const PARTIAL = {
   reason: 'aiNotAllowed' as const,
   solved: ['Item', 'Supplier', 'Qty'],
-  needsAi: ['Total', 'Shipped'],
+  needsAi: ['Total', 'Shipped', 'Remarks'],
   external: ['Remarks'],
   solvedColumns: [0, 1, 2],
   needsAiParts: ['sort' as const, 'summaryRows' as const],
@@ -87,7 +88,7 @@ describe('a visitor whose example needs the AI step', () => {
     await learn(engine);
     const dialog = await screen.findByRole('dialog', { name: 'Sign in to finish' });
     expect(within(dialog).getByTestId('partial-popup-text').textContent).toBe(
-      'We worked out 3 of 6 columns on your computer. 2 need the AI step — sign in free to finish (3 AI formats a month included). 1 more column has values that are not in your input file, so it needs your input.',
+      'We worked out 3 of 6 columns on your computer. 3 need the AI step — sign in free to finish (3 AI formats a month included).',
     );
     expect(await within(dialog).findByRole('button', { name: 'Continue with Google' })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Continue with Microsoft' })).toBeTruthy();
@@ -99,20 +100,20 @@ describe('a visitor whose example needs the AI step', () => {
     const dialog = await screen.findByRole('dialog', { name: 'התחברו כדי להשלים' });
     const text = within(dialog).getByTestId('partial-popup-text').textContent!;
     expect(text).toContain('הבנו 3 מתוך 6 עמודות במחשב שלכם');
-    expect(text).toContain('2 דורשות את שלב ה-AI');
+    expect(text).toContain('3 דורשות את שלב ה-AI');
     expect(text).toContain('כולל 3 פורמטים עם AI בחודש');
   });
 
   it('uses the "layout" sentence when every column is worked out and only parts of the layout are left', async () => {
     const rules = partialRules();
-    rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' ? { header: 'Total', from: 'total' } : c.header === 'Shipped' ? { header: 'Shipped', from: 'shipped' } : c));
+    rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' ? { header: 'Total', from: 'total' } : c.header === 'Shipped' ? { header: 'Shipped', from: 'shipped' } : c.header === 'Remarks' ? { header: 'Remarks', from: 'sku' } : c));
     rules.transform.computed = ordersRules().transform.computed;
     const { engine } = fakeEngine(async () =>
-      partialOutput({ rules, partial: { ...PARTIAL, solved: ['Item', 'Supplier', 'Qty', 'Total', 'Shipped'], needsAi: [], external: [], solvedColumns: [0, 1, 2, 3, 4] } }),
+      partialOutput({ rules, partial: { ...PARTIAL, solved: ['Item', 'Supplier', 'Qty', 'Total', 'Shipped', 'Remarks'], needsAi: [], external: [], solvedColumns: [0, 1, 2, 3, 4, 5] } }),
     );
     await learn(engine);
     const dialog = await screen.findByRole('dialog', { name: 'Sign in to finish' });
-    expect(within(dialog).getByTestId('partial-popup-text').textContent).toContain('We worked out 5 of 6 columns on your computer. The rest of the format');
+    expect(within(dialog).getByTestId('partial-popup-text').textContent).toContain('We worked out 6 of 6 columns on your computer. The rest of the format');
     expect(within(dialog).getByTestId('partial-popup-text').textContent).toContain('needs the AI step — sign in free to finish (3 AI formats a month included).');
   });
 
@@ -123,15 +124,15 @@ describe('a visitor whose example needs the AI step', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
 
     // Every column code could not explain says so; the others do not.
-    for (const header of ['Total', 'Shipped']) {
+    for (const header of ['Total', 'Shipped', 'Remarks']) {
       expect(line(`col:${header}`).getAttribute('data-ai-step')).toBe('true');
       expect(line(`col:${header}`).textContent).toContain('Needs the AI step');
     }
     expect(line('col:Item').getAttribute('data-ai-step')).toBeNull();
     expect(line('col:Item').getAttribute('data-status')).toBe('matches');
-    // External data is "needs your input", not "needs the AI step".
-    expect(line('col:Remarks').getAttribute('data-ai-step')).toBeNull();
-    expect(line('col:Remarks').getAttribute('data-status')).toBe('needsInput');
+    // A column with no trace in the input needs the AI step too, with the note that it may come from another source.
+    expect(line('col:Remarks').textContent).toContain('it may come from another source');
+    expect(line('col:Total').textContent).not.toContain('it may come from another source');
 
     // The parts (how the rows are sorted, the summary rows) are listed as what the AI step still does.
     const parts = screen.getByTestId('ai-step-parts');
@@ -139,7 +140,7 @@ describe('a visitor whose example needs the AI step', () => {
     expect(within(parts).getByText('How the rows are sorted.')).toBeTruthy();
     expect(within(parts).getByText('The summary or total rows.')).toBeTruthy();
 
-    expect(screen.getByTestId('status-badge').textContent).toBe('2 columns need the AI step');
+    expect(screen.getByTestId('status-badge').textContent).toBe('3 columns need the AI step');
     // There is nothing to save yet: the one action is to finish.
     expect(screen.queryByRole('button', { name: /Save format/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Sign in free to finish' })).toBeTruthy();
@@ -183,7 +184,7 @@ describe('a signed-in user', () => {
       learnResult({
         path: 'llm',
         rules: full,
-        completion: { columns: [3, 4], parts: ['summaryRows'], fixedProblems: [], matches: true, produced: { columns: 2, parts: 1 } },
+        completion: { columns: [3, 4, 5], parts: ['summaryRows'], fixedProblems: [], matches: true, produced: { columns: 2, parts: 1 } },
       }),
     ];
     const { engine, learn: learnMock } = fakeEngine(async () => results.shift()!);
@@ -193,7 +194,7 @@ describe('a signed-in user', () => {
     // (this fake hands a partial result even to a signed-in user: what matters is what the button then does)
     fireEvent.click(await screen.findByRole('button', { name: 'Finish with the AI step' }));
     await waitFor(() => expect(learnMock).toHaveBeenCalledTimes(2));
-    expect(learnMock.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', tier: 'registered', complete: { columns: [3, 4], parts: ['summaryRows'] } });
+    expect(learnMock.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', tier: 'registered', complete: { columns: [3, 4, 5], parts: ['summaryRows'] } });
     // ... and the result screen comes back with the finished rules (details of the completion: completion.test.tsx).
     expect(await screen.findByRole('button', { name: 'Save format and download' })).toBeTruthy();
   });
@@ -208,40 +209,41 @@ describe('a signed-in user', () => {
   });
 });
 
-describe('only external columns are left', () => {
-  it('is the finished local result: no popup, the columns say "needs your input", and it can be saved', async () => {
+describe('only an unexplained (external) column is left', () => {
+  /** Everything but Remarks is worked out; Remarks has no trace in the input: it is NOT a finished local result, it needs the AI step. */
+  function onlyRemarks(): LearnOutput {
     const rules = ordersRules();
-    const { engine } = fakeEngine(async () =>
-      learnResult({
-        path: 'partial',
-        rules,
-        partial: { reason: 'onlyExternalColumns', solved: ['Item', 'Supplier', 'Qty', 'Total', 'Shipped'], needsAi: [], external: ['Remarks'], solvedColumns: [0, 1, 2, 3, 4], needsAiParts: [] },
-        readiness: { ready: false, issues: [{ code: 'onlyExternalColumns', params: { count: 1, columns: 'Remarks' } }] },
-      }),
+    rules.output.columns = rules.output.columns.map((c) => (c.header === 'Remarks' ? { header: 'Remarks', from: null } : c));
+    rules.unsupported = [];
+    return learnResult({
+      path: 'partial',
+      rules,
+      partial: { reason: 'aiNotAllowed', solved: ['Item', 'Supplier', 'Qty', 'Total', 'Shipped'], needsAi: ['Remarks'], external: ['Remarks'], solvedColumns: [0, 1, 2, 3, 4], needsAiParts: [] },
+      readiness: { ready: true },
+    });
+  }
+
+  it('a visitor gets the sign-in popup for it (1 needs the AI step), and the column says "Needs the AI step"', async () => {
+    const { engine } = fakeEngine(async () => onlyRemarks());
+    await learn(engine);
+    const dialog = await screen.findByRole('dialog', { name: 'Sign in to finish' });
+    expect(within(dialog).getByTestId('partial-popup-text').textContent).toBe(
+      'We worked out 5 of 6 columns on your computer. 1 needs the AI step — sign in free to finish (3 AI formats a month included).',
     );
-    await learn(engine, fakeApi({ user: USER }));
-    await screen.findByTestId('rules-map');
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByText('Some columns need your input')).toBeTruthy();
-    expect(screen.getByText(/values we can't trace to your input file \(Remarks\)/)).toBeTruthy();
-    expect(line('col:Remarks').getAttribute('data-status')).toBe('needsInput');
-    expect(line('col:Remarks').getAttribute('data-ai-step')).toBeNull();
-    expect(screen.queryByText('Needs the AI step')).toBeNull();
-    expect(screen.getByRole('button', { name: /Save/ })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Not now' }));
+    expect(line('col:Remarks').getAttribute('data-ai-step')).toBe('true');
+    expect(line('col:Remarks').textContent).toContain('it may come from another source');
+    expect(screen.queryByRole('button', { name: /Save format/ })).toBeNull();
   });
 
-  it('a visitor gets no sign-in popup for it either', async () => {
-    const { engine } = fakeEngine(async () =>
-      learnResult({
-        path: 'partial',
-        rules: ordersRules(),
-        partial: { reason: 'onlyExternalColumns', solved: ['Item'], needsAi: [], external: ['Remarks'], solvedColumns: [0], needsAiParts: [] },
-        readiness: { ready: false, issues: [{ code: 'onlyExternalColumns', params: { count: 1, columns: 'Remarks' } }] },
-      }),
-    );
-    await learn(engine);
+  it('a signed-in user can finish it: "Finish with the AI step" asks for that column', async () => {
+    const results: LearnOutput[] = [onlyRemarks(), learnResult({ path: 'llm', rules: ordersRules(), completion: { columns: [5], parts: [], fixedProblems: [], matches: true, produced: { columns: 1, parts: 0 } } })];
+    const { engine, learn: learnMock } = fakeEngine(async () => results.shift()!);
+    await learn(engine, fakeApi({ user: USER }));
     await screen.findByTestId('rules-map');
-    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'Finish with the AI step' }));
+    await waitFor(() => expect(learnMock).toHaveBeenCalledTimes(2));
+    expect(learnMock.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', complete: { columns: [5], parts: [] } });
   });
 });
 

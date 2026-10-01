@@ -223,7 +223,7 @@ Built by `packages/engine/payload.ts` (browser). Field reference:
 | `samples[]` | up to 12 `{ in: [...], out: [...] }`, or up to 6 families `{ in: [...], out: [[...], [...]] }` when rows expand; values masked when masking is on |
 | `dropped[]` | up to 5 input rows |
 | `hints[]` | see below |
-| `skipColumns[]` | output positions of columns whose values are external data (not in the input file and not determined by it) |
+| `skipColumns[]` | output positions the user explicitly marked to skip (nothing sets it today, so it is empty or absent). A column no detector explained is NOT listed here: it is sent as a normal output column, and the answer may report it as `unsupported` with `externalData`. The §2 line about `skipColumns` is unchanged |
 | `output.file` | `{ type, delimiter?, header, encoding? }`, detected by code from the example output |
 | `target` | attach mode only: `{ output, layout, validations }` of the existing format. `output.summaryRows` (like `output` itself) is already keyed by output header, copied as-is. `layout` is normalized to output headers: `sort: [{ header, dir }]`, `group: { by: header, showDetailRows, blankRowsAfter, agg?: { header: fn }, summaryRows: [{ label?, labelColumn?, bold?, cells: { header: agg } }] }` |
 

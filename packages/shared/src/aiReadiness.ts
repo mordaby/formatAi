@@ -8,12 +8,11 @@ import type { Localized } from './i18n/messages';
 
 // ---------- SPEC 21 v5 item 4: why the AI step isn't attempted ----------
 // The gate is deliberately minimal: it stops only what is CERTAIN to fail even with the AI, and
-// lets every ambiguous case (few rows, some unmatched rows, a messy column) go to the LLM. None of
-// these consume a learn. Each message says what to fix.
+// lets every ambiguous case (few rows, some unmatched rows, a messy column, a column no detector
+// explained) go to the LLM. "Code found no relation" is not certainty, so there is no code for
+// "only external columns are left": the AI step tries them. None of these consume a learn. Each
+// message says what to fix.
 export const AI_READINESS_ISSUE_CODES = [
-  // Not a block: every column the code couldn't explain is external data, so the AI can't help.
-  // The learn finishes on the computer (a partial result), and those columns "need your input".
-  'onlyExternalColumns',
   // Blocks: no output data row could be matched to an input row, so there are no example pairs
   // to learn from (the two files don't seem to come from the same data).
   'noRowsMatched',
@@ -25,17 +24,12 @@ export const AI_READINESS_ISSUE_CODES = [
 export type AiReadinessIssueCode = (typeof AI_READINESS_ISSUE_CODES)[number];
 
 /**
- * Params per code (numbers and strings only, never cell values; headers only for external columns):
- *  - onlyExternalColumns: { count, columns } (columns: the headers, joined with ", ")
+ * Params per code (numbers and strings only, never cell values):
  *  - noRowsMatched: { }
  *  - inputColumnsTooMany / outputColumnsTooMany: { count, limit }
  *  - payloadTooLarge: { kb, limitKb } (the size of what would be sent, after trimming)
  */
 export const aiReadinessMessages: Record<AiReadinessIssueCode, Localized> = {
-  onlyExternalColumns: {
-    en: "Every column we couldn't work out has values we can't trace to your input file ({columns}). They probably come from another source, or are written inconsistently there (for example dates in two formats). The AI step can't help with that, so we finished everything else on your computer; those columns need your input.",
-    he: 'לכל העמודות שלא הצלחנו להבין יש ערכים שאי אפשר לאתר בקובץ הקלט ({columns}). הם כנראה מגיעים ממקור אחר, או שנכתבו שם בצורה לא עקבית (למשל תאריכים בשני פורמטים). שלב ה־AI לא יכול לעזור בזה, ולכן סיימנו את כל השאר במחשב שלכם; העמודות האלה דורשות את ההזנה שלכם.',
-  },
   noRowsMatched: {
     en: "None of the rows in your example output match a row of your input file, so the two files don't seem to come from the same data. Check that the example output was made from this input file and try again.",
     he: 'אף אחת מהשורות בפלט לדוגמה לא תואמת שורה בקובץ הקלט, ולכן נראה ששני הקבצים לא מאותם נתונים. ודאו שהפלט לדוגמה נוצר מקובץ הקלט הזה ונסו שוב.',

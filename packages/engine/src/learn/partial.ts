@@ -1,11 +1,13 @@
 // The local partial result (SPEC 21 v5 item 1): what code alone can build from the pair analysis when
-// the example needs the AI step - or when the AI step can't help. Like the strict fast path
+// the example needs the AI step (the caller may not use it yet). Like the strict fast path
 // (fastPath.ts, same builders) but tolerant: every output column the code explained (one coverage-1.0,
-// unambiguous, well-evidenced relation) gets its rule; every other output column gets `from: null`,
-// and comes back listed as either "needs the AI step" or "external data" (its values don't come from
-// the input file at all, SPEC 6.4). A DERIVED column - unexplained by any relation, yet determined by the
-// input (bands on a number, a category dependency; see analyze/derived.ts) - is one the AI can solve: it
-// "needs the AI step", it is not external.
+// unambiguous, well-evidenced relation) gets its rule; EVERY other output column gets `from: null` and
+// comes back listed as "needs the AI step". "Code found no relation" is not certainty (SPEC 6.4, 21 v7 note):
+// a column no detector explained (EXTERNAL: no relation, not derived either - maybe reformatted numbers or
+// dates, a calculation mixed in) is listed in `needsAi` too, and also in `external`, only so the UI can say it
+// "may come from another source". It is never put in `rules.unsupported`: only the AI step says that.
+// A DERIVED column - unexplained by any relation, yet determined by the input (bands on a number, a
+// category dependency; see analyze/derived.ts) - needs the AI step, and is not in `external`.
 //
 // Structure the strict path refuses outright is built here only where the analysis says exactly what
 // it is, and otherwise reported in `needsAiParts` instead of guessed:
@@ -15,7 +17,7 @@
 //   - constant title rows are kept; a title with a date from the data is not;
 //   - sort, groups, summary rows, blank rows, a summary output and a fixed fan-out are not built.
 // A partial result is never saved as a conversion: it is the local result shown before the AI step
-// (5 E), and the finished learn when nothing is left for the AI (only external columns).
+// (5 E).
 
 import type { AiStepPartCode, Assumption, ColumnType, Expand, LearnResult, TitleRow } from '@formatai/shared';
 import { AI_STEP_PART_CODES } from '@formatai/shared';
@@ -41,15 +43,14 @@ import {
 import type { PreflightResult } from './preflight';
 
 export interface PartialRulesResult {
-  /** Rules that load and run: solved columns are built, the rest have `from: null`. External columns are
-   * also listed in `rules.unsupported` (`externalData`). */
+  /** Rules that load and run: solved columns are built, the rest have `from: null` (and are not in `unsupported`: only the AI step reports that). */
   rules: LearnResult;
   assumptions: Assumption[];
   /** Headers of the output columns code built and can check against the example. */
   solved: string[];
-  /** Headers of the columns that need the AI step. */
+  /** Headers of every column that needs the AI step (including `external`). */
   needsAi: string[];
-  /** Headers of the columns whose values don't come from the input file: the AI can't help; the user must fill them in. */
+  /** The subset of `needsAi` whose values code could not find in the input file at all: they "may come from another source" (wording only; the AI step still tries them). */
   external: string[];
   /** Output column positions (0-based) of `solved`, for `verifyAgainstExample`'s `onlyColumns`. */
   solvedColumns: number[];
@@ -161,7 +162,6 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
   if (!rowsBuilt) parts.add('rows');
 
   // ---- columns ----
-  const skip = new Set(preflight.skipColumns);
   const outputColumns: BuiltOutputColumn[] = [];
   const solved: string[] = [];
   const needsAi: string[] = [];
@@ -169,8 +169,8 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
   const solvedColumns: number[] = [];
 
   for (const ca of analysis.columns) {
-    // A derived column (the input determines it) is not external: the AI can solve it, so it "needs the AI step".
-    const isExternal = isExternalColumn(ca) || skip.has(ca.out);
+    // Neither a derived column nor an external one is built here: both "need the AI step" (external only changes the wording).
+    const isExternal = isExternalColumn(ca);
     let from: string | null = null;
     let header = looseHeader(analysis, ca);
 
@@ -197,8 +197,10 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
     if (from !== null) {
       solved.push(header);
       solvedColumns.push(ca.out);
-    } else if (isExternal) external.push(header);
-    else needsAi.push(header);
+    } else {
+      needsAi.push(header);
+      if (isExternal) external.push(header);
+    }
   }
 
   // ---- dropped rows: only when fully explained, exactly as the strict path builds them ----
@@ -231,7 +233,6 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
   const rules = assembleRules(analysis, ctx, outputColumns, dropped, validations, assumptions, {
     ...(expand ? { expand } : {}),
     titleRows,
-    unsupported: external.map((outputColumn) => ({ outputColumn, reasonCode: 'externalData' as const })),
   });
 
   return {

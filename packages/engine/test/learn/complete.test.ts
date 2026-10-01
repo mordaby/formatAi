@@ -12,7 +12,7 @@ function key(seed: string): Uint8Array {
   return new TextEncoder().encode(seed);
 }
 
-/** The local partial rules of the mixed pair (Item, Ref, Total built; Label needs the AI step; Warehouse is external data), plus a filter and a computed column with text constants. */
+/** The local partial rules of the mixed pair (Item, Ref, Total built; Label needs the AI step; Warehouse is external data, which needs the AI step too), plus a filter and a computed column with text constants. */
 function setup() {
   const { a, pf } = analyzeWithPreflight(mixedPair());
   const partial = partialRules(a, pf);
@@ -122,23 +122,16 @@ describe('completePayloadOf: the complete field', () => {
 });
 
 describe('completionPlan: what is missing', () => {
-  it('the output columns with no rule, except data that is not in the input (external), and the layout parts still lacking', () => {
+  it('EVERY output column with no rule (an external one too), and the layout parts still lacking', () => {
     const { rules } = setup();
-    // Item, Ref, Total built; Label (needs the AI step) and Warehouse (external: unsupported externalData) have no rule.
-    expect(completionPlan(rules, { parts: ['sort', 'summaryRows'] })).toEqual({ columns: [3], parts: ['sort', 'summaryRows'] });
+    // Item, Ref, Total built; Label (needs the AI step) and Warehouse (no trace in the input: still the AI step's to try) have no rule.
+    expect(completionPlan(rules, { parts: ['sort', 'summaryRows'] })).toEqual({ columns: [3, 4], parts: ['sort', 'summaryRows'] });
   });
 
-  it('skip columns (external by position) are never asked for', () => {
+  it('a column an earlier answer reported as unsupported (externalData or not) is asked for again', () => {
     const { rules } = setup();
-    const noUnsupported: LearnResult = { ...rules, unsupported: [] };
-    expect(completionPlan(noUnsupported, { skipColumns: [4] }).columns).toEqual([3]);
-    expect(completionPlan(noUnsupported).columns).toEqual([3, 4]);
-  });
-
-  it('a column the AI step reported as unsupported (not external) is asked for again', () => {
-    const { rules } = setup();
-    const ambiguous: LearnResult = { ...rules, unsupported: [{ outputColumn: 'Label', reasonCode: 'ambiguous' }, { outputColumn: 'Warehouse', reasonCode: 'externalData' }] };
-    expect(completionPlan(ambiguous).columns).toEqual([3]);
+    const reported: LearnResult = { ...rules, unsupported: [{ outputColumn: 'Label', reasonCode: 'ambiguous' }, { outputColumn: 'Warehouse', reasonCode: 'externalData' }] };
+    expect(completionPlan(reported).columns).toEqual([3, 4]);
   });
 
   it('parts the user has built since are no longer asked for', () => {

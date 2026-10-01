@@ -27,8 +27,9 @@ export interface RulesMapProps {
   /**
    * SPEC 21 v5 item 1 (the local result before the AI step): the output columns (headers) and the layout parts code could
    * not work out. The columns are marked "Needs the AI step" in the map; the parts are listed in a section of their own.
+   * `external` (a subset of `columns`): columns whose values code could not find in the input file - the line adds "may come from another source".
    */
-  aiStep?: { columns: ReadonlySet<string>; parts: readonly AiStepPartCode[] } | undefined;
+  aiStep?: { columns: ReadonlySet<string>; external?: ReadonlySet<string>; parts: readonly AiStepPartCode[] } | undefined;
   /** No example is in memory (a saved source opened for editing): a tick says "no problem found", not "matches your example". */
   noExample?: boolean | undefined;
   /** "Applied · now matches X of Y rows": said for a few seconds on the lines the last edit changed. */
@@ -105,6 +106,7 @@ export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, i
             const n = lineNumber++;
             const isColumn = line.target.kind === 'column' && line.target.index !== undefined;
             const needsAi = isColumn && aiStep?.columns.has(line.target.header ?? '') === true;
+            const mayBeExternal = needsAi && aiStep?.external?.has(line.target.header ?? '') === true;
             return (
               <MapLine
                 key={line.id}
@@ -114,6 +116,7 @@ export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, i
                 check={isColumn && !needsAi ? columnChecks?.[line.target.index!] : undefined}
                 mismatch={isColumn && !needsAi && line.status !== 'needsInput' ? mismatches?.find((m) => m.index === line.target.index) : undefined}
                 needsAi={needsAi}
+                mayBeExternal={mayBeExternal}
                 noExample={noExample === true}
                 applied={applied?.ids.has(line.id) ? applied : undefined}
                 intro={intro}
@@ -213,6 +216,8 @@ interface MapLineProps {
   mismatch: ColumnMismatch | undefined;
   /** The AI step still has to work this column out (SPEC 21 v5). */
   needsAi: boolean;
+  /** With `needsAi`: code found no trace of this column's values in the input file, so it may come from another source (the AI step still tries it). */
+  mayBeExternal: boolean;
   noExample: boolean;
   applied: AppliedNote | undefined;
   intro: boolean;
@@ -229,7 +234,7 @@ interface MapLineProps {
   onMove(delta: number): void;
 }
 
-function MapLine({ line, keepable, selected, check, mismatch, needsAi, noExample, applied, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
+function MapLine({ line, keepable, selected, check, mismatch, needsAi, mayBeExternal, noExample, applied, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
   const { t } = useI18n();
   const index = line.target.index ?? 0;
   const name = line.target.header ?? '';
@@ -238,7 +243,7 @@ function MapLine({ line, keepable, selected, check, mismatch, needsAi, noExample
   // Rows of the example this column's rule doesn't reproduce: said on the line (with how to fix it) whatever the line's other status is.
   const attention = line.status === 'check' || line.status === 'needsInput' || needsAi;
   const statusLabel = needsAi ? t('partial.section') : noExample && line.status === 'matches' ? t('map.status.unchecked') : t(STATUS_TEXT[line.status]);
-  const reason = needsAi ? t('partial.line.reason') : line.statusReason;
+  const reason = needsAi ? t(mayBeExternal ? 'partial.line.reason.external' : 'partial.line.reason') : line.statusReason;
 
   const edgeOf = (e: DragEvent<HTMLElement>): 'before' | 'after' => {
     const rect = e.currentTarget.getBoundingClientRect();

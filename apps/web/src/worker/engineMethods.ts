@@ -6,6 +6,7 @@ import {
   analyzePair,
   convertFile,
   detectTable,
+  isExternalColumn,
   learnFromExamples,
   nonEmptySheets,
   readWorkbook,
@@ -58,7 +59,9 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
       analysis = a;
     },
     callLearn: async (payload) => {
-      emit({ phase: 'learning', attempt: 'learn' });
+      // SPEC 6.4: the columns code found no trace of in the input are said while the AI step works on them (in completion mode the user has seen them on the map).
+      const unexplained = analysis && !args.complete ? analysis.columns.filter(isExternalColumn).map((c) => c.header || `#${c.out + 1}`) : [];
+      emit({ phase: 'learning', attempt: 'learn', ...(unexplained.length > 0 ? { unexplained } : {}) });
       const out = await ctx.host<LearnCallResult>('callLearn', payload);
       emit({ phase: 'verifying' });
       return out;

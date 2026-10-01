@@ -178,17 +178,14 @@ describe('"Add a column"', () => {
     partial: { reason: 'aiNotAllowed', solved: ['Item', 'Supplier', 'Qty'], needsAi: ['Total', 'Shipped'], external: ['Remarks'], solvedColumns: [0, 1, 2], needsAiParts: ['sort'] },
     readiness: { ready: true },
   };
-  const EXTERNAL_ONLY = {
-    path: 'partial',
-    partial: { reason: 'onlyExternalColumns', solved: ['Item', 'Supplier', 'Qty', 'Total', 'Shipped'], needsAi: [], external: ['Remarks'], solvedColumns: [0, 1, 2, 3, 4], needsAiParts: [] },
-    readiness: { ready: false, issues: [{ code: 'onlyExternalColumns', params: { count: 1, columns: 'Remarks' } }] },
-  };
+  // An AI result that reported Remarks as unsupported externalData (the AI step's own word): it "needs your input".
+  const EXTERNAL_ONLY = { path: 'llm' };
 
   it.each([
     ['a verified result', {}, undefined],
     ['a result with differences', {}, async () => liveResult({ verified: false, matched: 25, total: 30, differences: 5 })],
     ['the local result that still needs the AI step', PARTIAL, undefined],
-    ['the finished local result with columns that need your input', EXTERNAL_ONLY, undefined],
+    ['an AI result with columns that need your input', EXTERNAL_ONLY, undefined],
   ] as const)('is on the map for %s', async (_name, result, live) => {
     await openResult(result as Record<string, unknown>, live ? { live } : {});
     expect(within(document.querySelector('[data-section="columns"]') as HTMLElement).getByRole('button', { name: 'Add a column' })).toBeTruthy();
@@ -213,11 +210,8 @@ describe('"Add a column"', () => {
 });
 
 describe('a result whose only open columns need your input', () => {
-  const EXTERNAL_ONLY = {
-    path: 'partial',
-    partial: { reason: 'onlyExternalColumns', solved: ['Item', 'Supplier', 'Qty', 'Total', 'Shipped'], needsAi: [], external: ['Remarks'], solvedColumns: [0, 1, 2, 3, 4], needsAiParts: [] },
-    readiness: { ready: false, issues: [{ code: 'onlyExternalColumns', params: { count: 1, columns: 'Remarks' } }] },
-  };
+  // An AI result that reported Remarks as unsupported externalData (ordersRules has that entry): the column "needs your input".
+  const EXTERNAL_ONLY = { path: 'llm' };
   /** The column nothing fills would differ on every row: comparing it is what made the old status "30 differences". */
   const live: LiveFn = async (_id, _rules, options) =>
     options?.onlyColumns ? liveResult({ verified: true, matched: 30, total: 30 }) : liveResult({ verified: false, matched: 0, total: 30, differences: 30 });

@@ -175,7 +175,7 @@ describe('engine methods, through the worker RPC', () => {
     const first = await client.call<LearnOutput>('learn', { ...local.args, ai: 'notAllowed' as const }, { transfer: local.transfer });
     expect(first.path).toBe('partial');
     expect(first.exampleOutputColumns).toBe(2);
-    const plan = completionPlan(first.rules!, { parts: first.partial!.needsAiParts, skipColumns: first.preflight.skipColumns });
+    const plan = completionPlan(first.rules!, { parts: first.partial!.needsAiParts });
     expect(plan.columns).toEqual([1]);
 
     // Then the AI step, for that column only. The fake server answers with the fixed rules plus a rule for Size.

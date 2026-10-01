@@ -193,15 +193,15 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     }
   };
 
-  // What the AI step would be asked for, from the rules as they are on screen right now: the output columns with no rule (not data the input
-  // does not hold) and the layout parts the local result could not build and the rules still lack. `usable` is false when there is nothing
+  // What the AI step would be asked for, from the rules as they are on screen right now: EVERY output column with no rule (also one code found
+  // no trace of in the input: that is not certainty) and the layout parts the local result could not build and the rules still lack. `usable` is false when there is nothing
   // to ask for, or the rules no longer line up with the example (columns added or removed) - then only a whole learn makes sense.
   const planFor = (rules: WorkbenchInfo['rules']) => {
-    const plan = completionPlan(rules, { parts: partial?.needsAiParts ?? [], skipColumns: result.preflight.skipColumns });
+    const plan = completionPlan(rules, { parts: partial?.needsAiParts ?? [] });
     const aligned = result.exampleOutputColumns === undefined || rules.output.columns.length === result.exampleOutputColumns;
     // Too little fixed (under limits.learn.completionMinFixedShare of the columns): a 'complete the rest' request is just a worse-shaped
     // full learn (first Haiku eval), so the whole learn runs instead.
-    const enoughFixed = fixedColumnShare(rules, { skipColumns: result.preflight.skipColumns }) >= limits.learn.completionMinFixedShare;
+    const enoughFixed = fixedColumnShare(rules) >= limits.learn.completionMinFixedShare;
     return { ...plan, usable: aligned && enoughFixed && isCompletable(rules) && (plan.columns.length > 0 || plan.parts.length > 0) };
   };
   const rerunAll = (): void => {
@@ -297,7 +297,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
 
   const banners = (info: WorkbenchInfo) => (
     <>
-      {partial && <PartialBanner partial={partial} totalColumns={rules.output.columns.length} readiness={result.readiness} />}
+      {partial && <PartialBanner partial={partial} totalColumns={rules.output.columns.length} />}
       {match.format && !match.dismissed && (
         <InlineMessage
           tone="info"

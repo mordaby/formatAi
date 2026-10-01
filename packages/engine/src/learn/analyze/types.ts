@@ -354,7 +354,7 @@ export interface ColumnAnalysis {
   /**
    * Unknown columns only: set when the input determines the values (a `derived` column, solvable by the AI).
    * An unknown column with `derived === null` is EXTERNAL data: its values don't come from the input file
-   * (SPEC 6.4 skipColumns) - see `isExternalColumn`.
+   * (SPEC 6.4: wording only, the AI step still tries it) - see `isExternalColumn`.
    */
   derived: Derivation | null;
 }

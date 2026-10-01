@@ -45,7 +45,10 @@ const MAX_PAIR_COLUMNS = 10;
 /** Two columns are combined only when their value pairs fit a table this big (bounds memory, not evidence). */
 const MAX_PAIR_TABLE = 1_000_000;
 
-/** An unknown column the input does not determine: its values come from somewhere else (SPEC 6.4 skipColumns). */
+/**
+ * An unknown column no detector explained AND the input does not determine (as far as code can tell): its values may come from somewhere
+ * else (SPEC 6.4). An internal class for wording and hints only: it is NOT skipped, the AI step tries it like any other column.
+ */
 export function isExternalColumn(ca: ColumnAnalysis): boolean {
   return ca.unknown && ca.derived === null;
 }

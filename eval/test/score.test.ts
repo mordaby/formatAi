@@ -57,6 +57,7 @@ function unsupportedResult(codes: string[]): LearnFromExamplesResult {
   };
 }
 
+/** An old-style run: the column was routed to skipColumns by pre-flight and the LLM never reported it (no longer how an external column is handled). */
 function skipColumnResult(): LearnFromExamplesResult {
   return {
     path: 'llm',
@@ -65,9 +66,23 @@ function skipColumnResult(): LearnFromExamplesResult {
     verification: { verified: true, matched: 5, total: 5, mismatches: [], layoutProblems: [],
     layoutIssues: [], repairProblems: [] },
     assumptions: [],
-    unsupported: [], // LEARN_PROMPT: skipColumns are never restated in unsupported
+    unsupported: [],
     calls: [],
     stages: stages({ llmCalled: true, verifiedFirstCall: true, verifiedAfterRepair: true }),
+  };
+}
+
+/** The AI step's own report for an external column: the LLM was asked (nothing in skipColumns) and answered unsupported externalData. */
+function reportedExternalResult(): LearnFromExamplesResult {
+  return {
+    path: 'llm',
+    preflight: { status: 'ok', issues: [{ code: 'unknownOutputColumns' as never, severity: 'info' }], skipColumns: [] },
+    rules: { output: {} } as never,
+    verification: { verified: false, matched: 0, total: 5, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] },
+    assumptions: [],
+    unsupported: [{ outputColumn: 'Assigned Warehouse', reasonCode: 'externalData' }],
+    calls: [],
+    stages: stages({ llmCalled: true }),
   };
 }
 
@@ -162,11 +177,16 @@ describe('expectationMet: "unsupported:<code>"', () => {
     const r = unsupportedResult(['externalData']);
     expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(true);
   });
-  it('is met when the column was a preflight skipColumn instead (never restated in unsupported)', () => {
-    const r = skipColumnResult();
+  it('is met when the LLM reports the column as unsupported externalData (it no longer comes from skipColumns: the LLM was asked about it)', () => {
+    const r = reportedExternalResult();
+    expect(r.preflight.skipColumns).toEqual([]);
     expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(true);
   });
-  it('is not met when neither unsupported nor skipColumns mention it', () => {
+  it('is NOT met by a skipColumns list alone: only the AI step\'s own report counts', () => {
+    const r = skipColumnResult();
+    expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(false);
+  });
+  it('is not met when unsupported does not mention it', () => {
     const r = verifiedResult();
     expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(false);
   });

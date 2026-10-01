@@ -230,7 +230,8 @@ describe('external columns stay external', () => {
     const unknown = a.columns.filter((c) => c.unknown);
     expect(unknown.map((c) => c.header)).toEqual(['Assigned Warehouse']);
     expect(unknown.every(isExternalColumn)).toBe(true);
-    expect(preflight(a, 'paid').skipColumns).toEqual(unknown.map((c) => c.out));
+    // (classified external internally - but never skipped: the AI step still tries it)
+    expect(preflight(a, 'paid').skipColumns).toEqual([]);
   });
 });
 
@@ -241,8 +242,8 @@ function derivedAndExternal(): Pair {
   return { input, output: output.map((row, i) => [...row, i === 0 ? 'Dock' : `D${100 + Math.floor(r() * 800)}`]) };
 }
 
-describe('pre-flight: only EXTERNAL columns are skipped', () => {
-  it('a derived column is not in skipColumns and does not raise the "unknown columns" warning', () => {
+describe('pre-flight: external columns are only noted, never skipped', () => {
+  it('a derived column is not in skipColumns and does not raise the "unknown columns" note', () => {
     const a = analyze(sizePair(PERM30));
     const pf = preflight(a, 'paid');
     expect(pf.skipColumns).toEqual([]);
@@ -250,11 +251,12 @@ describe('pre-flight: only EXTERNAL columns are skipped', () => {
     expect(pf.status).toBe('ok');
   });
 
-  it('with an external column too, only that one is skipped and counted', () => {
+  it('with an external column too, only that one is noted and counted (informational, nothing skipped)', () => {
     const a = analyze(derivedAndExternal());
     const pf = preflight(a, 'paid');
-    expect(pf.skipColumns).toEqual([3]);
-    expect(pf.issues).toContainEqual({ code: 'unknownOutputColumns', severity: 'warn', params: { count: 1 } });
+    expect(pf.skipColumns).toEqual([]);
+    expect(pf.status).toBe('ok');
+    expect(pf.issues).toContainEqual({ code: 'unknownOutputColumns', severity: 'info', params: { count: 1 } });
   });
 });
 
@@ -281,11 +283,11 @@ describe('hints', () => {
     });
   });
 
-  it('an external column still has no hint and is sent as skipColumns', () => {
+  it('an external column still has no hint, and is NOT sent as skipColumns (the AI step gets it as a normal output column)', () => {
     const a = analyze(derivedAndExternal());
     const pf = preflight(a, 'paid');
     expect(relationsToHints(a, pf).find((h) => 'out' in h && h.out === 3)).toBeUndefined();
-    expect(buildPayload(a, pf).payload.skipColumns).toEqual([3]);
+    expect(buildPayload(a, pf).payload.skipColumns).toBeUndefined();
   });
 
   it('with an exception row, the hint says where it fails (failsOn points at a sample)', () => {
@@ -340,14 +342,14 @@ describe('masking: band values are masked like other hint values', () => {
 });
 
 describe('partial result and the readiness gate', () => {
-  it('the derived column "needs the AI step"; only the external one is external', () => {
+  it('both the derived and the external column "need the AI step"; only the external one is marked external (wording)', () => {
     const a = analyze(derivedAndExternal());
     const p = partialRules(a, preflight(a, 'paid'));
     if ('reason' in p) throw new Error('unreachable');
     expect(p.solved).toEqual(['Ref', 'Item']);
-    expect(p.needsAi).toEqual(['Size']);
+    expect(p.needsAi).toEqual(['Size', 'Dock']);
     expect(p.external).toEqual(['Dock']);
-    expect(p.rules.unsupported).toEqual([{ outputColumn: 'Dock', reasonCode: 'externalData' }]);
+    expect(p.rules.unsupported).toEqual([]);
   });
 
   it('a derived column alone: the gate lets the AI step run (it is not "only external columns left")', () => {
@@ -356,15 +358,12 @@ describe('partial result and the readiness gate', () => {
     expect(r.ready).toBe(true);
   });
 
-  it('derived + external: the AI step still runs; external alone: finished locally', () => {
+  it('derived + external, or external alone: the AI step runs either way', () => {
     const a = analyze(derivedAndExternal());
     expect(aiReadiness(a, preflight(a, 'paid')).ready).toBe(true);
     const { input, output } = derivedAndExternal();
     const external = analyze({ input, output: output.map((row) => [row[0]!, row[1]!, row[3]!]) });
-    expect(aiReadiness(external, preflight(external, 'paid'))).toEqual({
-      ready: false,
-      issues: [{ code: 'onlyExternalColumns', params: { count: 1, columns: 'Dock' } }],
-    });
+    expect(aiReadiness(external, preflight(external, 'paid')).ready).toBe(true);
   });
 });
 

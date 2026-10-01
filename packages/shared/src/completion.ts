@@ -76,38 +76,28 @@ export function completionProduced(
 export interface CompletionPlanOptions {
   /** The layout parts the local partial result said it could not build (`PartialInfo.needsAiParts`); default none. */
   parts?: readonly AiStepPartCode[];
-  /** Output positions whose values are not in the input at all (`preflight.skipColumns`): the AI step can't produce them. */
-  skipColumns?: readonly number[];
 }
 
 /**
- * The share of the output columns that already have a rule, counting only columns a rule could fill
- * (not `skipColumns`, not external data). 1 when there is nothing to count.
+ * The share of the output columns that already have a rule. Every column counts as one the AI step could fill - also one the pair analysis
+ * could not trace to the input (external) or one an earlier answer reported as unsupported: code finding no relation is not proof that none
+ * exists (owner rule: skip only what is certain to fail). 1 when there are no columns.
  */
-export function fixedColumnShare(rules: LearnResult | Rules, options: CompletionPlanOptions = {}): number {
-  const skip = new Set(options.skipColumns ?? []);
-  const external = new Set(rules.unsupported.filter((u) => u.reasonCode === 'externalData').map((u) => u.outputColumn));
-  let fillable = 0;
-  let fixed = 0;
-  rules.output.columns.forEach((col, i) => {
-    if (skip.has(i) || external.has(col.header)) return;
-    fillable++;
-    if (col.from !== null) fixed++;
-  });
-  return fillable === 0 ? 1 : fixed / fillable;
+export function fixedColumnShare(rules: LearnResult | Rules): number {
+  const total = rules.output.columns.length;
+  if (total === 0) return 1;
+  return rules.output.columns.filter((col) => col.from !== null).length / total;
 }
 
 /**
- * What is missing from `rules`, for a completion call: every output column with no `from` (and not external data:
- * a column the pair analysis or the AI step called `externalData` is data no rule can produce), and the layout
- * parts of `options.parts` the rules still lack. The plan is empty when nothing is missing.
+ * What is missing from `rules`, for a completion call: EVERY output column with no `from` (a column no detector explained, or one an earlier
+ * answer called `externalData`, is still the AI step's to try - it may report it as unsupported again), and the layout parts of
+ * `options.parts` the rules still lack. The plan is empty when nothing is missing.
  */
 export function completionPlan(rules: LearnResult | Rules, options: CompletionPlanOptions = {}): CompletionPlan {
-  const skip = new Set(options.skipColumns ?? []);
-  const external = new Set(rules.unsupported.filter((u) => u.reasonCode === 'externalData').map((u) => u.outputColumn));
   const columns: number[] = [];
   rules.output.columns.forEach((c, i) => {
-    if (c.from === null && !skip.has(i) && !external.has(c.header)) columns.push(i);
+    if (c.from === null) columns.push(i);
   });
   return { columns, parts: missingParts(rules, options.parts ?? []) };
 }

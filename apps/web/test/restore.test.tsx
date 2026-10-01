@@ -25,10 +25,11 @@ afterEach(() => {
   setPendingStore(undefined);
 });
 
-/** What the local analysis gives for the orders example: three columns built, two for the AI step, one external. */
+/** What the local analysis gives for the orders example: three columns built, two for the AI step, one with no trace in the input (it needs the AI step too). */
 function localRules(): Rules {
   const rules = ordersRules();
   rules.output.columns = rules.output.columns.map((c) => (c.header === 'Total' || c.header === 'Shipped' ? { header: c.header, from: null } : c));
+  rules.unsupported = [];
   rules.output.summaryRows = [];
   rules.transform.computed = [];
   rules.validations = [];
@@ -39,7 +40,7 @@ function localRules(): Rules {
 const PARTIAL = {
   reason: 'aiNotAllowed' as const,
   solved: ['Item', 'Supplier', 'Qty'],
-  needsAi: ['Total', 'Shipped'],
+  needsAi: ['Total', 'Shipped', 'Remarks'],
   external: ['Remarks'],
   solvedColumns: [0, 1, 2],
   needsAiParts: ['sort' as const],
@@ -99,14 +100,14 @@ describe('coming back after signing in', () => {
     await store.save(await kept());
     const results = [
       partialOutput(),
-      learnResult({ path: 'llm', rules: ordersRules(), completion: { columns: [3, 4], parts: ['sort'], fixedProblems: [], matches: true, produced: { columns: 2, parts: 1 } } }),
+      learnResult({ path: 'llm', rules: ordersRules(), completion: { columns: [3, 4, 5], parts: ['sort'], fixedProblems: [], matches: true, produced: { columns: 2, parts: 1 } } }),
     ];
     const { engine, learn } = fakeEngine(async () => results.shift()!);
     renderApp({ api: fakeApi({ user: USER }), engine, route: '/result' });
     fireEvent.click(await screen.findByRole('button', { name: 'Finish with the AI step' }));
     await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
     const second = learn.mock.calls[1]![0] as { input: { name: string }; ai: string; masking: boolean; complete?: { columns: number[] } };
-    expect(second).toMatchObject({ ai: 'allowed', masking: false, complete: { columns: [3, 4] } });
+    expect(second).toMatchObject({ ai: 'allowed', masking: false, complete: { columns: [3, 4, 5] } });
     expect(second.input.name).toBe('orders.csv');
     expect(await screen.findByRole('button', { name: 'Save format and download' })).toBeTruthy();
   });

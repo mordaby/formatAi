@@ -22,7 +22,7 @@ export interface LearningProgressProps {
  * never appear.
  */
 export function LearningProgress({ state, steps, inputName, outputName, masking, onCancel }: LearningProgressProps) {
-  const { t } = useI18n();
+  const { t, code } = useI18n();
   const [sendOpen, setSendOpen] = useState(false);
   const finished = state.status === 'done';
 
@@ -52,6 +52,20 @@ export function LearningProgress({ state, steps, inputName, outputName, masking,
                 </span>
                 {active && key === 'checking' && state.status === 'checking' && <Progress value={state.fraction} label={t('flow.checking')} />}
                 {active && (key === 'learning' || key === 'learningRepair') && <span className="steps__note">{t('learning.wait')}</span>}
+                {/* SPEC 6.4 (informational, never a stop): columns code found no trace of in the input go to the AI step like the rest. */}
+                {active && key === 'learning' && state.status === 'learning' && state.unexplained && state.unexplained.length > 0 && (
+                  <div className="chips-block" data-testid="unexplained-note">
+                    <p className="steps__note">{code({ kind: 'preflight', code: 'unknownOutputColumns' })}</p>
+                    <p className="chips-block__lead">{t('learning.unexplained.lead')}</p>
+                    <ul className="chips">
+                      {state.unexplained.map((column, i) => (
+                        <li key={`${i}-${column}`}>
+                          <Cell value={column} />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </li>
           );

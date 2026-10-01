@@ -158,41 +158,36 @@ describe('LearnFlow', () => {
   });
 
   describe('warnings (SPEC 6.4)', () => {
-    it('unknown output columns: waits for the user before anything is sent', async () => {
-      const { engine } = fakeEngine(async (_a, host) => {
-        const r = await host.callLearn(PAYLOAD_SKIP);
+    it('unknown output columns are informational: no stop, no confirmation - the AI call goes straight out, and the screen is told which columns the AI step is trying', async () => {
+      const { engine } = fakeEngine(async (_a, host, opts) => {
+        opts.onProgress?.({ phase: 'learning', attempt: 'learn', unexplained: ['Assigned Warehouse'] });
+        const r = await host.callLearn(PAYLOAD);
         return result({ path: 'llm', rules: r.rules });
       });
       const api = fakeApi();
-      const { flow, start } = makeFlow(engine, api);
-      const done = start();
-      await vi.waitFor(() => expect(state(flow).status).toBe('warn'));
-      const s = state(flow);
-      expect(s.status === 'warn' && s.reason).toBe('confirmSkipColumns');
-      expect(s.status === 'warn' && s.columns).toEqual(['Assigned Warehouse']);
-      expect(s.status === 'warn' && s.issues[0]).toMatchObject({ code: 'unknownOutputColumns', severity: 'warn', params: { count: 1 } });
-      expect(api.learn).not.toHaveBeenCalled();
-      expect(s.sent).toEqual([]);
-
-      flow.confirm();
-      await done;
+      const { flow, statuses, start } = makeFlow(engine, api);
+      const seen: string[][] = [];
+      flow.subscribe(() => {
+        const s = state(flow);
+        if (s.status === 'learning' && s.unexplained) seen.push(s.unexplained);
+      });
+      await start();
+      expect(statuses).not.toContain('warn');
+      expect(seen[0]).toEqual(['Assigned Warehouse']);
       expect(api.learn).toHaveBeenCalledTimes(1);
       expect(state(flow).status).toBe('done');
     });
 
-    it('cancelling at the warning sends nothing and returns to idle', async () => {
+    it('a payload that skips a column (nothing sets it today) is not a stop either', async () => {
       const { engine } = fakeEngine(async (_a, host) => {
         await host.callLearn(PAYLOAD_SKIP);
         return result({ path: 'llm' });
       });
       const api = fakeApi();
-      const { flow, start } = makeFlow(engine, api);
-      const done = start();
-      await vi.waitFor(() => expect(state(flow).status).toBe('warn'));
-      flow.cancel();
-      await done;
-      expect(state(flow).status).toBe('idle');
-      expect(api.learn).not.toHaveBeenCalled();
+      const { flow, statuses, start } = makeFlow(engine, api);
+      await start();
+      expect(statuses).not.toContain('warn');
+      expect(api.learn).toHaveBeenCalledTimes(1);
     });
 
     it('rows not aligned: a warn with "Try anyway", which re-runs with tryAnyway', async () => {
@@ -436,7 +431,7 @@ describe('LearnFlow: completion mode (complete)', () => {
 
   it('passes complete to the worker with the example id to keep, allows the AI step, and does not stop to ask about empty columns', async () => {
     const { engine, learn } = fakeEngine(async (_a, host) => {
-      await host.callLearn(PAYLOAD_SKIP); // a payload with skipColumns would normally stop at "unknown output columns"
+      await host.callLearn(PAYLOAD_SKIP);
       return result({ path: 'llm', completion: GOOD });
     });
     const { flow, statuses } = makeFlow(engine, fakeApi());

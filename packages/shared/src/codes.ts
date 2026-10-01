@@ -58,8 +58,9 @@ export type PreflightBlockReason = (typeof PREFLIGHT_BLOCK_REASONS)[number];
 // DECISION: same rationale as PREFLIGHT_BLOCK_REASONS above - SPEC 6.4 lists these
 // as prose ("Some output columns are unknown", "Rows couldn't be aligned"), coded
 // here as a closed enum so preflight results and i18n share one vocabulary. Unlike
-// a block, the user can continue past a warn (skipColumns confirmation, or "try
-// anyway"), and doing so still counts as a learn.
+// a block, the user can continue past a warn ("try anyway"), and doing so still counts
+// as a learn. `unknownOutputColumns` is informational only (severity 'info', never a stop):
+// the AI step tries those columns, and what it can't produce stays empty.
 export const PREFLIGHT_WARN_REASONS = ['unknownOutputColumns', 'rowsNotAligned'] as const;
 export type PreflightWarnReason = (typeof PREFLIGHT_WARN_REASONS)[number];
 

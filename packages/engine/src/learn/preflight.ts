@@ -1,7 +1,7 @@
 // Pre-flight (SPEC 6.3 block, 6.4 warn): runs in the browser, on the real
 // pair-analysis result, before any LLM call. A block costs nothing (SPEC 5 A
-// step 2); a warn lets the user continue ("try anyway" / confirm skipColumns),
-// which still counts as a learn.
+// step 2); a warn lets the user continue ("try anyway"), which still counts as a
+// learn. An 'info' issue (columns no detector explained) never stops anything.
 //
 // This module only classifies what `analyzePair` already found; it never
 // re-reads the files or re-tests relations.
@@ -12,7 +12,8 @@ import { isExternalColumn, type PairAnalysis, type PairAnalysisResult } from './
 
 export interface PreflightIssue {
   code: PreflightBlockReason | PreflightWarnReason;
-  severity: 'block' | 'warn';
+  /** 'info' is a note only (SPEC 6.4 `unknownOutputColumns`): no gate, no status change - the AI step tries those columns. */
+  severity: 'block' | 'warn' | 'info';
   /** Structured details for the i18n message (e.g. which table issue, or the
    * measured value vs. the tier's limit). Never cell values. */
   params?: Record<string, string | number>;
@@ -21,10 +22,12 @@ export interface PreflightIssue {
 export interface PreflightResult {
   status: 'ok' | 'warn' | 'block';
   issues: PreflightIssue[];
-  /** Output column positions that are EXTERNAL data (SPEC 6.2/6.4, v5 item 4): no relation reaches
-   * minCoverage AND the input doesn't determine the values either (a derived column, e.g. "bulk" when
-   * Qty >= 10, is solvable by the AI and is NOT listed). Sent to the LLM as `skipColumns` once the user
-   * confirms the `unknownOutputColumns` warn. Empty when the 6.1 table check itself rejected one of the files. */
+  /**
+   * Output column positions the LLM is told to skip (`"from": null`, sent as `payload.skipColumns`): ONLY columns the user explicitly
+   * marked to skip. Nothing sets it today, so it is empty. A column code could not explain (external or derived, whatever the internal
+   * classification) is NEVER here: "code found no relation" is not certainty, so the AI step gets it like any other output column and
+   * may answer `unsupported` with `externalData` (SPEC 6.4, 21 v7 note).
+   */
   skipColumns: number[];
 }
 
@@ -34,6 +37,10 @@ function block(code: PreflightBlockReason, params?: Record<string, string | numb
 
 function warn(code: PreflightWarnReason, params?: Record<string, string | number>): PreflightIssue {
   return params ? { code, severity: 'warn', params } : { code, severity: 'warn' };
+}
+
+function info(code: PreflightWarnReason, params?: Record<string, string | number>): PreflightIssue {
+  return params ? { code, severity: 'info', params } : { code, severity: 'info' };
 }
 
 /** SPEC 6.3 "the files are over the tier's limits": measured against the larger
@@ -81,12 +88,13 @@ export function preflight(analysis: PairAnalysisResult, tier: Tier): PreflightRe
   const overLimits = overTierLimitsIssue(analysis, tier);
   if (overLimits) issues.push(overLimits);
 
-  // ---- SPEC 6.4 warns ----
-  const externalColumns = analysis.columns.filter(isExternalColumn).map((c) => c.out);
-  // Every column external is already the (stronger) noColumnTraced block above;
-  // the warn is for "some, but not all" columns.
-  if (externalColumns.length > 0 && !noColumnTraced) {
-    issues.push(warn('unknownOutputColumns', { count: externalColumns.length }));
+  // ---- SPEC 6.4 ----
+  // Columns no relation and no dependency explains (the internal "external" class). Informational only: they are NOT skipped, the AI
+  // step tries them (and what it can't produce stays empty). Every column external is already the (stronger) noColumnTraced block above;
+  // the note is for "some, but not all" columns.
+  const external = analysis.columns.filter(isExternalColumn);
+  if (external.length > 0 && !noColumnTraced) {
+    issues.push(info('unknownOutputColumns', { count: external.length }));
   }
   if (analysis.alignment.unalignedOut.length > 0) {
     issues.push(warn('rowsNotAligned', { count: analysis.alignment.unalignedOut.length }));
@@ -98,5 +106,5 @@ export function preflight(analysis: PairAnalysisResult, tier: Tier): PreflightRe
       ? 'warn'
       : 'ok';
 
-  return { status, issues, skipColumns: externalColumns };
+  return { status, issues, skipColumns: [] };
 }

@@ -130,7 +130,12 @@ export default function DevPage() {
             {t('flow.checking')}: {s.stage} <progress value={s.fraction} max={1} /> {Math.round(s.fraction * 100)}%
           </p>
         )}
-        {s.status === 'learning' && <p>{s.attempt === 'repair' ? t('flow.learningRepair') : t('flow.learning')}</p>}
+        {s.status === 'learning' && (
+          <p>
+            {s.attempt === 'repair' ? t('flow.learningRepair') : t('flow.learning')}
+            {s.unexplained && s.unexplained.length > 0 && <> ({s.unexplained.join(', ')})</>}
+          </p>
+        )}
         {s.status === 'verifying' && <p>{t('flow.verifying')}</p>}
         {s.status === 'error' && (
           <p role="alert" data-testid="error">
@@ -143,17 +148,8 @@ export default function DevPage() {
             {s.issues.map((i) => (
               <p key={i.code}>{code({ kind: 'preflight', code: i.code, ...(i.params ? { params: i.params } : {}) })}</p>
             ))}
-            {s.columns.length > 0 && (
-              <p>
-                {s.columns.map((c) => (
-                  <span key={c}>
-                    <Cell value={c} />{' '}
-                  </span>
-                ))}
-              </p>
-            )}
             <button type="button" onClick={flow.confirm}>
-              {s.reason === 'tryAnyway' ? t('flow.warn.tryAnyway') : t('flow.warn.continue')}
+              {t('flow.warn.tryAnyway')}
             </button>{' '}
             <button type="button" onClick={flow.cancel}>
               {t('flow.cancel')}

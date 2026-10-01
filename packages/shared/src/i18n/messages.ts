@@ -115,8 +115,8 @@ export const preflightBlockMessages: Record<PreflightBlockReason, Localized> = {
 
 export const preflightWarnMessages: Record<PreflightWarnReason, Localized> = {
   unknownOutputColumns: {
-    en: "These columns have values that don't appear in your input file. They probably come from another source, which isn't supported yet. We'll learn everything else and leave these empty.",
-    he: 'לעמודות האלה יש ערכים שלא מופיעים בקובץ הקלט שלכם. הם כנראה מגיעים ממקור אחר, ואפשרות זו עדיין לא נתמכת. נלמד את כל השאר ונשאיר את אלה ריקות.',
+    en: "We couldn't find these columns' values in your input file. The AI step will try them; if they come from another source they'll stay empty.",
+    he: 'לא מצאנו את הערכים של העמודות האלה בקובץ הקלט שלכם. שלב ה-AI ינסה אותן; אם הן מגיעות ממקור אחר, הן יישארו ריקות.',
   },
   rowsNotAligned: {
     en: 'We couldn’t match rows between the two files. Are they from the same data?',

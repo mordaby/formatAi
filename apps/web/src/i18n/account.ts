@@ -51,8 +51,6 @@ export const accountEn = {
     'We worked out {solved} of {total} columns on your computer. {needsAi} need the AI step — sign in free to finish ({included}).',
   'partial.popup.parts':
     'We worked out {solved} of {total} columns on your computer. The rest of the format (how the rows are shaped and laid out) needs the AI step — sign in free to finish ({included}).',
-  'partial.popup.external.one': ' 1 more column has values that are not in your input file, so it needs your input.',
-  'partial.popup.external.other': ' {n} more columns have values that are not in your input file, so they need your input.',
   'partial.popup.later': 'Not now',
   'partial.included.month': '{n} AI formats a month included',
   'partial.included.day': '{n} AI formats a day included',
@@ -61,6 +59,7 @@ export const accountEn = {
   'partial.section': 'Needs the AI step',
   'partial.section.lead': 'Your computer could not work these out on its own.',
   'partial.line.reason': 'The AI step works out how this column is made. You can also fill it in yourself.',
+  'partial.line.reason.external': "We couldn't find this column's values in your input file, so it may come from another source. The AI step will try it; you can also fill it in yourself.",
   'partial.badge.one': '1 column needs the AI step',
   'partial.badge.other': '{n} columns need the AI step',
   'partial.badge.parts': 'The layout needs the AI step',
@@ -72,8 +71,6 @@ export const accountEn = {
   'partial.finishNote': 'What needs the AI step is marked below.',
   'partial.note': 'Worked out on your computer; the rest needs the AI step',
   'partial.saveHint': 'This is only what your computer worked out so far, so it cannot be saved yet.',
-  'partial.onlyExternal.title': 'Some columns need your input',
-  'partial.onlyExternal.todo': 'Fill them in on the map below, or save the format and leave them empty.',
 
   // ----- completing what is missing with the AI step (LEARN_PROMPT "Completing a partial rules file") -----
   'partial.checking': 'Checking your account...',
@@ -173,8 +170,6 @@ export const accountHe: Record<keyof typeof accountEn, string> = {
     'הבנו {solved} מתוך {total} עמודות במחשב שלכם. {needsAi} דורשות את שלב ה-AI — התחברו בחינם כדי להשלים ({included}).',
   'partial.popup.parts':
     'הבנו {solved} מתוך {total} עמודות במחשב שלכם. שאר הפורמט (איך השורות מסודרות ומעוצבות) דורש את שלב ה-AI — התחברו בחינם כדי להשלים ({included}).',
-  'partial.popup.external.one': ' עוד עמודה אחת עם ערכים שלא מופיעים בקובץ הקלט, ולכן היא דורשת את ההזנה שלכם.',
-  'partial.popup.external.other': ' עוד {n} עמודות עם ערכים שלא מופיעים בקובץ הקלט, ולכן הן דורשות את ההזנה שלכם.',
   'partial.popup.later': 'לא עכשיו',
   'partial.included.month': 'כולל {n} פורמטים עם AI בחודש',
   'partial.included.day': 'כולל {n} פורמטים עם AI ביום',
@@ -183,6 +178,7 @@ export const accountHe: Record<keyof typeof accountEn, string> = {
   'partial.section': 'דורש את שלב ה-AI',
   'partial.section.lead': 'המחשב שלכם לא הצליח להבין את אלה בכוחות עצמו.',
   'partial.line.reason': 'שלב ה-AI מבין איך העמודה הזו נוצרת. אפשר גם למלא אותה בעצמכם.',
+  'partial.line.reason.external': 'לא מצאנו את הערכים של העמודה הזו בקובץ הקלט שלכם, ולכן היא אולי מגיעה ממקור אחר. שלב ה-AI ינסה אותה; אפשר גם למלא אותה בעצמכם.',
   'partial.badge.one': 'עמודה אחת דורשת את שלב ה-AI',
   'partial.badge.other': '{n} עמודות דורשות את שלב ה-AI',
   'partial.badge.parts': 'הפריסה דורשת את שלב ה-AI',
@@ -193,8 +189,6 @@ export const accountHe: Record<keyof typeof accountEn, string> = {
   'partial.finishNote': 'מה שדורש את שלב ה-AI מסומן למטה.',
   'partial.note': 'הובן במחשב שלכם; השאר דורש את שלב ה-AI',
   'partial.saveHint': 'זה רק מה שהמחשב שלכם הבין עד עכשיו, ולכן אי אפשר לשמור אותו עדיין.',
-  'partial.onlyExternal.title': 'חלק מהעמודות דורשות את ההזנה שלכם',
-  'partial.onlyExternal.todo': 'מלאו אותן במפה שלמטה, או שמרו את הפורמט והשאירו אותן ריקות.',
 
   'partial.checking': 'בודקים את החשבון שלכם...',
   'partial.rerun': 'הרצה מחדש של הכול עם AI',

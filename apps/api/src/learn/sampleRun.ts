@@ -171,12 +171,13 @@ function compareRow(
 /**
  * Completion mode only: the output columns that are not compared with the samples. The AI step is answerable for the columns it was asked
  * to produce (`complete.columns`) and nothing else: the other columns are the user's own rules (checked against the whole example in the
- * browser, and kept by the fixed lock - they may depart from the example on purpose), external data is left empty on purpose
- * (`skipColumns`), and a listed column the answer reports as unsupported is left empty on purpose (that the answer produced anything at
- * all is the fixed lock's business). A plain learn compares every column, as it always did.
+ * browser, and kept by the fixed lock - they may depart from the example on purpose), and a listed column the answer reports as
+ * unsupported is left empty on purpose (that the answer produced anything at all is the fixed lock's business). A plain learn compares every
+ * column, as it always did.
  *
- * DECISION: this narrowing is completion-only. A plain learn with `skipColumns` (external data) still compares the skipped columns, so such a
- * learn does not pass the server checks; changing that is a separate change.
+ * DECISION: this narrowing is completion-only. `skipColumns` now holds only columns the user explicitly marks to skip (a column code could
+ * not explain goes to the AI step like any other: the answer may report it as unsupported `externalData`), and a plain learn still compares
+ * every column - including one the answer reports as unsupported; changing that is a separate change.
  */
 function columnsNotCompared(rules: LearnResult | Rules, payload: LearnPayload): ReadonlySet<number> {
   const ignore = new Set<number>();

@@ -1,9 +1,8 @@
 // aiReadiness (SPEC 21 v5 item 4): the AI readiness gate. It is deliberately minimal - it stops only what is
-// certain to fail even with the AI (no matched rows; a payload over its caps), sends "only external columns
-// left" to the local finish instead of the LLM, and lets every ambiguous case through.
+// certain to fail even with the AI (no matched rows; a payload over its caps) and lets every ambiguous case through,
+// a column no detector could explain ("external") included: "code found no relation" is not certainty.
 import { AI_READINESS_ISSUE_CODES, aiReadinessMessages, limits } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
-import { partialRules } from '../../src/learn/partial';
 import { aiReadiness } from '../../src/learn/readiness';
 import { buildPayload } from '../../src/learn/payload';
 import { createMasker } from '../../src/learn/mask';
@@ -39,19 +38,22 @@ describe('aiReadiness: no rows matched (a block)', () => {
   });
 });
 
-describe('aiReadiness: only external columns left (no LLM call, not a block)', () => {
-  it('reports it, with the count and the headers', () => {
+describe('aiReadiness: only external columns left (the AI step still runs)', () => {
+  it('is ready, and the unexplained column is not in skipColumns', () => {
     const { a, pf } = analyzeWithPreflight(externalOnlyPair());
-    expect(aiReadiness(a, pf)).toEqual({ ready: false, issues: [{ code: 'onlyExternalColumns', params: { count: 1, columns: 'Warehouse' } }] });
+    const r = aiReadiness(a, pf);
+    expect(r.ready).toBe(true);
+    expect(r.ready && r.built?.payload.skipColumns).toBeUndefined();
   });
 
-  it('lists several external columns, joined', () => {
+  it('is ready with several external columns', () => {
     const { input, output } = externalOnlyPair();
     const r = rng(5);
     const out2: V[][] = output.map((row, i) => (i === 0 ? [...row, 'Dock'] : [...row, `D${100 + Math.floor(r() * 800)}`]));
     const { a, pf } = analyzeWithPreflight({ input, output: out2 });
     const res = aiReadiness(a, pf);
-    expect(res).toEqual({ ready: false, issues: [{ code: 'onlyExternalColumns', params: { count: 2, columns: 'Warehouse, Dock' } }] });
+    expect(res.ready).toBe(true);
+    expect(res.ready && res.built?.payload.skipColumns).toBeUndefined();
   });
 
   it('is not the case when a column also needs the AI step', () => {
@@ -78,14 +80,6 @@ describe('aiReadiness: only external columns left (no LLM call, not a block)', (
     };
     const r = aiReadiness(a, pf, { target: target as never });
     expect(r.ready).toBe(true);
-  });
-
-  it('reuses a partial result it is given; with none to be had (null) it cannot tell, so the AI step runs', () => {
-    const { a, pf } = analyzeWithPreflight(externalOnlyPair());
-    const partial = partialRules(a, pf);
-    if ('reason' in partial) throw new Error('unreachable');
-    expect(aiReadiness(a, pf, { partial })).toEqual(aiReadiness(a, pf));
-    expect(aiReadiness(a, pf, { partial: null }).ready).toBe(true);
   });
 });
 
@@ -175,9 +169,11 @@ describe('aiReadiness: what is NOT a block - the LLM gets these', () => {
     expect(aiReadiness(a, pf).ready).toBe(true);
   });
 
-  it('a date column written in two formats that is all that is left: the local finish names it', () => {
+  it('a date column written in two formats that is all that is left: the AI step still gets it', () => {
     const { a, pf } = twoFormatDates(false);
-    expect(aiReadiness(a, pf)).toEqual({ ready: false, issues: [{ code: 'onlyExternalColumns', params: { count: 1, columns: 'Date' } }] });
+    const r = aiReadiness(a, pf);
+    expect(r.ready).toBe(true);
+    expect(r.ready && r.built?.payload.skipColumns).toBeUndefined();
   });
 
   it('a column with many values that are not numbers', () => {
