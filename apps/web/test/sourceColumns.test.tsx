@@ -79,6 +79,10 @@ async function openResult(result: Record<string, unknown> = {}, opts: { live?: L
 
 const inputColumn = (rules: Rules, header: string) => rules.input.columns.find((c) => c.header === header);
 
+// Every test here runs the real editor + live check in-process: give them room when the whole
+// repo's tests (or a dev server) share the CPU. The flows themselves finish in about a second alone.
+vi.setConfig({ testTimeout: 30_000 });
+
 describe('a column of the example input that no rule uses yet', () => {
   it('is offered by the column editor; choosing it declares it, and Join text with a name works', async () => {
     const { lastRules, liveCheck } = await openResult();
