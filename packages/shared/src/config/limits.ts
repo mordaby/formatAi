@@ -127,6 +127,16 @@ export const limits = {
       /** Longest fixed text (in characters) in total, all places together. */
       maxTotalLiteralChars: 10,
     },
+    /**
+     * Owner rule: if the AI can solve a column, let it; only data with no relation to the input is external.
+     * An output text column beyond the light `template` (3 columns, long fixed text) is still COMPOSED from input
+     * values when an input column's value sits inside the output cell: such a column is `derived` (kind
+     * `composition`), not external. An input column counts when its value (normalized text) is a substring of
+     * the output cell on at least this share of the aligned rows...
+     */
+    compositionMinCoverage: 0.9,
+    /** ...and a value shorter than this (in characters) never counts, so a 1-character code ("1", "A") is not a composition. */
+    compositionMinValueLength: 2,
   },
   /**
    * SPEC 8.11 / 8.12 / 11 / 13: the registry (saved formats and their conversions).

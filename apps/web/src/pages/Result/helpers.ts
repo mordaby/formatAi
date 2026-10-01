@@ -13,6 +13,18 @@ export function isFailingColumn(check: ColumnCheck | undefined): boolean {
   return check.matched / check.total < editorConfig.mostlyFailsBelow;
 }
 
+/**
+ * The output columns that have no rule yet: nothing fills them (`from: null`), or the rules list them as unsupported (the AI step
+ * has not worked them out, or their values are not in the input). They are left out of the comparison with the example, and the
+ * preview shows them empty (never with the example's values, which would look like a working rule).
+ */
+export function columnsWithoutRule(rules: EditableRules): Set<string> {
+  const headers = new Set<string>();
+  for (const c of rules.output.columns) if (c.from === null) headers.add(c.header);
+  for (const u of rules.unsupported) if (rules.output.columns.some((c) => c.header === u.outputColumn)) headers.add(u.outputColumn);
+  return headers;
+}
+
 /** Where one output column's rule doesn't reproduce the example, for the notice on its line and above the preview. */
 export interface ColumnMismatch {
   /** Position in `rules.output.columns` (and in the live check's `perColumn`). */

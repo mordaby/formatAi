@@ -230,7 +230,7 @@ The example output is checked more loosely, because a report may contain title, 
    - summaries: `aggregate` (sum, count, min or max per group);
    - dropped rows: `filter` (an input column whose values separate kept rows from dropped rows: a set of values, emptiness, or a numeric threshold);
    - dropped rows: `dedupe` (the dropped rows are copies of kept rows, either on every column or on a key column; records whether the first or the last copy was kept);
-   - anything else: `unknown`. An unknown column is then split: **derived** when its values are determined by input column(s) — a category that always follows one or two input columns (repeated keys), or contiguous bands of a numeric or date column (e.g. `Qty < 10 → single`, `>= 10 → bulk`) — sent to the LLM with a `dependsOn` or `bands` hint; or **external** when nothing in the input determines it (only these are "another source").
+   - anything else: `unknown`. An unknown column is then split: **derived** when its values are determined by input column(s) — a category that always follows one or two input columns (repeated keys), or contiguous bands of a numeric or date column (e.g. `Qty < 10 → single`, `>= 10 → bulk`), or text composed from input values (an input column's value appears inside the output cell on most rows, e.g. `312345002 - Dana Cohen`) — sent to the LLM with a `dependsOn`, `bands` or `contains` hint; or **external** when nothing in the input determines it (only these are "another source").
    Inside a family, each output row is tested against its source input row, together with the columns the family pattern creates (label, value, part).
 5. **Detect layout:**
    - title rows (and whether they contain a date or month);

@@ -16,7 +16,7 @@ import type { LiveCheckResult } from '../../worker/editorApi';
 import { EditorEmpty, EditorPanel } from './EditorPanel';
 import type { EditorCtx } from './fields';
 import { FlagsList } from './FlagsList';
-import { assumptionIndexes, columnMismatches, planAdd, type AddKind } from './helpers';
+import { assumptionIndexes, columnMismatches, columnsWithoutRule, planAdd, type AddKind } from './helpers';
 import { LiveCheckStrip } from './LiveCheckStrip';
 import { PreviewGrid } from './PreviewGrid';
 import { ResultHeader, StatusBadge } from './ResultHeader';
@@ -108,12 +108,7 @@ export function Workbench(props: WorkbenchProps) {
   const rules = editor.state.rules;
 
   // A column that still has nothing to fill it says so (amber) even after the user touched it: "edited" would hide that.
-  const needsInput = useMemo(() => {
-    const headers = new Set<string>();
-    for (const c of rules.output.columns) if (c.from === null) headers.add(c.header);
-    for (const u of rules.unsupported) if (rules.output.columns.some((c) => c.header === u.outputColumn)) headers.add(u.outputColumn);
-    return headers;
-  }, [rules]);
+  const needsInput = useMemo(() => columnsWithoutRule(rules), [rules]);
   // Only the columns something fills are compared with the example: a column whose values are not in the input (or that the AI step still has
   // to work out) would differ on every row, and "N differences" is not what it means - it says "N columns need your input" (SPEC 8.11).
   // Whatever is compared is the same everywhere: the local partial result (SPEC 21 v5 item 1) and a finished result with such a column.

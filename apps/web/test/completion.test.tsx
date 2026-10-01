@@ -7,6 +7,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
 import { createMemoryPendingStore, setPendingStore, storeFile, type PendingLearn, type PendingLearnStore } from '../src/app/pendingLearn';
+import { learnFromExamples } from '@formatai/engine';
 import { ordersRules } from '../src/editor/testkit';
 import type { LearnOutput } from '../src/worker/engineApi';
 import { csv, fakeApi, fakeEngine, learnResult, renderApp, USER } from './helpers/renderApp';
@@ -544,5 +545,90 @@ describe('the owner\'s bug: a signed-in user\'s partial result shows "Finish wit
     });
     await waitFor(() => expect(redirectTo).toHaveBeenCalled());
     expect((await store.load())!.tryAnyway).toBe(true);
+  });
+});
+
+// A column COMPOSED from three input columns (`312345002 - Dana Cohen`) is beyond the light template, but the AI can write it: the pair
+// analysis calls it derived, not external, so the AI step is offered for it. These tests run the REAL pair analysis (the engine) on such an
+// example and feed what it said to the screen; an external column (nothing in the input explains it) is the control.
+describe('a column composed from three input columns reaches the AI buttons (the real pair analysis, not a fixture)', () => {
+  const FIRSTS = ['Dana', 'Omer', 'Noa', 'Yael', 'Tamar', 'Eitan', 'Lior', 'Maya', 'Amit', 'Shira', 'Ron', 'Gal'];
+  const LASTS = ['Cohen', 'Levi', 'Mizrahi', 'Katz', 'Peretz', 'Bar', 'Avraham', 'Dahan', 'Golan', 'Segal'];
+  const enc = (rows: string[][]): Uint8Array => new TextEncoder().encode(`${rows.map((r) => r.join(',')).join('\n')}\n`);
+
+  /** Ref + Cust + First + Last in; Ref + Label out, where Label is composed (or, for the control, a code the input does not explain). */
+  async function analysed(kind: 'composed' | 'external') {
+    const input: string[][] = [['Ref', 'Cust', 'First', 'Last']];
+    const output: string[][] = [['Ref', 'Label']];
+    for (let i = 0; i < 24; i++) {
+      const [first, last, cust, ref] = [FIRSTS[i % FIRSTS.length]!, LASTS[(i * 3) % LASTS.length]!, String(312345002 + i * 7), `R-${1000 + i * 7}`];
+      input.push([ref, cust, first, last]);
+      output.push([ref, kind === 'composed' ? `${cust} - ${first} ${last}` : `Z${(i * 7919) % 8000}x`]);
+    }
+    const res = await learnFromExamples({
+      input: { bytes: enc(input), name: 'in.csv' },
+      output: { bytes: enc(output), name: 'out.csv' },
+      masking: false,
+      tier: 'registered',
+      ai: 'notAllowed',
+      callLearn: async () => ({ rules: null, problems: [], calls: [] }),
+    });
+    if (res.path !== 'partial' || !res.rules || !res.partial) throw new Error(`unexpected path ${res.path}`);
+    return res;
+  }
+
+  it('the pair analysis: composed is "needs the AI step" and not skipped; the external control is skipped', async () => {
+    const composed = await analysed('composed');
+    expect(composed.partial).toMatchObject({ solved: ['Ref'], needsAi: ['Label'], external: [] });
+    expect(composed.preflight.skipColumns).toEqual([]);
+    // The control: a code nothing in the input explains is external data (skipped, "needs your input"), and with only external columns
+    // left the local result is final - there is no AI step to finish.
+    const external = await analysed('external');
+    expect(external.partial).toMatchObject({ reason: 'onlyExternalColumns', needsAi: [], external: ['Label'] });
+    expect(external.preflight.skipColumns).toEqual([1]);
+  });
+
+  it('partial result, signed in: "Finish with the AI step" is there and asks the AI step for the composed column', async () => {
+    const res = await analysed('composed');
+    const seen: CompletionArgs[] = [];
+    const { engine } = engineWith(
+      async (args) => {
+        seen.push(args);
+        return completionOutput(args);
+      },
+      () => learnResult({ path: 'partial', rules: res.rules, partial: res.partial, preflight: res.preflight, readiness: res.readiness }),
+    );
+    await start(engine);
+    fireEvent.click(finishButton());
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0]!.complete!.columns).toEqual([1]); // Label, by position
+  });
+
+  it('a result that left the composed column without a rule, signed in: "Try these columns with AI" is offered for it', async () => {
+    const res = await analysed('composed');
+    const rules: LearnResult = { ...res.rules!, unsupported: [{ outputColumn: 'Label', reasonCode: 'ambiguous' }] };
+    const seen: CompletionArgs[] = [];
+    const { engine } = engineWith(
+      async (args) => {
+        seen.push(args);
+        return completionOutput(args, {}, { produced: { columns: 1, parts: 0 } });
+      },
+      () => learnResult({ path: 'llm', rules, unsupported: rules.unsupported, preflight: res.preflight, verification: { verified: false, matched: 24, total: 24, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } }),
+    );
+    await start(engine);
+    fireEvent.click(screen.getByRole('button', { name: 'Try these columns with AI' }));
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0]!.complete!.columns).toEqual([1]);
+  });
+
+  it('a column that was skipped as external data (pre-flight skipColumns) is never offered', async () => {
+    const res = await analysed('composed');
+    // The same screen, but the pair analysis had called Label external (skipColumns [1]): nothing for the AI step to try.
+    const rules: LearnResult = { ...res.rules!, unsupported: [{ outputColumn: 'Label', reasonCode: 'ambiguous' }] };
+    const { engine } = engineWith(async (args) => completionOutput(args), () =>
+      learnResult({ path: 'llm', rules, unsupported: rules.unsupported, preflight: { ...res.preflight, skipColumns: [1] }, verification: { verified: false, matched: 24, total: 24, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } }),
+    );
+    await start(engine);
+    expect(screen.queryByRole('button', { name: 'Try these columns with AI' })).toBeNull();
   });
 });

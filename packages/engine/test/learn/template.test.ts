@@ -65,11 +65,12 @@ describe('template: the hint', () => {
     expect(h).toEqual({ rel: 'template', in: [0, 1], parts: [{ in: 0 }, ':"', { in: 1 }, '"'], out: 1, coverage: 1 });
   });
 
-  it('is absent when two templates fit (the column then has no hint at all)', () => {
+  it('is not a template hint when two templates fit: the column is composed from input values, so the AI gets a `contains` hint (not skipped as external)', () => {
     const rows = idNameRows(10, true).map((r) => [...r, r[1]!]);
     const a = analyze(['ID', 'Name', 'Note', 'Copy'], rows, ['ID', 'Label'], rows.map((r) => [r[0]!, `${r[0]}:"${r[1]}"`]));
-    const hints = relationsToHints(a, preflight(a, 'registered'));
-    expect(hints.find((x) => 'out' in x && x.out === 1)).toBeUndefined();
+    const pf = preflight(a, 'registered');
+    expect(pf.skipColumns).toEqual([]);
+    expect(relationsToHints(a, pf).find((x) => 'out' in x && x.out === 1)).toEqual({ rel: 'contains', in: [0, 1, 3], out: 1, coverage: 1 });
   });
 });
 

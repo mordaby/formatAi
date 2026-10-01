@@ -91,11 +91,14 @@ export function bestHintableRelation(ca: ColumnAnalysis): Relation | null {
 }
 
 /** A derived column's hint (SPEC 6.2 step 4 v5): `bands` when the output is a few contiguous ranges of one input
- * column, else `dependsOn` (the same input values always give the same output value). */
+ * column, `contains` when the output text is composed from input values (their text is inside the output cells),
+ * else `dependsOn` (the same input values always give the same output value). */
 function derivedHintCandidate(out: number, d: Derivation): HintCandidate {
   const failingRows = d.coverage < 1 && d.failing.length > 0 ? d.failing : undefined;
   const base = { out, coverage: d.coverage, ...(failingRows ? { failingRows } : {}) };
-  return d.kind === 'bands' ? { rel: 'bands', in: d.in, bands: d.bands, ...base } : { rel: 'dependsOn', in: d.in, ...base };
+  if (d.kind === 'bands') return { rel: 'bands', in: d.in, bands: d.bands, ...base };
+  if (d.kind === 'composition') return { rel: 'contains', in: d.in, ...base };
+  return { rel: 'dependsOn', in: d.in, ...base };
 }
 
 function toColumnHintCandidate(rel: Relation): HintCandidate {
@@ -177,7 +180,7 @@ function dedupeToHintCandidate(d: DedupeRelation): HintCandidate {
  * Every hint the LLM (and the local fast path) receive for this pair: one
  * per output column not in `preflight.skipColumns` (its best hintable
  * relation, or - for a derived column no relation explains - its `bands` /
- * `dependsOn` hint), the shape's expand hint when rows expand, and the
+ * `contains` / `dependsOn` hint), the shape's expand hint when rows expand, and the
  * dropped-rows hints (dedupe, then the best filter).
  */
 export function relationsToHints(analysis: PairAnalysis, preflight: PreflightResult): HintCandidate[] {

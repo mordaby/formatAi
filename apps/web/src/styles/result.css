@@ -884,6 +884,30 @@
   color: var(--on-diff-tint);
   font-weight: 500;
 }
+/* A column with no rule yet: "No rule yet" under its header, empty cells, and the example's value only as a muted, labelled target. */
+.pv__norule {
+  display: block;
+  inline-size: fit-content;
+  margin-block-start: 2px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--diff-tint);
+  color: var(--on-diff-tint);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+}
+.pv__target-toggle {
+  font-size: var(--fs-small);
+}
+.pv__target {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 400;
+}
+.pv__target-label {
+  font-style: italic;
+}
 .pv__row--example > * {
   border-block-end: 0;
 }

@@ -318,8 +318,10 @@ export type Relation = RelationStats & RelationBody;
 
 /**
  * SPEC 6.2 step 4 (v5): an output column no relation explains, but that the INPUT determines - a functional
- * dependency with real evidence (see derived.ts). The AI can solve such a column (e.g. `Size = "bulk" if Qty >= 10
- * else "single"`), so it is NOT external data: it is not skipped, and it counts as "needs the AI step".
+ * dependency with real evidence (see derived.ts) - or that is COMPOSED from input values (their text sits inside the
+ * output cells, e.g. `<id> - <first> <last>`, beyond the light `template`). The AI can solve such a column (e.g.
+ * `Size = "bulk" if Qty >= 10 else "single"`), so it is NOT external data: it is not skipped, and it counts as
+ * "needs the AI step".
  */
 export type Derivation = { coverage: number; /** Aligned rows where it fails, ascending, capped. */ failing: number[]; failCount: number } & (
   | {
@@ -334,6 +336,11 @@ export type Derivation = { coverage: number; /** Aligned rows where it fails, as
       in: [number];
       /** Contiguous ranges of the input column with one output value each (<= 5 breakpoints). */
       bands: Band[];
+    }
+  | {
+      kind: 'composition';
+      /** The input columns whose value sits inside the output text, ordered by where they first appear in it. */
+      in: number[];
     }
 );
 

@@ -1,9 +1,12 @@
 // The preview grid (SPEC 8.11 "Live check", 16.1 screen 4): the converted example in the SHEET's direction, mismatching rows
 // first with the differing cells in amber, what doesn't match said per column above the table (with "Fix the rule"), flagged
 // cells, and the free tier's 20 rows.
+//
+// A column with NO RULE yet (nothing fills it, or the AI step has not worked it out) shows EMPTY cells and "No rule yet" in its header: the
+// example's values would look like the rule's output. They can be shown on request (a toggle), each one labelled "Your example: ...".
 import type { Flag } from '@formatai/engine';
 import type { PayloadCell } from '@formatai/shared';
-import { Fragment, useMemo, type ReactElement } from 'react';
+import { Fragment, useMemo, useState, type ReactElement } from 'react';
 import { Cell } from '../../components/Cell';
 import { SheetDirection } from '../../components/SheetDirection';
 import type { EditableRules } from '../../editor';
@@ -11,7 +14,7 @@ import { useI18n, type Direction } from '../../i18n';
 import { Button, Icon, Spinner } from '../../ui';
 import type { LiveCheckResult, PreviewRow } from '../../worker/editorApi';
 import { formatPreview } from './formatPreview';
-import { columnMismatches } from './helpers';
+import { columnMismatches, columnsWithoutRule } from './helpers';
 import { FixRuleButton, MismatchMessage } from './MismatchNotice';
 
 export interface PreviewGridProps {
@@ -39,6 +42,10 @@ export function PreviewGrid({ live, rules, flags, limit, uiDir, onFixRule, onSig
   const direction = rules.output.direction;
   const language = rules.output.language;
 
+  // Whether the cells of columns with no rule show what the example has there (as a labelled target, never as the rule's output).
+  const [showTarget, setShowTarget] = useState(false);
+  const withoutRule = useMemo(() => columnsWithoutRule(rules), [rules]);
+
   const flagsByCell = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const f of flags) {
@@ -62,7 +69,9 @@ export function PreviewGrid({ live, rules, flags, limit, uiDir, onFixRule, onSig
     );
   }
 
-  const columns = live.perColumn.map((c, i) => ({ ...c, i })).filter((c) => c.inExample);
+  // A column the rules don't have at all (the example has more columns than the rules) has no rule either.
+  const columns = live.perColumn.map((c, i) => ({ ...c, i, noRule: rules.output.columns[i] === undefined || withoutRule.has(rules.output.columns[i]!.header) })).filter((c) => c.inExample);
+  const anyNoRule = columns.some((c) => c.noRule);
   const rows = limit === null ? live.preview : live.preview.slice(0, limit);
   const totalRows = live.total;
   const hiddenColumns = live.perColumn.some((c) => !c.inExample);
@@ -74,8 +83,22 @@ export function PreviewGrid({ live, rules, flags, limit, uiDir, onFixRule, onSig
   const isNumber = (v: PayloadCell | undefined): boolean => typeof v === 'number';
 
   const cellsOf = (row: PreviewRow, values: readonly PayloadCell[], kind: 'example' | 'rule' | 'plain'): ReactElement[] =>
-    columns.map(({ i }) => {
+    columns.map(({ i, noRule }) => {
       const v = values[i];
+      if (noRule && kind !== 'example') {
+        // No rule: nothing is converted here. The example's value is only ever shown as a labelled target, and only when asked for.
+        const target = row.expected[i];
+        const label = showTarget && target !== null && target !== undefined && target !== '' ? show(target, i) : '';
+        return (
+          <td key={i} className="pv__cell pv__cell--norule" data-no-rule="true">
+            {label !== '' && (
+              <span className="pv__target" data-testid="preview-target">
+                <span className="pv__target-label">{t('preview.targetLabel')}</span> <Cell value={label} />
+              </span>
+            )}
+          </td>
+        );
+      }
       const diff = !row.ok && row.badColumns.includes(i);
       const flagText = row.inputRow !== undefined ? flagsByCell.get(`${row.inputRow}:${i}`) : undefined;
       const cls = ['pv__cell', isNumber(v) ? 'pv__num' : '', diff ? `pv__diff pv__diff--${kind}` : '', flagText ? 'pv__flag' : ''].filter(Boolean).join(' ');
@@ -108,6 +131,14 @@ export function PreviewGrid({ live, rules, flags, limit, uiDir, onFixRule, onSig
         </ul>
       )}
 
+      {anyNoRule && (
+        <p className="pv__target-toggle">
+          <Button variant="link" aria-pressed={showTarget} onClick={() => setShowTarget((on) => !on)}>
+            {t(showTarget ? 'preview.hideTarget' : 'preview.showTarget')}
+          </Button>
+        </p>
+      )}
+
       <SheetDirection direction={direction} className="pv__scroll">
         <table className="pv" data-testid="preview-table">
           <thead>
@@ -117,8 +148,13 @@ export function PreviewGrid({ live, rules, flags, limit, uiDir, onFixRule, onSig
                 <span aria-hidden="true">#</span>
               </th>
               {columns.map((c) => (
-                <th key={c.i} scope="col">
+                <th key={c.i} scope="col" data-no-rule={c.noRule ? 'true' : undefined}>
                   <Cell value={c.header} />
+                  {c.noRule && (
+                    <span className="pv__norule" data-testid="no-rule-marker">
+                      {t('preview.noRule')}
+                    </span>
+                  )}
                 </th>
               ))}
             </tr>

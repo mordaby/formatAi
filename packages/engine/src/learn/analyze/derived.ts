@@ -13,14 +13,24 @@
 //       ranges with few breakpoints (<= 5), each range seen on >= 2 rows. The breakpoints are reported
 //       (e.g. `< 10 -> single`, `>= 10 -> bulk`). A value seen on a single row is an exception (it counts
 //       against the coverage), not a band.
-// Bands are tried first (they are the simpler, better generalizing rule), then one column, then two.
+//   (c) composition: the output is text COMPOSED from input values beyond the light `template` relation (three columns,
+//       longer fixed text: `312345002 - Dana Cohen`, `Customer number 312345002: Cohen`). The cells visibly contain
+//       input values, so the AI can write the rule: an input column counts when its value (normalized text) is a
+//       substring of the output cell on >= `limits.learn.compositionMinCoverage` of the rows. Values shorter than
+//       `compositionMinValueLength` never count, and neither does a value that sits just as often in the OTHER rows'
+//       outputs (a constant column is fixed text, a common 2-letter value is chance, not data). The columns are
+//       reported in the order they first appear in the output text. Tried last: only a column that no band or
+//       category dependency explains (it would have been external before).
+// Bands are tried first (they are the simpler, better generalizing rule), then one column, then two, then composition.
 // Values are integer-coded once per column, so testing a few unknown columns on 20,000 rows stays cheap.
-// Pure and deterministic. Only columns that stay `unknown` are tested.
+// Pure and deterministic. Only columns that stay `unknown` are tested. An unknown column with none of these is
+// EXTERNAL: no relation to the input at all.
 
 import Decimal from 'decimal.js';
+import { limits } from '@formatai/shared';
 import type { Band } from '@formatai/shared';
 import { ymdToSerial } from '../../values/dates';
-import { EMPTY, canonNum, decimalsOf, isoOfSerial, keys, payloadCell, ymdOfSerial, type ColumnData } from './cells';
+import { DATE, EMPTY, TEXT, canonNum, decimalsOf, isoOfSerial, keys, norms, payloadCell, ymdOfSerial, type ColumnData } from './cells';
 import { MAX_FAILING, type RelationEnv } from './relations';
 import type { ColumnAnalysis, Derivation } from './types';
 
@@ -396,11 +406,105 @@ function bandsFor(src: ColumnData, s: number, outCol: ColumnData, out: OutputCod
   return { kind: 'bands', in: [s], bands, coverage, failing: capped(failing), failCount: n - matched };
 }
 
+// ---------- (c) composition ----------
+
+/** One input column whose value sits inside the output text. */
+interface Contained {
+  col: number;
+  /** Rows (aligned-row index) where the value is inside the output cell. */
+  hit: Uint8Array;
+  /** Where in the output text it was found, per hit row (in row order). */
+  at: number[];
+  /** The median of `at`: where the value usually appears in the output text. */
+  place: number;
+}
+
+/** Where input column `a` (normalized `an`) is inside the output cell of the same row; null once the misses exceed `maxMisses` (it can't qualify). */
+function containedIn(n: number, a: ColumnData, an: readonly string[], out: ColumnData, outNorm: readonly string[], minLen: number, maxMisses: number): Contained | null {
+  const hit = new Uint8Array(n);
+  const at: number[] = [];
+  let misses = 0;
+  for (let k = 0; k < n; k++) {
+    const kind = a.kind[k]!;
+    const v = an[k]!;
+    let pos = -1;
+    if (out.kind[k] === TEXT && kind !== EMPTY && kind !== DATE && v.length >= minLen) pos = outNorm[k]!.indexOf(v);
+    if (pos < 0) {
+      if (++misses > maxMisses) return null;
+    } else {
+      hit[k] = 1;
+      at.push(pos);
+    }
+  }
+  return { col: -1, hit, at, place: 0 };
+}
+
+/** How often the values of `a` sit inside the output cells of OTHER rows (row k's value against row k + n/2's output). */
+function chanceRate(n: number, a: ColumnData, an: readonly string[], out: ColumnData, outNorm: readonly string[], minLen: number): number {
+  const shift = Math.floor(n / 2) + 1;
+  let hits = 0;
+  for (let k = 0; k < n; k++) {
+    const j = (k + shift) % n;
+    const kind = a.kind[k]!;
+    const v = an[k]!;
+    if (out.kind[j] === TEXT && kind !== EMPTY && kind !== DATE && v.length >= minLen && outNorm[j]!.indexOf(v) >= 0) hits++;
+  }
+  return hits / n;
+}
+
+/**
+ * Whether the output text is composed from input values: the input columns whose (normalized) value is a substring
+ * of the output cell on >= `limits.learn.compositionMinCoverage` of the rows, and not just as often on other rows'
+ * cells. Only input columns (not created family columns). Null when none qualifies: no composition evidence.
+ */
+function compositionDerivation(env: RelationEnv, out: ColumnData): Derivation | null {
+  const { compositionMinCoverage, compositionMinValueLength } = limits.learn;
+  const n = env.total;
+  const nIn = Math.min(env.src.length, env.inputCount ?? env.src.length);
+  let nonEmpty = 0;
+  let text = 0;
+  for (let k = 0; k < n; k++) {
+    if (out.kind[k] === EMPTY) continue;
+    nonEmpty++;
+    if (out.kind[k] === TEXT) text++;
+  }
+  if (nonEmpty === 0 || text < 0.5 * nonEmpty) return null; // a text-like output only
+  const maxMisses = n - Math.ceil(compositionMinCoverage * n - 1e-9);
+  const outNorm = norms(out);
+
+  const found: Contained[] = [];
+  for (let s = 0; s < nIn; s++) {
+    const a = env.src[s]!;
+    const an = norms(a);
+    const c = containedIn(n, a, an, out, outNorm, compositionMinValueLength, maxMisses);
+    if (c === null) continue;
+    // A value that sits as often in the other rows' outputs is not evidence about this row: a constant column is
+    // fixed text, a common short value is chance.
+    if (chanceRate(n, a, an, out, outNorm, compositionMinValueLength) > 0.5 * (c.at.length / n)) continue;
+    c.col = s;
+    c.place = [...c.at].sort((x, y) => x - y)[Math.floor(c.at.length / 2)]!;
+    found.push(c);
+  }
+  if (found.length === 0) return null;
+
+  // Ordered by where the value first appears in the output text (the median over the rows), then by column.
+  found.sort((x, y) => x.place - y.place || x.col - y.col);
+
+  const failing: number[] = [];
+  let matched = 0;
+  for (let k = 0; k < n; k++) {
+    if (found.every((c) => c.hit[k] === 1)) matched++;
+    else failing.push(k);
+  }
+  return { kind: 'composition', in: found.map((c) => c.col), coverage: matched / n, failing: capped(failing), failCount: n - matched };
+}
+
 // ---------- entry point ----------
 
 /**
  * Whether the input determines the (unknown) output column `out`, and how: bands on a numeric or date column, else
- * a category dependency on one column, else on two. `null` = no dependency with real evidence: external data.
+ * a category dependency on one column, else on two, else (a text output) a composition of input values. `null` = no
+ * dependency and no composition with real evidence: external data.
  * `env.src` are the columns aligned to the rows (input columns, then created family columns); `in` refers to them.
  */
 export function findDerivation(env: RelationEnv, out: ColumnData): Derivation | null {
@@ -417,5 +521,5 @@ export function findDerivation(env: RelationEnv, out: ColumnData): Derivation | 
       if (d !== null && d.kind === 'bands' && (best === null || d.bands.length < best.bands.length)) best = d;
     }
   }
-  return best ?? categoryDerivation(env.src, coded, env.minCoverage);
+  return best ?? categoryDerivation(env.src, coded, env.minCoverage) ?? compositionDerivation(env, out);
 }

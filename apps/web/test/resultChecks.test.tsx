@@ -234,9 +234,10 @@ describe('the per-column notices (the pure part, and the grid on its own)', () =
     expect(onFixRule).toHaveBeenCalledWith(HEAD[1]);
     fireEvent.click(within(list[0]!).getByRole('button', { name: `Fix the rule for ${HEAD[0]}` }));
     expect(onFixRule).toHaveBeenLastCalledWith(HEAD[0]);
-    // Every mismatching row is still in the table, its cells amber; no button but the two above.
+    // Every mismatching row is still in the table, its cells amber; no button but the two above (and the "Show what your example has"
+    // toggle: the example's last column has no rule yet).
     expect(document.querySelectorAll('tr.pv__note[data-mismatch]')).toHaveLength(3);
-    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual([expect.stringContaining('Fix the rule'), expect.stringContaining('Fix the rule'), 'Show what your example has']);
   });
 
   it('a column at 90% is not "failing"; one just under is', () => {

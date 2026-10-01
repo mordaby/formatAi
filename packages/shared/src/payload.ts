@@ -167,6 +167,10 @@ export type ColumnHint = HintBase & { out: number } & (
   | { rel: 'dependsOn'; in: number[] }
   // `bands`: sorted by the `in` column, the output values form a few contiguous ranges (<= 5 breakpoints).
   | { rel: 'bands'; in: [number]; bands: Band[] }
+  // `contains` (composition, beyond the light `template`): a text column composed from input values. The value of
+  // each `in` column is inside the output cell on the coverage's share of the rows; `in` is ordered by where
+  // the value first appears in the output text. The fixed text around the values is not sent: the samples show it.
+  | { rel: 'contains'; in: number[] }
 );
 
 export type RowHint = HintBase &
