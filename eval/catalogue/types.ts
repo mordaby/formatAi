@@ -11,8 +11,7 @@
 //   - a REFERENCE RULE written in our rules language (formula text + the rules structure), or
 //     `rule: null` plus the missing capability when the language cannot express it.
 //
-// The runner (run-catalogue.ts) then measures each type on two layers, and a later phase adds a
-// third (`ai`) without changing anything here:
+// The runner (run-catalogue.ts) measures each type on two free layers, and with `--ai <model>` a third (`ai`, see ai.ts):
 //     language - does the reference rule parse, type-check and reproduce the expected output?
 //     fast     - does the free code engine (pair analysis + strict fast path) detect it from the
 //                example pair alone, and does what it learned generalize to a "next month" file?
@@ -234,18 +233,59 @@ export interface FastRecord {
   ms: number;
 }
 
-/** Reserved for the AI phase (`--ai haiku`): the same facts the fast layer records, plus cost. Nothing reads it yet. */
-export interface AiRecord {
+/** The AI step's configuration of one measurement. Records measured under another configuration are never mixed up with these
+ * (`--resume` only skips a record of the same one; see `aiConfigKey` in ai.ts). */
+export interface AiConfigRecord {
   model: string;
+  provider: string;
+  /** full = the AI step learns everything; complete = the free engine first, the AI step only on what is missing (the app's default path). */
+  mode: 'full' | 'complete';
+  masking: boolean;
+  noEscalation: boolean;
+}
+
+/** `completion` facts (mode 'complete'): how much the free engine fixed, how much was left to the AI step. `skipped` = why no completion call was made. */
+export interface AiCompletionRecord {
+  fixedColumns: number;
+  missingColumns: number;
+  missingParts: number;
+  skipped?: string;
+}
+
+/** One AI measurement (`run-catalogue.ts --ai <model>`) of one (type, seed): the real flow with the AI step allowed. Values never appear here:
+ * only counts, codes and function-request NAMES. */
+export interface AiRecord extends AiConfigRecord {
+  /** learnFromExamples' path: llm (the AI step ran), local (the free engine finished it first), blocked, notReady, error (the run itself threw). */
   path: string;
+  /** What the run ended as, in the eval's vocabulary: verified | unsupported:<codes> | notVerified | failed | blocked:<reason> | error. */
+  classification: string;
+  /** Verified on the example: everything the answer covers matches the example, the answer has no unsupported column and (complete mode) the
+   * fixed rules are kept. A column the AI reported as unsupported therefore means "not verified" here. */
   verified: boolean;
+  /** The answer's rules convert the "next month" file exactly. 'n/a' when there are no rules. */
   holdOut: 'pass' | 'fail' | 'n/a';
   llmCalls: number;
   tokensIn: number;
   tokensOut: number;
+  tokensCached: number;
   costUsd: number;
+  /** Sum of the calls' own latency. */
   latencyMs: number;
+  /** Formula-text parse failures over every call (learn, repair, escalation). */
+  formulaErrors: number;
+  /** Calls that failed as calls (rate limit, timeout, CLI error ...), not as answers. */
+  callErrors: number;
+  /** The reason code of every column the AI reported as unsupported (externalData, crossRowCalculation, other ...). */
+  unsupported: string[];
+  /** The NAMES of the functions the AI asked for (learn-v7 `functionRequest`); never their purpose, arguments or any value. */
+  functionRequests: string[];
+  /** The AI returned a plain-language explanation for an unsupported column (never stored: only the fact). */
+  explanation: boolean;
+  completion?: AiCompletionRecord;
+  /** The measurement itself failed (every call failed, or the run threw): not an answer about the model, and `--resume` runs it again. */
   error?: string;
+  /** ISO time of the measurement. */
+  at: string;
 }
 
 export interface CatalogueRecord {

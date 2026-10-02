@@ -1,7 +1,9 @@
-// Turns the measurement records into the capability map (report.md) and a flat CSV. Pure functions over `CatalogueRecord[]`:
-// the AI phase adds `ai` to the records and re-renders (`run-catalogue.ts --report-only`) - this file already has the column.
+// Turns the measurement records into the capability map (report.md) and a flat CSV. Pure functions over `CatalogueRecord[]`.
+// With AI results in the records (`run-catalogue.ts --ai <model>`, see ai.ts) the report gains the "AI learns it" column and an AI section;
+// without any, nothing about the report differs from the free-run report.
+import { aiConfigKey, aiStatusOf, type AiStatus } from './aiRecords';
 import { CAPABILITIES, CAPABILITY_FAMILY_TITLES, type CapabilityId } from './capabilities';
-import { TOPICS, TOPIC_TITLES, type CatalogueRecord, type FastStatus, type TopicId } from './types';
+import { TOPICS, TOPIC_TITLES, type AiRecord, type CatalogueRecord, type FastStatus, type TopicId } from './types';
 
 // ---------- Per-type summary ----------
 
@@ -31,8 +33,24 @@ export interface TypeSummary {
   holdOut: 'pass' | 'fail' | 'n/a' | 'mixed';
   /** The strict path declined but the partial builder produced a complete, verified rules file. */
   viaPartial: boolean;
-  /** AI layer summary when the records carry it; undefined before the AI phase. */
-  ai?: string;
+  /** Expressible, but the free engine does not solve it on every seed: the types the AI step has to learn. */
+  needsAi: boolean;
+  /** The AI layer over the seeds that were measured; undefined when none was (the free-run report, or a needs-AI type not run yet). */
+  ai?: AiTypeSummary;
+}
+
+/** What the AI step did on one type, over its measured seeds. The worst seed counts; a seed whose measurement errored is not an answer and is left
+ * out (unless every seed errored). */
+export interface AiTypeSummary {
+  status: AiStatus;
+  /** Every answering seed has the same status. */
+  stable: boolean;
+  /** Seeds measured / seeds of the type in the file. */
+  seeds: number;
+  of: number;
+  records: AiRecord[];
+  /** The record that decided `status`. */
+  worst: AiRecord;
 }
 
 export interface TopicSummary {
@@ -78,6 +96,50 @@ export interface Totals {
   fastUnverified: number;
 }
 
+/** The AI step's numbers for a group of types (a topic, or all). Shares and the type counts are per type; the averages are per measured (type, seed). */
+export interface AiGroupStats {
+  label: string;
+  /** Types that need the AI step / of them: measured (at least one seed answered) / not run yet. */
+  needsAi: number;
+  run: number;
+  notRun: number;
+  learned: number;
+  verifiedOnly: number;
+  failed: number;
+  /** Types whose every measured seed errored. */
+  errors: number;
+  /** learned / (learned + verifiedOnly + failed); 0 when none was run. */
+  share: number;
+  /** Measured (type, seed) pairs that answered (errors left out). */
+  records: number;
+  avgCalls: number;
+  avgTokensIn: number;
+  avgTokensOut: number;
+  avgTokensCached: number;
+  avgLatencyMs: number;
+  formulaErrors: number;
+  /** The AI's unsupported codes / the functions it asked for, most frequent first; records with an explanation. */
+  unsupported: [string, number][];
+  functionRequests: [string, number][];
+  explanations: number;
+}
+
+export interface AiSummary {
+  /** Every configuration the file holds AI results for, with the number of records. */
+  configs: { key: string; provider: string; records: number }[];
+  topics: AiGroupStats[];
+  total: AiGroupStats;
+  /** Needs-AI types with no AI result yet. */
+  notRun: string[];
+  /** Function name -> the types whose answer asked for it. */
+  functionRequests: { name: string; types: string[] }[];
+  tokensIn: number;
+  tokensOut: number;
+  tokensCached: number;
+  costUsd: number;
+  latencyMs: number;
+}
+
 export interface Summary {
   types: TypeSummary[];
   topics: TopicSummary[];
@@ -88,6 +150,8 @@ export interface Summary {
   surprises: string[];
   totals: Totals;
   records: CatalogueRecord[];
+  /** Present only when some record carries an AI result. */
+  ai?: AiSummary;
 }
 
 const BADNESS: Record<FastStatus, number> = { solved: 0, partial: 1, none: 2, unverified: 3, overfit: 4 };
@@ -152,11 +216,79 @@ function fastDetailOf(r: CatalogueRecord): string {
   }
 }
 
-function aiOf(recs: CatalogueRecord[]): string | undefined {
-  const withAi = recs.filter((r) => r.ai);
-  if (withAi.length === 0) return undefined;
-  const ok = withAi.filter((r) => r.ai!.verified && r.ai!.holdOut !== 'fail').length;
-  return `${ok}/${withAi.length}`;
+const AI_BADNESS: Record<AiStatus, number> = { learned: 0, verifiedOnly: 1, failed: 2, error: 3 };
+
+function aiOf(recs: CatalogueRecord[]): AiTypeSummary | undefined {
+  const records = recs.flatMap((r) => (r.ai ? [r.ai] : []));
+  if (records.length === 0) return undefined;
+  const answered = records.filter((a) => aiStatusOf(a) !== 'error');
+  const pool = answered.length > 0 ? answered : records;
+  const worst = pool.reduce((x, y) => (AI_BADNESS[aiStatusOf(y)] > AI_BADNESS[aiStatusOf(x)] ? y : x));
+  return { status: aiStatusOf(worst), stable: pool.every((a) => aiStatusOf(a) === aiStatusOf(pool[0]!)), seeds: records.length, of: recs.length, records, worst };
+}
+
+function tally(items: readonly string[]): [string, number][] {
+  const m = new Map<string, number>();
+  for (const it of items) m.set(it, (m.get(it) ?? 0) + 1);
+  return [...m].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
+}
+
+function aiGroup(label: string, ts: TypeSummary[]): AiGroupStats {
+  const run = ts.filter((t) => t.ai !== undefined && t.ai.status !== 'error');
+  const count = (st: AiStatus): number => ts.filter((t) => t.ai?.status === st).length;
+  const learned = count('learned');
+  const verifiedOnly = count('verifiedOnly');
+  const failed = count('failed');
+  const answered = ts.flatMap((t) => (t.ai?.records ?? []).filter((a) => aiStatusOf(a) !== 'error'));
+  const avg = (f: (a: AiRecord) => number): number => (answered.length === 0 ? 0 : answered.reduce((n, a) => n + f(a), 0) / answered.length);
+  return {
+    label,
+    needsAi: ts.filter((t) => t.needsAi).length,
+    run: run.length,
+    notRun: ts.filter((t) => t.needsAi && t.ai === undefined).length,
+    learned,
+    verifiedOnly,
+    failed,
+    errors: count('error'),
+    share: learned + verifiedOnly + failed === 0 ? 0 : learned / (learned + verifiedOnly + failed),
+    records: answered.length,
+    avgCalls: avg((a) => a.llmCalls),
+    avgTokensIn: avg((a) => a.tokensIn),
+    avgTokensOut: avg((a) => a.tokensOut),
+    avgTokensCached: avg((a) => a.tokensCached),
+    avgLatencyMs: avg((a) => a.latencyMs),
+    formulaErrors: answered.reduce((n, a) => n + a.formulaErrors, 0),
+    unsupported: tally(answered.flatMap((a) => a.unsupported)),
+    functionRequests: tally(answered.flatMap((a) => a.functionRequests)),
+    explanations: answered.filter((a) => a.explanation).length,
+  };
+}
+
+function aiSummary(types: TypeSummary[], records: CatalogueRecord[]): AiSummary | undefined {
+  if (!records.some((r) => r.ai)) return undefined;
+  const configs = new Map<string, { key: string; provider: string; records: number }>();
+  for (const r of records) {
+    if (!r.ai) continue;
+    const key = aiConfigKey(r.ai);
+    const c = configs.get(key) ?? { key, provider: r.ai.provider, records: 0 };
+    c.records++;
+    configs.set(key, c);
+  }
+  const all = records.flatMap((r) => (r.ai ? [r.ai] : []));
+  const requests = new Map<string, Set<string>>();
+  for (const t of types) for (const a of t.ai?.records ?? []) for (const name of a.functionRequests) requests.set(name, (requests.get(name) ?? new Set<string>()).add(t.type));
+  return {
+    configs: [...configs.values()],
+    topics: TOPICS.map((topic) => aiGroup(TOPIC_TITLES[topic], types.filter((t) => t.topic === topic))).filter((g) => g.needsAi > 0 || g.run > 0 || g.errors > 0),
+    total: aiGroup('All', types),
+    notRun: types.filter((t) => t.needsAi && t.ai === undefined).map((t) => t.type),
+    functionRequests: [...requests].map(([name, ts]) => ({ name, types: [...ts] })).sort((x, y) => y.types.length - x.types.length || x.name.localeCompare(y.name)),
+    tokensIn: all.reduce((n, a) => n + a.tokensIn, 0),
+    tokensOut: all.reduce((n, a) => n + a.tokensOut, 0),
+    tokensCached: all.reduce((n, a) => n + a.tokensCached, 0),
+    costUsd: all.reduce((n, a) => n + a.costUsd, 0),
+    latencyMs: all.reduce((n, a) => n + a.latencyMs, 0),
+  };
 }
 
 export function summarize(records: CatalogueRecord[]): Summary {
@@ -186,6 +318,7 @@ export function summarize(records: CatalogueRecord[]): Summary {
       fastReasons: [...new Set(recs.flatMap(reasonsOf))],
       holdOut,
       viaPartial: recs.every((r) => r.fast.viaPartial === true),
+      needsAi: language === 'ok' && recs.some((r) => r.fast.status !== 'solved'),
     };
     if (lang.capability !== undefined) summary.capability = lang.capability;
     if (lang.workaround !== undefined) summary.workaround = lang.workaround;
@@ -207,7 +340,7 @@ export function summarize(records: CatalogueRecord[]): Summary {
       fastPartial: ts.filter((t) => t.fast === 'partial').length,
       fastNone: ts.filter((t) => t.fast === 'none').length,
       fastWrong: ts.filter((t) => t.fast === 'overfit' || t.fast === 'unverified').length,
-      needsAi: ts.filter((t) => t.language === 'ok' && t.fast !== 'solved').length,
+      needsAi: ts.filter((t) => t.needsAi).length,
     };
   }).filter((t) => t.types > 0);
 
@@ -252,6 +385,7 @@ export function summarize(records: CatalogueRecord[]): Summary {
   }
 
   const count = (f: (t: TypeSummary) => boolean): number => types.filter(f).length;
+  const ai = aiSummary(types, records);
   return {
     types,
     topics,
@@ -271,6 +405,7 @@ export function summarize(records: CatalogueRecord[]): Summary {
       fastUnverified: count((t) => t.fast === 'unverified'),
     },
     records,
+    ...(ai ? { ai } : {}),
   };
 }
 
@@ -312,6 +447,111 @@ function unsolvedCell(t: TypeSummary): string {
   return t.unsolved || t.fastDetail;
 }
 
+function aiCell(t: TypeSummary): string {
+  if (t.ai === undefined) return t.needsAi ? 'not run' : '—';
+  const a = t.ai;
+  const partialSeeds = a.seeds < a.of ? ` (${a.seeds}/${a.of} seeds)` : '';
+  const stable = a.stable ? '' : ' (varies by seed)';
+  switch (a.status) {
+    case 'learned':
+      return `✓${stable}${partialSeeds}`;
+    case 'verifiedOnly':
+      return `~ verified only (hold-out ${a.worst.holdOut === 'n/a' ? 'n/a' : '✗'})${stable}${partialSeeds}`;
+    case 'failed':
+      return `✗ ${a.worst.classification}${a.worst.path === 'local' ? ' (free engine answered)' : ''}${stable}${partialSeeds}`;
+    default:
+      return `⚠ measurement error${partialSeeds}`;
+  }
+}
+
+const pct = (x: number): string => `${Math.round(x * 100)}%`;
+const dec = (x: number): string => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+const kilo = (x: number): string => (x >= 1000 ? `${(x / 1000).toFixed(1)}k` : dec(Math.round(x * 10) / 10));
+const topList = (xs: readonly [string, number][], n = 4): string => (xs.length === 0 ? '—' : xs.slice(0, n).map(([k, c]) => `${k} ×${c}`).join(', ') + (xs.length > n ? `, +${xs.length - n} more` : ''));
+const seconds = (ms: number): string => (ms / 1000).toFixed(1);
+
+/** The AI section of the report (only when the records carry AI results). */
+function renderAiSection(s: Summary, ai: AiSummary): string[] {
+  const out: string[] = [];
+  const g = ai.total;
+  out.push('## AI step: what the AI learns that the free engine does not');
+  out.push('');
+  out.push(
+    ai.configs.length === 1
+      ? `Model \`${ai.configs[0]!.key}\` (provider \`${ai.configs[0]!.provider}\`): ${ai.configs[0]!.records} (type x seed) measurements.`
+      : `Several configurations are mixed in this file (re-run with \`--out\` to keep them apart): ${ai.configs.map((c) => `\`${c.key}\` ${c.records}`).join('; ')}.`,
+  );
+  out.push('');
+  out.push('The real learn flow with the AI step allowed, on the types the language can express and the free engine does not solve. **✓** = verified on the example AND the "next month" file converts exactly; **~** = verified on the example only; **✗** = not verified (wrong rules, columns reported as unsupported, no rules, or the free engine answered first and was wrong). A measurement whose every call failed (rate limit, timeout) is an error, not an answer: it is left out of the shares and `--resume` runs it again.');
+  out.push('');
+  out.push('| | types |');
+  out.push('|---|---|');
+  out.push(`| Need the AI step (expressible, not solved by the free engine) | ${g.needsAi} |`);
+  out.push(`| AI learns it (✓ verified + hold-out) | ${g.learned} |`);
+  out.push(`| AI verified only (~, hold-out fails) | ${g.verifiedOnly} |`);
+  out.push(`| AI does not learn it (✗) | ${g.failed} |`);
+  if (g.errors > 0) out.push(`| Measurement errors (re-run with \`--resume\`) | ${g.errors} |`);
+  out.push(`| Not run yet | ${g.notRun} |`);
+  out.push(`| Share learned (of those run) | ${g.learned + g.verifiedOnly + g.failed > 0 ? pct(g.share) : '—'} |`);
+  out.push(`| Tokens in / out / cached, all measurements | ${kilo(ai.tokensIn)} / ${kilo(ai.tokensOut)} / ${kilo(ai.tokensCached)} |`);
+  if (ai.costUsd > 0) out.push(`| Cost reported by the provider | $${ai.costUsd.toFixed(2)} |`);
+  out.push(`| Time in LLM calls | ${seconds(ai.latencyMs)} s |`);
+  out.push('');
+  if (ai.notRun.length > 0) {
+    out.push(`Not run yet: ${ai.notRun.map((x) => `\`${x}\``).join(', ')}.`);
+    out.push('');
+  }
+
+  out.push('### By topic');
+  out.push('');
+  out.push('| Topic | Needs AI | Run | ✓ | ~ | ✗ | Share learned | Avg calls | Avg tokens in / out (cached) | Avg latency | Formula errors | Top unsupported codes | Function requests (named) | Explained |');
+  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+  for (const x of [...ai.topics, ai.total]) {
+    const run = x.learned + x.verifiedOnly + x.failed;
+    const tokens = `${kilo(x.avgTokensIn)} / ${kilo(x.avgTokensOut)} (${kilo(x.avgTokensCached)})`;
+    out.push(
+      `| ${x === ai.total ? '**All**' : x.label} | ${x.needsAi} | ${run}${x.errors > 0 ? ` (+${x.errors} error)` : ''} | ${x.learned} | ${x.verifiedOnly} | ${x.failed} | ${run > 0 ? pct(x.share) : '—'} | ${run > 0 ? dec(Math.round(x.avgCalls * 10) / 10) : '—'} | ${run > 0 ? tokens : '—'} | ${run > 0 ? `${seconds(x.avgLatencyMs)} s` : '—'} | ${x.formulaErrors} | ${cell(topList(x.unsupported))} | ${cell(topList(x.functionRequests))} | ${x.explanations} |`,
+    );
+  }
+  out.push('');
+  out.push('Shares are per type (a type counts by its worst seed); the averages are per measured (type, seed).');
+  out.push('');
+
+  out.push('### Per type');
+  out.push('');
+  out.push('| Type | AI learns it | Path | Calls | Tokens in / out (cached) | Latency | Formula errors | Unsupported | Function request | Explained |');
+  out.push('|---|---|---|---|---|---|---|---|---|---|');
+  for (const topic of TOPICS) {
+    for (const t of s.types.filter((y) => y.topic === topic && y.ai !== undefined)) {
+      const rs = t.ai!.records;
+      const mean = (f: (a: AiRecord) => number): number => rs.reduce((n, a) => n + f(a), 0) / rs.length;
+      const paths = [...new Set(rs.map((a) => a.path))].join('/');
+      const unsupported = [...new Set(rs.flatMap((a) => a.unsupported))].join(', ');
+      const requests = [...new Set(rs.flatMap((a) => a.functionRequests))].join(', ');
+      const tokens = `${kilo(mean((a) => a.tokensIn))} / ${kilo(mean((a) => a.tokensOut))} (${kilo(mean((a) => a.tokensCached))})`;
+      out.push(
+        `| \`${t.type}\` | ${cell(aiCell(t))} | ${paths} | ${dec(Math.round(mean((a) => a.llmCalls) * 10) / 10)} | ${tokens} | ${seconds(mean((a) => a.latencyMs))} s | ${rs.reduce((n, a) => n + a.formulaErrors, 0)} | ${unsupported || '—'} | ${requests || '—'} | ${rs.some((a) => a.explanation) ? 'yes' : '—'} |`,
+      );
+    }
+  }
+  out.push('');
+  out.push('Calls, tokens and latency are the mean over the measured seeds.');
+  out.push('');
+
+  out.push('### Functions the AI asked for');
+  out.push('');
+  if (ai.functionRequests.length === 0) out.push('None: no answer carried a function request.');
+  else {
+    out.push('The names only (a request is value-free; its purpose and arguments are not recorded here). These are what the AI thinks the language lacks, for the types it could not finish.');
+    out.push('');
+    out.push('| Function | Types |');
+    out.push('|---|---|');
+    for (const f of ai.functionRequests) out.push(`| \`${f.name}\` | ${f.types.map((x) => `\`${x}\``).join(', ')} |`);
+  }
+  out.push('');
+  return out;
+}
+
 export function renderMarkdown(s: Summary): string {
   const t = s.totals;
   const seeds = [...new Set(s.records.map((r) => r.seed))];
@@ -319,12 +559,13 @@ export function renderMarkdown(s: Summary): string {
   const out: string[] = [];
   out.push('# Rule catalogue: capability map');
   out.push('');
-  out.push(`Generated by \`eval/catalogue/run-catalogue.ts\`: ${t.types} transformation types, seeds ${seeds.join(', ')}, no AI calls. Regenerate with \`pnpm --filter @formatai/eval exec tsx catalogue/run-catalogue.ts\`.`);
+  out.push(`Generated by \`eval/catalogue/run-catalogue.ts\`: ${t.types} transformation types, seeds ${seeds.join(', ')}, ${s.ai ? 'the free layers make no AI calls (the AI layer is its own section below)' : 'no AI calls'}. Regenerate with \`pnpm --filter @formatai/eval exec tsx catalogue/run-catalogue.ts\`.`);
   out.push('');
   out.push('- **Language**: can the rules language express the type? A reference rule (formula text + rules structure) must parse, type-check and reproduce the expected output exactly.');
   out.push('- **Fast engine**: does the free code engine (pair analysis + strict fast path, AI not allowed) finish it from the example pair alone? `partial n/m columns` = those columns are built, the rest need the AI step. A type is only `✓` when the learned rules are verified on the example AND convert the "next month" file exactly (hold-out).');
   out.push("- **⚠ wrong**: the fast engine produced rules that are wrong. Either they pass the engine's own verification but not the exact hold-out comparison (`verified, wrong on next file`), or they fail the engine's own verification (`local rules fail own verification`) although the path reports `local`.");
   out.push("- **Unsolved column(s) classified as**: how pair analysis sees a column the fast path did not build: `external` (nothing in the input explains it), `derived/<hint>` (a dependency code can see: `dependsOn`, `bands`, `contains`), or a relation it found but declined to build (`split@1.00 declined (columnNotFullyExplained)` = the relation has no rule form; `ambiguousColumn`, `thinEvidence`).");
+  if (s.ai) out.push("- **AI learns it**: the AI step (the real learn flow, AI allowed) on a type the free engine does not solve: `✓` verified on the example and the next month's file converts exactly; `~` verified on the example only; `✗` not verified; `not run` = needs the AI step but was not measured yet; `—` = nothing for the AI to do (the free engine solves it, or the language cannot express it).");
   out.push('');
   out.push('## Totals');
   out.push('');
@@ -346,6 +587,8 @@ export function renderMarkdown(s: Summary): string {
   out.push('|---|---|---|---|---|---|---|---|---|');
   for (const x of s.topics) out.push(`| ${TOPIC_TITLES[x.topic]} | ${x.types} | ${x.languageOk} | ${x.languageGap + x.languageBroken} | ${x.fastSolved} | ${x.fastPartial} | ${x.fastNone} | ${x.fastWrong} | ${x.needsAi} |`);
   out.push('');
+
+  if (s.ai) out.push(...renderAiSection(s, s.ai));
 
   out.push('## Language gaps (prioritized)');
   out.push('');
@@ -399,12 +642,12 @@ export function renderMarkdown(s: Summary): string {
 
   out.push('## Capability map');
   out.push('');
-  const hasAi = s.types.some((x) => x.ai !== undefined);
-  out.push(`| Topic | Type | Data | Language | Fast engine | Unsolved column(s) classified as | Hold-out |${hasAi ? ' AI |' : ''}`);
+  const hasAi = s.ai !== undefined;
+  out.push(`| Topic | Type | Data | Language | Fast engine | Unsolved column(s) classified as | Hold-out |${hasAi ? ' AI learns it |' : ''}`);
   out.push(`|---|---|---|---|---|---|---|${hasAi ? '---|' : ''}`);
   for (const topic of TOPICS) {
     for (const x of s.types.filter((y) => y.topic === topic)) {
-      out.push(`| ${TOPIC_TITLES[topic]} | \`${x.type}\` ${cell(x.title)} | ${x.lang === 'he' ? 'עב' : 'en'} | ${cell(languageCell(x))} | ${cell(fastCell(x))} | ${cell(unsolvedCell(x))} | ${holdOutCell(x)} |${hasAi ? ` ${x.ai ?? '—'} |` : ''}`);
+      out.push(`| ${TOPIC_TITLES[topic]} | \`${x.type}\` ${cell(x.title)} | ${x.lang === 'he' ? 'עב' : 'en'} | ${cell(languageCell(x))} | ${cell(fastCell(x))} | ${cell(unsolvedCell(x))} | ${holdOutCell(x)} |${hasAi ? ` ${cell(aiCell(x))} |` : ''}`);
     }
   }
   out.push('');
@@ -437,6 +680,12 @@ const CSV_COLUMNS = [
   'ai_model', 'ai_path', 'ai_verified', 'ai_holdOut', 'ai_llmCalls', 'ai_tokensIn', 'ai_tokensOut', 'ai_costUsd', 'ai_latencyMs',
 ] as const;
 
+/** Appended only when some record has an AI result (a free-run CSV stays exactly what it was). */
+const CSV_AI_COLUMNS = [
+  'ai_provider', 'ai_mode', 'ai_masking', 'ai_noEscalation', 'ai_status', 'ai_classification', 'ai_tokensCached', 'ai_formulaErrors', 'ai_callErrors',
+  'ai_unsupported', 'ai_functionRequests', 'ai_explanation', 'ai_error', 'ai_at',
+] as const;
+
 function csvField(v: unknown): string {
   if (v === undefined || v === null) return '';
   const s = String(v);
@@ -444,20 +693,24 @@ function csvField(v: unknown): string {
 }
 
 export function renderCsv(records: CatalogueRecord[]): string {
-  const lines = [CSV_COLUMNS.join(',')];
+  const columns: readonly string[] = records.some((r) => r.ai) ? [...CSV_COLUMNS, ...CSV_AI_COLUMNS] : CSV_COLUMNS;
+  const lines = [columns.join(',')];
   for (const r of records) {
     const f = r.fast;
     const l = r.language;
     const a = r.ai;
-    const row: Record<(typeof CSV_COLUMNS)[number], unknown> = {
+    const row: Record<string, unknown> = {
       type: r.type, topic: r.topic, title: r.title, lang: r.lang, seed: r.seed, rowsIn: r.rowsIn, rowsOut: r.rowsOut,
       language_expressible: l.expressible, language_capability: l.capability, language_valid: l.valid, language_reproduces: l.reproduces, language_mismatch: l.mismatch,
       fast_path: f.path, fast_status: f.status, fast_verified: f.verified, fast_viaPartial: f.viaPartial, fast_solved: f.solvedColumns.length, fast_total: f.totalColumns,
       fast_unsolved: f.unsolved.map((u) => `${u.header}:${u.cls}${u.hint ? `/${u.hint}` : ''}`).join(';'), fast_blockedBy: f.blockedBy.join(';'), fast_reason: f.fastReason,
       fast_needsAiParts: f.needsAiParts.join(';'), fast_holdOut: f.holdOut, fast_how: f.how, fast_ms: f.ms,
       ai_model: a?.model, ai_path: a?.path, ai_verified: a?.verified, ai_holdOut: a?.holdOut, ai_llmCalls: a?.llmCalls, ai_tokensIn: a?.tokensIn, ai_tokensOut: a?.tokensOut, ai_costUsd: a?.costUsd, ai_latencyMs: a?.latencyMs,
+      ai_provider: a?.provider, ai_mode: a?.mode, ai_masking: a?.masking, ai_noEscalation: a?.noEscalation, ai_status: a ? aiStatusOf(a) : undefined, ai_classification: a?.classification,
+      ai_tokensCached: a?.tokensCached, ai_formulaErrors: a?.formulaErrors, ai_callErrors: a?.callErrors, ai_unsupported: a?.unsupported.join(';'),
+      ai_functionRequests: a?.functionRequests.join(';'), ai_explanation: a?.explanation, ai_error: a?.error, ai_at: a?.at,
     };
-    lines.push(CSV_COLUMNS.map((c) => csvField(row[c])).join(','));
+    lines.push(columns.map((c) => csvField(row[c])).join(','));
   }
   return `${lines.join('\n')}\n`;
 }

@@ -3,7 +3,7 @@
 // `learn()` and `callRepair` = `repairFromBrowser`, called in-process (no HTTP), plus
 // the hold-out check and scoring. This is the one place that actually spends tokens.
 import { completionPlan, formatOf, learnFromExamples, type LearnFromExamplesResult } from '@formatai/engine';
-import { learn, repairFromBrowser, type LearnOptions, type LlmCallRecord } from '@formatai/api/learn';
+import { learn, repairFromBrowser, type CompleteFn, type LearnOptions, type LearnOutcome, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
 import type { Format, LearnResult, LlmProviderName, Rules, Tier } from '@formatai/shared';
@@ -127,6 +127,11 @@ export interface RunOneOptions {
   target?: Format;
   /** Default 'full'. An attach case (`target`) always runs full: the local step knows nothing of the format lock. */
   mode?: EvalMode;
+  /** Replaces the LLM call (`LearnOptions.complete`): a test or a dry run passes a fake provider with canned answers here. Default: the real provider of `env`. */
+  complete?: CompleteFn;
+  /** Called with every outcome of `learn()` / `repairFromBrowser()`: the answer BEFORE the AI notes are taken out of the rules (the catalogue's
+   * AI measurement reads the function-request names from it). Observer only. */
+  onLearnOutcome?: (outcome: LearnOutcome) => void;
 }
 
 export interface RunLearnResult {
@@ -160,6 +165,7 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
       for (const p of problems) if (p.kind === 'formula') formulaErrorMessages.push(p.message);
     },
     ...(opts.noEscalation ? { noEscalation: true } : {}),
+    ...(opts.complete ? { complete: opts.complete } : {}),
   };
   const common = {
     input: { bytes: opts.caseDef.input.bytes, name: opts.caseDef.input.fileName },
@@ -168,11 +174,17 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     ...(opts.masking ? { key: evalMaskingKey(opts.caseDef.name, opts.model, opts.run) } : {}),
     tier: EVAL_TIER,
   };
-  const callLearn = (payload: Parameters<typeof learn>[0]) => {
+  const callLearn = async (payload: Parameters<typeof learn>[0]) => {
     if (payloadBytes === 0) payloadBytes = new TextEncoder().encode(JSON.stringify(payload)).length;
-    return learn(payload, learnOpts);
+    const outcome = await learn(payload, learnOpts);
+    opts.onLearnOutcome?.(outcome);
+    return outcome;
   };
-  const callRepair: Parameters<typeof learnFromExamples<LlmCallRecord>>[0]['callRepair'] = (payload, previousRules, problems) => repairFromBrowser(payload, previousRules, problems, learnOpts);
+  const callRepair: Parameters<typeof learnFromExamples<LlmCallRecord>>[0]['callRepair'] = async (payload, previousRules, problems) => {
+    const outcome = await repairFromBrowser(payload, previousRules, problems, learnOpts);
+    opts.onLearnOutcome?.(outcome);
+    return outcome;
+  };
 
   const wantsComplete = opts.mode === 'complete' && !opts.target;
   if (!wantsComplete) {
