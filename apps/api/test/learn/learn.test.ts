@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V6, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT_V7, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
@@ -35,6 +35,49 @@ async function withServerRepairRounds<T>(rounds: number, fn: () => Promise<T>): 
     mutable.serverRepairRounds = original;
   }
 }
+
+describe('learn() with the fake provider: the learn-v7 prompt, the wire schema and the notes round trip', () => {
+  const request = { name: 'lookupStorageSite', purpose: 'Finds the storage site of an item from a table kept elsewhere.', args: [{ name: 'item', type: 'text' as const }], returns: 'text' as const };
+
+  it('sends the learn-v7 prompt and a wire schema that carries functionRequest and explanation, and returns both on the answer', async () => {
+    const fake = createFakeProvider();
+    const noted = { ...externalColumnRules(), unsupported: [{ outputColumn: 'Warehouse', reasonCode: 'externalData' as const, functionRequest: request, explanation: 'Looks like the storage site of the item.' }] };
+    const { toWire } = await import('@formatai/shared');
+    const { formulaRulesToWire } = await import('@formatai/engine');
+    fake.enqueue({ json: toWire(formulaRulesToWire(noted) as never) });
+
+    const outcome = await learn(externalColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.verified).toBe(true);
+    expect(outcome.rules?.unsupported).toEqual(noted.unsupported);
+    const sent = fake.calls[0]!;
+    expect(sent.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(sent.system).toContain('functionRequest');
+    expect(sent.system).toContain('runningSum(x)');
+    const unsupportedItem = (sent.schema as { properties: { unsupported: { items: { properties: Record<string, unknown> } } } }).properties.unsupported.items;
+    expect(Object.keys(unsupportedItem.properties).sort()).toEqual(['explanation', 'functionRequest', 'outputColumn', 'reasonCode']);
+    expect(outcome.calls[0]).toMatchObject({ promptVersion: 'learn-v7' });
+    // the ledger record is counts only: nothing of the notes
+    expect(JSON.stringify(outcome.calls)).not.toMatch(/storage site|lookupStorageSite|explanation/);
+  });
+
+  it('a window function in the answer round-trips like any other formula (the prompt documents it)', async () => {
+    const fake = createFakeProvider();
+    const rules = correctRules();
+    const withWindow = {
+      ...rules,
+      transform: { ...rules.transform, computed: [...rules.transform.computed, { id: 'running', type: 'decimal' as const, expr: { op: 'window' as const, fn: 'runningSum' as const, arg: { col: 'amount' } } }] },
+    };
+    const { toWire } = await import('@formatai/shared');
+    const { formulaRulesToWire } = await import('@formatai/engine');
+    const wire = toWire(formulaRulesToWire(withWindow) as never) as unknown as { transform: { computed: { expr: string }[] } };
+    expect(wire.transform.computed.at(-1)!.expr).toBe('runningSum(amount)');
+    fake.enqueue({ json: wire });
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    expect(outcome.problems).toEqual([]);
+    expect(outcome.rules?.transform.computed.at(-1)?.expr).toMatchObject({ op: 'window', fn: 'runningSum' });
+  });
+});
 
 describe('learn()', () => {
   it('verifies on the first call when the model gets it right immediately', async () => {
@@ -142,8 +185,8 @@ describe('learn()', () => {
 
     // Every call uses the identical, unchanging system prompt (SPEC 9.1) - no
     // conversation history is ever built up.
-    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT_V6);
-    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT_V6);
+    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
 
     // The learn call: exactly one content block, the cached payload.
     expect(learnCall!.content).toHaveLength(1);

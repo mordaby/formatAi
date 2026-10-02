@@ -1,6 +1,7 @@
 // What the Result screen keeps for one learn result, outside the component: the editor (with its undo history) and
 // the format's name. Leaving the screen (to read the privacy page, say) and coming back finds the edits where they
 // were, and opening the sign-in wall never touches them (SPEC 5 E: "the learned rules survive sign-in").
+import type { AiColumnNote } from '@formatai/shared';
 import { EditorStore, type EditableRules } from '../../editor';
 import type { LearnOutput } from '../../worker/engineApi';
 
@@ -23,6 +24,12 @@ export interface ResultSession {
   name: string;
   /** Set once the learn has been saved as a format and its first source: saving again writes a new version of that source. */
   source?: SavedSource | undefined;
+  /**
+   * learn-v7 (SPEC 8.10, 15): the AI step's notes on the columns it could not express - its plain-language guess at the rule (unmasked, real
+   * words) and whether a function request was recorded. They live HERE, in memory, for the session only: never in the rules, never saved,
+   * never in IndexedDB (a reload or a sign-in trip forgets them, by design).
+   */
+  aiNotes?: AiColumnNote[] | undefined;
   /** The deep analysis with AI has been started for this result (by the user, or by Home's "Deep analysis with AI if needed"): it is never started by itself twice. */
   deepRun?: boolean | undefined;
 }
@@ -42,10 +49,21 @@ export function getResultSession(result: LearnOutput, defaultName: string): Resu
   let s = sessions.get(result);
   if (!s) {
     // The caller only shows the screen for a result with rules.
-    s = { store: new EditorStore(result.rules!), name: defaultName };
+    s = { store: new EditorStore(result.rules!), name: defaultName, ...(result.aiNotes && result.aiNotes.length > 0 ? { aiNotes: [...result.aiNotes] } : {}) };
     sessions.set(result, s);
   }
   return s;
+}
+
+/**
+ * A completion answer was applied: its notes replace the session's notes for the columns it was asked for (a column it now has a rule for, or
+ * reported again without a note, loses the old one); notes of other columns stay.
+ */
+export function applyCompletionNotes(session: ResultSession, askedHeaders: readonly string[], fresh: readonly AiColumnNote[]): void {
+  const asked = new Set(askedHeaders);
+  const kept = (session.aiNotes ?? []).filter((n) => !asked.has(n.header));
+  const next = [...kept, ...fresh.filter((n) => asked.has(n.header))];
+  session.aiNotes = next.length > 0 ? next : undefined;
 }
 
 /** The session of a result, if the Result screen has made one (it never creates one). */

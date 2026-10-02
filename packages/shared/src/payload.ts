@@ -173,7 +173,7 @@ export type ColumnHint = HintBase & { out: number } & (
   | { rel: 'contains'; in: number[] }
   // learn-v7 (docs/proposals/window-operations.md): the column is an ACROSS-ROW (window) function of the input rows - a running
   // total, a group's total on every row, the previous row's value, a rank, a row number ... Computed on all rows, in the input's
-  // row order. Not sent until learn-v7 documents window functions in the system prompt (`limits.learn.window.hintsEnabled`).
+  // row order. Sent since learn-v7, which documents window functions in the system prompt (`limits.learn.window.hintsEnabled`).
   | {
       rel: 'window';
       fn: WindowFn;

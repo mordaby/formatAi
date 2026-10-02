@@ -408,6 +408,22 @@
 .map-line__notelabel {
   font-weight: 500;
 }
+/* learn-v7: the AI's guess at a rule it could not build, and the note that a function request was recorded */
+.map-line__guess,
+.map-line__requested {
+  margin-block-start: var(--s-1);
+}
+.map-line__guess bdi,
+.deep__guess bdi {
+  font-style: italic;
+}
+.deep__guess {
+  margin-block-start: var(--s-1);
+  padding-inline-start: var(--s-5);
+}
+.deep__guess-label {
+  font-weight: 500;
+}
 .map-line__actions {
   display: flex;
   gap: var(--s-2);

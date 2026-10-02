@@ -1,13 +1,14 @@
 // The free engine and across-row (window) patterns (docs/proposals/window-operations.md, owner decisions): it builds ONLY the order-independent
 // ones - a group's total on every row (`groupSum(x, by: g)`) and a count per group (`groupCount(by: g)`), exact on every aligned row - and
 // refuses everything that depends on the order of the rows (running totals, row numbers, previous / next, fill down, rank), which are found only
-// as hints for the AI step, behind a switch that stays off until learn-v7. Two equally fitting columns build nothing.
+// as hints for the AI step (sent since learn-v7, `limits.learn.window.hintsEnabled`). Two equally fitting columns build nothing.
 import { checkRules, limits } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { typeCheck } from '../../src/check';
 import { analyzePair, type PairAnalysis, type WindowFinding } from '../../src/learn/analyze';
 import { fastPath, type FastPathResult } from '../../src/learn/fastPath';
 import { relationsToHints, windowHintCandidate } from '../../src/learn/hints';
+import { buildPayload } from '../../src/learn/payload';
 import { preflight } from '../../src/learn/preflight';
 import { runOk, table, values, type CellInput } from '../pipeline/helpers';
 import { xlsx, type V } from './analyze/helpers';
@@ -330,8 +331,30 @@ describe('the hint (shape and switch)', () => {
   };
   const hintsOf = (a: PairAnalysis) => relationsToHints(a, preflight(a, 'registered'));
 
-  it('the switch is off until learn-v7', () => {
-    expect(limits.learn.window.hintsEnabled).toBe(false);
+  it('the switch is ON since learn-v7 (the prompt documents the window functions)', () => {
+    expect(limits.learn.window.hintsEnabled).toBe(true);
+  });
+
+  it('on (the default): the learn payload carries the window hints for a detected pattern, with the shapes the prompt documents', () => {
+    // a running total (order-dependent: never built by the free engine, always a hint for the AI step)
+    const run = runningPair();
+    const { payload } = buildPayload(run, preflight(run, 'registered'));
+    const w = payload.hints.find((h) => h.rel === 'window');
+    expect(w).toEqual({ out: 2, rel: 'window', fn: 'runningSum', in: [3], order: 'file', coverage: 1 });
+    // the column has no other hint (no misleading lookalike next to it)
+    expect(payload.hints.filter((h) => 'out' in h && h.out === 2)).toHaveLength(1);
+    // a group total: hinted too (the AI step may be asked after the free engine could not build everything else)
+    const g = groupTotalPair();
+    const { payload: gp } = buildPayload(g, preflight(g, 'registered'));
+    expect(gp.hints.find((h) => h.rel === 'window')).toEqual({ out: 3, rel: 'window', fn: 'groupSum', in: [3], by: [1], coverage: 1 });
+    // the serialized payload stays compact (no values of the window columns are added)
+    expect(JSON.stringify(payload).length).toBeLessThan(limits.payload.maxBytes);
+  });
+
+  it('switched off: the payload has no window hint (the pre-learn-v7 behaviour)', () => {
+    const run = runningPair();
+    const { payload } = withSwitch(false, () => buildPayload(run, preflight(run, 'registered')));
+    expect(payload.hints.some((h) => h.rel === 'window')).toBe(false);
   });
 
   it('off: no window hint is sent, and a column the free engine knows is a group total gets no (misleading value map) hint at all', () => {

@@ -4,7 +4,7 @@
 // While it runs the panel shows the progress; afterwards what the AI solved and what still needs the user's input (an honest "could not
 // produce" stays "needs your input"). "Re-run all with AI" (the whole learn, replacing the rules) is a link in here too.
 // It also carries "See what we send" (SPEC 15) for the call it made, and the plain-words reasons a run was not used.
-import { aiReadinessMessages, aiStepPartMessages, type AiLearnQuotaState, type AiStepPartCode } from '@formatai/shared';
+import { aiReadinessMessages, aiStepPartMessages, type AiColumnNote, type AiLearnQuotaState, type AiStepPartCode } from '@formatai/shared';
 import { useId, useState, type ReactNode } from 'react';
 import { includedLabel } from '../../app/aiQuota';
 import { errorView } from '../../app/messages';
@@ -41,6 +41,11 @@ export interface DeepAnalysisPanelProps {
   /** What is left of the AI formats (null: not known yet). */
   quota: AiLearnQuotaState | null;
   completion: UseCompletion;
+  /**
+   * learn-v7: what the AI step noted about the fields it could not build, by header: its guess at the rule ("The AI's guess (not applied)": in
+   * this session only, never saved) and whether a function request was recorded. Said under the field, next to the way to fill it in yourself.
+   */
+  aiNotes?: ReadonlyMap<string, AiColumnNote> | undefined;
   /** Ticks the user removed (`columnKey` / `partKey`); everything else is ticked. */
   unticked: ReadonlySet<string>;
   onToggle(key: string, ticked: boolean): void;
@@ -148,7 +153,21 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
   const retryable = p.who === 'user' && !done && !exhausted && !noneLeft;
   const choosing = retryable && !running && listed > 0;
   const showRun = p.who === 'user' && !done && !(final && !retryable);
-  const row = (key: string, field: string, text: ReactNode): ReactNode => (
+  const noteOf = (header: string | undefined): ReactNode => {
+    const note = header === undefined || running ? undefined : p.aiNotes?.get(header);
+    if (!note || (!note.explanation && !note.functionRecorded)) return null;
+    return (
+      <div className="deep__guess" data-testid="deep-guess">
+        {note.explanation ? (
+          <p>
+            <span className="deep__guess-label">{t('ai.guess.label')}</span> <bdi>{note.explanation}</bdi>
+          </p>
+        ) : null}
+        {note.functionRecorded ? <p className="muted">{t('ai.functionRecorded')}</p> : null}
+      </div>
+    );
+  };
+  const row = (key: string, field: string, text: ReactNode, header?: string): ReactNode => (
     <li key={key} data-field={field}>
       {choosing ? (
         <label className="deep__field">
@@ -161,11 +180,12 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
           {text}
         </span>
       )}
+      {noteOf(header)}
     </li>
   );
   const list = (
     <ul className="deep__fields" data-testid="deep-fields">
-      {p.columns.map((c) => row(columnKey(c), `col:${c.header}`, fieldText(c.header, c.external)))}
+      {p.columns.map((c) => row(columnKey(c), `col:${c.header}`, fieldText(c.header, c.external), c.header))}
       {p.parts.map((code) => row(partKey(code), `part:${code}`, partText(code)))}
     </ul>
   );

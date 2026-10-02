@@ -86,7 +86,8 @@ export interface FormulaParseContext {
   /**
    * Across-row functions (runningSum, rank, ...) are read only where they can run: a computed column's formula. Off by default, so a row
    * filter, a fan-out value or a function body that contains one is a parse error; the computed-column readers (`formulaRulesFromWire`'s
-   * computed columns, the editor's formula field) turn it on. Ignored with `promptOpsOnly`, where these names are not built-ins at all.
+   * computed columns, the editor's formula field) turn it on. With `promptOpsOnly` the names are built-ins only while the prompt documents the
+   * window op (`OP_SIGNATURES.window.inPrompt`; learn-v7 does).
    */
   allowWindows?: boolean;
 }
@@ -285,7 +286,7 @@ class Parser {
     }
 
     this.advance(); // '('
-    if (!this.ctx.promptOpsOnly && isWindowFn(name)) return this.parseWindowCall(name, t);
+    if (isWindowFn(name) && !(this.ctx.promptOpsOnly && OP_SIGNATURES.window.inPrompt === false)) return this.parseWindowCall(name, t);
     const args: ParsedArg[] = [];
     if (!this.check(')')) {
       for (;;) {

@@ -2,6 +2,7 @@
 // (what to ask the AI step for; is this answer worth using) and the engine (the payload, the fixed lock, the API's checks) ask. They only read
 // rules, so they live here and the main thread never has to import the engine as code.
 import type { AiStepPartCode } from './aiReadiness';
+import { stripAiNotes } from './rules/aiNotes';
 import { LearnResultSchema, type LearnResult, type Rules } from './rules/schema';
 
 /** What a completion call has to produce: output column positions (0-based) and layout parts. */
@@ -18,7 +19,8 @@ export function learnResultOf(rules: LearnResult | Rules): LearnResult {
     transform: rules.transform,
     output: rules.output,
     validations: rules.validations,
-    unsupported: rules.unsupported,
+    // learn-v7: the AI step's notes on an unsupported column (a guess, a function request) are never sent back to it
+    unsupported: stripAiNotes(rules).unsupported,
     assumptions: rules.assumptions,
   };
 }

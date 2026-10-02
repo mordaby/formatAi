@@ -225,16 +225,18 @@ describe('where windows may be written', () => {
     expect(fan.problems[0]).toMatchObject({ path: 'transform.expand.rows[0].set.n' });
   });
 
-  it('promptOpsOnly (the API reading an AI answer): the names are not built-ins, so they are unknown functions', () => {
-    for (const text of ['runningSum(a)', 'groupCount()', 'rowNumber()', 'rank()', 'previous(a)']) {
+  it('promptOpsOnly (the API reading an AI answer): the names are built-ins since learn-v7 documents them, in a computed column only', () => {
+    for (const text of ['runningSum(a)', 'groupCount()', 'rowNumber()', 'rank(order: a)', 'previous(a)', 'runningSum(a, by: g, order: d desc)']) {
       const r = parseFormula(text, { promptOpsOnly: true, allowWindows: true });
       expect(r.ok, text).toBe(true);
-      if (r.ok) expect(r.expr, text).toMatchObject({ op: 'call' });
+      if (r.ok) expect(r.expr, text).toMatchObject({ op: 'window' });
     }
-    // with named arguments there is no function call to fall back to: an error
-    expect(parseFormula('runningSum(a, by: g)', { promptOpsOnly: true, allowWindows: true }).ok).toBe(false);
-    const { problems } = formulaRulesFromWire({ transform: { computed: [{ id: 'c', type: 'decimal', expr: 'runningSum(a, by: g)' }] } }, { promptOpsOnly: true });
-    expect(problems).toHaveLength(1);
+    // not allowed where windows cannot run (a row filter, a fan-out value, a function body): still a parse error for the AI's answer
+    expect(parseFormula('runningSum(a)', { promptOpsOnly: true }).ok).toBe(false);
+    const wire = (expr: string) => ({ transform: { computed: [{ id: 'c', type: 'decimal', expr }] } });
+    expect(formulaRulesFromWire(wire('runningSum(a, by: g)'), { promptOpsOnly: true }).problems).toEqual([]);
+    const bad = formulaRulesFromWire({ input: { rowFilters: [{ expr: 'rowNumber() > 1' }] }, transform: { computed: [] } }, { promptOpsOnly: true });
+    expect(bad.problems).toHaveLength(1);
   });
 });
 

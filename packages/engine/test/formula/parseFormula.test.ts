@@ -401,7 +401,7 @@ describe('parseFormula <-> printFormula: round trip for every op', () => {
   });
 });
 
-describe('parseFormula: operations added after learn-v6 (inPrompt: false)', () => {
+describe('parseFormula: operations added after learn-v6 (documented by learn-v7)', () => {
   const NEW_OPS: [SigOp, string][] = [
     ['weekday', 'weekday(d)'],
     ['makeDate', 'makeDate(y, m, d)'],
@@ -419,15 +419,15 @@ describe('parseFormula: operations added after learn-v6 (inPrompt: false)', () =
     }
   });
 
-  it('with promptOpsOnly (an LLM answer) they are unknown names: calls to functions that do not exist', () => {
-    for (const [, text] of NEW_OPS) {
+  it('with promptOpsOnly (an LLM answer) they are built-ins too: learn-v7 documents every op, so none is held back', () => {
+    for (const [op, text] of NEW_OPS) {
       const r = parseFormula(text, { promptOpsOnly: true });
       expect(r.ok, text).toBe(true);
-      if (r.ok) expect(r.expr, text).toMatchObject({ op: 'call' });
+      if (r.ok) expect('op' in r.expr && r.expr.op, text).toBe(op);
     }
     expect(parseFormula('date("2026-01-31")', { promptOpsOnly: true })).toEqual({
       ok: true,
-      expr: { op: 'call', fn: 'date', args: [{ const: '2026-01-31' }] },
+      expr: { op: 'dateLiteral', value: '2026-01-31' },
     });
   });
 

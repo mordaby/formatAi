@@ -214,7 +214,31 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
           { header: 'Amount', aliases: [], type: 'decimal', required: false },
         ],
       });
-      expect(doc).toMatchObject({ model: 'fake-model', promptVersion: 'learn-v6', masking: false, exampleExceptions: [] });
+      expect(doc).toMatchObject({ model: 'fake-model', promptVersion: 'learn-v7', masking: false, exampleExceptions: [] });
+    });
+
+    it('never stores the AI explanation or function request, even when the browser sends them (SPEC 15, learn-v7)', async () => {
+      const rules = {
+        ...sourceOne(),
+        output: { ...sourceOne().output, columns: [...sourceOne().output.columns, { header: 'Site', from: null }] },
+        unsupported: [
+          {
+            outputColumn: 'Site',
+            reasonCode: 'other' as const,
+            explanation: 'a guess that may name Dana',
+            functionRequest: { name: 'lookupSite', purpose: 'Finds a site.', args: [{ name: 'x', type: 'text' as const }], returns: 'text' as const },
+          },
+        ],
+      };
+      const res = await create(rules);
+      expect(res.status).toBe(201);
+      const doc = await appDb.conversions.findOne({ _id: new ObjectId(res.body.conversion.id) });
+      expect((doc!.rules as Rules).unsupported).toEqual([{ outputColumn: 'Site', reasonCode: 'other' }]);
+      expect(JSON.stringify(await appDb.conversions.find({}).toArray())).not.toMatch(/Dana|lookupSite|explanation|functionRequest/);
+      // ...nor in the next version an edit writes
+      const next = await save(res.body.conversion.id, { ...(doc!.rules as Rules), unsupported: rules.unsupported });
+      expect(next.status).toBe(200);
+      expect(JSON.stringify(await appDb.conversions.find({}).toArray())).not.toMatch(/Dana|lookupSite|explanation|functionRequest/);
     });
 
     it('takes a source name, a saved-with-differences status and example exceptions', async () => {

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AiStepPartCode, LearnResult, Rules, Tier } from '@formatai/shared';
+import { stripAiNotes, type AiStepPartCode, type LearnResult, type Rules, type Tier } from '@formatai/shared';
 import { useLearnFlow, type UseLearnFlow } from '../flow/useLearnFlow';
 import { peekResultSession, seedResultSession } from '../pages/Result/session';
 import { webConfig } from '../config';
@@ -148,7 +148,8 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       let result: PendingResult | null = null;
       if (resultSession) {
         const editor = resultSession.store.getState();
-        result = { name: resultSession.name, rules: editor.rules, edited: [...editor.edited], exceptions: editor.exceptions };
+        // SPEC 15: what is kept in IndexedDB never holds the AI's explanation or function request (they live beside the rules, in the session only).
+        result = { name: resultSession.name, rules: stripAiNotes(editor.rules), edited: [...editor.edited], exceptions: editor.exceptions };
       }
       const record: PendingLearn = {
         version: 1,

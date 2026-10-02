@@ -4,7 +4,7 @@
 // (SPEC 9.6).
 import { formulaRulesToWire } from '@formatai/engine';
 import {
-  LEARN_SYSTEM_PROMPT_V6,
+  LEARN_SYSTEM_PROMPT_V7,
   learnResultWireJsonSchema,
   limits,
   promptVersion,
@@ -152,7 +152,7 @@ async function callAndCheck(
   const schema = learnResultWireJsonSchema();
 
   try {
-    const result = await completeFn({ system: LEARN_SYSTEM_PROMPT_V6, content, schema, model, purpose }, env);
+    const result = await completeFn({ system: LEARN_SYSTEM_PROMPT_V7, content, schema, model, purpose }, env);
     const { problems, rules } = runChecks(result.json, payload, { tier });
     const record: LlmCallRecord = {
       purpose,

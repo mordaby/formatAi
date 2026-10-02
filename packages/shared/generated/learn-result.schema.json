@@ -1412,6 +1412,73 @@
               "ambiguous",
               "other"
             ]
+          },
+          "functionRequest": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[a-z][A-Za-z0-9]*$"
+              },
+              "purpose": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "args": {
+                "maxItems": 6,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "maxLength": 40,
+                      "pattern": "^[a-z][A-Za-z0-9]*$"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "text",
+                        "idLike",
+                        "integer",
+                        "decimal",
+                        "date",
+                        "boolean"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "returns": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "idLike",
+                  "integer",
+                  "decimal",
+                  "date",
+                  "boolean"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "purpose",
+              "args",
+              "returns"
+            ],
+            "additionalProperties": false
+          },
+          "explanation": {
+            "type": "string",
+            "maxLength": 200
           }
         },
         "required": [
@@ -1462,6 +1529,9 @@
   "additionalProperties": false,
   "$defs": {
     "__schema0": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "__schema1": {
       "anyOf": [
         {
           "anyOf": [
@@ -2164,6 +2234,1663 @@
               "required": [
                 "op",
                 "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "weekday"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "op",
+                "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "makeDate"
+                },
+                "args": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              },
+              "required": [
+                "op",
+                "args"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "toDate"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "format": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "format"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "dateLiteral"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "keepChars"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "chars": {
+                  "type": "string",
+                  "enum": [
+                    "digits",
+                    "letters",
+                    "lettersAndDigits"
+                  ]
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "chars"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "titleCase"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "op",
+                "arg"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "find"
+                },
+                "arg": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "search": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "op",
+                "arg",
+                "search"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "const": "window"
+                },
+                "fn": {
+                  "type": "string",
+                  "enum": [
+                    "runningSum",
+                    "groupSum",
+                    "groupAvg",
+                    "groupMin",
+                    "groupMax",
+                    "groupCount",
+                    "previous",
+                    "next",
+                    "fillDown",
+                    "rowNumber",
+                    "rank"
+                  ]
+                },
+                "arg": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "col": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "col"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "const": {
+                              "type": [
+                                "string",
+                                "number",
+                                "boolean",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "const"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "param": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "param"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "dateAdd"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "days": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "days"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "dateAdd"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "months": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "months"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "dateAdd"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "years": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "years"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "add"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "sub"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "mul"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "div"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "neg"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "abs"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "floor"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "ceil"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "mod"
+                            },
+                            "args": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "min"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "max"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "round"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "digits": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "digits"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "concat"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "substr"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "start": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "length": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "start",
+                            "length"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "trim"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "upper"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "lower"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "length"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "replaceText"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "find": {
+                              "type": "string"
+                            },
+                            "with": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "find",
+                            "with"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "padLeft"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "length": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "char": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "length",
+                            "char"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "split"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "separator": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "index": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "separator",
+                            "index"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "toNumber"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "toText"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "format": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "datePart"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "part": {
+                              "type": "string",
+                              "enum": [
+                                "year",
+                                "month",
+                                "day"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "part"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "dateFormat"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "format": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "format"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "dateDiff"
+                            },
+                            "args": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            },
+                            "unit": {
+                              "type": "string",
+                              "enum": [
+                                "days",
+                                "months",
+                                "years"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args",
+                            "unit"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "endOfMonth"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "weekday"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "makeDate"
+                            },
+                            "args": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 3,
+                              "maxItems": 3
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "toDate"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "format": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "format"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "dateLiteral"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "keepChars"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "chars": {
+                              "type": "string",
+                              "enum": [
+                                "digits",
+                                "letters",
+                                "lettersAndDigits"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "chars"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "titleCase"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "find"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "search": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "search"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "window"
+                            },
+                            "fn": {
+                              "type": "string",
+                              "enum": [
+                                "runningSum",
+                                "groupSum",
+                                "groupAvg",
+                                "groupMin",
+                                "groupMax",
+                                "groupCount",
+                                "previous",
+                                "next",
+                                "fillDown",
+                                "rowNumber",
+                                "rank"
+                              ]
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "by": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "order": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "column": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "dir": {
+                                    "type": "string",
+                                    "enum": [
+                                      "asc",
+                                      "desc"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "column",
+                                  "dir"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "ties": {
+                              "type": "string",
+                              "enum": [
+                                "min",
+                                "dense"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "fn"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "if"
+                            },
+                            "cond": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "then": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "else": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "cond",
+                            "then",
+                            "else"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "switch"
+                            },
+                            "cases": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "when": {
+                                    "$ref": "#/$defs/__schema0"
+                                  },
+                                  "then": {
+                                    "$ref": "#/$defs/__schema0"
+                                  }
+                                },
+                                "required": [
+                                  "when",
+                                  "then"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "else": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "cases",
+                            "else"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "coalesce"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "lookup"
+                            },
+                            "table": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "key": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "return": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "onMissing": {
+                              "type": "string",
+                              "enum": [
+                                "flag",
+                                "empty",
+                                "keep"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "table",
+                            "key",
+                            "return",
+                            "onMissing"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "call"
+                            },
+                            "fn": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "args": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "fn",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "eq"
+                            },
+                            "args": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "ne"
+                            },
+                            "args": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "gt"
+                            },
+                            "args": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "gte"
+                            },
+                            "args": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "lt"
+                            },
+                            "args": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "lte"
+                            },
+                            "args": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                },
+                                {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "isEmpty"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "notEmpty"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "oneOf"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "values": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "type": [
+                                  "string",
+                                  "number",
+                                  "boolean",
+                                  "null"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "values"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "startsWith"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "text"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "endsWith"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "text"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "contains"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg",
+                            "text"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "and"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "or"
+                            },
+                            "args": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "args"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "op": {
+                              "type": "string",
+                              "const": "not"
+                            },
+                            "arg": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          },
+                          "required": [
+                            "op",
+                            "arg"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  ],
+                  "$ref": "#/$defs/__schema0"
+                },
+                "by": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "order": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "column": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "dir": {
+                        "type": "string",
+                        "enum": [
+                          "asc",
+                          "desc"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "column",
+                      "dir"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "ties": {
+                  "type": "string",
+                  "enum": [
+                    "min",
+                    "dense"
+                  ]
+                }
+              },
+              "required": [
+                "op",
+                "fn"
               ],
               "additionalProperties": false
             },

@@ -70,6 +70,12 @@ Production (`NODE_ENV=production`) refuses to start without `TURNSTILE_SECRET_KE
 The learn cache (`learn_cache`) is keyed by a hash of the structure only and is only ever returned
 to the same owner (`user:<id>`) - see `src/protection/cache.ts`.
 
+Function requests (learn-v7, `function_requests`, SPEC 8.10 / 13 / 15): an AI answer may carry a value-free
+`functionRequest` and a short `explanation` on an unsupported column - see `src/learn/notes.ts`. A request is
+stored only after a value filter (anything that occurs in the payload rejects it: counted, not stored), deduplicated
+on name + signature, counted per distinct HASHED owner. The explanation is returned to the browser and never stored,
+cached, logged or saved (`stripAiNotes` runs before the cache and before every registry save).
+
 ## Registry: formats, sources and conversions (M3, SPEC 8.12 / 8.15 / 13)
 
 Signed-in users only (`401 signInRequired`), database required (`503 unavailable`); every read and write

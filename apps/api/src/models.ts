@@ -6,7 +6,7 @@
  * from one owner's data, so it is owner-scoped and TTL-expired - see `LearnCacheDoc`.
  */
 import type { ObjectId } from 'mongodb';
-import type { RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, Validation } from '@formatai/shared';
+import type { RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, Validation, ValueType } from '@formatai/shared';
 
 export type AuthProvider = 'google' | 'microsoft';
 
@@ -248,6 +248,38 @@ export interface LearnCacheDoc {
   rules: string;
   promptVersion: string;
   createdAt: Date;
+}
+
+/** Where a recorded function request stands. Only `new` is written today (the M4 admin adds the others: a threshold or a click turns a request into a GitHub issue). */
+export type FunctionRequestStatus = 'new' | 'issueOpened' | 'approved' | 'declined';
+
+/**
+ * SPEC 13 `function_requests` (issue #40, learn-v7): one document per requested function, deduplicated on `key` (the normalized
+ * name plus the signature). Holds NOTHING from any user's data: the request is value-filtered before it is written (`learn/notes.ts`),
+ * and who asked is kept only as a set of hashed owner ids (`ownerHashes`, an HMAC under the server secret: the raw id is never
+ * stored), which is what `distinctOwners` counts.
+ */
+export interface FunctionRequestDoc {
+  _id?: ObjectId;
+  /** `<normalized name>(<arg types>):<returns>`. Unique. */
+  key: string;
+  /** The name as first seen. */
+  name: string;
+  /** The purpose sentence as first seen. */
+  purpose: string;
+  args: { name: string; type: ValueType }[];
+  returns: ValueType;
+  /** A catalogue topic (extraction, cleanup, formatting, combining, logic, lookups, arithmetic, dates, acrossRows, rowOps, structure) guessed from the purpose words, or `unknown`. */
+  topic: string;
+  /** How many times it was recorded (once per learn answer that carried it). */
+  count: number;
+  /** How many different (hashed) owners asked: the size of `ownerHashes`. */
+  distinctOwners: number;
+  /** HMAC of the owner id (truncated), at most `limits.learn.functionRequests.maxOwnerHashes`. Never a raw id. */
+  ownerHashes: string[];
+  firstSeen: Date;
+  lastSeen: Date;
+  status: FunctionRequestStatus;
 }
 
 export interface LeadDoc {

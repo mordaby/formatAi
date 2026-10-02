@@ -113,6 +113,41 @@ describe('checkRulesFile (SPEC 9.2 layers 1-4 on save)', () => {
   });
 });
 
+describe('the AI explanation and function request are never saved with rules (SPEC 15, learn-v7)', () => {
+  const noted = () => ({
+    ...sourceOne(),
+    unsupported: [
+      {
+        outputColumn: 'Total',
+        reasonCode: 'other' as const,
+        explanation: 'a guess that may name Dana',
+        functionRequest: { name: 'doubleIt', purpose: 'Doubles a number.', args: [{ name: 'x', type: 'decimal' as const }], returns: 'decimal' as const },
+      },
+    ],
+  });
+
+  it('withMeta strips both notes from a bare learn result and from a full rules file', () => {
+    for (const raw of [noted(), { ...noted(), name: 'X', meta: { source: 'examplePair', status: 'verified' } }]) {
+      const out = withMeta(raw, meta) as Rules;
+      expect(out.unsupported).toEqual([{ outputColumn: 'Total', reasonCode: 'other' }]);
+      expect(JSON.stringify(out)).not.toMatch(/Dana|doubleIt|explanation|functionRequest/);
+    }
+  });
+
+  it('checkRulesFile strips them too (whatever path the rules came by), and the stored rules still pass', () => {
+    const checked = checkRulesFile(noted(), 'registered');
+    expect(checked.ok).toBe(false); // (a bare learn result has no name/meta yet: the schema says so...)
+    const ok = checkRulesFile(withMeta(noted(), meta), 'registered');
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(JSON.stringify(ok.rules)).not.toMatch(/Dana|doubleIt|explanation|functionRequest/);
+    // ...and a rules file that still carries notes when it reaches checkRulesFile directly is stripped there as well
+    const direct = { ...(withMeta(noted(), meta) as Rules), unsupported: noted().unsupported };
+    const again = checkRulesFile(direct, 'registered');
+    expect(again.ok).toBe(true);
+    if (again.ok) expect(again.rules.unsupported).toEqual([{ outputColumn: 'Total', reasonCode: 'other' }]);
+  });
+});
+
 describe('signatureOf (SPEC 8.12 input signature)', () => {
   it('lists the input columns with their aliases, types and whether they are required', () => {
     const rules = asRules(

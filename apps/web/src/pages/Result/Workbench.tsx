@@ -2,7 +2,7 @@
 // preview grid and the flagged rows. It does not know where the rules came from - a fresh learn, a source being added to a
 // format, or a saved source opened for editing - or what "save" means there: the caller passes the header's actions, banners
 // and (when there is no example in memory) what replaces the preview.
-import { missingParts, type AiStepPartCode, type Format, type SourceStructure, type Tier } from '@formatai/shared';
+import { missingParts, type AiColumnNote, type AiStepPartCode, type Format, type SourceStructure, type Tier } from '@formatai/shared';
 import type { PartialInfo } from '@formatai/engine';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LeaveGuard } from '../../app/LeaveGuard';
@@ -80,6 +80,8 @@ export interface WorkbenchProps {
   analysing?: { columns: ReadonlySet<string>; parts: readonly AiStepPartCode[]; whole?: boolean } | undefined;
   /** The learn's own verification, shown in the map until the live check answers. */
   verification?: VerificationLike | null | undefined;
+  /** learn-v7: what the AI step noted about the columns it could not build (its guess, a recorded function request): shown in the session only. */
+  aiNotes?: ReadonlyMap<string, AiColumnNote> | undefined;
   name: string;
   onRename?: ((name: string) => void) | undefined;
   learnedNote: string;
@@ -352,6 +354,7 @@ export function Workbench(props: WorkbenchProps) {
                 addLocked={addLocked}
                 noExample={noExample}
                 applied={applied}
+                aiNotes={props.aiNotes}
               />
               <p className="workbench__advanced">
                 <Button

@@ -2,6 +2,7 @@ export * from './rules/schema';
 export * from './rules/check';
 export * from './rules/jsonSchema';
 export * from './rules/wire';
+export * from './rules/aiNotes';
 export * from './format';
 export * from './source';
 
@@ -16,7 +17,7 @@ export * from './config/models';
 export * from './config/prices';
 export * from './config/prompts';
 
-export * from './prompts/learnV6';
+export * from './prompts/learnV7';
 export * from './payload';
 export * from './completion';
 export * from './api';

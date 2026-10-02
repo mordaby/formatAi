@@ -67,18 +67,14 @@ describe('formulaRulesFromWire: promptOpsOnly (the API reading an LLM answer)', 
     assumptions: [],
   });
 
-  it('reads a new op for the editor, but as an unknown function for an LLM answer', () => {
+  it('reads every op the same way for the editor and for an LLM answer (learn-v7 documents them all: none is held back)', () => {
     const full = formulaRulesFromWire(wire('weekday(d)'));
     expect(full.problems).toEqual([]);
     expect((full.rules as { transform: { computed: { expr: unknown }[] } }).transform.computed[0]?.expr).toEqual({ op: 'weekday', arg: { col: 'd' } });
 
     const llm = formulaRulesFromWire(wire('weekday(d)'), { promptOpsOnly: true });
-    expect(llm.problems).toEqual([]); // it parses, as a call to a function nobody defined...
-    expect((llm.rules as { transform: { computed: { expr: unknown }[] } }).transform.computed[0]?.expr).toEqual({
-      op: 'call',
-      fn: 'weekday',
-      args: [{ col: 'd' }],
-    }); // ...which checkRules then rejects ("unknown function")
+    expect(llm.problems).toEqual([]);
+    expect((llm.rules as { transform: { computed: { expr: unknown }[] } }).transform.computed[0]?.expr).toEqual({ op: 'weekday', arg: { col: 'd' } });
   });
 
   it('also applies inside function bodies, row filters and fan-out rows', () => {
@@ -97,7 +93,8 @@ describe('formulaRulesFromWire: promptOpsOnly (the API reading an LLM answer)', 
       const j = JSON.stringify(r.rules);
       return { call: j.includes('"op":"call"'), weekday: j.includes('"op":"weekday"'), find: j.includes('"op":"find"') };
     };
-    expect(kinds(formulaRulesFromWire(rules))).toEqual({ call: false, weekday: true, find: true });
-    expect(kinds(formulaRulesFromWire(rules, { promptOpsOnly: true }))).toEqual({ call: true, weekday: false, find: false });
+    const normal = kinds(formulaRulesFromWire(rules));
+    expect(normal).toEqual({ call: false, weekday: true, find: true });
+    expect(kinds(formulaRulesFromWire(rules, { promptOpsOnly: true }))).toEqual(normal);
   });
 });

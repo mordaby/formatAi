@@ -6,13 +6,13 @@
 // (add/sub/mul/div/eq/ne/gt/gte/lt/lte) or as its function-call form (everything
 // else) - so the LLM is never asked to use an operation it hasn't been told about.
 //
-// Exception: an op flagged `inPrompt: false` (weekday, makeDate, toDate, date, keepChars,
-// titleCase, find) is supported by the engine, the formula parser and the editor but ships
-// to the prompt with a later prompt version. It is skipped here - and must really be ABSENT
-// from the prompt: the day the prompt documents it, the flag has to go (otherwise the API's
-// LLM-answer check would keep rejecting an op the model was told to use).
+// learn-v7 documented every op (the seven date/text ops added after learn-v6 and the eleven window
+// functions), so NO op is held back any more. The mechanism stays for the next op added before its prompt
+// version: an op flagged `inPrompt: false` is skipped here - and must really be ABSENT from the prompt:
+// the day the prompt documents it, the flag has to go (otherwise the API's LLM-answer check would keep
+// rejecting an op the model was told to use).
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V6 } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT_V7 } from '@formatai/shared';
 import { OP_SIGNATURES, WINDOW_SIGNATURES, type SigOp } from '../../src/check/signatures';
 
 /** The "# Operations" section of LEARN_PROMPT §2 (learn-v6): from "# Operations" to the
@@ -36,7 +36,7 @@ function mentions(section: string, op: SigOp): boolean {
 }
 
 describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3, learn-v6 formulas)', () => {
-  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT_V6);
+  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT_V7);
   const ops = Object.keys(OP_SIGNATURES) as SigOp[];
   const inPrompt = ops.filter((op) => OP_SIGNATURES[op].inPrompt !== false);
   const notInPrompt = ops.filter((op) => OP_SIGNATURES[op].inPrompt === false);
@@ -58,18 +58,31 @@ describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3,
     expect(notInPrompt.filter((op) => mentions(section, op))).toEqual([]);
   });
 
-  it('the ops held back from the prompt are exactly the ones added after learn-v6', () => {
-    expect(notInPrompt.sort()).toEqual(['dateLiteral', 'find', 'keepChars', 'makeDate', 'titleCase', 'toDate', 'weekday', 'window']);
+  it('learn-v7: no op is held back from the prompt (every OP_SIGNATURES op, including the seven date/text ops and window, is documented)', () => {
+    expect(notInPrompt).toEqual([]);
+    expect([...inPrompt].sort()).toEqual([...ops].sort());
+    for (const op of ['weekday', 'makeDate', 'toDate', 'dateLiteral', 'keepChars', 'titleCase', 'find', 'window'] as SigOp[]) {
+      expect(mentions(section, op), op).toBe(true);
+    }
   });
 
-  // The across-row functions are one op (`window`) with eleven names. Until learn-v7 documents them the prompt must not mention
-  // them (and the API reads them as unknown functions); the day it does, the flag goes and every name must be there as `name(`.
-  it('the eleven across-row function names are in the prompt exactly when the window op is flagged in', () => {
+  // The across-row functions are one op (`window`) with eleven names; every name must be in the prompt as `name(`.
+  it('the eleven across-row function names are all in the prompt', () => {
     const names = Object.keys(WINDOW_SIGNATURES);
     expect(names).toHaveLength(11);
-    const documented = names.filter((n) => section.includes(`${n}(`));
-    if (OP_SIGNATURES.window.inPrompt === false) expect(documented).toEqual([]);
-    else expect(documented).toEqual(names);
+    expect(names.filter((n) => !section.includes(`${n}(`))).toEqual([]);
+  });
+
+  it('the prompt documents the window arguments (named by:/order:/ties:, column-only) and the window hint', () => {
+    for (const text of ['by:', 'order:', 'ties:', 'FILE ORDER', 'rel "window"', 'plain column ids']) {
+      expect(LEARN_SYSTEM_PROMPT_V7, text).toContain(text);
+    }
+  });
+
+  it('the prompt documents the optional functionRequest and explanation of an unsupported entry, with the privacy wording', () => {
+    expect(LEARN_SYSTEM_PROMPT_V7).toContain('functionRequest');
+    expect(LEARN_SYSTEM_PROMPT_V7).toContain('explanation');
+    expect(LEARN_SYSTEM_PROMPT_V7).toMatch(/no examples and no values from the data of any kind/);
   });
 
   it('the six comparison symbols and four arithmetic symbols are all documented', () => {

@@ -36,6 +36,9 @@ export const resultEn = {
   'map.keep': 'Keep',
   'map.change': 'Change',
   'map.fill': 'Fill in',
+  // learn-v7 (SPEC 8.10): what the AI step noted about a column it could not build. The guess is shown in this session only, never saved.
+  'ai.guess.label': "The AI's guess (not applied):",
+  'ai.functionRecorded': "This needs a function we don't have yet — we've recorded it.",
   'map.move': 'Move {name}',
   'map.moveHint': 'Drag to reorder, or use the up and down arrow keys',
   'map.moved': '{name} is now column {n} of {total}',
@@ -446,6 +449,8 @@ export const resultHe: Record<keyof typeof resultEn, string> = {
   'map.keep': 'להשאיר',
   'map.change': 'לשנות',
   'map.fill': 'להשלים',
+  'ai.guess.label': 'הניחוש של ה-AI (לא הוחל):',
+  'ai.functionRecorded': 'זה דורש פונקציה שעדיין אין לנו — רשמנו אותה.',
   'map.move': 'הזזת {name}',
   'map.moveHint': 'גררו כדי לשנות את הסדר, או השתמשו בחצים למעלה ולמטה',
   'map.moved': '{name} היא עכשיו עמודה {n} מתוך {total}',

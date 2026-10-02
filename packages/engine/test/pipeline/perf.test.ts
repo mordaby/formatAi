@@ -122,7 +122,9 @@ function bigRules() {
   });
 }
 
-describe('performance', () => {
+// Timing tests share the CPU with the rest of the repo's tests: a retry re-measures instead of failing
+// on a noisy neighbour (the budgets themselves are unchanged).
+describe('performance', { retry: 2 }, () => {
   it(`runs ${ROWS} rows × 10 input columns, 10 computed columns (incl. mod/min/max/dateAdd/switch/toText) well under the live-check budget`, () => {
     const r = bigRules();
     const t = bigTable();
@@ -156,7 +158,7 @@ describe('performance', () => {
 
 // Across-row (window) functions: four of them over the whole table (a running balance per account in date order, a group total, a global
 // rank, a row number per account). Each window is a single pass over cached partitions and sorted indexes (see pipeline/v1/window.ts).
-describe('performance: window functions', () => {
+describe('performance: window functions', { retry: 2 }, () => {
   function windowTable(rows: number) {
     const out: CellInput[][] = [];
     for (let i = 0; i < rows; i++) {

@@ -9,7 +9,7 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import type { AiStepPartCode, Format, LearnPayload, LearnResult, RepairProblem, Tier } from '@formatai/shared';
+import { aiNotesOf, stripAiNotes, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Tier } from '@formatai/shared';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
@@ -166,6 +166,12 @@ export interface LearnFromExamplesResult<Call = unknown> {
   stages: LearnStages;
   /** path 'partial': see `PartialInfo`. `rules` are the partial rules; `verification` counts the solved columns only. */
   partial?: PartialInfo;
+  /**
+   * learn-v7 (SPEC 8.10, 15): the AI step's notes on the columns it reported as unsupported, taken OUT of `rules`: its plain-language guess
+   * at the rule (unmasked here, real words) and whether a function request for the column was recorded. For the session only - the caller
+   * shows them and never stores them; `rules` and `unsupported` never carry them, so nothing that saves, caches or re-sends the rules can.
+   */
+  aiNotes?: AiColumnNote[];
   /** The AI readiness verdict, when the gate ran (paths 'notReady', 'partial' and 'llm'). Issues carry codes and
    * params for `aiReadinessMessages`; the payload the check built is not included. */
   readiness?: AiReadiness;
@@ -384,16 +390,21 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   }
   stages.verifiedAfterRepair = passes(verification, rules, fixedProblems);
 
+  // learn-v7: the notes leave the rules here (SPEC 15): the answer the caller works with has none, and they travel beside it.
+  const aiNotes = aiNotesOf(rules);
+  const answer = stripAiNotes(rules);
+
   return {
     path: 'llm',
     preflight: pf,
-    rules,
+    rules: answer,
     verification,
-    assumptions: rules.assumptions,
-    unsupported: rules.unsupported,
+    assumptions: answer.assumptions,
+    unsupported: answer.unsupported,
     calls,
     stages,
     readiness: shownReadiness,
+    ...(aiNotes.length > 0 ? { aiNotes } : {}),
     ...(opts.complete ? { completion: { columns: [...opts.complete.columns], parts: [...opts.complete.parts], fixedProblems, matches: matchesExample(verification, rules), produced: completionProduced(rules, opts.complete.fixedRules, opts.complete) } } : {}),
   };
 }

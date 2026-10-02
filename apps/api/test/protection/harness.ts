@@ -10,7 +10,7 @@ import { connectDb, ensureIndexes, type AppDb } from '../../src/db.js';
 import { loadEnv, type Env } from '../../src/env.js';
 import type { CompleteFn } from '../../src/learn/index.js';
 import type { CompleteRequest, CompleteResult } from '../../src/llm/index.js';
-import type { LlmCallDoc } from '../../src/models.js';
+import type { FunctionRequestDoc, LlmCallDoc } from '../../src/models.js';
 import type { Identity } from '../../src/protection/identity.js';
 import { createMemoryStore, createMongoStore, type ProtectionStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
@@ -24,6 +24,10 @@ export interface StoreHandle {
   /** A usage counter's current value (0 when absent). */
   counter(key: string): Promise<number>;
   cacheEntryCount(): Promise<number>;
+  /** Every cached rules entry (the JSON strings), for "never in the cache" assertions. */
+  cacheRules(): Promise<string[]>;
+  /** The `function_requests` documents, by key (learn-v7). */
+  functionRequests(): Promise<FunctionRequestDoc[]>;
 }
 
 export interface StoreKit {
@@ -44,6 +48,8 @@ export const memoryKit: StoreKit = {
       ledger: async () => store.ledger,
       counter: async (key) => store.counter(key),
       cacheEntryCount: async () => store.cacheEntries.size,
+      cacheRules: async () => [...store.cacheEntries.values()].map((d) => d.rules),
+      functionRequests: async () => [...store.functionRequests.values()].map((d) => structuredClone(d)),
     };
   },
 };
@@ -74,6 +80,7 @@ export function mongoKit(): StoreKit {
         db.budgets.deleteMany({}),
         db.learnCache.deleteMany({}),
         db.llmCalls.deleteMany({}),
+        db.functionRequests.deleteMany({}),
       ]);
       const store = createMongoStore(db);
       return {
@@ -81,6 +88,8 @@ export function mongoKit(): StoreKit {
         ledger: () => db.llmCalls.find({}, { projection: { _id: 0 } }).toArray() as Promise<LlmCallDoc[]>,
         counter: async (key) => (await db.usageCounters.findOne({ key }))?.count ?? 0,
         cacheEntryCount: () => db.learnCache.countDocuments(),
+        cacheRules: async () => (await db.learnCache.find({}).toArray()).map((d) => d.rules),
+        functionRequests: () => db.functionRequests.find({}, { projection: { _id: 0 } }).toArray() as Promise<FunctionRequestDoc[]>,
       };
     },
   };

@@ -176,7 +176,7 @@ describe('runChecks: an honest "cannot produce this column" (from: null AND an u
   });
 });
 
-describe('runChecks: operations the prompt does not document yet (weekday, find, ...) are unknown functions', () => {
+describe('runChecks: the operations added after learn-v6 (weekday, find, ...) are documented by learn-v7, so an AI answer may use them', () => {
   function withExtraColumn(expr: LearnResult['transform']['computed'][number]['expr']): unknown {
     const rules = correctRules();
     const extended: LearnResult = {
@@ -187,10 +187,12 @@ describe('runChecks: operations the prompt does not document yet (weekday, find,
     return toWire(formulaRulesToWire(extended) as unknown as LearnResult);
   }
 
-  it('rejects find(...) in an LLM answer as a reference to an unknown function', () => {
+  it('accepts find(...), weekday-style date ops and the other seven in an LLM answer: no unknown-function problem', () => {
     const { problems, rules } = runChecks(withExtraColumn({ op: 'find', arg: { col: 'id' }, search: 'A' }), basicPayload(), { tier: 'registered' });
-    expect(problems.some((p) => p.kind === 'reference' && p.message.includes('find'))).toBe(true);
+    expect(problems).toEqual([]);
     expect(rules).not.toBeNull();
+    const titled = runChecks(withExtraColumn({ op: 'find', arg: { op: 'titleCase', arg: { col: 'id' } }, search: 'A' }), basicPayload(), { tier: 'registered' });
+    expect(titled.problems).toEqual([]);
   });
 
   it('accepts the same rules while the answer only uses documented operations', () => {
@@ -199,7 +201,7 @@ describe('runChecks: operations the prompt does not document yet (weekday, find,
   });
 });
 
-describe('runChecks: the across-row (window) functions are not in the prompt yet', () => {
+describe('runChecks: the across-row (window) functions are documented by learn-v7, so an AI answer may use them', () => {
   function withComputed(expr: LearnResult['transform']['computed'][number]['expr'], extra: Partial<LearnResult['transform']> = {}): unknown {
     const rules = correctRules();
     const extended: LearnResult = {
@@ -209,16 +211,26 @@ describe('runChecks: the across-row (window) functions are not in the prompt yet
     return toWire(formulaRulesToWire(extended) as unknown as LearnResult);
   }
 
-  it('reads runningSum(...) in an LLM answer as an unknown function, like any operation the prompt never documented', () => {
-    // The printed formula has a named argument, which no function call can carry: a formula problem for the repair call, not a run.
+  it('accepts runningSum(..., by: ...) and rowNumber() in a computed column of an LLM answer (named arguments and all)', () => {
     const named = withComputed({ op: 'window', fn: 'runningSum', arg: { col: 'amount' }, by: ['id'] });
-    const { problems, rules } = runChecks(named, basicPayload(), { tier: 'registered' });
-    expect(rules).toBeNull();
-    expect(problems.some((p) => p.kind === 'formula')).toBe(true);
-    // without named arguments the name is simply not a function that exists
-    const bare = withComputed({ op: 'window', fn: 'rowNumber' });
-    const second = runChecks(bare, basicPayload(), { tier: 'registered' });
-    expect(second.problems.some((p) => p.kind === 'reference' && p.message.includes('rowNumber'))).toBe(true);
+    const first = runChecks(named, basicPayload(), { tier: 'registered' });
+    expect(first.problems).toEqual([]);
+    expect(first.rules?.transform.computed.at(-1)?.expr).toMatchObject({ op: 'window', fn: 'runningSum', by: ['id'] });
+    const bare = runChecks(withComputed({ op: 'window', fn: 'rowNumber' }), basicPayload(), { tier: 'registered' });
+    expect(bare.problems).toEqual([]);
+  });
+
+  it('a window written wrongly (a missing column, an order: on a group function) is a precise problem for the repair call', () => {
+    const wire = (formula: string): unknown => {
+      const json = withComputed({ op: 'window', fn: 'rowNumber' }) as { transform: { computed: { id: string; expr: unknown }[] } };
+      json.transform.computed = json.transform.computed.map((c) => (c.id === 'run' ? { ...c, expr: formula } : c));
+      return json;
+    };
+    const missing = runChecks(wire('runningSum()'), basicPayload(), { tier: 'registered' });
+    expect(missing.rules).toBeNull();
+    expect(missing.problems.some((p) => p.kind === 'formula')).toBe(true);
+    const orderOnGroup = runChecks(wire('groupSum(amount, order: id)'), basicPayload(), { tier: 'registered' });
+    expect(orderOnGroup.problems.some((p) => p.kind === 'formula')).toBe(true);
   });
 
   it('refuses a function the AI names like a built-in across-row function (it would be read as the built-in)', () => {

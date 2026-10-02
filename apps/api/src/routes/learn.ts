@@ -10,6 +10,10 @@
 // failed-attempt cap on its example pair, same outcome report), except that it never touches the structure cache - its answer contains
 // the user's own rules, so it is neither served from nor stored in it.
 //
+// learn-v7 (issue #40): an answer may carry two optional notes on an unsupported column - a value-free function request and a plain-language
+// explanation (see `learn/notes.ts`). The request is value-filtered and recorded in `function_requests` before the answer goes back; the
+// explanation goes back to the browser (masked) and NOWHERE else: `stripAiNotes` takes both notes out before the structure cache is written.
+//
 // Every refusal is a stable code (`{ error, limit?, period?, counted? }`, see shared `API_ERROR_CODES`); the web maps it to
 // UI text. SPEC 15: this file never logs a payload, a cell value, a token, or `previousRules`/`problems`
 // content - only counts, ids and error names.
@@ -20,6 +24,7 @@ import {
   LearnResultSchema,
   limits,
   promptVersion,
+  stripAiNotes,
   type ApiErrorBody,
   type LearnOutcomeResponse,
   type LearnQuotaResponse,
@@ -30,7 +35,7 @@ import {
   type RepairResponse,
 } from '@formatai/shared';
 import type { Env } from '../env.js';
-import { countProblems, learn, readCompleteFixed, repairFromBrowser, type CompleteFn, type LearnOutcome, type LlmCallRecord } from '../learn/index.js';
+import { countProblems, learn, readCompleteFixed, recordFunctionRequests, repairFromBrowser, requestKeysOf, type CompleteFn, type LearnOutcome, type LlmCallRecord } from '../learn/index.js';
 import type { LlmCallDoc } from '../models.js';
 import { BUDGET_STATUS, checkBudgets, totalCostUsd } from '../protection/budget.js';
 import { isCacheable, learnCacheKey } from '../protection/cache.js';
@@ -195,12 +200,38 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     now: Date,
   ): Promise<void> => {
     if (payload.complete !== undefined) return; // completion: the answer holds the user's own rules (see the file header)
-    if (!outcome.verified || !outcome.rules || !isCacheable(outcome.rules, payload.masking)) return;
+    if (!outcome.verified || !outcome.rules) return;
+    // SPEC 15: the AI's explanation and function request are never cached (the guess may name values; the request is recorded elsewhere).
+    const rules = stripAiNotes(outcome.rules);
+    if (!isCacheable(rules, payload.masking)) return;
     try {
-      await store.putCachedRules({ owner, key, rules: outcome.rules, promptVersion, createdAt: now });
+      await store.putCachedRules({ owner, key, rules, promptVersion, createdAt: now });
     } catch (err) {
       logFailure('failed to write the learn cache', err);
     }
+  };
+
+  /**
+   * learn-v7: the function requests of this answer are value-filtered and recorded (`notes.ts`); the answer comes back without the ones
+   * that were refused. `previous` (a repair): requests its answer already carried were recorded then and are not counted again.
+   */
+  const withRecordedRequests = async (
+    outcome: LearnOutcome,
+    payload: LearnPayload,
+    owner: string,
+    now: Date,
+    previous?: LearnResult,
+  ): Promise<LearnOutcome> => {
+    if (!outcome.rules) return outcome;
+    const noted = await recordFunctionRequests(outcome.rules, payload, {
+      store,
+      secret,
+      owner,
+      now,
+      ...(previous ? { alreadyRecorded: requestKeysOf(previous) } : {}),
+      onError: (err) => logFailure('failed to record a function request', err),
+    });
+    return noted.rules === outcome.rules ? outcome : { ...outcome, rules: noted.rules };
   };
 
   /** At least one model answered: a provider outage (every call an `error:*`) is nobody's failed attempt. */
@@ -244,14 +275,14 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       const notBefore = new Date(now.getTime() - limits.cache.ttlDays * DAY_MS);
       const saved = LearnResultSchema.safeParse(await store.getCachedRules(owner, cacheKey, notBefore));
       // Re-checked on read too: an entry written under another masking rule set must not be served.
-      if (saved.success && isCacheable(saved.data as LearnResult, payload.masking)) {
+      if (saved.success && isCacheable(stripAiNotes(saved.data as LearnResult), payload.masking)) {
         try {
           await store.insertLlmCalls([cacheHitLedgerDoc(randomUUID(), identity, payload, now, Date.now() - started)]);
         } catch (err) {
           logFailure('failed to write the llm_calls ledger', err);
         }
         const hit: LearnResponse = {
-          rules: saved.data as LearnResult,
+          rules: stripAiNotes(saved.data as LearnResult),
           verified: true,
           problems: [],
           cached: true,
@@ -283,7 +314,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     let outcome: LearnOutcome;
     try {
-      outcome = await learn(payload, { tier: tierOf(identity), env, complete });
+      outcome = await withRecordedRequests(await learn(payload, { tier: tierOf(identity), env, complete }), payload, owner, now);
     } catch (err) {
       // Something threw past the provider layer: nothing was learned, nothing counts.
       await releaseReservation(ctx).catch((e: unknown) => logFailure('failed to release an AI learn', e));
@@ -352,11 +383,17 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     const payload = parsedPayload.data as unknown as LearnPayload;
     const previousRules: LearnResult = parsedRules.data;
-    const outcome = await repairFromBrowser(payload, previousRules, body.problems, {
-      tier: tierOf(identity),
-      env,
-      complete,
-    });
+    const outcome = await withRecordedRequests(
+      await repairFromBrowser(payload, previousRules, body.problems, {
+        tier: tierOf(identity),
+        env,
+        complete,
+      }),
+      payload,
+      owner,
+      now,
+      previousRules,
+    );
 
     await recordCalls(learnCheck.uuid, identity, outcome.calls, now);
     // The repaired rules replace the owner's entry for this structure, so a later cache hit returns

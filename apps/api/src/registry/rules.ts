@@ -4,6 +4,7 @@ import { checkFormatLock, checkLimits, formatOf, inputSignatureOf, typeCheck } f
 import {
   checkRules,
   RulesSchema,
+  stripAiNotesFromJson,
   type Format,
   type LearnResult,
   type RepairProblem,
@@ -39,7 +40,8 @@ const isRuleLimitProblem = (p: { path?: string; message: string }): boolean =>
  * problem.
  */
 export function checkRulesFile(input: unknown, tier: Tier): RulesCheck {
-  const parsed = RulesSchema.safeParse(input);
+  // SPEC 15 (learn-v7): the AI's explanation and function request are never saved with a rules file, whatever the client sent.
+  const parsed = RulesSchema.safeParse(stripAiNotesFromJson(input));
   if (!parsed.success) {
     return {
       ok: false,
@@ -98,7 +100,9 @@ function isRecord(v: unknown): v is Record<string, unknown> {
  * and `meta` set by the server, so that `meta.formatId`, `sourceName`, `status` and the rest always agree with
  * the conversion document (SPEC 13). The result still has to pass `checkRulesFile`.
  */
-export function withMeta(raw: unknown, m: SaveMeta): unknown {
+export function withMeta(rawInput: unknown, m: SaveMeta): unknown {
+  // SPEC 15 (learn-v7): never saved with the rules - the web strips them too, the API does not rely on it.
+  const raw = stripAiNotesFromJson(rawInput);
   if (!isRecord(raw)) return raw;
   const oldMeta = isRecord(raw.meta) ? raw.meta : {};
   const meta: Record<string, unknown> = {

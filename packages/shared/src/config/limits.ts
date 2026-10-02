@@ -148,10 +148,28 @@ export const limits = {
       minRows: 4,
       /**
        * Whether the learn payload carries `rel: 'window'` hints for the patterns the free engine does not build (previous / next /
-       * fillDown / rank / running sum / group average, min, max / row number). OFF until learn-v7 documents window functions in the
-       * system prompt: the AI is not told about them before that, so a hint would only confuse it.
+       * fillDown / rank / running sum / group average, min, max / row number). ON since learn-v7, which documents the window functions in
+       * the system prompt (before that the AI was not told about them, so a hint would only have confused it).
        */
-      hintsEnabled: false,
+      hintsEnabled: true,
+    },
+    /**
+     * learn-v7 (issue #40): the two optional notes on an `unsupported` entry. `functionRequest`: a camelCase name (at most
+     * `maxNameChars`), one neutral sentence (`maxPurposeChars`), at most `maxArgs` typed arguments, a return type. `explanation`: a
+     * plain-language guess at the rule, at most `maxExplanationChars`, shown in the session only. The schema enforces them; a note that
+     * breaks them is dropped, never a reason to fail or repair a learn.
+     */
+    notes: {
+      maxNameChars: 40,
+      maxPurposeChars: 160,
+      maxArgs: 6,
+      maxExplanationChars: 200,
+      /** A request is rejected (counted, not stored) when its name, purpose or argument names contain a payload value: only tokens of at least this many characters are compared (numbers are compared whatever their length). */
+      minTokenChars: 3,
+    },
+    /** The API's `function_requests` collection (SPEC 13): how many distinct (hashed) owners one request remembers; past it `distinctOwners` stops growing. */
+    functionRequests: {
+      maxOwnerHashes: 1000,
     },
   },
   /**

@@ -24,7 +24,7 @@ import { Versions } from '../Format/Versions';
 import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
 import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
-import { defaultFormatName, getResultSession, sourcePath, type SavedSource } from './session';
+import { applyCompletionNotes, defaultFormatName, getResultSession, sourcePath, type SavedSource } from './session';
 import { useCompletion } from './useCompletion';
 import { useFormatMatch } from './useFormatMatch';
 import { convertAndDownload, useSave } from './useSave';
@@ -104,7 +104,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // "Run deep analysis with AI" (completion mode): the AI step produces only what is missing and the rules on screen stay as they are; an
   // answer that passes the fixed lock and the verification replaces them (see useCompletion). It never runs unless the user chose it: the
   // panel's button, or Home's "Deep analysis with AI if needed" (acted on below, once per result).
-  const completion = useCompletion(kept.store, result.exampleId);
+  // learn-v7: the notes of an applied answer go into the session (never into the rules): see `ResultSession.aiNotes`.
+  const completion = useCompletion(kept.store, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
   const completed = completion.completed;
   const [confirmRerun, setConfirmRerun] = useState(false);
   // What the AI step reported for the answer on screen (the completion's, once one has been applied).
@@ -122,6 +123,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // What the AI step would be asked for, from the rules as they are on screen right now: EVERY output column with no rule (also one code found
   // no trace of in the input: that is not certainty) and the layout parts the free result could not build and the rules still lack.
   const liveRules = useSyncExternalStore(kept.store.subscribe, () => kept.store.getState().rules);
+  // What the AI step noted about the columns it could not build (its guess, a recorded function request), by header. Memory only; read each render.
+  const aiNotes = new Map((kept.aiNotes ?? []).map((n) => [n.header, n] as const));
   const missing = useMemo(() => {
     const plan = completionPlan(liveRules, { parts: partial?.needsAiParts ?? [] });
     const external = new Set(partial?.external ?? []);
@@ -322,6 +325,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           who={me.status === 'loading' ? 'checking' : me.user ? 'user' : 'guest'}
           quota={me.quota}
           completion={completion}
+          aiNotes={aiNotes}
           unticked={unticked}
           onToggle={toggle}
           whole={!missing.completable}
@@ -382,6 +386,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         inputFile={session.input}
         tier={me.tier}
         partial={partial}
+        aiNotes={aiNotes}
         analysing={analysing}
         verification={completed ? completed.verification : result.verification}
         name={name}

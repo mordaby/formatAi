@@ -16,6 +16,7 @@ import {
 // time), so re-using it here creates no runtime dependency on payload.ts, only a
 // type-level one - and avoids two independently-declared literal unions drifting apart.
 import type { SummaryAgg } from '../payload';
+import { limits } from '../config/limits';
 
 // ---------- Column type (SPEC 8.1) ----------
 
@@ -1045,14 +1046,64 @@ export const ValidationSchema = z.discriminatedUnion('rule', [
 
 // ---------- unsupported / assumptions (SPEC 8.10) ----------
 
+// learn-v7 (issue #40, SPEC 8.10): for a column the language cannot express the AI step may add a FUNCTION REQUEST (the function it
+// would need: a camelCase name, one neutral sentence, typed arguments, a return type - and NO example or value of any kind) and a short
+// plain-language EXPLANATION of the rule it sees. Both are optional extras: neither is ever executed or part of the rules, and neither is
+// ever stored with them (SPEC 15): the request is value-filtered and recorded by the API, the explanation is shown to the user in the
+// session only. `stripAiNotes` (./aiNotes.ts) removes both from any rules that are cached, saved or sent back to the AI step.
+
+/** The caps of the two notes live in config (`limits.learn.notes`); the schema and the prompt both read them from there. */
+export const FUNCTION_REQUEST_LIMITS = limits.learn.notes;
+
+/** camelCase: starts with a lower-case Latin letter, then letters and digits only. */
+export const FUNCTION_REQUEST_NAME_PATTERN = /^[a-z][A-Za-z0-9]*$/;
+
+export interface FunctionRequestArg {
+  name: string;
+  type: ValueType;
+}
+export interface FunctionRequest {
+  name: string;
+  purpose: string;
+  args: FunctionRequestArg[];
+  returns: ValueType;
+}
+
+/**
+ * `constrained: true` is the real gate (`LearnResultSchema`): the name pattern and the length caps are enforced. The WIRE schema
+ * (`wire.ts`) is built with `constrained: false`: structured-output providers do not all accept `pattern` / `maxLength` / `maxItems`, so
+ * the limits are said in the prompt and enforced here, after the call - a note that breaks them is dropped by the API (never a repair).
+ */
+export function buildFunctionRequestSchema(constrained: boolean): z.ZodType<FunctionRequest> {
+  const L = FUNCTION_REQUEST_LIMITS;
+  const identifier = constrained ? z.string().max(L.maxNameChars).regex(FUNCTION_REQUEST_NAME_PATTERN) : z.string();
+  const arg = z.strictObject({ name: identifier, type: ValueTypeSchema });
+  return z.strictObject({
+    name: identifier,
+    purpose: constrained ? z.string().min(1).max(L.maxPurposeChars) : z.string(),
+    args: constrained ? z.array(arg).max(L.maxArgs) : z.array(arg),
+    returns: ValueTypeSchema,
+  }) as unknown as z.ZodType<FunctionRequest>;
+}
+export const FunctionRequestSchema = buildFunctionRequestSchema(true);
+
 export interface Unsupported {
   outputColumn: string;
   reasonCode: UnsupportedReasonCode;
+  /** learn-v7: the function the language lacks for this column (value-free; recorded by the API, never saved with the rules). */
+  functionRequest?: FunctionRequest;
+  /** learn-v7: one short plain-language description of the rule the AI sees, in the output headers' language (a guess; in-session only, never stored). */
+  explanation?: string;
 }
-export const UnsupportedSchema = z.strictObject({
-  outputColumn: z.string(),
-  reasonCode: z.enum(UNSUPPORTED_REASON_CODES),
-});
+export function buildUnsupportedSchema(constrained: boolean): z.ZodType<Unsupported> {
+  return z.strictObject({
+    outputColumn: z.string(),
+    reasonCode: z.enum(UNSUPPORTED_REASON_CODES),
+    functionRequest: buildFunctionRequestSchema(constrained).optional(),
+    explanation: (constrained ? z.string().max(FUNCTION_REQUEST_LIMITS.maxExplanationChars) : z.string()).optional(),
+  }) as unknown as z.ZodType<Unsupported>;
+}
+export const UnsupportedSchema = buildUnsupportedSchema(true);
 
 export interface Assumption {
   outputColumn?: string;

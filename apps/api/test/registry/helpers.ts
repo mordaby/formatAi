@@ -55,7 +55,7 @@ export function saveBody(rules: unknown, over: Record<string, unknown> = {}): Re
     learnPath: 'llm',
     masking: false,
     model: 'fake-model',
-    promptVersion: 'learn-v6',
+    promptVersion: 'learn-v7',
     ...over,
   };
 }

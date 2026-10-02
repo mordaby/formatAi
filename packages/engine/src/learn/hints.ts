@@ -72,7 +72,7 @@ function columnHintBody(rel: Relation): ColumnHintBody | null {
     case 'aggregate':
       return { rel: 'aggregate', in: rel.in, fn: rel.fn };
     // An across-row relation is hinted through its WindowFinding (`windowHintCandidate`), and only when
-    // `limits.learn.window.hintsEnabled` (learn-v7): the fast path writes it, but it has no column hint of this kind.
+    // `limits.learn.window.hintsEnabled` (on since learn-v7): the fast path writes it, but it has no column hint of this kind.
     case 'window':
       return null;
   }

@@ -1,9 +1,10 @@
 // Everything the protections persist (SPEC 13): usage counters, daily budgets, the learn cache and
 // the `llm_calls` ledger - behind one small interface, so the route logic is the same against real
 // MongoDB and against the in-memory store used by tests and by dev runs with no database.
+import { limits, type ValueType } from '@formatai/shared';
 import type { AppDb } from '../db.js';
 import { incrementCounter } from '../db.js';
-import type { LearnCacheDoc, LlmCallDoc } from '../models.js';
+import type { FunctionRequestDoc, LearnCacheDoc, LlmCallDoc } from '../models.js';
 import type { DaySpend } from './budget.js';
 
 /** A cache write: `rules` is the rules object (stored as a JSON string, see `LearnCacheDoc`). */
@@ -16,6 +17,18 @@ function parseRules(json: string | undefined): unknown | null {
   } catch {
     return null;
   }
+}
+
+/** One recording of a (value-filtered) function request (`learn/notes.ts`). `ownerHash` is an HMAC of the owner id, never the id. */
+export interface FunctionRequestWrite {
+  key: string;
+  name: string;
+  purpose: string;
+  args: { name: string; type: ValueType }[];
+  returns: ValueType;
+  topic: string;
+  ownerHash: string;
+  now: Date;
 }
 
 export interface ProtectionStore {
@@ -41,6 +54,12 @@ export interface ProtectionStore {
   deleteCachedRules(owner: string, keyPrefix: string): Promise<void>;
   /** SPEC 13 `llm_calls`. */
   insertLlmCalls(docs: LlmCallDoc[]): Promise<void>;
+  /**
+   * SPEC 13 `function_requests`: records one request atomically - creates the document for its `key` (name, purpose, args, returns,
+   * topic as first seen; status `new`) or bumps it: `count` + 1, `lastSeen`, and the hashed owner added to the set (`distinctOwners`
+   * is the size of the set, which stops growing at `limits.learn.functionRequests.maxOwnerHashes`).
+   */
+  upsertFunctionRequest(write: FunctionRequestWrite): Promise<void>;
 }
 
 /** MongoDB-backed store. */
@@ -105,6 +124,39 @@ export function createMongoStore(appDb: AppDb): ProtectionStore {
       if (docs.length === 0) return;
       await appDb.llmCalls.insertMany(docs);
     },
+
+    async upsertFunctionRequest(w) {
+      const cap = limits.learn.functionRequests.maxOwnerHashes;
+      // One atomic pipeline update (MongoDB 4.2+). Everything user-derived goes in as `$literal`: a string that starts with `$` must
+      // never be read as a field path.
+      const first = <T>(field: string, value: T) => ({ $ifNull: [`$${field}`, { $literal: value }] });
+      await appDb.functionRequests.updateOne(
+        { key: w.key },
+        [
+          {
+            $set: {
+              name: first('name', w.name),
+              purpose: first('purpose', w.purpose),
+              args: first('args', w.args),
+              returns: first('returns', w.returns),
+              topic: first('topic', w.topic),
+              status: first('status', 'new'),
+              firstSeen: first('firstSeen', w.now),
+              lastSeen: { $literal: w.now },
+              count: { $add: [{ $ifNull: ['$count', 0] }, 1] },
+              ownerHashes: {
+                $let: {
+                  vars: { current: { $ifNull: ['$ownerHashes', []] } },
+                  in: { $cond: [{ $gte: [{ $size: '$$current' }, cap] }, '$$current', { $setUnion: ['$$current', [{ $literal: w.ownerHash }]] }] },
+                },
+              },
+            },
+          },
+          { $set: { distinctOwners: { $size: '$ownerHashes' } } },
+        ],
+        { upsert: true },
+      );
+    },
   };
 }
 
@@ -117,6 +169,8 @@ export interface MemoryStore extends ProtectionStore {
   counter(key: string): number;
   readonly cacheEntries: Map<string, LearnCacheDoc>;
   readonly spend: Map<string, DaySpend>;
+  /** The `function_requests` documents by key, for assertions. */
+  readonly functionRequests: Map<string, FunctionRequestDoc>;
 }
 
 export function createMemoryStore(now: () => Date = () => new Date()): MemoryStore {
@@ -124,6 +178,7 @@ export function createMemoryStore(now: () => Date = () => new Date()): MemorySto
   const spend = new Map<string, DaySpend>();
   const cacheEntries = new Map<string, LearnCacheDoc>();
   const ledger: LlmCallDoc[] = [];
+  const functionRequests = new Map<string, FunctionRequestDoc>();
 
   const live = (key: string): { count: number; expiresAt?: Date } | undefined => {
     const c = counters.get(key);
@@ -138,6 +193,7 @@ export function createMemoryStore(now: () => Date = () => new Date()): MemorySto
     ledger,
     cacheEntries,
     spend,
+    functionRequests,
     counter: (key) => live(key)?.count ?? 0,
 
     async getCounter(key) {
@@ -189,6 +245,29 @@ export function createMemoryStore(now: () => Date = () => new Date()): MemorySto
 
     async insertLlmCalls(docs) {
       ledger.push(...docs);
+    },
+
+    async upsertFunctionRequest(w) {
+      const cap = limits.learn.functionRequests.maxOwnerHashes;
+      const doc: FunctionRequestDoc = functionRequests.get(w.key) ?? {
+        key: w.key,
+        name: w.name,
+        purpose: w.purpose,
+        args: w.args.map((a) => ({ ...a })),
+        returns: w.returns,
+        topic: w.topic,
+        count: 0,
+        distinctOwners: 0,
+        ownerHashes: [],
+        firstSeen: w.now,
+        lastSeen: w.now,
+        status: 'new',
+      };
+      doc.count += 1;
+      doc.lastSeen = w.now;
+      if (doc.ownerHashes.length < cap && !doc.ownerHashes.includes(w.ownerHash)) doc.ownerHashes.push(w.ownerHash);
+      doc.distinctOwners = doc.ownerHashes.length;
+      functionRequests.set(w.key, doc);
     },
   };
 }

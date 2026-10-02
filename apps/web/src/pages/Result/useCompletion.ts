@@ -9,7 +9,7 @@
 //   * while it works, the fields it is asked for (and the shape of the columns) are read-only (`EditorStore.setLock`, see Workbench) and
 //     the rest can be edited: the answer is MERGED with those edits (`mergeRules`, the rules as they were at the start being the common
 //     ground). Only edits that collide with the answer keep it out.
-import { isCompletable, type AiStepPartCode, type LearnResult, type Rules } from '@formatai/shared';
+import { isCompletable, type AiColumnNote, type AiStepPartCode, type LearnResult, type Rules } from '@formatai/shared';
 import type { VerifyResult } from '@formatai/engine';
 import type { LearnOutput } from '../../worker/engineApi';
 import { useEffect, useRef, useState } from 'react';
@@ -53,7 +53,11 @@ export interface UseCompletion {
   start(plan: CompletionPlanInput): void;
 }
 
-export function useCompletion(store: EditorStore, exampleId: string | undefined): UseCompletion {
+/**
+ * `onNotes` (learn-v7): called with what the AI step noted about the columns it was asked for (its guess, whether a function request was
+ * recorded) just before an applied answer replaces the rules - the screen keeps them in the session, never with the rules.
+ */
+export function useCompletion(store: EditorStore, exampleId: string | undefined, onNotes?: (askedHeaders: string[], notes: AiColumnNote[]) => void): UseCompletion {
   const session = useLearnSession();
   const state = session.completion.state;
   const [outcome, setOutcome] = useState<CompletionOutcome | null>(null);
@@ -81,6 +85,10 @@ export function useCompletion(store: EditorStore, exampleId: string | undefined)
         const next = edited && baseRules.current ? mergeRules<EditableRules>(baseRules.current, s.rules, res.rules) : edited ? null : res.rules;
         if (!next || (edited && !isCompletable(next))) setOutcome({ kind: 'kept', why: 'changed' });
         else {
+          onNotes?.(
+            c.columns.map((i) => res.rules!.output.columns[i]?.header ?? ''),
+            res.aiNotes ?? [],
+          );
           store.reset(next, { exceptions: s.exceptions, edited: [...s.edited] });
           if (res.verification) setDone({ result: res, verification: res.verification, ai: state.ai });
           const partsAsked = c.parts.length;
