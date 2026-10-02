@@ -44,3 +44,18 @@ Next: run Sonnet 5 on the same set (escalation slot), `--runs 3`, and an API-key
 - Misses differ by mode (full missed `stock-count-warehouse-report`, completion verified it) — partly run-to-run variance at 1 run per case.
 - learn-v6 did not regress full learns (94%, in line with learn-v5).
 - **Change made:** "Finish with the AI step" uses completion only when ≥ 50% of the fillable output columns already have a rule (`limits.learn.completionMinFixedShare`), otherwise the full learn.
+
+## 2026-10-02 — learn-v7 (new date/text ops, window functions, function requests, AI's guess)
+
+- **Provider:** `claude-cli`, **Haiku 4.5**, masking on, 1 run, no escalation, `--mode both`. Report `eval/reports/2026-10-02T15-51-21-499Z/`.
+
+| | v6 complete | v7 complete | v6 full | v7 full |
+|---|---|---|---|---|
+| Expectation met | 94% | **94%** | 94% | **82%** |
+| Verified 1st / after repair | 75% / 88% | 67% / 89% | 75% / 88% | 67% / 78% |
+| Hold-out correct | 93% | 93% | 100% | 86% |
+| Avg output tokens per learn | 15.3k | 14.6k | 17.5k | 18.8k |
+
+- Completion mode (the app's default when ≥ 50% of columns are solved) held steady.
+- Full-mode misses: `registry-supplier-c` (the AI marked a derivable column `externalData` and the new "honest unsupported" rule accepted it without repair), `purchase-orders-supplier-summary` (summary output; fails in both modes, verified in v6 full — suspected interference from the new window functions), `stock-count-warehouse-report` (also missed in v6 full: variance).
+- Follow-up: repair when the AI gives up despite code's evidence; check window guidance vs summary outputs; re-run the 3 cases.
