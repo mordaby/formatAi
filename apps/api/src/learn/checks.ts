@@ -23,6 +23,7 @@ import {
   type RuleProblem,
   type LearnPayload,
   type Tier,
+  unsupportedDespiteEvidence,
 } from '@formatai/shared';
 import { dropInvalidNotes } from './notes.js';
 import { overfitLint } from './overfitLint.js';
@@ -270,14 +271,22 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
     });
   }
 
+  // ----- Layer 5d: an honest "unsupported" is no mismatch - unless the app's own analysis found how the column is built -----
+  // A hint for a column the answer gave up on (copy, template, composition, dependency, bands, window ...) is positive evidence that it can be
+  // produced: one repair round to write the rule (SPEC 9.2). A column with no hint stays accepted. Not a gate: the sample run below
+  // still runs, so the same repair call also carries any diff on the columns that do have a rule.
+  const gatesClean = problems.length === 0;
+  problems.push(...unsupportedDespiteEvidence(rules, payload));
+
   // ----- Layer 6: overfitting lint (never a rejection) -----
   const lintAssumptions = overfitLint(rules, payload);
   const rulesWithLint: LearnResult =
     lintAssumptions.length > 0 ? { ...rules, assumptions: [...rules.assumptions, ...lintAssumptions] } : rules;
 
   // ----- Layer 7: run on the samples (only once every gate above is clean) -----
-  // (A column reported as unsupported - `from: null` plus an entry - is left out of the diff: nothing to compare, nothing to repair.)
-  if (problems.length === 0) {
+  // (A column reported as unsupported - `from: null` plus an entry - is left out of the diff: nothing to compare. Whether it should have been
+  // given a rule is layer 5d's question, not a comparison.)
+  if (gatesClean) {
     problems.push(...runOnSamples(rulesWithLint, payload));
   }
 

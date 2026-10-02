@@ -1,0 +1,99 @@
+// Two learn-v7 regressions of the Haiku eval (2026-10-02), pinned WITHOUT any LLM: the real eval cases, the real learn pipeline (payload, API
+// checks, server repair round, the browser's verification), and canned answers from the fake provider. Nothing here may reach a real provider.
+//
+//  - purchase-orders-supplier-summary (a summary output, one row per supplier): the right answer - group + column aggs + a Total row - was
+//    rejected by the API's own checks (a count of an id column "is not an integer"; a sample run that "differs" on every group because the
+//    samples hold one row per group), so no attempt could ever be clean. It verifies on the first call now.
+//  - registry-supplier-c (attach): the answer gave up on a column ("unsupported externalData") that the analysis had a hint for, and was
+//    accepted without a repair. It is repaired now.
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { loadEnv } from '@formatai/api/env';
+import type { CompleteFn } from '@formatai/api/learn';
+import { formatOf, formulaRulesToWire } from '@formatai/engine';
+import { toWire, type LearnResult } from '@formatai/shared';
+import { loadCase, type CaseDef } from '../lib/caseLoader';
+import { runLearn } from '../lib/runner';
+
+const env = loadEnv({ ...process.env, LLM_PROVIDER: 'fake' });
+const CASES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'cases');
+const load = (name: string): CaseDef => loadCase(path.join(CASES, name))!;
+
+/** The wire form of a rules file, as the AI step writes it. */
+function wireOf(rules: unknown): unknown {
+  const copy = JSON.parse(JSON.stringify(rules)) as Record<string, unknown>;
+  delete copy.name;
+  delete copy.meta;
+  return toWire(formulaRulesToWire(copy as unknown as LearnResult) as unknown as LearnResult);
+}
+
+/** A provider that answers with `answers` in order, and keeps every request it got. */
+function scripted(answers: unknown[]): { complete: CompleteFn; requests: { content: { text: string }[] }[] } {
+  const requests: { content: { text: string }[] }[] = [];
+  const complete: CompleteFn = async (req) => {
+    requests.push(req as never);
+    return { json: answers.shift(), model: 'fake', usage: { tokensIn: 1, tokensOut: 1, tokensCachedRead: 0, tokensCachedWrite: 0 }, costUsd: 0, latencyMs: 0 } as never;
+  };
+  return { complete, requests };
+}
+
+describe('purchase-orders-supplier-summary: the right summary answer is clean in the API checks and verifies on the first call', () => {
+  it.each([false, true])('masking %s', async (masking) => {
+    const c = load('purchase-orders-supplier-summary');
+    const { complete, requests } = scripted([wireOf(c.referenceRules)]);
+    const ran = await runLearn({ caseDef: c, masking, model: 'fake', run: 1, env, noEscalation: false, complete });
+
+    expect(requests).toHaveLength(1); // no repair, no escalation: the first answer had no problem
+    expect(ran.result.calls).toHaveLength(1);
+    expect(ran.result.calls[0]!.problemCounts).toMatchObject({ type: 0, diff: 0, rowCount: 0, unsupportedDespiteEvidence: 0 });
+    expect(ran.result.stages).toMatchObject({ llmCalled: true, verifiedFirstCall: true, browserRepairUsed: false, verifiedAfterRepair: true });
+    expect(ran.result.verification).toMatchObject({ verified: true, mismatches: [] });
+  });
+
+  it('the payload says summary, and carries aggregate hints but no window hint (a window is for a row-per-row output)', async () => {
+    const c = load('purchase-orders-supplier-summary');
+    const { complete, requests } = scripted([wireOf(c.referenceRules)]);
+    await runLearn({ caseDef: c, masking: false, model: 'fake', run: 1, env, noEscalation: false, complete });
+    const payload = JSON.parse(requests[0]!.content[0]!.text) as { output: { layout: { summary: boolean } }; hints: { rel: string }[] };
+    expect(payload.output.layout.summary).toBe(true);
+    expect(payload.hints.some((h) => h.rel === 'window')).toBe(false);
+    expect(payload.hints.filter((h) => h.rel === 'aggregate').length).toBeGreaterThan(0);
+  });
+});
+
+describe('registry-supplier-c: giving up on a column the analysis explained is repaired', () => {
+  const attach = () => ({ caseDef: load('registry-supplier-c'), target: formatOf(load('registry-supplier-a').referenceRules!) });
+  const gaveUp = (c: CaseDef): unknown => {
+    const rules = JSON.parse(JSON.stringify(c.referenceRules)) as { output: { columns: { header: string; from: string | null }[] }; unsupported: unknown[] };
+    rules.output.columns.find((x) => x.header === 'Unit Price')!.from = null;
+    rules.unsupported = [{ outputColumn: 'Unit Price', reasonCode: 'externalData' }];
+    return wireOf(rules);
+  };
+
+  it('the server repair round asks for it (the hint is named, no value) and the next answer verifies', async () => {
+    const { caseDef, target } = attach();
+    const { complete, requests } = scripted([gaveUp(caseDef), wireOf(caseDef.referenceRules)]);
+    const ran = await runLearn({ caseDef, masking: false, model: 'fake', run: 1, env, noEscalation: true, target, complete });
+
+    expect(ran.result.calls.map((x) => x.purpose)).toEqual(['learn', 'repair']);
+    expect(ran.result.calls[0]!.problemCounts.unsupportedDespiteEvidence).toBe(1);
+    const repair = requests[1]!.content[1]!.text;
+    expect(repair).toContain('"kind":"unsupportedDespiteEvidence"');
+    expect(repair).toContain('the app found it is built from');
+    expect(repair).toContain('(copy); write a rule for it.');
+    expect(ran.result.unsupported).toEqual([]);
+    expect(ran.result.stages).toMatchObject({ verifiedAfterRepair: true });
+    expect(ran.result.verification).toMatchObject({ verified: true });
+  });
+
+  it('a model that insists is asked once more by the browser, then accepted: 3 calls, the column stays unsupported', async () => {
+    const { caseDef, target } = attach();
+    const { complete } = scripted([gaveUp(caseDef), gaveUp(caseDef), gaveUp(caseDef)]);
+    const ran = await runLearn({ caseDef, masking: false, model: 'fake', run: 1, env, noEscalation: true, target, complete });
+
+    expect(ran.result.calls.map((x) => x.purpose)).toEqual(['learn', 'repair', 'repair']);
+    expect(ran.result.stages).toMatchObject({ verifiedFirstCall: false, browserRepairUsed: true });
+    expect(ran.result.unsupported).toEqual([{ outputColumn: 'Unit Price', reasonCode: 'externalData' }]);
+  });
+});

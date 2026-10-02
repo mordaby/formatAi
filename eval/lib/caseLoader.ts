@@ -57,8 +57,9 @@ export function loadCase(dir: string): CaseDef | undefined {
   return { name: path.basename(dir), dir, meta, input, output, next, referenceRules };
 }
 
-/** Every case under `casesDir`, optionally filtered to names containing `substring`
- * (case-insensitive). Sorted by name for deterministic run order. */
+/** Every case under `casesDir`, optionally filtered to the names containing `substring` (case-insensitive). `substring` may be a
+ * comma-separated list ("purchase-orders,registry-supplier-"): a case is kept when its name contains ANY of them. Sorted by name for
+ * deterministic run order. */
 export function loadCases(casesDir: string, substring?: string): CaseDef[] {
   const names = fs
     .readdirSync(casesDir, { withFileTypes: true })
@@ -71,7 +72,10 @@ export function loadCases(casesDir: string, substring?: string): CaseDef[] {
     const def = loadCase(path.join(casesDir, name));
     if (def) cases.push(def);
   }
-  if (!substring) return cases;
-  const needle = substring.toLowerCase();
-  return cases.filter((c) => c.name.toLowerCase().includes(needle));
+  const needles = (substring ?? '')
+    .split(',')
+    .map((n) => n.trim().toLowerCase())
+    .filter((n) => n.length > 0);
+  if (needles.length === 0) return cases;
+  return cases.filter((c) => needles.some((needle) => c.name.toLowerCase().includes(needle)));
 }

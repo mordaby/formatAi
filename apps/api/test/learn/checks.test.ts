@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { formulaRulesToWire } from '@formatai/engine';
 import { toWire, type LearnPayload, type LearnResult } from '@formatai/shared';
 import { runChecks } from '../../src/learn/index.js';
-import { allUnsupportedRules, basicPayload, correctRules, externalColumnPayload, externalColumnRules } from './fixtures.js';
+import {
+  allUnsupportedRules,
+  basicPayload,
+  correctRules,
+  derivableColumnPayload,
+  derivableColumnRules,
+  externalColumnPayload,
+  externalColumnRules,
+  gaveUpOnDerivableRules,
+} from './fixtures.js';
 
 describe('runChecks: structure (layer 1)', () => {
   it('reports schema problems and rules:null for an unknown op', () => {
@@ -173,6 +182,48 @@ describe('runChecks: an honest "cannot produce this column" (from: null AND an u
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatchObject({ kind: 'reference' });
     expect((problems[0] as { message: string }).message).toContain('no value at all');
+  });
+});
+
+describe('runChecks: an unsupported column the app found a relation for (layer 5d)', () => {
+  it('is a problem for the repair round: the column, the input columns it is built from and the hint kind - no value', () => {
+    const { problems, rules } = runChecks(toWire(gaveUpOnDerivableRules()), derivableColumnPayload(), { tier: 'registered' });
+    expect(rules).not.toBeNull();
+    expect(problems).toEqual([
+      { kind: 'unsupportedDespiteEvidence', out: 2, message: 'Column "Warehouse": the app found it is built from "Site" (copy); write a rule for it.' },
+    ]);
+  });
+
+  it('a column with NO hint stays an honest unsupported: no problem (the same answer, the same payload without the hint)', () => {
+    const noHint = { ...derivableColumnPayload(), hints: [] };
+    expect(runChecks(toWire(gaveUpOnDerivableRules()), noHint, { tier: 'registered' }).problems).toEqual([]);
+  });
+
+  it('the answer that writes the rule has no problem at all', () => {
+    expect(runChecks(toWire(derivableColumnRules()), derivableColumnPayload(), { tier: 'registered' }).problems).toEqual([]);
+  });
+
+  it('is not a gate: the sample run still runs, so one repair call also carries a diff on a column that has a rule', () => {
+    const rules = gaveUpOnDerivableRules();
+    const wrong: LearnResult = {
+      ...rules,
+      transform: { ...rules.transform, computed: [{ id: 'total', type: 'decimal', expr: { op: 'mul', args: [{ col: 'amount' }, { const: 3 }] } }] },
+    };
+    const { problems } = runChecks(toWire(wrong), derivableColumnPayload(), { tier: 'registered' });
+    expect(problems.filter((p) => p.kind === 'unsupportedDespiteEvidence')).toHaveLength(1);
+    expect(problems.some((p) => p.kind === 'diff' && p.out === 1)).toBe(true);
+    expect(problems.some((p) => p.kind === 'diff' && p.out === 2)).toBe(false); // the given-up column is never compared
+  });
+
+  it("completion mode: only a column the AI step was asked for is asked about again (a fixed unsupported entry is the user's own)", () => {
+    const fixed = gaveUpOnDerivableRules();
+    const base = derivableColumnPayload();
+    const evidenceOf = (columns: number[]) =>
+      runChecks(toWire(fixed), { ...base, complete: { fixed: toWire(fixed) as Record<string, unknown>, columns, parts: [] } } as LearnPayload, { tier: 'registered' }).problems.filter(
+        (p) => p.kind === 'unsupportedDespiteEvidence',
+      );
+    expect(evidenceOf([])).toEqual([]);
+    expect(evidenceOf([2])).toHaveLength(1);
   });
 });
 

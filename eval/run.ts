@@ -4,7 +4,7 @@
 // masking mode x run, and writes a report.
 //
 //   pnpm eval --models <a>,<b> --masking on,off --runs 3 [--provider anthropic|openai|claude-cli|fake]
-//             [--cases <substring>] [--out <dir>] [--no-escalation] [--mode full|complete|both]
+//             [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]
 //
 // Defaults: provider from env (LLM_PROVIDER / .env, see apps/api/src/env.ts), models =
 // the provider's configured firstTry model, masking on and off, runs 1, mode full.

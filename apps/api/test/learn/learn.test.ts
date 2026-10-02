@@ -8,9 +8,12 @@ import {
   basicPayload,
   correctRules,
   correctRulesWireJson,
+  derivableColumnPayload,
+  derivableColumnWireJson,
   externalColumnPayload,
   externalColumnRules,
   externalColumnWireJson,
+  gaveUpOnDerivableWireJson,
   schemaBrokenRulesJson,
   wrongRoundingWireJson,
 } from './fixtures.js';
@@ -228,6 +231,46 @@ describe('learn(): an honest "cannot produce this column"', () => {
     expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn', 'repair', 'escalation']);
     expect(outcome.verified).toBe(false);
     expect(outcome.problems.every((p) => p.kind === 'reference')).toBe(true);
+  });
+});
+
+describe('learn(): an unsupported column the app found a relation for', () => {
+  it('is repaired once: the repair call carries the problem, and the answer that writes the rule verifies (2 calls, no escalation)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: gaveUpOnDerivableWireJson() }); // learn: gives up on Warehouse
+    fake.enqueue({ json: derivableColumnWireJson() }); // repair: writes the rule
+
+    const outcome = await learn(derivableColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn', 'repair']);
+    expect(outcome.calls[0]).toMatchObject({ outcome: 'needsRepair' });
+    expect(outcome.calls[0]!.problemCounts.unsupportedDespiteEvidence).toBe(1);
+    expect(outcome.calls[1]!.problemCounts.unsupportedDespiteEvidence).toBe(0);
+    expect(outcome.verified).toBe(true);
+    expect(outcome.rules?.unsupported).toEqual([]);
+    const repairText = fake.calls[1]!.content[1]!.text;
+    expect(repairText).toContain('"kind":"unsupportedDespiteEvidence"');
+    expect(repairText).toContain('the app found it is built from \\"Site\\" (copy); write a rule for it.');
+  });
+
+  it('a model that stands by "unsupported" is repaired once, escalated once, and ends not verified - the rules it gave are still returned (the browser decides)', async () => {
+    const fake = createFakeProvider();
+    for (let i = 0; i < 3; i++) fake.enqueue({ json: gaveUpOnDerivableWireJson() });
+
+    const outcome = await learn(derivableColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn', 'repair', 'escalation']);
+    expect(outcome.verified).toBe(false);
+    expect(outcome.problems.map((p) => p.kind)).toEqual(['unsupportedDespiteEvidence']);
+    expect(outcome.rules?.unsupported).toEqual([{ outputColumn: 'Warehouse', reasonCode: 'externalData' }]);
+  });
+
+  it('a column with no hint is still accepted on the first call (nothing to repair)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: externalColumnWireJson() });
+    const outcome = await learn(externalColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    expect(fake.calls).toHaveLength(1);
+    expect(outcome.verified).toBe(true);
   });
 });
 

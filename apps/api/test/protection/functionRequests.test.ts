@@ -161,7 +161,8 @@ function defineSuite(kit: StoreKit): void {
       ['a hint value', { ...REQUEST, purpose: 'Finds the site, like Zulu does.' }],
     ])('rejects a request with %s: counted, never stored, removed from the answer (the explanation stays)', async (_label, request) => {
       const { h, body } = await setup(answerWith({ functionRequest: request, explanation: EXPLANATION }));
-      (body.payload as LearnPayload).hints = [{ out: 2, rel: 'valueMap', in: [0], pairs: [['A1', 'Zulu']], coverage: 1 }];
+      // (the hint is for the column that HAS a rule, Total: a hint for the unsupported column would be evidence against giving up on it, a repair)
+      (body.payload as LearnPayload).hints = [{ out: 1, rel: 'valueMap', in: [0], pairs: [['A1', 'Zulu']], coverage: 1 }];
       const res = await h.learn(body);
       expect(res.statusCode).toBe(200);
       expect(res.json().verified).toBe(true); // a rejected extra never fails a learn

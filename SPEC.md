@@ -717,7 +717,7 @@ The prompt text is versioned (`promptVersion`) and logged with every call.
 A rules file is accepted only after it passes these layers, in order. Every failure becomes a precise problem for the repair call (9.3). Nothing is judged by another LLM.
 1. **Structure:** zod against the schema. Unknown fields, operations and enum values are rejected.
 2. **References:** every column id, table, function and param exists; ids created by expand and by computed columns don't collide; every input header exists in the input profile; `from` is null exactly for `skipColumns` plus `unsupported`; output validations name existing output headers.
-3. **Types:** a static type check of every expression, filter and function body against the declared column types and the operation signatures (8.3). Each output column's result type must fit its output type.
+3. **Types:** a static type check of every expression, filter and function body against the declared column types and the operation signatures (8.3). Each output column's result type must fit its output type (for a summary output, the type after the column's `agg`: a count is an integer whatever it counts).
 4. **Limits and safety:** depth and node budgets, function and table counts, an acyclic call graph, unique table keys, and a rule count within the user's tier (11).
 5. **Format lock,** when the conversion belongs to a format (8.12); in completion mode (21, v6 item 8) the **fixed lock** instead: every element of the rules the user already had must come back unchanged.
 6. **Overfitting lint.** Never a rejection; each finding becomes a "Please check" line with assumption code `overfitSuspected`:
@@ -725,7 +725,7 @@ A rules file is accepted only after it passes these layers, in order. Every fail
    - a condition that is true for exactly one sample row;
    - a `switch`, value map or table with one entry per sample row;
    - an expression far larger than needed by any other column.
-7. **Run on the samples** in the API, and diff. A column the answer honestly reports as `unsupported` (`from: null` with an `unsupported` entry) is left out of the diff here and in step 8: it is "needs your input", not a mismatch. An answer that produces no column at all is a failure.
+7. **Run on the samples** in the API, and diff. A column the answer honestly reports as `unsupported` (`from: null` with an `unsupported` entry) is left out of the diff here and in step 8: it is "needs your input", not a mismatch - unless the app's own pair analysis found how that column is built (the payload carries a hint for it): giving up on it is then a problem for the repair round (`unsupportedDespiteEvidence`, from the API's checks and from the browser's verification; a model that stands by it after the repair is accepted). An answer that produces no column at all is a failure. The samples hold only some rows, so a column that reads other rows (a summary output's sum, count, average, min, max or last; the result of a window function) is not compared here either: step 8 checks it on every row.
 8. **Full verification** in the browser on every row of the real example (5 A step 6). The LLM saw at most 12 rows, so this is the hold-out test: rules that only memorized the samples fail here.
 
 The same layers 1–6 run in the browser on every save from the editor.

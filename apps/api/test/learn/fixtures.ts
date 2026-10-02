@@ -166,3 +166,48 @@ export function allUnsupportedRules(): LearnResult {
 export function allUnsupportedWireJson(): unknown {
   return toWire(formulaRulesToWire(allUnsupportedRules()) as unknown as LearnResult);
 }
+
+/**
+ * `externalColumnPayload()` where the Warehouse values DO come from the input: a third input column "Site" holds them, and a coverage-1
+ * `copy` hint says so (the pair analysis found it). Giving up on Warehouse here is an unsupported column the analysis had evidence against.
+ */
+export function derivableColumnPayload(): LearnPayload {
+  const base = externalColumnPayload();
+  return {
+    ...base,
+    input: { ...base.input, columns: [...base.input.columns, { i: 2, header: 'Site', type: 'text' }] },
+    samples: [
+      { in: ['A1', 10, 'North'], out: ['A1', 20, 'North'] },
+      { in: ['A2', 5, 'South'], out: ['A2', 10, 'South'] },
+    ],
+    hints: [{ rel: 'copy', in: [2], out: 2, coverage: 1 }],
+  };
+}
+
+/** The answer for `derivableColumnPayload()` that writes the rule: Warehouse is a copy of Site. */
+export function derivableColumnRules(): LearnResult {
+  const rules = correctRules();
+  return {
+    ...rules,
+    input: { ...rules.input, columns: [...rules.input.columns, { id: 'site', header: 'Site', type: 'text' }] },
+    output: { ...rules.output, columns: [...rules.output.columns, { header: 'Warehouse', from: 'site' }] },
+  };
+}
+
+/** The answer for `derivableColumnPayload()` that gives up on Warehouse (unsupported externalData) although the hint explains it. */
+export function gaveUpOnDerivableRules(): LearnResult {
+  const rules = derivableColumnRules();
+  return {
+    ...rules,
+    output: { ...rules.output, columns: rules.output.columns.map((c) => (c.header === 'Warehouse' ? { header: 'Warehouse', from: null } : c)) },
+    unsupported: [{ outputColumn: 'Warehouse', reasonCode: 'externalData' }],
+  };
+}
+
+export function derivableColumnWireJson(): unknown {
+  return toWire(formulaRulesToWire(derivableColumnRules()) as unknown as LearnResult);
+}
+
+export function gaveUpOnDerivableWireJson(): unknown {
+  return toWire(formulaRulesToWire(gaveUpOnDerivableRules()) as unknown as LearnResult);
+}

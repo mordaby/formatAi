@@ -290,13 +290,15 @@ The second content block of a repair call:
     { "kind": "formatMismatch", "path": "output.columns[3].format", "message": "must equal the format" },
     { "kind": "fixedMismatch", "path": "transform.computed[1]", "message": "computed column \"total\" is part of complete.fixed and must stay unchanged" },
     { "kind": "type", "path": "transform.computed[1].expr", "message": "expected decimal, got text; use toNumber (in: toNumber(amount))" },
-    { "kind": "limit", "message": "output column 4 uses 260 nodes after expanding calls; the limit is 200" }
+    { "kind": "limit", "message": "output column 4 uses 260 nodes after expanding calls; the limit is 200" },
+    { "kind": "unsupportedDespiteEvidence", "out": 2, "message": "Column \"Unit Price\": the app found it is built from \"Cost\" (copy); write a rule for it." }
   ]
 }
 ```
 
 - `formula` is a formula-text parse error: `offset` is the character offset INTO that one formula string (not the payload). Fix only the formula named by `path`.
 - `fixedMismatch` (completion mode only): an element of `complete.fixed` is missing or changed in the answer, something outside `complete.columns`/`complete.parts` was changed, or a listed column has neither a `from` nor an `unsupported` entry. `path` points into the answer.
+- `unsupportedDespiteEvidence`: the answer reports output column `out` as unsupported, but the app's own analysis found how it is built - the payload carries a hint for that column (a copy, template, composition, dependency, bands, value map, window, ...). The message names input columns and the kind of hint, never a value; the fix is the rule for that column. Raised by the API's checks (a server repair round) and by the browser's verification (the browser-triggered repair); a column with no hint is accepted as unsupported, with no problem.
 - `sample` refers to a sample in the payload. `familyRow` points to a row inside a family sample (0-based).
 - `row` carries a failing row from the browser's full verification (masked when masking is on). At most 10 `diff` problems are sent.
 - A `type`/`limit` problem's message may quote the offending formula text in parentheses ("in: ...") - read it, it's the exact sub-expression that's wrong.

@@ -22,6 +22,7 @@ import type {
   RowFilter,
   Rules,
   RulesTable,
+  SummaryAgg,
   SummaryRow,
   Validation,
 } from '@formatai/shared';
@@ -71,6 +72,29 @@ function inferConstType(v: ExprConstValue): SigType | undefined {
   if (typeof v === 'boolean') return 'boolean';
   if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'decimal';
   return 'text';
+}
+
+/**
+ * The type an output column shows once its `agg` is applied (summary output, `group.showDetailRows: false`, SPEC 8.6): a count is an integer
+ * whatever is counted (a text or id column too), an average a decimal, a sum a number (an integer for integers), and min / max / first / last
+ * keep the source type. Without a summary output (no group, or one that shows its detail rows) the engine ignores `agg`, so the column
+ * keeps the type of what it reads.
+ */
+function typeAfterAgg(agg: SummaryAgg | undefined, source: SigType, summaryOutput: boolean): SigType {
+  if (!summaryOutput || agg === undefined) return source;
+  switch (agg) {
+    case 'count':
+      return 'integer';
+    case 'average':
+      return 'decimal';
+    case 'sum':
+      return source === 'integer' ? 'integer' : 'decimal';
+    case 'min':
+    case 'max':
+    case 'first':
+    case 'last':
+      return source;
+  }
 }
 
 function suggestionFor(expected: SigType, actual: SigType): string | undefined {
@@ -661,12 +685,14 @@ export function typeCheck(rules: LearnResult | Rules, opts?: TypeCheckOptions): 
   // ----- output columns vs. opts.outputTypes (SPEC 9.2: "Each output column's result
   // type must fit its output type") -----
   if (opts?.outputTypes) {
+    const summaryOutput = rules.transform.group !== undefined && !rules.transform.group.showDetailRows;
     rules.output.columns.forEach((col, i) => {
       if (col.from === null) return;
       const declaredRaw = opts.outputTypes?.[col.header];
       if (declaredRaw === undefined) return;
-      const srcType = finalTypes.get(col.from);
-      if (srcType === undefined) return;
+      const readType = finalTypes.get(col.from);
+      if (readType === undefined) return;
+      const srcType = typeAfterAgg(col.agg, readType, summaryOutput);
       const family = familyOf(declaredRaw);
       const nominal = family ? FAMILY_NOMINAL[family] : undefined;
       if (nominal && !fits(srcType, nominal)) {

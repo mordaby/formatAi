@@ -9,7 +9,7 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import { aiNotesOf, stripAiNotes, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Tier } from '@formatai/shared';
+import { aiNotesOf, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Tier } from '@formatai/shared';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
@@ -118,7 +118,8 @@ export interface LearnStages {
   fastPathSucceeded: boolean;
   llmCalled: boolean;
   /** Full verification passed right after `callLearn` (+ unmask), before any
-   * browser-triggered repair. Meaningless (always false) off the LLM path. */
+   * browser-triggered repair - and the answer gave up on no column the pair analysis had found a relation for
+   * (`unsupportedDespiteEvidence`: that alone is a reason for the repair call). Meaningless (always false) off the LLM path. */
   verifiedFirstCall: boolean;
   browserRepairUsed: boolean;
   /** Final verification result: after the browser-triggered repair when one was used,
@@ -371,13 +372,17 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     return !worse;
   };
   const passes = (v: VerifyResult, r: LearnResult, lock: readonly FixedProblem[]): boolean => lock.length === 0 && matchesExample(v, r);
-  stages.verifiedFirstCall = passes(verification, rules, fixedProblems);
+  // DECISION (an honest unsupported is not a mismatch, with one exception): a column the answer gives up on although the pair analysis found how
+  // it is built (the payload carries a hint for it) is a problem for the repair round - one call to write the rule. It is the repair's trigger
+  // and no more: a model that stands by "unsupported" after that round is accepted (the column stays "needs your input").
+  const evidence = unsupportedDespiteEvidence(rules, payload);
+  stages.verifiedFirstCall = passes(verification, rules, fixedProblems) && evidence.length === 0;
 
   // ---- SPEC 5 A step 6 / 9.3: at most one browser-triggered repair ----
   // (Nothing to say to the AI step when there is no problem to name: an answer that produced no column at all is no verified learn, but
   // there is nothing in the example it differs from - the API's own checks already asked for more.)
-  const problems: RepairProblem[] = [...fixedProblems.slice(0, MAX_FIXED_PROBLEMS), ...verification.repairProblems];
-  if (!passes(verification, rules, fixedProblems) && opts.callRepair && problems.length > 0) {
+  const problems: RepairProblem[] = [...fixedProblems.slice(0, MAX_FIXED_PROBLEMS), ...verification.repairProblems, ...evidence];
+  if (!stages.verifiedFirstCall && opts.callRepair && problems.length > 0) {
     stages.browserRepairUsed = true;
     const repaired = await opts.callRepair(payload, maskedRules, problems);
     calls.push(...repaired.calls);

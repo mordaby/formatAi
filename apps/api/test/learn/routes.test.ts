@@ -107,6 +107,7 @@ describe('POST /api/learn', () => {
       diff: 0,
       rowCount: 0,
       layout: 0,
+      unsupportedDespiteEvidence: 0,
     });
   });
 });

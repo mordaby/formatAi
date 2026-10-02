@@ -351,6 +351,19 @@ describe('the hint (shape and switch)', () => {
     expect(JSON.stringify(payload).length).toBeLessThan(limits.payload.maxBytes);
   });
 
+  it('a summary output (one row per group) carries no window hint: its rows are groups, not input rows - the totals are aggregate hints', () => {
+    const depts = ['A', 'B', 'C'];
+    const out = depts.map((d) => [d, totals.get(d)!, IN_ROWS.filter((r) => dept(r) === d).length]);
+    const a = analyze(IN_ROWS, ['Dept', 'Total', 'Orders'], out);
+    const { payload } = buildPayload(a, preflight(a, 'registered'));
+    expect(payload.output.layout.summary).toBe(true);
+    expect(payload.hints.some((h) => h.rel === 'window')).toBe(false);
+    expect(payload.hints.filter((h) => 'out' in h).map((h) => [(h as { out: number }).out, h.rel])).toEqual([[0, 'copy'], [1, 'aggregate'], [2, 'aggregate']]);
+    // ... and with the group total ALSO on a plain row-per-row output of the same data, the window hint is there (the guard is the shape, not the data)
+    const plain = groupTotalPair();
+    expect(buildPayload(plain, preflight(plain, 'registered')).payload.hints.some((h) => h.rel === 'window')).toBe(true);
+  });
+
   it('switched off: the payload has no window hint (the pre-learn-v7 behaviour)', () => {
     const run = runningPair();
     const { payload } = withSwitch(false, () => buildPayload(run, preflight(run, 'registered')));

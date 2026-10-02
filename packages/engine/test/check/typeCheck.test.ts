@@ -256,6 +256,63 @@ describe('typeCheck: opts.inputProfile / opts.outputTypes', () => {
   });
 });
 
+describe('typeCheck: a summary output column has the type its agg gives (SPEC 8.6)', () => {
+  /** Group by `dept`, one row per group (showDetailRows false); the output columns are `cols`. */
+  function summaryOutput(cols: { header: string; from: string; agg?: 'sum' | 'count' | 'min' | 'max' | 'average' | 'first' | 'last' }[], showDetailRows = false): LearnResult {
+    return baseRules({
+      input: {
+        sheet: { pick: 'first' },
+        headerRow: 'auto',
+        columns: [
+          { id: 'poNo', header: 'PO No', type: 'idLike' },
+          { id: 'dept', header: 'Dept', type: 'text' },
+          { id: 'qty', header: 'Qty', type: 'integer' },
+          { id: 'amount', header: 'Amount', type: 'decimal' },
+        ],
+      },
+      transform: { computed: [], valueMaps: [], sort: [], group: { by: 'dept', showDetailRows } },
+      output: { sheetName: 'Out', direction: 'ltr', language: 'en', titleRows: [], columns: cols },
+    });
+  }
+  const types = { Orders: 'integer', 'Total Qty': 'integer', Total: 'decimal', Average: 'decimal', Latest: 'text' };
+
+  it('a count is an integer whatever it counts: the count of an id or text column fits an integer output column', () => {
+    const rules = summaryOutput([{ header: 'Orders', from: 'poNo', agg: 'count' }]);
+    expect(typeCheck(rules, { outputTypes: types })).toEqual([]);
+    expect(typeCheck(summaryOutput([{ header: 'Orders', from: 'dept', agg: 'count' }]), { outputTypes: types })).toEqual([]);
+  });
+
+  it('a sum and an average are numbers: they fit a numeric output column, and not a text one', () => {
+    const ok = summaryOutput([
+      { header: 'Total Qty', from: 'qty', agg: 'sum' },
+      { header: 'Total', from: 'amount', agg: 'sum' },
+      { header: 'Average', from: 'amount', agg: 'average' },
+    ]);
+    expect(typeCheck(ok, { outputTypes: types })).toEqual([]);
+    const bad = summaryOutput([
+      { header: 'Latest', from: 'qty', agg: 'sum' },
+      { header: 'Latest', from: 'qty', agg: 'count' },
+    ]);
+    expect(typeCheck(bad, { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]', 'output.columns[1]']);
+  });
+
+  it('first, last, min and max keep the type of what they read', () => {
+    expect(typeCheck(summaryOutput([{ header: 'Latest', from: 'dept', agg: 'first' }]), { outputTypes: types })).toEqual([]);
+    expect(typeCheck(summaryOutput([{ header: 'Total', from: 'dept', agg: 'last' }]), { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]']);
+  });
+
+  it('a column with no agg is still the type of what it reads (a text column is no integer)', () => {
+    expect(typeCheck(summaryOutput([{ header: 'Orders', from: 'poNo' }]), { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]']);
+  });
+
+  it('without a summary output the engine ignores agg, so it does not change the type: no group, or a group that shows its detail rows', () => {
+    const detail = summaryOutput([{ header: 'Orders', from: 'poNo', agg: 'count' }], true);
+    expect(typeCheck(detail, { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]']);
+    const noGroup = { ...detail, transform: { ...detail.transform, group: undefined } } as LearnResult;
+    expect(typeCheck(noGroup, { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]']);
+  });
+});
+
 describe('typeCheck: summary rows (SPEC 8.12 v4)', () => {
   function summaryRules(cells: Record<string, 'sum' | 'count' | 'min' | 'max' | 'average' | 'first' | 'last'>): LearnResult {
     return baseRules({

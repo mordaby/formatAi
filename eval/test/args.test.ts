@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EvalArgsError, parseArgs } from '../lib/args.js';
+import { loadCases } from '../lib/caseLoader.js';
 
 describe('parseArgs', () => {
   it('applies the documented defaults with no flags', () => {
@@ -83,5 +86,31 @@ describe('parseArgs', () => {
 
   it('rejects an unknown flag', () => {
     expect(() => parseArgs(['--bogus', 'x'])).toThrow(EvalArgsError);
+  });
+});
+
+describe('--cases: a substring, or a comma-separated list of them', () => {
+  const casesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'cases');
+  const names = (filter?: string) => loadCases(casesDir, filter).map((c) => c.name);
+
+  it('parses the value as it is', () => {
+    expect(parseArgs(['--cases', 'crm']).cases).toBe('crm');
+    expect(parseArgs(['--cases=a,b']).cases).toBe('a,b');
+  });
+
+  it('one substring keeps the cases whose name contains it (case-insensitive); none keeps all', () => {
+    expect(names('PURCHASE-ORDERS')).toEqual(['purchase-orders-supplier-summary']);
+    expect(names('registry-supplier-')).toEqual(['registry-supplier-a', 'registry-supplier-b', 'registry-supplier-c']);
+    expect(names().length).toBeGreaterThan(10);
+  });
+
+  it('a list keeps a case that contains ANY of them: exactly the cases named', () => {
+    expect(names('registry-supplier-a,registry-supplier-c,purchase-orders,stock-count')).toEqual([
+      'purchase-orders-supplier-summary',
+      'registry-supplier-a',
+      'registry-supplier-c',
+      'stock-count-warehouse-report',
+    ]);
+    expect(names(' crm , ,orders-dedupe')).toEqual(['crm-rename-reorder', 'orders-dedupe']);
   });
 });

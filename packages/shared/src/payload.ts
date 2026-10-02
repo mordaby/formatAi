@@ -297,7 +297,14 @@ export type RepairProblem =
   /** Completion mode: an element of `complete.fixed` changed (or is missing) in the answer, or a listed column was not produced. */
   | { kind: 'fixedMismatch'; path: string; message: string }
   | { kind: 'type'; path: string; message: string }
-  | { kind: 'limit'; path?: string; message: string };
+  | { kind: 'limit'; path?: string; message: string }
+  /**
+   * The answer reports output column `out` as unsupported, but the app's own pair analysis found how it is built (the payload carries a
+   * hint for it: a copy, template, composition, dependency, bands, value map, window ... of input columns). An honest "cannot be produced"
+   * is no mismatch, but giving up on a column code can already trace to the input is worth one repair round (`unsupportedDespiteEvidence`,
+   * `unsupportedEvidence.ts`). The message names columns and the hint kind only, never a value.
+   */
+  | { kind: 'unsupportedDespiteEvidence'; out: number; message: string };
 
 export interface RepairBlock<Rules = unknown> {
   mode: 'repair';

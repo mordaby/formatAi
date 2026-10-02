@@ -93,7 +93,7 @@ describe('learnFromExamples: a column the AI step reports as unsupported', () =>
     expect(res.verification?.verified).toBe(true);
   });
 
-  it('every column reported as unsupported produced nothing: never verified (0 of 0 rows), and nothing to ask a repair about', async () => {
+  it('every column reported as unsupported produced nothing: never verified (0 of 0 rows); the only thing to ask a repair about is the columns the analysis had explained (never a diff)', async () => {
     const pair = externalOnlyPair();
     const good = await localRules(pair);
     const nothing: LearnResult = {
@@ -107,8 +107,10 @@ describe('learnFromExamples: a column the AI step reports as unsupported', () =>
 
     expect(res.path).toBe('llm');
     expect(res.verification).toMatchObject({ verified: false, matched: 0, total: 0 });
-    expect(res.stages).toMatchObject({ verifiedFirstCall: false, verifiedAfterRepair: false, browserRepairUsed: false });
-    expect(s.repairs).toEqual([]);
+    expect(res.stages).toMatchObject({ verifiedFirstCall: false, verifiedAfterRepair: false, browserRepairUsed: true });
+    // Item, Ref and Total have a hint (copy, copy, Qty x Price); Warehouse has none and stays an honest unsupported
+    expect(s.repairs).toHaveLength(1);
+    expect(s.repairs[0]!.map((p) => [p.kind, p.kind === 'unsupportedDespiteEvidence' ? p.out : -1])).toEqual([['unsupportedDespiteEvidence', 0], ['unsupportedDespiteEvidence', 1], ['unsupportedDespiteEvidence', 2]]);
     expect(res.unsupported).toHaveLength(4);
   });
 
@@ -121,5 +123,61 @@ describe('learnFromExamples: a column the AI step reports as unsupported', () =>
     const res = await learn(pair, spy(filled), false);
     expect(res.verification?.verified).toBe(false);
     expect(res.verification?.mismatches.every((m) => m.column === 'Warehouse')).toBe(true);
+  });
+});
+
+// The one exception to "an honest unsupported is not a mismatch": the pair analysis HAD found how the column is built (the payload carries a
+// hint for it). Giving up on it is a problem for the repair round - the browser's own repair call, besides the API's server round.
+describe('learnFromExamples: a column the AI step gives up on although the analysis explained it', () => {
+  /** What code built, with Total (a hint: Qty x Price) given up as unsupported, and Warehouse (no hint) too. */
+  const gaveUpOnTotal = (rules: LearnResult): LearnResult => ({
+    ...rules,
+    output: { ...rules.output, columns: rules.output.columns.map((c) => (c.header === 'Total' ? { header: 'Total', from: null } : c)) },
+    unsupported: [external('Total'), external()],
+  });
+
+  it.each([false, true])('is one repair call that names the column, its input columns and the hint kind - nothing else, no value (masking %s)', async (masking) => {
+    const pair = externalOnlyPair();
+    const good = honest(await localRules(pair));
+    const s = spy(gaveUpOnTotal(good), good);
+    const res = await learn(pair, s, masking);
+
+    expect(s.repairs).toHaveLength(1);
+    expect(s.repairs[0]).toEqual([
+      { kind: 'unsupportedDespiteEvidence', out: 2, message: 'Column "Total": the app found it is built from "Qty", "Price" (mul); write a rule for it.' },
+    ]);
+    expect(res.stages).toMatchObject({ verifiedFirstCall: false, browserRepairUsed: true, verifiedAfterRepair: true });
+    expect(res.verification).toMatchObject({ verified: true, matched: 20, total: 20 });
+    expect(res.unsupported).toEqual([external()]); // Warehouse has no hint: still an honest unsupported, never asked about
+  });
+
+  it('a model that stands by "unsupported" after that round is accepted: the column stays "needs your input" and the produced columns are verified', async () => {
+    const pair = externalOnlyPair();
+    const answer = gaveUpOnTotal(honest(await localRules(pair)));
+    const s = spy(answer, answer);
+    const res = await learn(pair, s, false);
+
+    expect(s.repairs).toHaveLength(1);
+    expect(res.stages).toMatchObject({ verifiedFirstCall: false, browserRepairUsed: true, verifiedAfterRepair: true });
+    expect(res.unsupported.map((u) => u.outputColumn)).toEqual(['Total', 'Warehouse']);
+  });
+
+  it('a repair that writes a rule for it is checked like any column: a wrong one is a mismatch', async () => {
+    const pair = externalOnlyPair();
+    const good = honest(await localRules(pair));
+    const itemFrom = good.output.columns.find((c) => c.header === 'Item')!.from;
+    const wrong: LearnResult = { ...good, output: { ...good.output, columns: good.output.columns.map((c) => (c.header === 'Total' ? { ...c, from: itemFrom } : c)) }, unsupported: [external()] };
+    const res = await learn(pair, spy(gaveUpOnTotal(good), wrong), false);
+    expect(res.stages).toMatchObject({ browserRepairUsed: true, verifiedAfterRepair: false });
+    expect(res.verification?.mismatches.every((m) => m.column === 'Total')).toBe(true);
+  });
+
+  it('without a repair call to make (callRepair not given) nothing is asked: the answer is returned as it is', async () => {
+    const pair = externalOnlyPair();
+    const answer = gaveUpOnTotal(honest(await localRules(pair)));
+    const s = spy(answer);
+    const res = await learnFromExamples({ ...(await bytes(pair)), masking: false, tier: 'paid', callLearn: s.callLearn });
+    expect(res.stages).toMatchObject({ verifiedFirstCall: false, browserRepairUsed: false });
+    expect(res.unsupported.map((u) => u.outputColumn)).toEqual(['Total', 'Warehouse']);
   });
 });

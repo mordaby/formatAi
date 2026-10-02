@@ -168,6 +168,48 @@ function compareRow(
   return true;
 }
 
+/** Whether `v` (an expression tree, or anything inside one) holds an across-row (window) function call. */
+function hasWindowCall(v: unknown): boolean {
+  if (Array.isArray(v)) return v.some(hasWindowCall);
+  if (typeof v !== 'object' || v === null) return false;
+  if ((v as { op?: unknown }).op === 'window') return true;
+  return Object.values(v).some(hasWindowCall);
+}
+
+/** Whether `v` (an expression tree) reads one of the column ids in `ids`. */
+function readsColumnOf(v: unknown, ids: ReadonlySet<string>): boolean {
+  if (ids.size === 0) return false;
+  if (Array.isArray(v)) return v.some((x) => readsColumnOf(x, ids));
+  if (typeof v !== 'object' || v === null) return false;
+  const col = (v as { col?: unknown }).col;
+  if (typeof col === 'string' && ids.has(col)) return true;
+  return Object.values(v).some((x) => readsColumnOf(x, ids));
+}
+
+/**
+ * The output columns whose value depends on rows other than the one they are written for, so they cannot be checked on the sample table:
+ *   - a summary output (`group.showDetailRows: false`, SPEC 8.6): every column with an `agg` other than `first` (a sum, count, average, min,
+ *     max or last over the group). The samples hold ONE input row per group - the group's first row - so such a column over the sample table
+ *     is the first row's own value, never the group's total; the correct rules would "differ" on every sample, and the repair call would be
+ *     pushed away from them. (`first` is the first row's value: it is compared.)
+ *   - a column read from a computed column that uses a window function (`runningSum`, `groupSum`, `previous`, `rank` ...), directly or through
+ *     another computed column: over the sample rows only, a running total, a group total or a rank is not the one over the file.
+ * The browser's full verification compares all of them on every row of the real example (SPEC 9.2 layer 8).
+ */
+function columnsReadingOtherRows(rules: LearnResult | Rules): number[] {
+  const crossRow = new Set<string>();
+  for (const c of rules.transform.computed) {
+    if (hasWindowCall(c.expr) || readsColumnOf(c.expr, crossRow)) crossRow.add(c.id);
+  }
+  const summaryOutput = rules.transform.group !== undefined && !rules.transform.group.showDetailRows;
+  const out: number[] = [];
+  rules.output.columns.forEach((col, i) => {
+    if (col.from === null) return;
+    if (crossRow.has(col.from) || (summaryOutput && (col.agg ?? 'first') !== 'first')) out.push(i);
+  });
+  return out;
+}
+
 /**
  * The output columns that are not compared with the samples.
  *
@@ -183,8 +225,12 @@ function compareRow(
  * at all is the fixed lock's business).
  */
 function columnsNotCompared(rules: LearnResult | Rules, payload: LearnPayload): ReadonlySet<number> {
-  if (!payload.complete) return new Set(columnsReportedUnsupported(rules));
-  const ignore = new Set<number>();
+  // (Both modes: a column that reads other rows is checked on the whole file by the browser, never on the samples - see its own doc.)
+  const ignore = new Set<number>(columnsReadingOtherRows(rules));
+  if (!payload.complete) {
+    for (const i of columnsReportedUnsupported(rules)) ignore.add(i);
+    return ignore;
+  }
   const produced = new Set(payload.complete.columns.filter((i) => rules.output.columns[i]?.from != null));
   for (let i = 0; i < payload.output.columns.length; i++) if (!produced.has(i)) ignore.add(i);
   return ignore;
@@ -286,7 +332,8 @@ export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload):
     }
   });
 
-  if (expectedTotal !== dataRows.length) {
+  // (Not once the diff cap stopped the walk: `expectedTotal` only counts the samples reached, so the two numbers would not be comparable.)
+  if (!stop && expectedTotal !== dataRows.length) {
     ctx.problems.push({ kind: 'rowCount', expected: expectedTotal, actual: dataRows.length });
   }
 

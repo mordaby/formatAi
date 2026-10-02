@@ -1,6 +1,6 @@
 // CLI argument parsing for `pnpm eval` (SPEC 10): "pnpm eval --models <a>,<b>
 // --masking on,off --runs 3 [--provider anthropic|openai|claude-cli|fake]
-// [--cases <substring>] [--out <dir>] [--no-escalation] [--mode full|complete|both]".
+// [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]".
 //
 // Kept dependency-free (no argv-parsing package) since the surface is tiny and fixed.
 import { LLM_PROVIDERS, type LlmProviderName } from '@formatai/shared';
@@ -19,7 +19,7 @@ export interface EvalArgs {
   runs: number;
   /** Undefined means "whatever env.LLM_PROVIDER / .env resolves to". */
   provider?: LlmProviderName;
-  /** Substring filter on the case directory name. */
+  /** Substring filter on the case directory name; a comma-separated list keeps a case whose name contains any of them. */
   cases?: string;
   /** Report output directory. Defaults to `eval/reports/<UTC timestamp>`. */
   out?: string;

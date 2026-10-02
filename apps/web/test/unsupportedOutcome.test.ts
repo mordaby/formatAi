@@ -106,7 +106,11 @@ describe('LearnFlow with the real engine: an AI answer that reports a column as 
     const state = flow.getState();
     if (state.status !== 'done') throw new Error(`expected done, got ${state.status}`);
     expect(state.result.verification).toMatchObject({ verified: false, total: 0 });
-    expect(api.repair).not.toHaveBeenCalled(); // nothing in the example to point a repair at
+    // Nothing in the example to point a repair at (no diff) - but Item and Qty are copies the analysis found (a hint each), and the answer gave up on
+    // them: that is what the one repair call asks about. Warehouse has no hint and is never asked about. The repair did not fix it: still failed.
+    expect(api.repair).toHaveBeenCalledTimes(1);
+    const problems = (api.repair as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![3] as { kind: string; out: number }[];
+    expect(problems.map((p) => [p.kind, p.out])).toEqual([['unsupportedDespiteEvidence', 0], ['unsupportedDespiteEvidence', 1]]);
     await vi.waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', 'failed'));
   });
 });
