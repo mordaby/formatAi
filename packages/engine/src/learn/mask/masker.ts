@@ -89,6 +89,12 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
   }
 
   function maskWord(word: string): string {
+    // Same real ID -> same fake everywhere: a digit word inside a text cell that is a valid Israeli
+    // ID goes through the ID generator, exactly like that ID in an idLike column. Otherwise
+    // "312345002 - Cohen" and the ID column would carry different fakes and the AI could not see
+    // that one is built from the other. DECISION: 5+ digits, so short numbers in text (quantities,
+    // codes) keep plain word masking.
+    if (/^\d{5,9}$/.test(word) && isValidIsraeliId(word)) return maskValidIsraeliId(word);
     const key = normalizeText(word);
     seenReal.add(key);
 
