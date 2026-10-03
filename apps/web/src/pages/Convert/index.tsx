@@ -200,7 +200,14 @@ function ConvertTool({ tier }: { tier: Tier }) {
           </InlineMessage>
         ) : null}
         {phase.kind === 'mapping' ? (
-          <MapColumns sourceName={phase.source.name} formats={phase.source.conversions.map((c) => c.formatName)} match={phase.match} onSubmit={flow.submitMapping} onCancel={flow.reset} />
+          <MapColumns
+            sourceName={phase.source.name}
+            formats={phase.formats.map((c) => c.formatName)}
+            sourceFormats={phase.source.conversions.length}
+            match={phase.match}
+            onSubmit={flow.submitMapping}
+            onCancel={flow.reset}
+          />
         ) : null}
         {phase.kind === 'missing' ? (
           <MissingColumns sourceName={phase.source.name} formats={phase.source.conversions.map((c) => c.formatName)} missing={phase.missing} onAnotherFile={flow.reset} />

@@ -68,6 +68,16 @@ describe('readHeaders / matchFile', () => {
     expect(m.missingRequired).toEqual(['Item Code']);
     expect(m.renamedCandidates).toEqual([{ required: 'Item Code', candidates: ['Item-Code'] }]);
   });
+
+  it('a header the source already knew (ignoredHeaders) is never offered as a renamed column, only the others are', async () => {
+    const csv = 'Item-Code,Qty,Price,City,Region\n00001,5,1,Haifa,North\n00002,6,2,Acre,North\n';
+    const out = await engine().matchFile({ file: file('r.csv', csv), signatures: [{ ...SIG_A, ignoredHeaders: ['city', 'Item-Code'] }] });
+    if (!out.ok) throw new Error('expected a match');
+    const m = out.ranked[0]!;
+    expect(m.extra).toEqual(['Item-Code', 'City', 'Region']);
+    expect(m.unknownExtra).toEqual(['Region']);
+    expect(m.renamedCandidates).toEqual([{ required: 'Item Code', candidates: [] }]);
+  });
 });
 
 describe('convertWithDecisions', () => {

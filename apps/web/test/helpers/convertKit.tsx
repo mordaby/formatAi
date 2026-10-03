@@ -118,7 +118,8 @@ export function detail(over: Partial<ConversionDetail> & { id: string }, rules: 
 }
 
 export function match(over: Partial<ConversionMatch> & { id: string }): ConversionMatch {
-  return { name: 'Supplier A', score: 1, missingRequired: [], extra: [], renamedCandidates: [], ...over };
+  // `unknownExtra` is `extra` unless the test says the source already knew some of them.
+  return { name: 'Supplier A', score: 1, missingRequired: [], extra: [], unknownExtra: over.extra ?? [], renamedCandidates: [], ...over };
 }
 
 export const REGISTERED: MeUser = { id: 'u1', name: 'Dana', avatarUrl: null, tier: 'registered', providers: ['google'], isAdmin: false, uiLanguage: null };

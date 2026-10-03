@@ -25,6 +25,8 @@ export interface SignatureInput {
   /** The source's name, shown next to the score in the "which source is this file?" list. */
   name: string;
   columns: SignatureColumn[];
+  /** The source's `ignoredHeaders`: headers it already knows, which are never offered as a renamed column. Names only. */
+  ignoredHeaders?: string[];
 }
 
 export interface MatchFileArgs {

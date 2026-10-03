@@ -783,7 +783,7 @@ describe('a structural change is detected ONCE per source', () => {
   const noQty = (): MatchFileOutput => autoSource({ score: 0.9, missingRequired: ['Qty'], extra: [] }, ['Item Code', 'Price']);
   const affected = () => within(screen.getByTestId('affected-formats')).getAllByRole('listitem').map((li) => li.textContent);
 
-  it('a renamed column: the step lists EVERY format it affects, and the confirmed mapping is saved once, on the source', async () => {
+  it('a renamed column: the step lists the formats that need it, and the confirmed mapping is saved once, on the source', async () => {
     const api = fakeConvertApi({ entries: [two], rulesById: twoRules });
     const { engine, matchFile, convertWithDecisions } = fakeEngine({ match: renamedMatch() });
     renderConvert(<ConvertPage />, { api, engine });
@@ -791,9 +791,10 @@ describe('a structural change is detected ONCE per source', () => {
     expect(await screen.findByText('Is a column named differently?')).toBeTruthy();
     expect(affected()).toEqual(['Load file', 'ERP load']);
     expect(screen.getByText(/saved on the source, so next time it applies to all 2 of its formats/)).toBeTruthy();
-    // Detected at match time, once: no conversion has been fetched or run yet.
+    // Detected at match time, once; the formats' rules were fetched to see which of them need the column, and nothing has run yet.
     expect(matchFile).toHaveBeenCalledTimes(1);
-    expect(api.conversion).not.toHaveBeenCalled();
+    expect(api.conversion.mock.calls.map((c) => c[0])).toEqual(['c1', 'c2']);
+    expect(convertWithDecisions).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     // The mapping is saved ONCE, on the source (never per conversion) ...
@@ -826,6 +827,89 @@ describe('a structural change is detected ONCE per source', () => {
     await screen.findByText('Your file is ready');
     expect(api.addAlias).toHaveBeenCalledTimes(1);
     expect(api.addAlias).toHaveBeenCalledWith('c1', { header: 'Qty', alias: 'Quantity' });
+  });
+
+  describe('the rename step lists only the formats that use the missing column', () => {
+    /** A format whose rules do not read "Qty" at all (like a short variant of the load file). */
+    const withoutQty = (id: string): Rules => ({
+      ...rulesFor(id),
+      input: { ...RULES.input, columns: RULES.input.columns.filter((c) => c.id !== 'c_qty') },
+      output: { ...RULES.output, columns: RULES.output.columns.filter((c) => c.from !== 'c_qty') },
+    });
+    const mixed = { c1: rulesFor('c1'), c2: withoutQty('c2') };
+
+    it('"Qty" is used by one of the two formats: only that one is listed, while the saved rename still applies to both', async () => {
+      const api = fakeConvertApi({ entries: [two], rulesById: mixed });
+      const { engine, convertWithDecisions } = fakeEngine({ match: renamedMatch() });
+      renderConvert(<ConvertPage />, { api, engine });
+      await drop();
+      await screen.findByText('Is a column named differently?');
+      expect(affected()).toEqual(['Load file']);
+      // The hint under the step is about the SOURCE: it is saved on it, so it holds for all of its formats.
+      expect(screen.getByText(/saved on the source, so next time it applies to all 2 of its formats/)).toBeTruthy();
+      expect(convertWithDecisions).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+      await screen.findByText('This file feeds 2 formats');
+      expect(api.addAlias).toHaveBeenCalledTimes(1);
+      expect(api.addAlias).toHaveBeenCalledWith('s1', { header: 'Qty', alias: 'Quantity' });
+    });
+
+    it('no format uses the missing column (the page runs only one that does not): the question is not asked, and that format runs', async () => {
+      const api = fakeConvertApi({ entries: [two], rulesById: mixed });
+      const { engine, convertWithDecisions } = fakeEngine({ match: renamedMatch() });
+      renderConvert(<ConvertPage />, { api, engine, route: '/convert?format=F2' });
+      await screen.findByTestId('only-format');
+      await drop();
+      expect(await screen.findByText('Your file is ready')).toBeTruthy();
+      expect(screen.queryByText('Is a column named differently?')).toBeNull();
+      expect(ranOrder(convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c2']);
+      expect(api.addAlias).not.toHaveBeenCalled();
+    });
+
+    it('of two missing columns only the one a format uses is asked about, and the lead counts just that one', async () => {
+      const api = fakeConvertApi({ entries: [two], rulesById: mixed });
+      // The file has neither "Item Code" nor "Qty" under those names; the page runs only c2, which needs "Item Code" and does not read "Qty".
+      const both = autoSource(
+        { score: 0.8, missingRequired: ['Item Code', 'Qty'], extra: ['Code', 'Quantity'], renamedCandidates: [{ required: 'Item Code', candidates: ['Code'] }, { required: 'Qty', candidates: ['Quantity'] }] },
+        ['Code', 'Quantity', 'Price'],
+      );
+      const { engine } = fakeEngine({ match: both });
+      renderConvert(<ConvertPage />, { api, engine, route: '/convert?format=F2' });
+      await screen.findByTestId('only-format');
+      await drop();
+      await screen.findByText('Is a column named differently?');
+      expect(affected()).toEqual(['ERP load']);
+      expect(screen.getByText(/needs a column that this file doesn't have under that name/)).toBeTruthy();
+      expect(screen.getAllByLabelText(/The column .* is/)).toHaveLength(1);
+      expect(screen.getByLabelText(/The column .*Item Code.* is/)).toBeTruthy();
+      expect(screen.queryByLabelText(/The column .*Qty.* is/)).toBeNull();
+    });
+
+    it('does not offer a column the source already knew, as a suggestion or among the other columns', async () => {
+      const api = fakeConvertApi({ entries: [two], rulesById: twoRules });
+      // "City" was in the example next to the columns the rules read: the matcher left it out of `unknownExtra`.
+      const city = autoSource(
+        { score: 0.9, missingRequired: ['Qty'], extra: ['City', 'Region', 'Quantity'], unknownExtra: ['Region', 'Quantity'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] },
+        ['Item Code', 'City', 'Region', 'Quantity', 'Price'],
+      );
+      const { engine } = fakeEngine({ match: city });
+      renderConvert(<ConvertPage />, { api, engine });
+      await drop();
+      await screen.findByText('Is a column named differently?');
+      const options = within(screen.getByLabelText(/The column .*Qty.* is/)).getAllByRole('option').map((o) => o.textContent);
+      expect(options).toEqual(['Choose a column of the file', 'Quantity', 'Region', "It isn't in this file"]);
+    });
+
+    it('only the headers a source knows are sent to the matcher (names, never values)', async () => {
+      const known = { ...two, ignoredHeaders: ['City'] };
+      const api = fakeConvertApi({ entries: [known], rulesById: twoRules });
+      const { engine, matchFile } = fakeEngine({ match: noQty() });
+      renderConvert(<ConvertPage />, { api, engine });
+      await drop();
+      await screen.findByTestId('missing-columns');
+      expect(matchFile.mock.calls[0]![0].signatures.map((s) => s.ignoredHeaders)).toEqual([['City']]);
+    });
   });
 
   it('a missing column nothing can stand in for stops the run and names every affected format', async () => {

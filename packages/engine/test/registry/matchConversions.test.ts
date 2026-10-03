@@ -158,6 +158,39 @@ describe('matchConversions: renamed columns', () => {
     expect(list[0]).toBe('Amounts');
   });
 
+  it('never offers a header the source already knew (ignoredHeaders), as a suggestion or among the others', () => {
+    const sig: ConversionSignatureInput = { id: 's', name: 's', columns: [c('Name'), c('Phone'), c('Price')], ignoredHeaders: ['City', 'Unit Price'] };
+    const [m] = matchConversions(['Name', 'City', 'Unit Price', 'Region'], [sig]);
+    expect(m!.missingRequired).toEqual(['Phone', 'Price']);
+    // still unclaimed (the score and the ranking are as before), but only "Region" can be a renamed column
+    expect(m!.extra).toEqual(['City', 'Unit Price', 'Region']);
+    expect(m!.unknownExtra).toEqual(['Region']);
+    expect(m!.renamedCandidates).toEqual([
+      { required: 'Phone', candidates: [] },
+      { required: 'Price', candidates: [] },
+    ]);
+  });
+
+  it('compares the ignored headers like the engine does: case, spacing and quotes do not matter', () => {
+    const sig: ConversionSignatureInput = { id: 's', name: 's', columns: [c('Name'), c('Phone')], ignoredHeaders: ['  city', 'Cust.  Notes'] };
+    const [m] = matchConversions(['Name', 'CITY', 'Cust. Notes', 'Mobile'], [sig]);
+    expect(m!.unknownExtra).toEqual(['Mobile']);
+  });
+
+  it('does not change the score: an ignored header is still an extra column for it', () => {
+    const plain: ConversionSignatureInput = { id: 's', name: 's', columns: [c('Name'), c('Phone')] };
+    const [without] = matchConversions(['Name', 'Phone', 'City'], [plain]);
+    const [withIgnored] = matchConversions(['Name', 'Phone', 'City'], [{ ...plain, ignoredHeaders: ['City'] }]);
+    expect(withIgnored!.score).toBe(without!.score);
+    expect(withIgnored!.extra).toEqual(['City']);
+    expect(withIgnored!.unknownExtra).toEqual([]);
+  });
+
+  it('a signature with no ignored headers offers every extra header, as before', () => {
+    const [m] = matchConversions(['SKU', 'Product Name', 'Qty', 'Unit Price', 'Whatever'], [items]);
+    expect(m!.unknownExtra).toEqual(m!.extra);
+  });
+
   it('header similarity: punctuation, containment, partial overlap, nothing in common', () => {
     expect(headerSimilarity('Item-Code', 'item code')).toBe(1);
     expect(headerSimilarity('Price', 'Unit Price')).toBe(0.8);

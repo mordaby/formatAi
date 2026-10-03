@@ -1,7 +1,7 @@
 // The pure parts of convert: which rows need a look, the decisions the user's choices become, the counts a run reports.
 import type { Flag, RunSummary } from '@formatai/engine';
 import { describe, expect, it } from 'vitest';
-import { applyToAll, attentionOfGaps, attentionOfUnlike, baseName, canRunAnyway, columnLabel, fixFields, flaggedRowCount, mappingOptions, matchWords, newColumns, normalizeHeader, quoteNames, requiredAcross, reviewRows, runCounts, scopeSources, signatureOf, tally, toRowDecisions, withAliases } from '../src/pages/Convert/logic';
+import { applyToAll, attentionOfGaps, attentionOfUnlike, baseName, canRunAnyway, columnLabel, fixFields, flaggedRowCount, formatsNeeding, mappingOptions, matchWords, newColumns, normalizeHeader, quoteNames, requiredAcross, reviewRows, runCounts, scopeSources, signatureOf, tally, toRowDecisions, withAliases } from '../src/pages/Convert/logic';
 import { entry, match, RULES, sourceEntry } from './helpers/convertKit';
 
 const flag = (rowNumber: number, column: string, extra: Partial<Flag> = {}): Flag => ({ rowNumber, column, rule: 'type', value: 'x', messageKey: 'flag.parseFailed.number', ...extra });
@@ -90,6 +90,44 @@ describe('renamed columns', () => {
   it('offers the suggested headers first, then the other unknown ones', () => {
     const m = match({ id: 'x', missingRequired: ['Qty'], extra: ['Foo', 'Quantity', 'Bar'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] });
     expect(mappingOptions(m, 'Qty')).toEqual({ suggested: ['Quantity'], others: ['Foo', 'Bar'] });
+  });
+
+  it('does not offer a header the source already knew (the engine leaves it out of `unknownExtra`)', () => {
+    const m = match({ id: 'x', missingRequired: ['Qty'], extra: ['City', 'Quantity', 'Region'], unknownExtra: ['Quantity', 'Region'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] });
+    expect(mappingOptions(m, 'Qty')).toEqual({ suggested: ['Quantity'], others: ['Region'] });
+  });
+
+  it('hands the source\'s ignored headers to the matcher, and nothing when there are none', () => {
+    const known = { ...entry({ conversionId: 'c1' }), ignoredHeaders: ['City', 'Created by'] };
+    expect(signatureOf(known).ignoredHeaders).toEqual(['City', 'Created by']);
+    expect('ignoredHeaders' in signatureOf(entry({ conversionId: 'c1' }))).toBe(false);
+    expect('ignoredHeaders' in signatureOf({ ...entry({ conversionId: 'c1' }), ignoredHeaders: [] })).toBe(false);
+  });
+});
+
+describe('the formats a missing column affects', () => {
+  const ref = (conversionId: string, formatName: string) => ({ conversionId, formatId: `F-${conversionId}`, formatName, status: 'verified' as const });
+  const contacts = ref('c1', 'crm contacts');
+  const short = ref('c2', 'crm short');
+  const checked = [
+    { conversion: contacts, gaps: [{ header: 'Phone' }, { header: 'Region' }] },
+    { conversion: short, gaps: [{ header: 'Region' }] },
+  ];
+
+  it('lists only the formats that need the column (required, or used though optional)', () => {
+    const out = formatsNeeding(['Phone', 'Region'], checked);
+    expect(out.get('Phone')).toEqual([contacts]);
+    expect(out.get('Region')).toEqual([contacts, short]);
+  });
+
+  it('a column no format needs maps to an empty list', () => {
+    expect(formatsNeeding(['Fax'], checked).get('Fax')).toEqual([]);
+    expect(formatsNeeding(['Phone'], []).get('Phone')).toEqual([]);
+  });
+
+  it('finds the header the way matching does: case and spacing do not matter', () => {
+    expect(formatsNeeding(['phone '], checked).get('phone ')).toEqual([contacts]);
+    expect(formatsNeeding(['PHONE'], [{ conversion: short, gaps: [{ header: ' Phone' }] }]).get('PHONE')).toEqual([short]);
   });
 });
 

@@ -32,6 +32,7 @@ import {
   canRunAnyway,
   columnLabel,
   flaggedRowCount,
+  formatsNeeding,
   newColumns,
   requiredAcross,
   reviewRows,
@@ -148,8 +149,11 @@ export type Phase =
   /** Options are SOURCES (`id` is the source's id). */
   | { kind: 'choose'; options: ConversionMatch[] }
   | { kind: 'noMatch' }
-  /** Required columns are missing but the file has columns nothing claimed: the user can say which is which (once per source). */
-  | { kind: 'mapping'; source: SignatureEntry; match: ConversionMatch }
+  /**
+   * Required columns are missing but the file has columns nothing claimed: the user can say which is which (once per source). `match.missingRequired`
+   * holds only the columns some format needs; `formats` are the formats that need one of them (the source may feed more).
+   */
+  | { kind: 'mapping'; source: SignatureEntry; match: ConversionMatch; formats: SourceConversionRef[] }
   /** No format can be made from this file: each lacks a column it requires and nothing can stand in. Stop, and say exactly which (and which formats it affects). */
   | { kind: 'missing'; source: SignatureEntry; missing: string[] }
   /**
@@ -457,6 +461,26 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   /** The queue is decided: run it from its first conversion. */
   const startJob = drive;
 
+  /** The rules of every format of the source (kept for the runs). A format that is gone has none (null): it is dealt with when it is run. */
+  const loadDetails = useCallback(
+    (source: SignatureEntry, signal: AbortSignal): Promise<(ConversionDetail | null)[]> =>
+      Promise.all(
+        source.conversions.map(async (c): Promise<ConversionDetail | null> => {
+          const cached = detailsRef.current.get(c.conversionId);
+          if (cached) return cached;
+          try {
+            const detail = await api.conversion(c.conversionId, signal);
+            detailsRef.current.set(c.conversionId, detail);
+            return detail;
+          } catch (e) {
+            if (toConvertError(e).kind === 'gone') return null;
+            throw e;
+          }
+        }),
+      ),
+    [api],
+  );
+
   /**
    * The source is known and the rename step is behind us: every format of it is checked against THIS file (SPEC 8.15, 21 v11 items 4-7) before any
    * runs. A format whose rules need none of the columns the file lacks is ready; one that needs a missing column - required, or used
@@ -471,21 +495,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     async (source: SignatureEntry, mapping: Record<string, string>, sourceFile: File, match: ConversionMatch | null, runId: number, signal: AbortSignal): Promise<void> => {
       setPhase({ kind: 'running', target: null });
       try {
-        // The rules of every format of the source (kept for the runs). A format that is gone has none: it is dealt with when it is run.
-        const details = await Promise.all(
-          source.conversions.map(async (c): Promise<ConversionDetail | null> => {
-            const cached = detailsRef.current.get(c.conversionId);
-            if (cached) return cached;
-            try {
-              const detail = await api.conversion(c.conversionId, signal);
-              detailsRef.current.set(c.conversionId, detail);
-              return detail;
-            } catch (e) {
-              if (toConvertError(e).kind === 'gone') return null;
-              throw e;
-            }
-          }),
-        );
+        const details = await loadDetails(source, signal);
         if (runId !== runRef.current) return;
         // What each format needs that the file does not have, with the renames the user confirmed applied in memory.
         const checked = details.flatMap((d, at) => (d ? [{ at, rules: withAliases(d.rules, mapping) }] : []));
@@ -519,7 +529,43 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         fail(runId, e);
       }
     },
-    [api, engine, fail, startJob],
+    [engine, fail, loadDetails, startJob],
+  );
+
+  /**
+   * The file lacks required columns of the source and has columns nothing claimed: asks which is which - but only for the columns a format
+   * of the source needs. Which formats need one is worked out the way `settle` does it (the worker's `columnGaps`, over the formats' rules).
+   *
+   * DECISION: the source's required columns are those ANY of its formats requires (and on `?format=` the page only runs one of them), so a
+   * missing column may be needed by only some of the formats, or by none that this page runs: the step lists only the formats that need
+   * one of the columns it asks about, and a column no format needs is not asked about at all. When that leaves nothing to ask, the formats are
+   * checked at once, as for a file with nothing to rename.
+   */
+  const askRename = useCallback(
+    async (source: SignatureEntry, match: ConversionMatch, sourceFile: File, runId: number, signal: AbortSignal): Promise<void> => {
+      setPhase({ kind: 'running', target: null });
+      try {
+        const details = await loadDetails(source, signal);
+        if (runId !== runRef.current) return;
+        const known = details.flatMap((d, at) => (d ? [{ conversion: source.conversions[at] as SourceConversionRef, rules: d.rules }] : []));
+        const gaps = known.length > 0 ? await engine.columnGaps({ headers: headersRef.current, rules: known.map((k) => k.rules) }, { signal }) : [];
+        if (runId !== runRef.current) return;
+        const needing = formatsNeeding(
+          match.missingRequired,
+          known.map((k, i) => ({ conversion: k.conversion, gaps: gaps[i] ?? [] })),
+        );
+        const asked = match.missingRequired.filter((h) => (needing.get(h) ?? []).length > 0);
+        if (asked.length === 0) {
+          await settle(source, {}, sourceFile, match, runId, signal);
+          return;
+        }
+        const formats = source.conversions.filter((c) => asked.some((h) => needing.get(h)?.includes(c)));
+        setPhase({ kind: 'mapping', source, match: { ...match, missingRequired: asked }, formats });
+      } catch (e) {
+        fail(runId, e);
+      }
+    },
+    [engine, fail, loadDetails, settle],
   );
 
   /**
@@ -529,7 +575,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
    *
    * DECISION (SPEC 21 v11 items 4-7): the rename step stays first and is the source's, not a format's: a source's required columns are those any
    * of its conversions requires, so the user is asked once, the answer is saved once on the source and holds for every format, and the
-   * step can name every format it touches. It no longer stops everything, though: after it (or when nothing can stand in for a missing
+   * step can name the formats that need the columns it asks about (`askRename`). It no longer stops everything, though: after it (or when nothing can stand in for a missing
    * column) each format is checked on its own, so a format that needs none of the missing columns is made while the ones that do are
    * listed as needing attention - the user decides what to fix and how, and nothing is changed automatically.
    */
@@ -540,14 +586,15 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         setPhase({ kind: 'error', error: { kind: 'gone' } });
         return;
       }
-      if (match && match.missingRequired.length > 0 && match.extra.length > 0) {
-        // The source can't run without these columns (a score of 0.9 allows one to be missing), and the file has columns nothing claimed.
-        setPhase({ kind: 'mapping', source, match });
+      if (match && match.missingRequired.length > 0 && match.unknownExtra.length > 0) {
+        // The source can't run without these columns (a score of 0.9 allows one to be missing), and the file has columns nothing claimed
+        // that the source did not already know. The question is asked only if a format needs a missing column (`askRename`).
+        void askRename(source, match, sourceFile, runId, signal);
         return;
       }
       void settle(source, {}, sourceFile, match, runId, signal);
     },
-    [settle],
+    [askRename, settle],
   );
 
   const start = useCallback(

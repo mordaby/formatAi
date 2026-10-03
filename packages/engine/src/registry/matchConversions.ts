@@ -25,6 +25,11 @@ export interface ConversionSignatureInput {
   id: string;
   name: string;
   columns: SignatureColumnInput[];
+  /**
+   * Headers this kind of file is already known to carry that no column of it reads (a source's `ignoredHeaders`, SPEC 8.15): never offered as
+   * a renamed column. Compared like the engine's normalized header step (NFC, spacing, case). Names only.
+   */
+  ignoredHeaders?: string[];
 }
 
 export interface RenamedCandidates {
@@ -44,6 +49,8 @@ export interface ConversionMatch {
   missingRequired: string[];
   /** File headers that no column of the conversion matches (empty headers are ignored). */
   extra: string[];
+  /** `extra` without the headers the signature already knows (`ignoredHeaders`): the only ones a missing column may have been renamed to. */
+  unknownExtra: string[];
   /** For every missing required column: the extra file headers it may have been renamed to. */
   renamedCandidates: RenamedCandidates[];
 }
@@ -136,6 +143,11 @@ function renamedCandidatesFor(col: SignatureColumnInput, extra: readonly string[
 // Matching
 // ---------------------------------------------------------------------------
 
+/** A header compared the way the engine's third matching step does (`mapHeaders`): NFC, spacing, case. */
+function knownKey(s: string): string {
+  return normalizeText(s).toLowerCase();
+}
+
 function matchOne(fileHeaders: readonly string[], sig: ConversionSignatureInput): ConversionMatch {
   // The engine's own header mapping (exact, then aliases, then normalized), so this can't disagree with a run.
   const asColumns: InputColumn[] = sig.columns.map((c, i) => ({
@@ -150,6 +162,11 @@ function matchOne(fileHeaders: readonly string[], sig: ConversionSignatureInput)
   const claimed = new Set<number>();
   for (const s of src) if (s >= 0) claimed.add(s);
   const extra = fileHeaders.filter((h, i) => !claimed.has(i) && h.trim() !== '');
+  // DECISION: a header the source already knew (it sat in the example next to the columns the rules read, or the user dismissed it as a "new
+  // column") is not a renamed column: "City" beside "Phone" in the example is not a renamed "Phone". It stays in `extra` - the score and
+  // the ranking are unchanged - but is not offered as a rename, neither as a suggestion nor among the others (`unknownExtra`).
+  const known = new Set((sig.ignoredHeaders ?? []).map(knownKey));
+  const unknownExtra = extra.filter((h) => !known.has(knownKey(h)));
 
   const requiredIdx = sig.columns.flatMap((c, i) => (c.required ? [i] : []));
   const scoring = requiredIdx.length > 0 ? requiredIdx : sig.columns.map((_, i) => i);
@@ -164,7 +181,8 @@ function matchOne(fileHeaders: readonly string[], sig: ConversionSignatureInput)
     score: round6(Math.max(0, base - penalty)),
     missingRequired: missing.map((c) => c.header),
     extra,
-    renamedCandidates: missing.map((c) => ({ required: c.header, candidates: renamedCandidatesFor(c, extra) })),
+    unknownExtra,
+    renamedCandidates: missing.map((c) => ({ required: c.header, candidates: renamedCandidatesFor(c, unknownExtra) })),
   };
 }
 

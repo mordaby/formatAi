@@ -1,7 +1,7 @@
 // The pure parts of "convert a file" (SPEC 5 C, 21 v5 item 5): which rows need a look, what the user chose for each,
 // the RowDecisions those choices become, and the counts a finished run reports. No React, no worker: easy to test.
 import type { ConversionMatch, Flag, RowDecisions, RunSummary } from '@formatai/engine';
-import type { ColumnType, LearnResult, Rules, SignatureEntry } from '@formatai/shared';
+import type { ColumnType, LearnResult, Rules, SignatureEntry, SourceConversionRef } from '@formatai/shared';
 import type { MessageKey } from '../../i18n';
 import type { RowInputCell, SignatureInput } from '../../worker/convertApi';
 
@@ -136,7 +136,7 @@ export function scopeSources(entries: readonly SignatureEntry[], formatId: strin
 
 /** What the worker's matcher takes: one signature per SOURCE (its id stands in for the "conversion id" the engine names it by). */
 export function signatureOf(e: SignatureEntry): SignatureInput {
-  return { id: e.sourceId, name: e.name, columns: e.columns };
+  return { id: e.sourceId, name: e.name, columns: e.columns, ...(e.ignoredHeaders && e.ignoredHeaders.length > 0 ? { ignoredHeaders: e.ignoredHeaders } : {}) };
 }
 
 /** The name of a file without its folder and extension ("Payments.xlsx" -> "Payments"). */
@@ -243,11 +243,34 @@ export function withAliases<R extends LearnResult | Rules>(rules: R, mapping: Re
   };
 }
 
-/** For the renamed-column step: the file's unknown headers to offer for one missing column, suggestions first. */
+/** For the renamed-column step: the file's unknown headers to offer for one missing column, suggestions first. Headers the source already knew are not offered. */
 export function mappingOptions(match: ConversionMatch, required: string): { suggested: string[]; others: string[] } {
   const suggested = match.renamedCandidates.find((r) => r.required === required)?.candidates ?? [];
   const seen = new Set(suggested);
-  return { suggested: [...suggested], others: match.extra.filter((h) => !seen.has(h)) };
+  return { suggested: [...suggested], others: match.unknownExtra.filter((h) => !seen.has(h)) };
+}
+
+/** A format of a source with the columns of a file its rules need and the file lacks (`missingInputColumns`, as the worker's `columnGaps` gives them). */
+export interface FormatGaps {
+  conversion: SourceConversionRef;
+  gaps: readonly { header: string }[];
+}
+
+/**
+ * For each of these missing columns, the formats whose rules need it: it is required by them, or they use it though it is optional
+ * (SPEC 21 v11 items 4-7). A column no format needs maps to an empty list. Headers are compared the way matching does (NFC, trimmed,
+ * lower-case), keyed by the header as given.
+ */
+export function formatsNeeding(columns: readonly string[], checked: readonly FormatGaps[]): Map<string, SourceConversionRef[]> {
+  const out = new Map<string, SourceConversionRef[]>();
+  for (const column of columns) {
+    const key = normalizeHeader(column);
+    out.set(
+      column,
+      checked.filter((f) => f.gaps.some((g) => normalizeHeader(g.header) === key)).map((f) => f.conversion),
+    );
+  }
+  return out;
 }
 
 /** A user-supplied name inside a sentence (a source, a column): isolated so a Hebrew name in an English sentence, or the reverse, never reorders the words around it. */
