@@ -4,9 +4,9 @@
 
 export const formatsEn = {
   // ----- Home for a signed-in user with formats (SPEC 16.1 screen 5) -----
-  'home.convert': 'Convert a file',
+  'home.convert': 'Run a format',
   'home.teachNew': 'Teach a new format',
-  'home.convertLead': 'Drop the next file on one of your formats, or teach a new one from two examples.',
+  'home.convertLead': 'Drop your next files on your formats, or teach a new one from two examples.',
 
   // ----- statuses -----
   'status.verified': 'Verified',
@@ -38,7 +38,7 @@ export const formatsEn = {
   'formats.count.draft': '{n} draft',
   'formats.count.needsReview': '{n} need review',
   'formats.slots': 'Saved formats: {used} of {max}',
-  'formats.convert': 'Convert a file',
+  'formats.convert': 'Run this format',
   'formats.addSource': 'Add a source',
   'formats.batch': 'Run a batch',
   'formats.editRules': 'Edit rules',
@@ -150,9 +150,9 @@ export const formatsEn = {
 } as const satisfies Record<string, string>;
 
 export const formatsHe: Record<keyof typeof formatsEn, string> = {
-  'home.convert': 'המרת קובץ',
+  'home.convert': 'הרצת פורמט',
   'home.teachNew': 'ללמד פורמט חדש',
-  'home.convertLead': 'העלו את הקובץ הבא לאחד הפורמטים שלכם, או למדו פורמט חדש משתי דוגמאות.',
+  'home.convertLead': 'העלו את הקבצים הבאים לפורמטים שלכם, או למדו פורמט חדש משתי דוגמאות.',
 
   'status.verified': 'מאומת',
   'status.differencesAccepted.one': 'הבדל אחד',
@@ -182,7 +182,7 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'formats.count.draft': '{n} טיוטות',
   'formats.count.needsReview': '{n} דורשים בדיקה',
   'formats.slots': 'פורמטים שמורים: {used} מתוך {max}',
-  'formats.convert': 'המרת קובץ',
+  'formats.convert': 'הרצת הפורמט',
   'formats.addSource': 'הוספת מקור',
   'formats.batch': 'הרצת קבוצת קבצים',
   'formats.editRules': 'עריכת כללים',

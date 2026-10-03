@@ -107,6 +107,11 @@ export function AccountMenu() {
           </div>
           <ul className="account__list">
             <li>
+              <Link className="account__item" to="/convert" onClick={() => setOpen(false)}>
+                {t('conv.nav')}
+              </Link>
+            </li>
+            <li>
               <Link className="account__item" to="/formats" onClick={() => setOpen(false)}>
                 {t('account.myFormats')}
               </Link>

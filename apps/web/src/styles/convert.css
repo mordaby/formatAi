@@ -382,9 +382,6 @@
   flex-direction: column;
   gap: var(--s-3);
 }
-.dz--batch .dz__target {
-  min-block-size: 140px;
-}
 
 @media (max-width: 640px) {
   .review__tally {

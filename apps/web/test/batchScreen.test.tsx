@@ -1,18 +1,17 @@
-// The Batch screen (SPEC 5 D, 8.15, 11): gated by tier (paid only; the files per run come from the tier), one file at a time in
+// The several-files half of the Run screen (SPEC 5 D, 8.15, 11, 21 v11): the files per run come from the tier, one file at a time in
 // the worker, each file matched to a SOURCE on its own (auto-pick only), a status per file, results grouped by format (a source
 // that feeds several formats converts the file into all of them), a zip and a summary sheet, and counts-only reports to the API.
-// The last tests run the real worker methods and open the zip and the sheet.
+// The last tests run the real worker methods and open the zip and the sheet. (One dropped file is the Convert flow: see runScreen.test.)
 import { readWorkbook, readZip, type Flag } from '@formatai/engine';
 import { tiers } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { webConfig } from '../src/config';
-import BatchPage from '../src/pages/Batch';
+import ConvertPage from '../src/pages/Convert';
 import type { BatchArgs, ConvertRunOutput, MatchFileOutput } from '../src/worker/convertApi';
 import { createEngineClient, type EngineClient } from '../src/worker/engineClient';
 import { engineMethods } from '../src/worker/engineMethods';
 import { loopbackWorker } from './helpers/loopback';
-import { csvFile, entry, fakeConvertApi, match, PAID, renderConvert, REGISTERED, RULES, SUPPLIER_A_CLEAN_CSV, SUPPLIER_A_CSV, sourceEntry } from './helpers/convertKit';
+import { csvFile, entry, fakeConvertApi, match, PAID, renderConvert, RULES, SUPPLIER_A_CLEAN_CSV, SUPPLIER_A_CSV, sourceEntry } from './helpers/convertKit';
 
 const { signInOpen, downloaded } = vi.hoisted(() => ({ signInOpen: vi.fn(), downloaded: vi.fn() }));
 vi.mock('../src/app/SignIn', () => ({ useSignIn: () => ({ open: signInOpen, close: vi.fn() }) }));
@@ -25,37 +24,22 @@ afterEach(() => {
 
 const flag = (rowNumber: number): Flag => ({ rowNumber, column: 'c_qty', rule: 'type', value: 'abc', messageKey: 'flag.parseFailed.integer' });
 
+/**
+ * Drops files on the Run screen's zone. One file would be the Convert flow, so a batch of exactly one file is made the way a user
+ * can: two files dropped, the second taken out again.
+ */
 async function addFiles(files: File[]) {
-  const input = (await screen.findByTestId('batch-input')) as HTMLInputElement;
+  const input = (await screen.findByLabelText('Files to convert')) as HTMLInputElement;
+  const only = files.length === 1;
   await act(async () => {
-    fireEvent.change(input, { target: { files } });
+    fireEvent.change(input, { target: { files: only ? [...files, csvFile('filler.csv', 'x')] : files } });
   });
+  if (only) fireEvent.click(await screen.findByRole('button', { name: 'Remove filler.csv' }));
 }
 
-describe('who can run a batch', () => {
-  it('signed out: the sign-in wall, and what Batch does is still shown', async () => {
-    renderConvert(<BatchPage />, { api: fakeConvertApi({ user: null }), engine: {} as EngineClient, route: '/batch' });
-    expect(await screen.findByText('Sign in to run a batch')).toBeTruthy();
-    expect(screen.getByText('Convert many files in one go. Each file is matched to its own source, and you download one zip.')).toBeTruthy();
-    expect(screen.queryByTestId('batch-input')).toBeNull();
-  });
-
-  it('registered (not paid): what it does, the paid limit, an Upgrade prompt - and no way to run one', async () => {
-    const api = fakeConvertApi({ user: REGISTERED });
-    renderConvert(<BatchPage />, { api, engine: {} as EngineClient, route: '/batch' });
-    expect(await screen.findByText('Batch is part of the paid plan')).toBeTruthy();
-    expect(screen.getByText(/Convert up to 50 files in one run/)).toBeTruthy();
-    expect(screen.getByText('You get a zip with the converted files, grouped by format, and a summary sheet of every flag.')).toBeTruthy();
-    // Upgrade opens the shared panel (no payment code in the MVP): a contact address.
-    fireEvent.click(screen.getByRole('button', { name: 'Upgrade' }));
-    expect(screen.getByRole('link', { name: /contact/i }).getAttribute('href')).toBe(webConfig.contactHref);
-    expect(screen.queryByTestId('batch-input')).toBeNull();
-    // A registered user converts one file at a time, so the sources are not even loaded here.
-    expect(api.signatures).not.toHaveBeenCalled();
-  });
-
+describe('what the several-files half takes', () => {
   it('paid: the drop zone takes up to the files per run of the tier, and says when more were dropped', async () => {
-    renderConvert(<BatchPage />, { api: fakeConvertApi({ user: PAID }), engine: {} as EngineClient, route: '/batch' });
+    renderConvert(<ConvertPage />, { api: fakeConvertApi({ user: PAID }), engine: {} as EngineClient });
     const limit = tiers.paid.filesPerRun;
     await addFiles(Array.from({ length: limit + 3 }, (_, i) => csvFile(`f${i}.csv`, SUPPLIER_A_CLEAN_CSV)));
     expect(await screen.findByText(`${limit} files`)).toBeTruthy();
@@ -65,7 +49,7 @@ describe('who can run a batch', () => {
   });
 
   it('turns away files it cannot read and files already added', async () => {
-    renderConvert(<BatchPage />, { api: fakeConvertApi({ user: PAID }), engine: {} as EngineClient, route: '/batch' });
+    renderConvert(<ConvertPage />, { api: fakeConvertApi({ user: PAID }), engine: {} as EngineClient });
     const a = csvFile('a.csv', SUPPLIER_A_CLEAN_CSV);
     await addFiles([a, new File(['x'], 'notes.pdf')]);
     expect(screen.getAllByTestId('batch-file')).toHaveLength(1);
@@ -128,7 +112,7 @@ describe('a batch, file by file', () => {
   it('matches each file on its own, gives each a status, groups by format, and packs a zip and a summary', async () => {
     const api = fakeConvertApi({ user: PAID, entries });
     const { engine, order, max, batch, convertWithDecisions } = setup();
-    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x'), csvFile('e.csv', 'x'), csvFile('c.csv', 'x'), csvFile('d.csv', 'x'), csvFile('bad.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 6 files' }));
 
@@ -184,7 +168,7 @@ describe('a batch, file by file', () => {
   it('POST /runs per converted file carries counts only: no values, headers or file names', async () => {
     const api = fakeConvertApi({ user: PAID, entries });
     const { engine } = setup();
-    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x'), csvFile('e.csv', 'x'), csvFile('c.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 4 files' }));
     await screen.findByTestId('batch-results');
@@ -210,7 +194,7 @@ describe('a batch, file by file', () => {
           stopNow = () => reject(Object.assign(new Error('Cancelled'), { name: 'CancelledError' }));
         }),
     );
-    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x'), csvFile('e.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 3 files' }));
     await waitFor(() => expect(stopNow).toBeDefined());
@@ -264,7 +248,7 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
   it('one file whose source feeds 2 formats gives 2 outputs, grouped by format, with a row per (file, format) in the summary', async () => {
     const { engine, matchFile, convertWithDecisions, batch, rulesById } = setup();
     const api = fakeConvertApi({ user: PAID, entries: [feeds, other], rulesById });
-    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x'), csvFile('x.csv', 'x')]);
     // (working, but never advertised: the page's text does not mention sources that feed several formats)
     expect(document.body.textContent).not.toMatch(/feeds several formats|all of them/);
@@ -324,7 +308,7 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
   it('a format whose rules cannot run does not stop the file\'s other formats: it is listed as not converted, with the format named', async () => {
     const { engine, batch, rulesById } = setup({ failC2: true });
     const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
-    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
     const results = await screen.findByTestId('batch-results');
@@ -346,7 +330,7 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
     const { engine, matchFile, convertWithDecisions, rulesById } = setup();
     matchFile.mockImplementationOnce(async () => ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: 's1', score: 0.9, missingRequired: ['Qty'] }) } }) as MatchFileOutput);
     const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
-    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('d.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
     await screen.findByTestId('batch-results');
@@ -359,7 +343,7 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
   it('the progress counts FILES, not the (file, format) items a finished file becomes', async () => {
     const { engine, rulesById } = setup();
     const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
-    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
     expect(screen.getByTestId('batch-count').textContent).toBe('2 files');
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
@@ -382,7 +366,7 @@ describe('the real worker: one source, two formats', () => {
     });
     const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById: { c1: RULES, c2: RULES_ERP } });
     const engine = createEngineClient({ createWorker: () => loopbackWorker(engineMethods) });
-    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('jan.csv', SUPPLIER_A_CLEAN_CSV)]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
     await screen.findByRole('button', { name: 'Download all (zip)' }, { timeout: 15000 });
@@ -412,7 +396,7 @@ describe('the real worker: the zip and the summary sheet', () => {
   it('converts real files one at a time and hands back a zip (a folder per format) and a workbook of files and flags', async () => {
     const api = fakeConvertApi({ user: PAID, entries: [entry({ conversionId: 'c1' })] });
     const engine = createEngineClient({ createWorker: () => loopbackWorker(engineMethods) });
-    renderConvert(<BatchPage />, { api, engine, route: '/batch' });
+    renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('jan.csv', SUPPLIER_A_CLEAN_CSV), csvFile('feb.csv', SUPPLIER_A_CSV), csvFile('other.csv', 'Foo,Bar\n1,2\n3,4\n')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 3 files' }));
     await screen.findByRole('button', { name: 'Download all (zip)' }, { timeout: 15000 });

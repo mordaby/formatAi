@@ -3,7 +3,7 @@
 // then a download each and a zip), missing and renamed columns (detected once per source), the review of flagged rows BEFORE the
 // file is written and the decisions it sends, the run summary, and what is (and is not) sent to the API.
 import type { Flag, RunSummary } from '@formatai/engine';
-import type { Rules } from '@formatai/shared';
+import { tiers, type Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatchArgs, ConvertRunOutput, MatchFileArgs, MatchFileOutput } from '../src/worker/convertApi';
@@ -60,7 +60,7 @@ function fakeEngine(opts: EngineOpts = {}) {
   return { engine, matchFile, convertWithDecisions, batch };
 }
 
-async function drop(name = 'jan.csv', body = SUPPLIER_A_CSV, label = 'File to convert') {
+async function drop(name = 'jan.csv', body = SUPPLIER_A_CSV, label = 'Files to convert') {
   const input = await screen.findByLabelText(label);
   await act(async () => {
     fireEvent.change(input, { target: { files: [csvFile(name, body)] } });
@@ -71,8 +71,8 @@ describe('signed out', () => {
   it('meets the sign-in wall, not the tool, and no formats are loaded', async () => {
     const api = fakeConvertApi({ user: null });
     renderConvert(<ConvertPage />, { api, engine: fakeEngine().engine });
-    expect(await screen.findByText('Sign in to convert a file')).toBeTruthy();
-    expect(screen.queryByLabelText('File to convert')).toBeNull();
+    expect(await screen.findByText('Sign in to run a format')).toBeTruthy();
+    expect(screen.queryByLabelText('Files to convert')).toBeNull();
     expect(api.signatures).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(signInOpen).toHaveBeenCalled();
@@ -132,7 +132,7 @@ describe('matching', () => {
   it('never advertises one source feeding several formats: the lead speaks of "its format"', async () => {
     const api = fakeConvertApi();
     renderConvert(<ConvertPage />, { api, engine: fakeEngine().engine });
-    expect(await screen.findByText('Drop a file. We find which of your sources it is and make it into its format.')).toBeTruthy();
+    expect(await screen.findByText(`Drop a file, or up to ${tiers.registered.filesPerRun} at once. We find which of your sources each one is and make it into its format.`)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/or formats|several formats|feeds/i);
   });
 
@@ -882,8 +882,8 @@ describe('Hebrew', () => {
   it('the same screen is available in Hebrew, and the file names stay isolated', async () => {
     const { engine } = fakeEngine();
     renderConvert(<ConvertPage />, { api: fakeConvertApi(), engine, lang: 'he' });
-    expect(await screen.findByText('המרת קובץ')).toBeTruthy();
-    await drop('ינואר.csv', SUPPLIER_A_CSV, 'קובץ להמרה');
+    expect(await screen.findByText('הרצת פורמט')).toBeTruthy();
+    await drop('ינואר.csv', SUPPLIER_A_CSV, 'קבצים להמרה');
     expect(await screen.findByText('הקובץ שלכם מוכן')).toBeTruthy();
   });
 
@@ -898,7 +898,7 @@ describe('Hebrew', () => {
     });
     const { engine } = fakeEngine({ match: autoSource() });
     renderConvert(<ConvertPage />, { api: fakeConvertApi({ entries: [hebrew], rulesById }), engine, lang: 'he' });
-    await drop('ינואר.csv', SUPPLIER_A_CSV, 'קובץ להמרה');
+    await drop('ינואר.csv', SUPPLIER_A_CSV, 'קבצים להמרה');
     expect(await screen.findByText('הקובץ הזה מזין 2 פורמטים')).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: 'כל הפורמטים' })).toBeTruthy();
     // A format name is a <bdi>: a Hebrew name never reorders the words around it, and an English one stays whole.

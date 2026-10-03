@@ -54,7 +54,7 @@ export default function Home() {
     previous.current = state.status;
   }, [state.status, navigate]);
 
-  // SPEC 16.1 screen 5: a signed-in user who has formats starts from "Convert a file"; teaching a new one is the other button.
+  // SPEC 16.1 screen 5: a signed-in user who has formats starts from "Run a format"; teaching a new one is the other button.
   const offerConvert = me.user !== null && (me.formatCount ?? 0) > 0 && state.status === 'idle' && !teaching && session.input === null && session.output === null;
 
   let view;

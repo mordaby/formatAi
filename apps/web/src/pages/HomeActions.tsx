@@ -3,7 +3,7 @@ import { useI18n } from '../i18n';
 import { Button } from '../ui';
 
 /**
- * SPEC 16.1 screen 5: for a signed-in user who has saved formats, Home's first action is "Convert a file", with "Teach a new
+ * SPEC 16.1 screen 5: for a signed-in user who has saved formats, Home's first action is "Run a format", with "Teach a new
  * format" next to it (the two drop zones open under it).
  */
 export function HomeActions({ onTeach }: { onTeach(): void }) {

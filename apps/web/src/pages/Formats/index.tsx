@@ -27,7 +27,7 @@ function Formats() {
   const formats = useLoad((signal) => api.registry.listFormats(signal), []);
   const { setFormatCount } = me;
 
-  // The list is the freshest word on how many formats there are: Home's "Convert a file" reads the same number.
+  // The list is the freshest word on how many formats there are: Home's "Run a format" reads the same number.
   const count = formats.state.status === 'ready' ? formats.state.data.length : undefined;
   useEffect(() => {
     if (count !== undefined) setFormatCount(count);

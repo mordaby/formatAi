@@ -1,4 +1,5 @@
-// Flow D as a state machine (SPEC 5 D, 8.15): many files, one at a time in the worker. Each file is matched to a SOURCE on its
+// Flow D as a state machine (SPEC 5 D, 8.15): many files, one at a time in the worker. It is the several-files half of the Run
+// screen (/convert): the page owns the saved sources (scoped by `?format=`) and hands them in. Each file is matched to a SOURCE on its
 // own (only a clear, single winner is used: no guessing, no per-file mapping in the MVP) and converted with the rules of every
 // conversion that source has, and gets a status: converted, converted with flags, or didn't match. Then the worker packs a zip
 // (a folder per format) and a summary workbook. Files and their bytes stay on this computer; POST /runs gets counts only.
@@ -16,8 +17,9 @@ import { downloadBytes, outputFileName } from '../../flow/download';
 import { isCancellation } from '../../flow/errors';
 import { useI18n, type I18n } from '../../i18n';
 import { useServices } from '../../services';
+import { isAcceptedFile } from '../../ui';
 import type { BatchOutputFile, SummaryTable } from '../../worker/convertApi';
-import { columnLabel, isolate, runCounts, scopeSources, signatureOf } from '../Convert/logic';
+import { columnLabel, isolate, runCounts, signatureOf } from '../Convert/logic';
 
 export type BatchStatus = 'queued' | 'running' | 'converted' | 'convertedFlags' | 'noMatch';
 
@@ -53,9 +55,6 @@ export interface BatchItem {
 
 export type BatchPhase = 'idle' | 'running' | 'packing' | 'done';
 
-/** `entries` are the sources that feed at least one format: a source with no conversion cannot convert anything (SPEC 8.15). */
-export type BatchSources = { status: 'loading' } | { status: 'ready'; entries: SignatureEntry[] } | { status: 'error' };
-
 /** What converting one file gave for ONE of its conversions: the item's fields, the file made, and the counts to report. */
 interface ConversionResult {
   change: Partial<BatchItem>;
@@ -69,6 +68,8 @@ export interface BatchDownloads {
 }
 
 export interface AddResult {
+  /** Files that went into the list. */
+  added: number;
   /** Files not added: wrong type or too large. */
   skipped: number;
   /** Files not added because the plan's files-per-run limit was reached. */
@@ -76,7 +77,6 @@ export interface AddResult {
 }
 
 export interface UseBatchFlow {
-  sources: BatchSources;
   phase: BatchPhase;
   items: BatchItem[];
   /** How many FILES are done, for the progress line (one file can give several items). */
@@ -97,7 +97,6 @@ export interface UseBatchFlow {
   reset(): void;
 }
 
-const ACCEPTED = ['.xlsx', '.xls', '.csv', '.txt'];
 const fileKey = (f: File): string => `${f.name}|${f.size}|${f.lastModified}`;
 
 /** The sentence for a "didn't match" reason. */
@@ -123,14 +122,14 @@ export function reasonText(i18n: I18n, reason: NoMatchReason): string {
   }
 }
 
-export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }): UseBatchFlow {
+/** `entries` are the sources the page may run: each feeds at least one format, and on `?format=` only that format's conversion (SPEC 8.15). */
+export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly SignatureEntry[] }): UseBatchFlow {
   const i18n = useI18n();
   const { engine } = useServices();
   const api = useConvertApi();
   const limits = tiers[tier];
   const filesPerRun = limits.filesPerRun;
 
-  const [sources, setSources] = useState<BatchSources>({ status: 'loading' });
   const [phase, setPhase] = useState<BatchPhase>('idle');
   const [items, setItems] = useState<BatchItem[]>([]);
   const [stopped, setStopped] = useState(false);
@@ -149,19 +148,6 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
   const i18nRef = useRef(i18n);
   i18nRef.current = i18n;
 
-  useEffect(() => {
-    if (!enabled) return;
-    const abort = new AbortController();
-    setSources({ status: 'loading' });
-    api.signatures(abort.signal).then(
-      (list) => setSources({ status: 'ready', entries: scopeSources(list, null) }),
-      (e: unknown) => {
-        if (!abort.signal.aborted && !(e instanceof DOMException && e.name === 'AbortError')) setSources({ status: 'error' });
-      },
-    );
-    return () => abort.abort();
-  }, [api, enabled]);
-
   useEffect(
     () => () => {
       runRef.current++;
@@ -176,12 +162,11 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
 
   const add = useCallback(
     (files: readonly File[]): AddResult => {
-      const result: AddResult = { skipped: 0, overLimit: 0 };
+      const result: AddResult = { added: 0, skipped: 0, overLimit: 0 };
       const have = new Set(itemsRef.current.map((i) => fileKey(i.file)));
       const fresh: BatchItem[] = [];
       for (const f of files) {
-        const name = f.name.toLowerCase();
-        if (!ACCEPTED.some((ext) => name.endsWith(ext)) || f.size > limits.maxFileBytes) {
+        if (!isAcceptedFile(f.name) || f.size > limits.maxFileBytes) {
           result.skipped++;
           continue;
         }
@@ -195,6 +180,7 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
         fresh.push({ id, fileId: id, file: f, status: 'queued', flags: [], columnLabels: {} });
       }
       if (fresh.length > 0) setItems((list) => [...list, ...fresh]);
+      result.added = fresh.length;
       return result;
     },
     [filesPerRun, limits.maxFileBytes],
@@ -311,12 +297,11 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
   );
 
   const run = useCallback(() => {
-    if (sources.status !== 'ready' || itemsRef.current.length === 0) return;
+    if (entries.length === 0 || itemsRef.current.length === 0) return;
     abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
     const runId = ++runRef.current;
-    const entries = sources.entries;
     const queue = itemsRef.current.map((i) => i.id);
     outputs.current.clear();
     rulesCache.current.clear();
@@ -379,7 +364,7 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
       }
       if (runId === runRef.current) setPhase('done');
     })();
-  }, [api, convertOne, pack, patch, sources]);
+  }, [api, convertOne, entries, pack, patch]);
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
@@ -405,5 +390,5 @@ export function useBatchFlow({ tier, enabled }: { tier: Tier; enabled: boolean }
   const done = useMemo(() => new Set(items.filter((i) => i.status !== 'queued' && i.status !== 'running').map((i) => i.fileId)).size, [items]);
   const total = useMemo(() => new Set(items.map((i) => i.fileId)).size, [items]);
 
-  return { sources, phase, items, done, total, stopped, packError, downloads, filesPerRun, add, remove, clear, run, stop, downloadZip, downloadSummary, reset };
+  return { phase, items, done, total, stopped, packError, downloads, filesPerRun, add, remove, clear, run, stop, downloadZip, downloadSummary, reset };
 }

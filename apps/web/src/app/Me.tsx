@@ -26,7 +26,7 @@ export interface Me {
   /** What is left of the AI learns (null when unknown, or not signed in). */
   quota: AiLearnQuotaState | null;
   notice: AuthNotice | null;
-  /** How many formats the signed-in user has saved (null: not signed in, or not known yet). Home offers "Convert a file" first when there are some. */
+  /** How many formats the signed-in user has saved (null: not signed in, or not known yet). Home offers "Run a format" first when there are some. */
   formatCount: number | null;
   /** Reads the format count again (after saving, renaming or deleting one). */
   refreshFormats(): Promise<void>;
