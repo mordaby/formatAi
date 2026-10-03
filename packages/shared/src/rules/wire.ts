@@ -59,7 +59,7 @@ import {
   SortKeySchema,
   StopAtSchema,
   SummaryAggSchema,
-  UnsupportedSchema,
+  buildUnsupportedSchema,
   ValidationSchema,
   type Expand,
   type Expr,
@@ -137,6 +137,9 @@ const WireComputedSchema = buildComputedSchema(WireExprSchema);
 const WireValueMapSchema = buildValueMapSchema(wireStringMapSchema);
 const WireRulesFunctionSchema = buildRulesFunctionSchema(WireExprSchema);
 
+// learn-v7: the optional functionRequest / explanation notes, with no pattern or length caps on the wire (see `buildFunctionRequestSchema`).
+const WireUnsupportedSchema = buildUnsupportedSchema(false);
+
 const WireRulesInputSchema = z.strictObject({
   sheet: InputSheetSelectorSchema,
   headerRow: HeaderRowSchema,
@@ -166,7 +169,7 @@ const WireLearnResultSchema = z.strictObject({
   transform: WireRulesTransformSchema,
   output: WireRulesOutputSchema,
   validations: z.array(ValidationSchema),
-  unsupported: z.array(UnsupportedSchema),
+  unsupported: z.array(WireUnsupportedSchema),
   assumptions: z.array(AssumptionSchema),
 });
 

@@ -118,7 +118,7 @@ describe('preflight: SPEC 6.3 blocks', () => {
 });
 
 describe('preflight: SPEC 6.4 warns', () => {
-  it('unknownOutputColumns: some (not all) output columns are unknown -> skipColumns', () => {
+  it('unknownOutputColumns: some (not all) output columns are unknown -> a note only (info): no warn status, nothing skipped', () => {
     const input: V[][] = [['Id', 'Amount']];
     const output: V[][] = [['Id', 'Amount', 'Extra']];
     for (let i = 0; i < 10; i++) {
@@ -127,9 +127,9 @@ describe('preflight: SPEC 6.4 warns', () => {
     }
     const a = analyzeOk(xlsx(input), xlsx(output));
     const pf = preflight(a, 'registered');
-    expect(pf.status).toBe('warn');
-    expect(pf.skipColumns).toEqual([2]);
-    expect(pf.issues).toContainEqual({ code: 'unknownOutputColumns', severity: 'warn', params: { count: 1 } });
+    expect(pf.status).toBe('ok');
+    expect(pf.skipColumns).toEqual([]);
+    expect(pf.issues).toEqual([{ code: 'unknownOutputColumns', severity: 'info', params: { count: 1 } }]);
   });
 
   it('rowsNotAligned: some output rows could not be matched to an input row', () => {

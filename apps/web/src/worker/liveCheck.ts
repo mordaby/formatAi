@@ -4,20 +4,23 @@
 //   result with the example output (`verifyAgainstExample`). Returns counts, per-column counts, a preview
 //   with mismatching rows first, and how long it took. Above `fullCheckAboveRows` example rows it runs on a
 //   deterministic prefix subset and says so (`partial`); `subset: false` runs every row (Apply).
-// - `staticChecks`: zod, checkRules, typeCheck, checkLimits and (inside a format) the format lock.
+// - `staticChecks`: zod, checkRules, typeCheck, checkLimits and (inside a format) the format lock; and, for a conversion about to
+//   join an existing source, the source lock (SPEC 8.15).
 //
 // Pure functions over a `PairAnalysis` and rules, so a Node test runs the same code the worker does.
 import {
   checkFormatLock,
   checkLimits,
+  checkSourceLock,
   typeCheck,
   verifyAgainstExample,
   type PairAnalysis,
   type VerifyResult,
 } from '@formatai/engine';
-import type { Format, LearnResult, PayloadCell, Rules } from '@formatai/shared';
+import type { Format, LearnResult, PayloadCell, Rules, SourceStructure } from '@formatai/shared';
 import { checkRules, LearnResultSchema, RulesSchema } from '@formatai/shared';
 import { editorConfig } from '../editor/config';
+import type { ExampleInputColumn } from '../editor/types';
 import type { LiveCheckResult, PreviewRow, StaticCheckOptions, StaticProblem } from './editorApi';
 
 // ---------- the example kept in worker memory ----------
@@ -37,10 +40,27 @@ let current: { id: string; analysis: PairAnalysis } | undefined;
  * Keeps this example (only the last one) and returns its id. The id is random, so an id from before a worker
  * restart can never be mistaken for a newer example.
  */
-export function rememberExample(analysis: PairAnalysis): string {
-  const id = crypto.randomUUID();
+export function rememberExample(analysis: PairAnalysis, keepId?: string): string {
+  // `keepId`: a completion run re-reads the same two files, so the example it holds is the one the screen already checks against.
+  const id = keepId ?? crypto.randomUUID();
   current = { id, analysis };
   return id;
+}
+
+/**
+ * The example INPUT's columns for the rules editor's source dropdowns (SPEC 8.11): the header and what the profile knows
+ * about the values (never the values). A column no rule declares yet can still be chosen.
+ */
+export function exampleInputOf(analysis: PairAnalysis): ExampleInputColumn[] {
+  return analysis.input.profile.map((p) => ({
+    header: p.header,
+    type: p.type,
+    ...(p.israeliId ? { israeliId: true } : {}),
+    ...(p.leadingZerosLost ? { leadingZerosLost: true } : {}),
+    ...(p.serialDates ? { serialDates: true } : {}),
+    ...(p.len !== undefined ? { maxLength: p.len[1] } : {}),
+    ...(p.dateFormat !== undefined ? { dateFormat: p.dateFormat } : {}),
+  }));
 }
 
 export function getExample(id: string): PairAnalysis {
@@ -157,6 +177,8 @@ export interface CheckExampleOptions {
   exceptions?: number[];
   /** Allow the subset above `fullCheckAboveRows` rows (default true). `false` checks every row. */
   subset?: boolean;
+  /** SPEC 21 v5 item 1: the local partial result compares only the columns code built (0-based positions in `rules.output.columns`). */
+  onlyColumns?: number[];
 }
 
 export function checkExample(analysis: PairAnalysis, rules: LearnResult | Rules, opts: CheckExampleOptions = {}): LiveCheckResult {
@@ -166,7 +188,7 @@ export function checkExample(analysis: PairAnalysis, rules: LearnResult | Rules,
   const partial = opts.subset !== false && rowsInExample > editorConfig.fullCheckAboveRows;
   const target = partial ? subsetAnalysis(analysis, editorConfig.subsetRows) : analysis;
 
-  const v = verifyAgainstExample(rules, target, { exceptions });
+  const v = verifyAgainstExample(rules, target, { exceptions, ...(opts.onlyColumns ? { onlyColumns: opts.onlyColumns } : {}) });
 
   // Per column: every aligned row is compared on every example column, so a column's misses are its mismatches.
   const missesByHeader = new Map<string, number>();
@@ -236,6 +258,12 @@ export function runStaticChecks(rules: LearnResult | Rules, opts: StaticCheckOpt
   if (opts.format) {
     const format: Format = opts.format;
     guard('formatLock', () => checkFormatLock(rules, format));
+  }
+  if (opts.source) {
+    const source: SourceStructure = opts.source;
+    // DECISION: aliases are not compared here. The check is for a conversion about to be saved into an EXISTING source, and there the
+    // server merges the file's aliases into the source instead of refusing (SPEC 8.15 "Saving": saving = reuse).
+    guard('sourceLock', () => checkSourceLock(rules, source, { ignoreAliases: true }));
   }
   return problems;
 }

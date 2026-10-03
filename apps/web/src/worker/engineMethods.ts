@@ -6,6 +6,7 @@ import {
   analyzePair,
   convertFile,
   detectTable,
+  isExternalColumn,
   learnFromExamples,
   nonEmptySheets,
   readWorkbook,
@@ -16,7 +17,8 @@ import {
 import type { AnalysisProgress, PairAnalysis } from '@formatai/engine';
 import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress, VerifyArgs, VerifyOutput } from './engineApi';
 import type { LiveCheckArgs, LiveCheckResult, LoadExampleArgs, LoadExampleOutput, StaticChecksArgs, StaticProblem } from './editorApi';
-import { checkExample, getExample, rememberExample, runStaticChecks } from './liveCheck';
+import { checkExample, exampleInputOf, getExample, rememberExample, runStaticChecks } from './liveCheck';
+import { convertMethods } from './convertMethods';
 import { Transfer, type MethodContext, type MethodMap } from './runtime';
 
 /**
@@ -50,12 +52,16 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     tier: args.tier,
     ...(args.target ? { target: args.target } : {}),
     ...(args.tryAnyway ? { tryAnyway: true } : {}),
+    ...(args.ai ? { ai: args.ai } : {}),
+    ...(args.complete ? { complete: args.complete } : {}),
     onProgress: (p: AnalysisProgress) => emit({ phase: 'checking', stage: p.stage, fraction: p.fraction }),
     onAnalysis: (a) => {
       analysis = a;
     },
     callLearn: async (payload) => {
-      emit({ phase: 'learning', attempt: 'learn' });
+      // SPEC 6.4: the columns code found no trace of in the input are said while the AI step works on them (in completion mode the user has seen them on the map).
+      const unexplained = analysis && !args.complete ? analysis.columns.filter(isExternalColumn).map((c) => c.header || `#${c.out + 1}`) : [];
+      emit({ phase: 'learning', attempt: 'learn', ...(unexplained.length > 0 ? { unexplained } : {}) });
       const out = await ctx.host<LearnCallResult>('callLearn', payload);
       emit({ phase: 'verifying' });
       return out;
@@ -68,7 +74,10 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     },
   });
   // The rules editor's live check (SPEC 8.11) re-runs rules on this example; it stays in the worker.
-  return analysis && result.rules ? { ...result, exampleId: rememberExample(analysis) } : result;
+  // Its input's columns come with it: the editor offers the ones no rule uses yet (headers only; the file stays here).
+  return analysis && result.rules
+    ? { ...result, exampleId: rememberExample(analysis, args.keepExampleId), exampleInput: exampleInputOf(analysis), exampleOutputColumns: analysis.output.columnCount }
+    : result;
 }
 
 async function convert(args: ConvertArgs): Promise<Transfer<ConvertOutput> | ConvertOutput> {
@@ -130,17 +139,31 @@ async function loadExample(args: LoadExampleArgs): Promise<LoadExampleOutput> {
     ...(args.target ? { outputFileSpec: args.target.output.file } : {}),
   });
   if (!analysis.ok) return { ok: false, reason: 'analysisFailed' };
-  return { ok: true, exampleId: rememberExample(analysis), inputRows: analysis.input.rows.length, outputRows: analysis.output.dataRows.length };
+  return {
+    ok: true,
+    exampleId: rememberExample(analysis),
+    exampleInput: exampleInputOf(analysis),
+    inputRows: analysis.input.rows.length,
+    outputRows: analysis.output.dataRows.length,
+  };
 }
 
 /** Runs the rules on the example in memory (a subset above 5,000 rows, unless `subset: false`). */
 function liveCheck(args: LiveCheckArgs): LiveCheckResult {
-  return checkExample(getExample(args.exampleId), args.rules, { ...(args.exceptions ? { exceptions: args.exceptions } : {}), subset: args.subset !== false });
+  return checkExample(getExample(args.exampleId), args.rules, {
+    ...(args.exceptions ? { exceptions: args.exceptions } : {}),
+    ...(args.onlyColumns ? { onlyColumns: args.onlyColumns } : {}),
+    subset: args.subset !== false,
+  });
 }
 
 /** The same check on every row (the editor's Apply). */
 function fullCheck(args: Omit<LiveCheckArgs, 'subset'>): LiveCheckResult {
-  return checkExample(getExample(args.exampleId), args.rules, { ...(args.exceptions ? { exceptions: args.exceptions } : {}), subset: false });
+  return checkExample(getExample(args.exampleId), args.rules, {
+    ...(args.exceptions ? { exceptions: args.exceptions } : {}),
+    ...(args.onlyColumns ? { onlyColumns: args.onlyColumns } : {}),
+    subset: false,
+  });
 }
 
 /** SPEC 9.2 layers 1-5: structure, references, types, limits, and the format lock inside a format. */
@@ -148,4 +171,4 @@ function staticChecks(args: StaticChecksArgs): StaticProblem[] {
   return runStaticChecks(args.rules, { tier: args.tier, ...(args.format ? { format: args.format } : {}) });
 }
 
-export const engineMethods = { learn, convert, verify, inspect, loadExample, liveCheck, fullCheck, staticChecks } satisfies MethodMap;
+export const engineMethods = { learn, convert, verify, inspect, loadExample, liveCheck, fullCheck, staticChecks, ...convertMethods } satisfies MethodMap;

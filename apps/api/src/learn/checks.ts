@@ -9,11 +9,12 @@
 // collected. Layer 6 (the overfitting lint) is never a gate: it always runs and always
 // appends its findings to the returned rules' `assumptions`, regardless of what else
 // failed, since it costs nothing and the caller may still show this attempt to a human.
-import { checkFormatLock, checkLimits, formulaRulesFromWire, printFormula, typeCheck } from '@formatai/engine';
+import { checkFixedLock, checkFormatLock, checkLimits, completionProduced, formulaRulesFromWire, printFormula, typeCheck } from '@formatai/engine';
 import {
   checkRules,
   fromWire,
   LearnResultSchema,
+  type CompletePayload,
   type Expr,
   type Format,
   type LearnResult,
@@ -22,7 +23,9 @@ import {
   type RuleProblem,
   type LearnPayload,
   type Tier,
+  unsupportedDespiteEvidence,
 } from '@formatai/shared';
+import { dropInvalidNotes } from './notes.js';
 import { overfitLint } from './overfitLint.js';
 import { runOnSamples } from './sampleRun.js';
 
@@ -85,6 +88,18 @@ export interface ChecksResult {
   rules: LearnResult | null;
 }
 
+/**
+ * Completion mode: `payload.complete.fixed` (wire form, constants masked when masking is on) read back into a real
+ * `LearnResult` - the same steps an answer goes through (pairs -> records, formula text -> trees, zod). `null` when it
+ * cannot be read: the route refuses such a payload (`invalidPayload`) before any call is made.
+ */
+export function readCompleteFixed(complete: Pick<CompletePayload, 'fixed'>): LearnResult | null {
+  const { rules, problems } = formulaRulesFromWire(fromWire(complete.fixed));
+  if (problems.length > 0) return null;
+  const parsed = LearnResultSchema.safeParse(rules);
+  return parsed.success ? parsed.data : null;
+}
+
 function ruleProblemToRepairProblem(p: RuleProblem): RepairProblem {
   // RuleProblem's sub-kinds (reference/depth/duplicateId/arity) are all SPEC 9.2
   // layer 2 "References" - RepairProblem has one `reference` kind for the whole
@@ -118,6 +133,12 @@ function extraReferenceProblems(rules: LearnResult, payload: LearnPayload): Repa
     if (header !== undefined) mustBeNull.add(header);
   }
   for (const u of rules.unsupported) mustBeNull.add(u.outputColumn);
+  // Completion mode: a listed column with no `from` and no `unsupported` entry is reported, more precisely, by the fixed lock.
+  const listed = new Set<string>();
+  for (const i of payload.complete?.columns ?? []) {
+    const header = outputHeaderAt.get(i);
+    if (header !== undefined) listed.add(header);
+  }
 
   for (const col of rules.output.columns) {
     const shouldBeNull = mustBeNull.has(col.header);
@@ -127,7 +148,7 @@ function extraReferenceProblems(rules: LearnResult, payload: LearnPayload): Repa
         kind: 'reference',
         message: `output column "${col.header}" is in skipColumns or unsupported, so "from" must be null`,
       });
-    } else if (!shouldBeNull && isNull) {
+    } else if (!shouldBeNull && isNull && !listed.has(col.header)) {
       problems.push({
         kind: 'reference',
         message: `output column "${col.header}" has "from": null but is not in skipColumns or unsupported`,
@@ -153,13 +174,21 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
   // invalid formulas); this attempt stops here, same as layer 1 below, since there's no
   // point running reference/type/limit checks against a tree that still has raw text
   // sitting where an Expr belongs.
-  const { rules: formulaDecoded, problems: formulaProblems } = formulaRulesFromWire(fromWire(rawJson));
+  // Operations the prompt does not document (an op flagged `inPrompt: false` in the engine's OP_SIGNATURES) would be unknown
+  // functions here: the model was never told about them, so it cannot use them. learn-v7 documents every op, so none is held back
+  // today; the mechanism stays for the next op added before its prompt version. Completion mode is the one exception:
+  // `complete.fixed` is the user's own rules, which may already use them, and the answer must copy it unchanged.
+  const { rules: formulaDecoded, problems: formulaProblems } = formulaRulesFromWire(fromWire(rawJson), {
+    promptOpsOnly: payload.complete === undefined,
+  });
   if (formulaProblems.length > 0) {
     return { problems: formulaProblems, rules: null };
   }
 
   // ----- Layer 1: structure -----
-  const parsed = LearnResultSchema.safeParse(formulaDecoded);
+  // learn-v7: the optional notes of an unsupported entry (functionRequest, explanation) are extras: one that breaks its limits is dropped
+  // here, so it can never fail or repair a learn (`notes.ts`). The strict schema still checks everything else, notes included.
+  const parsed = LearnResultSchema.safeParse(dropInvalidNotes(formulaDecoded));
   if (!parsed.success) {
     const problems: RepairProblem[] = parsed.error.issues.map((issue) => ({
       kind: 'schema',
@@ -173,7 +202,7 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
   const problems: RepairProblem[] = [];
 
   // ----- Layer 2: references -----
-  problems.push(...checkRules(rules).map(ruleProblemToRepairProblem));
+  problems.push(...checkRules(rules, { rejectBuiltinFunctionNames: true }).map(ruleProblemToRepairProblem));
   problems.push(...extraReferenceProblems(rules, payload));
 
   // ----- Layer 3: types -----
@@ -197,7 +226,7 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
     ),
   );
 
-  // ----- Layer 5: format lock (attach mode only) -----
+  // ----- Layer 5: format lock (attach mode only; completion mode has its own, 5b below) -----
   if (payload.target) {
     const format: Format = {
       output: payload.target.output,
@@ -211,13 +240,53 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
     );
   }
 
+  // ----- Layer 5b: fixed lock (completion mode only) -----
+  // Both sides are still in the vocabulary of this payload (masked when masking is on), so they compare as they are.
+  if (payload.complete) {
+    const fixed = readCompleteFixed(payload.complete);
+    if (fixed) {
+      const asked = { columns: payload.complete.columns, parts: payload.complete.parts };
+      problems.push(
+        ...checkFixedLock(rules, fixed, asked).map((p): RepairProblem => ({ kind: 'fixedMismatch', path: p.path, message: p.message })),
+      );
+      // Reporting every listed column as unsupported and building no listed part is clean for the lock, but it is no completion.
+      const produced = completionProduced(rules, fixed, asked);
+      if ((asked.columns.length > 0 || asked.parts.length > 0) && produced.columns === 0 && produced.parts === 0) {
+        problems.push({
+          kind: 'fixedMismatch',
+          path: 'output.columns',
+          message: 'nothing that complete lists was produced: give at least one column of complete.columns a "from" (or build one of complete.parts), and report only what really cannot be produced as unsupported',
+        });
+      }
+    }
+  }
+
+  // ----- Layer 5c: something has to be produced (plain learn only; completion mode has its own, 5b above) -----
+  // A column honestly reported as unsupported is no problem (layer 7 leaves it out of the comparison), but a file in which EVERY column is
+  // is no learn: no value is produced at all. It is not "verified", however clean the rest.
+  if (!payload.complete && rules.output.columns.length > 0 && rules.output.columns.every((c) => c.from === null)) {
+    problems.push({
+      kind: 'reference',
+      message: 'every output column has "from": null (reported as unsupported), so the rules produce no value at all: give a "from" to every column that can be produced from the input, and report only what really cannot be produced as unsupported',
+    });
+  }
+
+  // ----- Layer 5d: an honest "unsupported" is no mismatch - unless the app's own analysis found how the column is built -----
+  // A hint for a column the answer gave up on (copy, template, composition, dependency, bands, window ...) is positive evidence that it can be
+  // produced: one repair round to write the rule (SPEC 9.2). A column with no hint stays accepted. Not a gate: the sample run below
+  // still runs, so the same repair call also carries any diff on the columns that do have a rule.
+  const gatesClean = problems.length === 0;
+  problems.push(...unsupportedDespiteEvidence(rules, payload));
+
   // ----- Layer 6: overfitting lint (never a rejection) -----
   const lintAssumptions = overfitLint(rules, payload);
   const rulesWithLint: LearnResult =
     lintAssumptions.length > 0 ? { ...rules, assumptions: [...rules.assumptions, ...lintAssumptions] } : rules;
 
   // ----- Layer 7: run on the samples (only once every gate above is clean) -----
-  if (problems.length === 0) {
+  // (A column reported as unsupported - `from: null` plus an entry - is left out of the diff: nothing to compare. Whether it should have been
+  // given a rule is layer 5d's question, not a comparison.)
+  if (gatesClean) {
     problems.push(...runOnSamples(rulesWithLint, payload));
   }
 

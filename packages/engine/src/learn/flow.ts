@@ -9,15 +9,18 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import type { Format, LearnPayload, LearnResult, RepairProblem, Tier } from '@formatai/shared';
+import { aiNotesOf, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Tier } from '@formatai/shared';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
 import { analyzePair } from './analyze';
+import { checkFixedLock, type FixedProblem } from '../registry/checkFixedLock';
+import { columnsWithRule, completionProduced, isCompletable, type CompleteOptions } from './complete';
 import { fastPath } from './fastPath';
 import { createMasker, unmaskRules, type Masker } from './mask';
-import { buildPayload } from './payload';
+import { partialRules, type PartialRulesResult } from './partial';
 import { preflight, type PreflightResult } from './preflight';
+import { aiReadiness, type AiReadiness } from './readiness';
 import { verifyAgainstExample, type VerifyResult } from './verify';
 
 /** What `callLearn`/`callRepair` return - the shape of `apps/api/src/learn`'s
@@ -51,8 +54,25 @@ export interface LearnFromExamplesOptions<Call = unknown> {
   /** SPEC 8.12/A2: attach mode - the existing format this input must produce. */
   target?: Format;
   /** SPEC 6.4: "Try anyway" past a "rows couldn't be aligned" warning. Trying anyway
-   * still counts as a learn, same as any other continued warn. */
+   * still counts as a learn once it reaches the AI step, same as any other continued warn. It never
+   * gets past the AI readiness gate (SPEC 21 v5 item 4): with no matched rows at all there is nothing
+   * to learn from (`path: 'notReady'`). */
   tryAnyway?: boolean;
+  /**
+   * SPEC 21 v5 item 1: whether this caller may use the AI step at all. 'notAllowed' (a user who isn't
+   * signed in) never reaches the LLM: when the fast path can't finish, the learn returns the local
+   * partial result (`path: 'partial'`) instead, with the columns that need the AI step listed. Default
+   * 'allowed' (the existing behavior). `callLearn` is never called when 'notAllowed'.
+   */
+  ai?: 'allowed' | 'notAllowed';
+  /**
+   * Completion mode (LEARN_PROMPT "Completing a partial rules file"): the user already has part of the rules
+   * (`fixedRules`, exactly as they are on screen) and the AI step only produces what is listed - output
+   * `columns` and layout `parts`. The fast path and the local partial result are skipped (the caller decided the AI
+   * step is wanted), the payload carries `complete`, and the answer must pass the fixed lock (`checkFixedLock`) as
+   * well as the full verification - see `LearnFromExamplesResult.completion`. Not combined with `target`.
+   */
+  complete?: CompleteOptions;
   /** SPEC 5 A step 5: one learn action (however many calls it takes under the hood -
    * server repair rounds and escalation are `callLearn`'s own business, e.g.
    * `apps/api/src/learn`'s `learn()`). */
@@ -76,7 +96,12 @@ export interface LearnFromExamplesOptions<Call = unknown> {
   onAnalysis?: (analysis: PairAnalysis) => void;
 }
 
-export type LearnPath = 'blocked' | 'local' | 'llm';
+/**
+ * blocked: pre-flight (SPEC 6.3) stopped it.  local: the strict fast path finished it, no LLM.
+ * llm: the AI step ran.  partial (v5): the local partial result - see `LearnFromExamplesResult.partial`.
+ * notReady (v5): the AI readiness gate stopped the AI step - see `readiness`; nothing was consumed.
+ */
+export type LearnPath = 'blocked' | 'local' | 'llm' | 'partial' | 'notReady';
 
 /**
  * DECISION: SPEC 10's report needs per-stage shares ("share blocked, share fast path
@@ -93,12 +118,37 @@ export interface LearnStages {
   fastPathSucceeded: boolean;
   llmCalled: boolean;
   /** Full verification passed right after `callLearn` (+ unmask), before any
-   * browser-triggered repair. Meaningless (always false) off the LLM path. */
+   * browser-triggered repair - and the answer gave up on no column the pair analysis had found a relation for
+   * (`unsupportedDespiteEvidence`: that alone is a reason for the repair call). Meaningless (always false) off the LLM path. */
   verifiedFirstCall: boolean;
   browserRepairUsed: boolean;
   /** Final verification result: after the browser-triggered repair when one was used,
    * otherwise the same as `verifiedFirstCall` (or the fast path's own verification). */
   verifiedAfterRepair: boolean;
+  /** v5: the AI readiness gate ran (the fast path did not finish the learn). */
+  readinessChecked?: boolean;
+  /** v5: the gate stopped the AI step with a block (`path: 'notReady'`). */
+  readinessBlocked?: boolean;
+  /** v5: the local partial result was built and returned (`path: 'partial'`). */
+  partialBuilt?: boolean;
+}
+
+/** v5 item 1: what the local partial result holds and why it was returned. */
+export interface PartialInfo {
+  /** The caller may not use the AI step (sign in to finish). It is the only reason: a result is never finished locally because the
+   * remaining columns "look external" - the AI step tries every column code couldn't explain (SPEC 6.4, 21 v7 note). */
+  reason: 'aiNotAllowed';
+  /** Headers of the output columns code built (and `verification` counts). */
+  solved: string[];
+  /** Headers of EVERY output column that needs the AI step: the ones with a dependency or composition code couldn't turn into a rule,
+   * and the ones it found no relation to the input for at all (`external`). */
+  needsAi: string[];
+  /** The subset of `needsAi` whose values code could not find in the input file: they "may come from another source" (wording only). */
+  external: string[];
+  /** Output column positions of `solved`. */
+  solvedColumns: number[];
+  /** What besides columns still needs the AI step (rows that change shape, dropped rows, sort, groups, ...). */
+  needsAiParts: AiStepPartCode[];
 }
 
 export interface LearnFromExamplesResult<Call = unknown> {
@@ -108,13 +158,46 @@ export interface LearnFromExamplesResult<Call = unknown> {
    * never returned anything usable even after repair. */
   rules: LearnResult | null;
   /** Full-file verification (SPEC 5 A step 6) of `rules` - or null when blocked or
-   * `rules` is null (nothing to verify). */
+   * `rules` is null (nothing to verify). On the LLM path (plain learn) a column the answer reports as unsupported is not compared: the
+   * verification covers the columns that have a rule, and `verified` means everything produced matches (never true when nothing was). */
   verification: VerifyResult | null;
   assumptions: LearnResult['assumptions'];
   unsupported: LearnResult['unsupported'];
   calls: Call[];
   stages: LearnStages;
+  /** path 'partial': see `PartialInfo`. `rules` are the partial rules; `verification` counts the solved columns only. */
+  partial?: PartialInfo;
+  /**
+   * learn-v7 (SPEC 8.10, 15): the AI step's notes on the columns it reported as unsupported, taken OUT of `rules`: its plain-language guess
+   * at the rule (unmasked here, real words) and whether a function request for the column was recorded. For the session only - the caller
+   * shows them and never stores them; `rules` and `unsupported` never carry them, so nothing that saves, caches or re-sends the rules can.
+   */
+  aiNotes?: AiColumnNote[];
+  /** The AI readiness verdict, when the gate ran (paths 'notReady', 'partial' and 'llm'). Issues carry codes and
+   * params for `aiReadinessMessages`; the payload the check built is not included. */
+  readiness?: AiReadiness;
+  /**
+   * Completion mode, path 'llm' with rules: what was asked, and the fixed lock's findings on the (unmasked) answer against the
+   * real fixed rules. The answer may replace the user's rules only when `fixedProblems` is empty AND `matches`.
+   */
+  completion?: {
+    columns: number[];
+    parts: AiStepPartCode[];
+    fixedProblems: FixedProblem[];
+    /**
+     * The answer matches the example as far as the AI step is responsible for it: every cell of a column it produced matches, and it made
+     * nothing worse anywhere else - a difference the user's own rules already had (an edit that departs from the example on purpose, a
+     * layout part still missing) is not counted against it, and neither is a column that still has no rule (the AI step may report a
+     * listed column as unsupported; it is left empty, and the editor says "needs your input").
+     */
+    matches: boolean;
+    /** What the answer produced of what was asked: listed columns that got a rule, listed parts it built. Nothing produced is no completion. */
+    produced: { columns: number; parts: number };
+  };
 }
+
+/** Like the diff problems (LEARN_PROMPT §4: "At most 10 diff problems are sent"), a repair call needs enough fixed-lock findings to fix the pattern, not all of them. */
+const MAX_FIXED_PROBLEMS = 10;
 
 function emptyStages(status: PreflightResult['status']): LearnStages {
   return {
@@ -125,6 +208,9 @@ function emptyStages(status: PreflightResult['status']): LearnStages {
     verifiedFirstCall: false,
     browserRepairUsed: false,
     verifiedAfterRepair: false,
+    readinessChecked: false,
+    readinessBlocked: false,
+    partialBuilt: false,
   };
 }
 
@@ -134,12 +220,18 @@ function blockedResult<Call>(pf: PreflightResult): LearnFromExamplesResult<Call>
 
 /**
  * Runs SPEC 5 flow A/A2 end to end: read both files, analyze the pair, pre-flight,
- * the local fast path, the (optionally masked) payload, the learn call, unmasking,
- * full verification, and - when needed and offered - one browser-triggered repair.
+ * the local fast path, the AI readiness gate (v5: which also builds the (optionally masked) payload, and
+ * decides whether the AI step runs at all - see `ai`, `partial` and `readiness`), the learn call,
+ * unmasking, full verification, and - when needed and offered - one browser-triggered repair.
  */
 export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesOptions<Call>): Promise<LearnFromExamplesResult<Call>> {
   if (opts.masking && !opts.key) {
     throw new Error('learnFromExamples: masking is on but no key was given (SPEC 7.2: the key never leaves the browser, and this module never generates one)');
+  }
+  if (opts.complete) {
+    if (opts.target) throw new Error('learnFromExamples: completion mode and attach mode (target) cannot be combined');
+    if (opts.ai === 'notAllowed') throw new Error('learnFromExamples: completion mode is the AI step, but the AI step is not allowed');
+    if (!isCompletable(opts.complete.fixedRules)) throw new Error('learnFromExamples: complete.fixedRules is not a valid rules file');
   }
 
   // ---- SPEC 5 A step 1: read both files (sniff delimited output bytes so
@@ -177,7 +269,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // target's exactly), so an attached source always goes through the LLM, which is
   // told to copy `target` verbatim (LEARN_PROMPT "Adding a source to an existing
   // format"). ----
-  if (!opts.target) {
+  if (!opts.target && !opts.complete) {
     stages.fastPathTried = true;
     const fp = fastPath(analysis, pf);
     if ('rules' in fp) {
@@ -198,9 +290,37 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     }
   }
 
-  // ---- SPEC 5 A step 4 / 7: the (optionally masked) payload ----
+  // ---- SPEC 21 v5 item 4: the AI readiness gate, before any payload or LLM call. It also builds the
+  // (optionally masked, SPEC 7.2) payload, which the learn call below then uses as it is. ----
+  const ai = opts.ai ?? 'allowed';
   const masker: Masker | undefined = opts.masking ? createMasker(opts.key!) : undefined;
-  const { payload } = buildPayload(analysis, pf, { ...(masker ? { masker } : {}), ...(opts.target ? { target: opts.target } : {}) });
+  // (The local partial result is only for a caller that may not use the AI step.)
+  const partial = opts.complete || ai !== 'notAllowed' ? null : localPartial(analysis, pf);
+  const readiness = aiReadiness(analysis, pf, {
+    ...(masker ? { masker } : {}),
+    ...(opts.target ? { target: opts.target } : {}),
+    ...(opts.complete ? { complete: opts.complete } : {}),
+  });
+  stages.readinessChecked = true;
+  const shownReadiness: AiReadiness = readiness.ready ? { ready: true } : readiness;
+
+  // A block: the AI step can't succeed. Signed-out callers still get the local result unless it has no
+  // example pairs at all (then signing in wouldn't help either).
+  if (!readiness.ready) {
+    const noPairs = readiness.issues.some((i) => i.code === 'noRowsMatched');
+    if (partial && !noPairs) return partialResult(analysis, pf, partial, shownReadiness, stages);
+    stages.readinessBlocked = true;
+    return { path: 'notReady', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls: [], stages, readiness: shownReadiness };
+  }
+
+  // The AI step isn't available to this caller: the local partial result is what they get (SPEC 21 v5 item 1).
+  if (ai === 'notAllowed') {
+    if (partial) return partialResult(analysis, pf, partial, shownReadiness, stages);
+    return blockedResult(pf);
+  }
+
+  // ---- SPEC 5 A step 4 / 7: the payload (built by the gate) ----
+  const payload: LearnPayload = readiness.built!.payload;
 
   // ---- SPEC 5 A step 5: the learn call ----
   stages.llmCalled = true;
@@ -208,28 +328,131 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   const calls: Call[] = [...learned.calls];
 
   if (!learned.rules) {
-    return { path: 'llm', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls, stages };
+    return { path: 'llm', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls, stages, readiness: shownReadiness };
   }
 
   let maskedRules = learned.rules;
   let rules: LearnResult = masker ? unmaskRules(maskedRules, masker) : maskedRules;
 
   // ---- SPEC 5 A step 6 / 9.2 layer 8: full verification on the real, unmasked data ----
-  let verification = verifyAgainstExample(rules, analysis, masker ? { masker } : {});
-  stages.verifiedFirstCall = verification.verified;
+  // DECISION (SPEC 4/8.10: a partial, correct rules file beats a complete, wrong one; an unsupported column is "needs your input", not an
+  // error): a plain learn is checked on the columns that have a rule - one the AI step honestly reported as unsupported (`from: null` plus
+  // an entry, typically `externalData`) would differ on every row and is left out, so the learn is `verified` when everything produced matches.
+  // Nothing produced at all checks nothing (`onlyColumns: []`: never verified). The same rule as the editor's live check. When every column has
+  // a rule this is the full verification (layout rows included). Completion mode keeps the full verification: its own `matchesExample` below
+  // already leaves out a column that has no rule.
+  const verifyAnswer = (r: LearnResult): VerifyResult => {
+    const base = masker ? { masker } : {};
+    if (opts.complete) return verifyAgainstExample(r, analysis, base);
+    const withRule = columnsWithRule(r);
+    return verifyAgainstExample(r, analysis, withRule.length < r.output.columns.length ? { ...base, onlyColumns: withRule } : base);
+  };
+  let verification = verifyAnswer(rules);
+  // Completion mode: the answer must also still contain the user's rules, unchanged (the API checked this on the masked
+  // copies; this is the same check on the real ones, before anything replaces what the user has).
+  const fixedLock = (r: LearnResult): FixedProblem[] => (opts.complete ? checkFixedLock(r, opts.complete.fixedRules, { columns: opts.complete.columns, parts: opts.complete.parts }) : []);
+  let fixedProblems = fixedLock(rules);
+  // What "the answer is good" means: a plain learn - the full verification; completion - that too, but a column with no rule does not count.
+  // DECISION: in completion mode "matches the example" is relative to the user's own rules - the AI step answers for the columns it produced
+  // (every cell must match) and must not make anything else worse; a difference the fixed rules already had (an edit that departs from the
+  // example on purpose, a part still missing) is not its fault. Against the raw example no edit of a header or a value could ever pass.
+  // What the user's own rules already differ by, against the example:
+  const before = opts.complete ? verifyAgainstExample(opts.complete.fixedRules, analysis) : null;
+  const cellKey = (m: { exampleRow: number; column: string }): string => `${m.exampleRow}\u0000${m.column}`;
+  const matchesExample = (v: VerifyResult, r: LearnResult): boolean => {
+    if (!opts.complete || !before) return v.verified;
+    if (v.verified) return true;
+    const noRule = new Set(r.output.columns.filter((c) => c.from === null).map((c) => c.header));
+    const produced = new Set(opts.complete.columns.map((i) => r.output.columns[i]).filter((c) => c !== undefined && c.from !== null).map((c) => c!.header));
+    const hadCell = new Set(before.mismatches.map(cellKey));
+    const hadLayout = new Set(before.layoutIssues.map((i) => `${i.code}\u0000${i.message}`));
+    const worse =
+      v.mismatches.some((m) => !noRule.has(m.column) && (produced.has(m.column) || !hadCell.has(cellKey(m)))) ||
+      v.layoutIssues.some((i) => !hadLayout.has(`${i.code}\u0000${i.message}`));
+    return !worse;
+  };
+  const passes = (v: VerifyResult, r: LearnResult, lock: readonly FixedProblem[]): boolean => lock.length === 0 && matchesExample(v, r);
+  // DECISION (an honest unsupported is not a mismatch, with one exception): a column the answer gives up on although the pair analysis found how
+  // it is built (the payload carries a hint for it) is a problem for the repair round - one call to write the rule. It is the repair's trigger
+  // and no more: a model that stands by "unsupported" after that round is accepted (the column stays "needs your input").
+  const evidence = unsupportedDespiteEvidence(rules, payload);
+  stages.verifiedFirstCall = passes(verification, rules, fixedProblems) && evidence.length === 0;
 
   // ---- SPEC 5 A step 6 / 9.3: at most one browser-triggered repair ----
-  if (!verification.verified && opts.callRepair) {
+  // (Nothing to say to the AI step when there is no problem to name: an answer that produced no column at all is no verified learn, but
+  // there is nothing in the example it differs from - the API's own checks already asked for more.)
+  const problems: RepairProblem[] = [...fixedProblems.slice(0, MAX_FIXED_PROBLEMS), ...verification.repairProblems, ...evidence];
+  if (!stages.verifiedFirstCall && opts.callRepair && problems.length > 0) {
     stages.browserRepairUsed = true;
-    const repaired = await opts.callRepair(payload, maskedRules, verification.repairProblems);
+    const repaired = await opts.callRepair(payload, maskedRules, problems);
     calls.push(...repaired.calls);
     if (repaired.rules) {
       maskedRules = repaired.rules;
       rules = masker ? unmaskRules(maskedRules, masker) : maskedRules;
-      verification = verifyAgainstExample(rules, analysis, masker ? { masker } : {});
+      verification = verifyAnswer(rules);
+      fixedProblems = fixedLock(rules);
     }
   }
-  stages.verifiedAfterRepair = verification.verified;
+  stages.verifiedAfterRepair = passes(verification, rules, fixedProblems);
 
-  return { path: 'llm', preflight: pf, rules, verification, assumptions: rules.assumptions, unsupported: rules.unsupported, calls, stages };
+  // learn-v7: the notes leave the rules here (SPEC 15): the answer the caller works with has none, and they travel beside it.
+  const aiNotes = aiNotesOf(rules);
+  const answer = stripAiNotes(rules);
+
+  return {
+    path: 'llm',
+    preflight: pf,
+    rules: answer,
+    verification,
+    assumptions: answer.assumptions,
+    unsupported: answer.unsupported,
+    calls,
+    stages,
+    readiness: shownReadiness,
+    ...(aiNotes.length > 0 ? { aiNotes } : {}),
+    ...(opts.complete ? { completion: { columns: [...opts.complete.columns], parts: [...opts.complete.parts], fixedProblems, matches: matchesExample(verification, rules), produced: completionProduced(rules, opts.complete.fixedRules, opts.complete) } } : {}),
+  };
+}
+
+/** The local partial result, or null when there is none. It is a preview built from what code already knows, so a
+ * problem in building it must never take down a learn that would otherwise reach the AI step. */
+function localPartial(analysis: PairAnalysis, pf: PreflightResult): PartialRulesResult | null {
+  try {
+    const p = partialRules(analysis, pf);
+    return 'reason' in p ? null : p;
+  } catch {
+    return null;
+  }
+}
+
+/** The local partial result (SPEC 21 v5 item 1): built rules for what code explained, checked against the
+ * example on those columns only. */
+function partialResult<Call>(
+  analysis: PairAnalysis,
+  pf: PreflightResult,
+  partial: PartialRulesResult,
+  readiness: AiReadiness,
+  stages: LearnStages,
+): LearnFromExamplesResult<Call> {
+  stages.partialBuilt = true;
+  const verification = verifyAgainstExample(partial.rules, analysis, { onlyColumns: partial.solvedColumns });
+  return {
+    path: 'partial',
+    preflight: pf,
+    rules: partial.rules,
+    verification,
+    assumptions: partial.assumptions,
+    unsupported: partial.rules.unsupported,
+    calls: [],
+    stages,
+    partial: {
+      reason: 'aiNotAllowed',
+      solved: partial.solved,
+      needsAi: partial.needsAi,
+      external: partial.external,
+      solvedColumns: partial.solvedColumns,
+      needsAiParts: partial.needsAiParts,
+    },
+    readiness,
+  };
 }

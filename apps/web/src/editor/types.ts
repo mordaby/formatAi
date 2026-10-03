@@ -7,6 +7,7 @@ import type {
   LearnResult,
   OutputColumnAgg,
   OutputFile,
+  ProfileType,
   RowFilterOp,
   Rules,
   RulesTable,
@@ -44,10 +45,17 @@ export interface TranslatePair {
 export type ColumnMethod =
   | { kind: 'copy'; source: string; padLeft?: number; trim?: boolean }
   | { kind: 'calculate'; terms: CalcTerm[]; ops: CalcOp[]; round?: number }
-  | { kind: 'join'; columns: string[]; separator: string }
+  /** `before`/`after` are optional fixed text at the start and end (e.g. "ID: "); `separator` goes between the columns. */
+  | { kind: 'join'; columns: string[]; separator: string; before?: string; after?: string }
   | { kind: 'partOfText'; source: string; part: 'first' | 'last'; n: number }
   | { kind: 'translate'; source: string; pairs: TranslatePair[]; onMissing: 'flag' | 'keep' }
   | { kind: 'fixed'; value: string | number | boolean }
+  /**
+   * A running total (the across-row function `runningSum`): add up `column`, from the first row to this one, optionally starting again
+   * for each value of `groupBy`. `orderBy` is required: 'file' adds the rows up as they appear in the input file, or in the order of a column.
+   * Every other across-row function is written in Advanced (`formula`).
+   */
+  | { kind: 'runningSum'; column: string; groupBy?: string; orderBy: 'file' | { column: string; dir: 'asc' | 'desc' } }
   | { kind: 'empty' }
   /** Advanced: any formula text (`round(amount * 0.17, 2)`, `if(...)`). `type` is the result type of the column. */
   | { kind: 'formula'; formula: string; type?: ColumnType };
@@ -70,7 +78,9 @@ export type EditProblemCode =
   | 'json'
   | 'schema'
   | 'reference'
-  | 'rule';
+  | 'rule'
+  /** The deep analysis with AI is working on this part of the rules: it can't be edited until that is done. */
+  | 'locked';
 
 export interface EditProblem {
   code: EditProblemCode;
@@ -185,6 +195,12 @@ export interface FormatInfo {
   sourceCount: number;
 }
 
+/** What the editor knows about the SOURCE the conversion reads (SPEC 8.15). */
+export interface SourceInfo {
+  /** How many formats the source feeds (this conversion's included): "This changes the source for N formats" is said only when it is more than 1. */
+  formats: number;
+}
+
 export interface EditorState {
   rules: EditableRules;
   history: { past: Snapshot[]; future: Snapshot[] };
@@ -198,6 +214,10 @@ export interface EditorState {
   formatChange: boolean;
   /** Set when the conversion belongs to a format. */
   format: FormatInfo | null;
+  /** Set when the conversion's source is known (a saved conversion). */
+  source: SourceInfo | null;
+  /** The source is known and the input side has changed (SPEC 8.15): an edit of it is an edit of the source, for every format it feeds. */
+  sourceChange: boolean;
   /** Bumped by every change of rules or exceptions: a cheap "is this result still current" key. */
   rev: number;
   // ----- bookkeeping -----
@@ -214,6 +234,8 @@ export interface EditorOptions {
   exceptions?: number[];
   /** The format this conversion belongs to. Default: `{ sourceCount: 1 }` when `rules.meta.formatId` is set, else none. */
   format?: FormatInfo | null;
+  /** The source this conversion reads (SPEC 8.15). Default: none known. */
+  source?: SourceInfo | null;
   /** Lines already known to be edited (from an earlier session). */
   edited?: readonly LineId[];
   historyCap?: number;
@@ -223,11 +245,31 @@ export interface EditorOptions {
 
 export type ReadMethod = ColumnMethod;
 
+/**
+ * One column of the example INPUT file, as the editor needs it (headers and facts about the values, never the values
+ * themselves). The worker builds these from the kept analysis; the file is the user's own and stays in the browser.
+ */
+export interface ExampleInputColumn {
+  header: string;
+  type: ProfileType;
+  israeliId?: boolean;
+  leadingZerosLost?: boolean;
+  serialDates?: boolean;
+  /** Longest text length of the values (ids), so a padded id can be declared with the right width. */
+  maxLength?: number;
+  /** Date columns: the token format of text dates ("DD/MM/YYYY"), or "excel" for real date cells. */
+  dateFormat?: string;
+}
+
 /** One choice in a "source column" dropdown. */
 export interface SourceOption {
   id: string;
   /** What to show: the input header, or the output header of the computed column that feeds it. */
   label: string;
   type: ValueType | undefined;
-  kind: 'input' | 'expand' | 'computed';
+  /**
+   * `available`: a column of the example input file that no rule declares yet. Choosing it declares it (in the same edit
+   * that uses it), so the id is the one it will have once declared.
+   */
+  kind: 'input' | 'expand' | 'computed' | 'available';
 }

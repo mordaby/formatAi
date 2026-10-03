@@ -6,7 +6,17 @@
 
 export type Tier = 'anonymous' | 'registered' | 'paid';
 
-export type LearnPeriod = 'day' | 'month';
+/**
+ * SPEC 11 / 21 v5: the period an AI-learn quota is counted over. `lifetime` never resets (a one-time allowance),
+ * `month` and `day` reset with the UTC month / UTC day, `unlimited` has no cap.
+ */
+export type AiLearnPeriod = 'lifetime' | 'month' | 'day' | 'unlimited';
+
+export interface AiLearnQuota {
+  /** How many AI learns fit in one `period` (ignored for `unlimited`). */
+  count: number;
+  period: AiLearnPeriod;
+}
 
 export interface TierLimits {
   /** SPEC 6.1/15: maximum upload size in bytes (placeholder, tune from limit_hit data). */
@@ -31,8 +41,13 @@ export interface TierLimits {
   /** SPEC 8.14/11 "Rules per format": functions, tables, output columns, filters,
    * dedupe, expand, sort, group and validations each count as one rule. */
   rulesPerFormat: number;
-  /** "Learns that reach the LLM" (SPEC 11). Fast-path/cache learns don't count (SPEC 6.5). */
-  learnsToLlm: { count: number; period: LearnPeriod };
+  /**
+   * SPEC 11 / 21 v5: "AI learns" - learns that reach the LLM. Only signed-in users have any (anonymous: 0);
+   * a learn counts once, when it succeeds (never for a failed attempt, except the one that ends
+   * `limits.learn.maxFailedAiAttempts` failed attempts on the same example pair). Fast-path and cache
+   * learns never count (SPEC 6.5). Changing the numbers or the period is config only.
+   */
+  aiLearns: AiLearnQuota;
   fastPathLearns: 'unlimited';
   editRules: boolean;
 }
@@ -48,7 +63,7 @@ export const tiers: Record<Tier, TierLimits> = {
     savedFormats: 0,
     sourcesPerFormat: 0,
     rulesPerFormat: 30,
-    learnsToLlm: { count: 2, period: 'day' },
+    aiLearns: { count: 0, period: 'lifetime' },
     fastPathLearns: 'unlimited',
     editRules: false,
   },
@@ -62,7 +77,7 @@ export const tiers: Record<Tier, TierLimits> = {
     savedFormats: 3,
     sourcesPerFormat: 3,
     rulesPerFormat: 30,
-    learnsToLlm: { count: 10, period: 'month' },
+    aiLearns: { count: 3, period: 'month' },
     fastPathLearns: 'unlimited',
     editRules: true,
   },
@@ -78,7 +93,7 @@ export const tiers: Record<Tier, TierLimits> = {
     newSavedFormatsPerMonth: 50,
     sourcesPerFormat: 'unlimited',
     rulesPerFormat: 300,
-    learnsToLlm: { count: 150, period: 'month' },
+    aiLearns: { count: 150, period: 'month' },
     fastPathLearns: 'unlimited',
     editRules: true,
   },

@@ -2,14 +2,14 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { extractLearnV5Prompt } from '../scripts/sync-prompt';
-import { LEARN_SYSTEM_PROMPT_V5 } from '../src/prompts/learnV5';
+import { extractLearnPrompt } from '../scripts/sync-prompt';
+import { LEARN_SYSTEM_PROMPT_V7 } from '../src/prompts/learnV7';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
 
-describe('learn-v5 system prompt sync', () => {
-  const expected = extractLearnV5Prompt(
+describe('learn-v7 system prompt sync', () => {
+  const expected = extractLearnPrompt(
     readFileSync(path.join(repoRoot, 'LEARN_PROMPT.md'), 'utf8'),
   );
 
@@ -18,15 +18,15 @@ describe('learn-v5 system prompt sync', () => {
     expect(expected).toContain('You write rules files for a deterministic spreadsheet');
   });
 
-  it('matches prompts/learn-v5.txt', () => {
-    const txt = readFileSync(path.join(here, '..', 'prompts', 'learn-v5.txt'), 'utf8').replace(
+  it('matches prompts/learn-v7.txt', () => {
+    const txt = readFileSync(path.join(here, '..', 'prompts', 'learn-v7.txt'), 'utf8').replace(
       /\r\n/g,
       '\n',
     );
     expect(txt).toBe(expected);
   });
 
-  it('matches the LEARN_SYSTEM_PROMPT_V5 TS constant', () => {
-    expect(LEARN_SYSTEM_PROMPT_V5).toBe(expected);
+  it('matches the LEARN_SYSTEM_PROMPT_V7 TS constant', () => {
+    expect(LEARN_SYSTEM_PROMPT_V7).toBe(expected);
   });
 });

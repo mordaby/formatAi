@@ -5,11 +5,14 @@ import type {
   BudgetDoc,
   EventDoc,
   FeedbackDoc,
+  FunctionRequestDoc,
   ConversionDoc,
   FormatDoc,
   LeadDoc,
   LearnCacheDoc,
   LlmCallDoc,
+  SessionDoc,
+  SourceDoc,
   UsageCounterDoc,
   UserDoc,
   WaitlistDoc,
@@ -19,13 +22,16 @@ export interface AppDb {
   client: MongoClient;
   db: Db;
   users: Collection<UserDoc>;
+  sessions: Collection<SessionDoc>;
   formats: Collection<FormatDoc>;
   conversions: Collection<ConversionDoc>;
+  sources: Collection<SourceDoc>;
   events: Collection<EventDoc>;
   llmCalls: Collection<LlmCallDoc>;
   usageCounters: Collection<UsageCounterDoc>;
   budgets: Collection<BudgetDoc>;
   learnCache: Collection<LearnCacheDoc>;
+  functionRequests: Collection<FunctionRequestDoc>;
   leads: Collection<LeadDoc>;
   waitlist: Collection<WaitlistDoc>;
   feedback: Collection<FeedbackDoc>;
@@ -49,13 +55,16 @@ export async function connectDb(env: Env): Promise<AppDb | null> {
     client,
     db,
     users: db.collection<UserDoc>('users'),
+    sessions: db.collection<SessionDoc>('sessions'),
     formats: db.collection<FormatDoc>('formats'),
     conversions: db.collection<ConversionDoc>('conversions'),
+    sources: db.collection<SourceDoc>('sources'),
     events: db.collection<EventDoc>('events'),
     llmCalls: db.collection<LlmCallDoc>('llm_calls'),
     usageCounters: db.collection<UsageCounterDoc>('usage_counters'),
     budgets: db.collection<BudgetDoc>('budgets'),
     learnCache: db.collection<LearnCacheDoc>('learn_cache'),
+    functionRequests: db.collection<FunctionRequestDoc>('function_requests'),
     leads: db.collection<LeadDoc>('leads'),
     waitlist: db.collection<WaitlistDoc>('waitlist'),
     feedback: db.collection<FeedbackDoc>('feedback'),
@@ -69,9 +78,17 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
       { 'identities.provider': 1, 'identities.subject': 1 },
       { unique: true, name: 'identities_provider_subject_unique' },
     ),
+    // SPEC 12: sessions expire through their own `expiresAt`.
+    appDb.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'sessions_expiresAt_ttl' }),
+    appDb.sessions.createIndex({ userId: 1 }, { name: 'sessions_userId' }),
     appDb.formats.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'formats_ownerId_createdAt' }),
     appDb.conversions.createIndex({ ownerId: 1, formatId: 1 }, { name: 'conversions_ownerId_formatId' }),
     appDb.conversions.createIndex({ formatId: 1, createdAt: -1 }, { name: 'conversions_formatId_createdAt' }),
+    // SPEC 8.15/13: a source's conversions, and the owner's sources; names are unique per owner, case-insensitively
+    // (the `nameKey` field holds the normalized name).
+    appDb.conversions.createIndex({ ownerId: 1, sourceId: 1 }, { name: 'conversions_ownerId_sourceId' }),
+    appDb.sources.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'sources_ownerId_createdAt' }),
+    appDb.sources.createIndex({ ownerId: 1, nameKey: 1 }, { unique: true, name: 'sources_ownerId_nameKey_unique' }),
     appDb.events.createIndex({ ts: 1 }, { name: 'events_ts' }),
     appDb.events.createIndex({ type: 1, ts: 1 }, { name: 'events_type_ts' }),
     appDb.events.createIndex({ userId: 1 }, { name: 'events_userId' }),
@@ -90,6 +107,10 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
       { createdAt: 1 },
       { expireAfterSeconds: limits.cache.ttlDays * 24 * 60 * 60, name: 'learn_cache_createdAt_ttl' },
     ),
+    // SPEC 13 / issue #40: one document per requested function (normalized name + signature); the admin lists the most asked-for first, per topic.
+    appDb.functionRequests.createIndex({ key: 1 }, { unique: true, name: 'function_requests_key_unique' }),
+    appDb.functionRequests.createIndex({ status: 1, distinctOwners: -1, count: -1 }, { name: 'function_requests_status_owners_count' }),
+    appDb.functionRequests.createIndex({ topic: 1, distinctOwners: -1 }, { name: 'function_requests_topic_owners' }),
     appDb.leads.createIndex({ ts: 1 }, { name: 'leads_ts' }),
     appDb.waitlist.createIndex({ userId: 1 }, { name: 'waitlist_userId' }),
     appDb.feedback.createIndex({ ts: 1 }, { name: 'feedback_ts' }),

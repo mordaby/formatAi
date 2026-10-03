@@ -35,6 +35,35 @@ function defineStoreContract(kit: StoreKit): void {
     expect(await store.incrementCounter(b, 0)).toBe(5);
   });
 
+  it('reads a counter (0 when absent) without creating it', async () => {
+    const { store } = await fresh();
+    const k = key();
+    expect(await store.getCounter(k)).toBe(0);
+    await store.incrementCounter(k, 3);
+    expect(await store.getCounter(k)).toBe(3);
+    expect(await store.getCounter(key())).toBe(0);
+  });
+
+  it('moves a state counter by compare-and-set, at most once per transition (SPEC 21 v5)', async () => {
+    const { store } = await fresh();
+    const k = key();
+    // An absent counter is state 0.
+    expect(await store.transitionCounter(k, 1, 2)).toBe(false);
+    expect(await store.getCounter(k)).toBe(0);
+    expect(await store.transitionCounter(k, 0, 1)).toBe(true);
+    expect(await store.getCounter(k)).toBe(1);
+    expect(await store.transitionCounter(k, 0, 1)).toBe(false); // already moved
+    expect(await store.transitionCounter(k, 1, 2, new Date(Date.now() + 60_000))).toBe(true);
+    expect(await store.transitionCounter(k, 1, 2)).toBe(false);
+    expect(await store.getCounter(k)).toBe(2);
+
+    // Only one of many racing callers wins the same transition.
+    const race = key();
+    const wins = await Promise.all(Array.from({ length: 12 }, () => store.transitionCounter(race, 0, 1)));
+    expect(wins.filter(Boolean)).toHaveLength(1);
+    expect(await store.getCounter(race)).toBe(1);
+  });
+
   it('accumulates spend per day atomically, with the anonymous part tracked separately', async () => {
     const { store } = await fresh();
     expect(await store.getSpend('2026-01-01')).toEqual({ spendUsd: 0, anonSpendUsd: 0 });
@@ -70,6 +99,23 @@ function defineStoreContract(kit: StoreKit): void {
     const rules = { transform: { valueMaps: [{ map: { 'a.b': 'x', $set: 'y', '': 'z', 'שלום': 'hello' } }] } };
     await store.putCachedRules({ owner: 'anon:a', key: 'k', rules, promptVersion: 'p', createdAt: now });
     expect(await store.getCachedRules('anon:a', 'k', new Date(now.getTime() - 1000))).toEqual(rules);
+  });
+
+  it('removes the owner cached rules by structure-hash prefix, leaving other structures and owners alone', async () => {
+    const { store } = await fresh();
+    const now = new Date();
+    const back = new Date(now.getTime() - 1000);
+    for (const [owner, key] of [['user:a', 'abc123def'], ['user:a', 'abc999'], ['user:a', 'fff000'], ['user:b', 'abc123def']] as const) {
+      await store.putCachedRules({ owner, key, rules: { v: key }, promptVersion: 'p', createdAt: now });
+    }
+    await store.deleteCachedRules('user:a', 'abc');
+    expect(await store.getCachedRules('user:a', 'abc123def', back)).toBeNull();
+    expect(await store.getCachedRules('user:a', 'abc999', back)).toBeNull();
+    expect(await store.getCachedRules('user:a', 'fff000', back)).toEqual({ v: 'fff000' });
+    expect(await store.getCachedRules('user:b', 'abc123def', back)).toEqual({ v: 'abc123def' });
+    // Anything that is not hex deletes nothing (no pattern is ever built from it).
+    await store.deleteCachedRules('user:a', '.*');
+    expect(await store.getCachedRules('user:a', 'fff000', back)).toEqual({ v: 'fff000' });
   });
 
   it('does not return an entry older than the cut-off', async () => {

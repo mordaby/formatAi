@@ -469,21 +469,84 @@ async function buildInventorySummaryRows(): Promise<void> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Across-row (window) cases: running balance per account in date order and a share of the account total (the file is NOT in date
+// order); a rank and row numbers in Hebrew (RTL); a category written once per block, filled down, in a csv.
+// ---------------------------------------------------------------------------
+async function buildWindowBalanceShare(): Promise<void> {
+  await writeXlsxFile('window-balance-share', 'input.xlsx', (wb) => {
+    const ws = wb.addWorksheet('Transactions');
+    ['Account', 'Date', 'Amount'].forEach((h, i) => (ws.getRow(1).getCell(i + 1).value = h));
+    // Excel serials: 2026-01-01 = 46023
+    const rows: [string, number, number][] = [
+      ['A', 46027, 100], // row 2: 5 Jan
+      ['B', 46024, 50], // row 3: 2 Jan
+      ['A', 46023, 40], // row 4: 1 Jan
+      ['B', 46031, -20], // row 5: 9 Jan
+      ['A', 46034, 60], // row 6: 12 Jan
+      ['B', 46025, 70], // row 7: 3 Jan
+    ];
+    rows.forEach((r, i) => {
+      const row = ws.getRow(2 + i);
+      row.getCell(1).value = r[0];
+      dateCell(ws, 2 + i, 2, r[1]);
+      row.getCell(3).value = r[2];
+    });
+  });
+}
+
+async function buildWindowRankRownumberHe(): Promise<void> {
+  await writeXlsxFile('window-rank-rownumber-he', 'input.xlsx', (wb) => {
+    const ws = wb.addWorksheet('מכירות', { views: [{ rightToLeft: true }] });
+    ['מוכר', 'מכירות', 'אזור'].forEach((h, i) => (ws.getRow(1).getCell(i + 1).value = h));
+    const rows: [string, number, string][] = [
+      ['דנה', 300, 'צפון'], // row 2
+      ['יוסי', 500, 'דרום'], // row 3
+      ['מאיה', 300, 'צפון'], // row 4
+      ['עומר', 100, 'דרום'], // row 5
+      ['שירה', 500, 'צפון'], // row 6
+      ['אבי', 200, 'דרום'], // row 7
+    ];
+    rows.forEach((r, i) => {
+      const row = ws.getRow(2 + i);
+      row.getCell(1).value = r[0];
+      row.getCell(2).value = r[1];
+      row.getCell(3).value = r[2];
+    });
+  });
+}
+
+function buildWindowFillDownCsv(): void {
+  writeUtf8Csv('window-fill-down-csv', 'input.csv', ['Category,Item,Qty', 'Tools,Hammer,5', ',Saw,7', ',Drill,2', 'Paint,Brush,9', ',Roller,4']);
+}
+
+// `pnpm ... build-inputs.ts` writes every case; `... build-inputs.ts window-balance-share` only the cases named (it never rewrites the others).
+const BUILDERS: [string, () => void | Promise<void>][] = [
+  ['he-commissions-report', buildHeCommissionsReport],
+  ['en-rename-reorder', buildEnRenameReorder],
+  ['dedupe-columns-to-rows', buildDedupeColumnsToRows],
+  ['split-cell-csv-out', buildSplitCellCsvOut],
+  ['fixed-fan-out-debit-credit', buildFixedFanOutDebitCredit],
+  ['summary-by-agent', buildSummaryByAgent],
+  ['win1255-csv-rename', buildWin1255CsvRename],
+  ['supplier-pricelist-to-erp-load', buildSupplierPricelistToErpLoad],
+  ['customer-export-to-crm-csv', buildCustomerExportToCrmCsv],
+  ['freight-carrier-a', buildFreightCarrierA],
+  ['freight-carrier-b', buildFreightCarrierB],
+  ['payroll-to-deposits-function', buildPayrollToDepositsFunction],
+  ['bank-export-lookup', buildBankExportLookup],
+  ['inventory-summary-rows', buildInventorySummaryRows],
+  ['window-balance-share', buildWindowBalanceShare],
+  ['window-rank-rownumber-he', buildWindowRankRownumberHe],
+  ['window-fill-down-csv', buildWindowFillDownCsv],
+];
+
 async function main(): Promise<void> {
-  await buildHeCommissionsReport();
-  buildEnRenameReorder();
-  await buildDedupeColumnsToRows();
-  await buildSplitCellCsvOut();
-  await buildFixedFanOutDebitCredit();
-  await buildSummaryByAgent();
-  buildWin1255CsvRename();
-  await buildSupplierPricelistToErpLoad();
-  buildCustomerExportToCrmCsv();
-  await buildFreightCarrierA();
-  await buildFreightCarrierB();
-  await buildPayrollToDepositsFunction();
-  await buildBankExportLookup();
-  await buildInventorySummaryRows();
+  const only = process.argv.slice(2);
+  for (const name of only) if (!BUILDERS.some(([n]) => n === name)) throw new Error(`unknown case "${name}"`);
+  for (const [name, build] of BUILDERS) {
+    if (only.length === 0 || only.includes(name)) await build();
+  }
   console.log('Golden test inputs written.');
 }
 

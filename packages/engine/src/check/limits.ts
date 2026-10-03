@@ -8,7 +8,7 @@
 // though `checkRules`, which runs earlier as layer 2 "References", already guards them
 // defensively while resolving `call`/`lookup` references). Both are kept in sync
 // through the same `limits.rules.maxExprDepth` config value, so they can never disagree.
-import type { Computed, Expr, LearnResult, Rules, RulesFunction, RulesTable, Tier } from '@formatai/shared';
+import type { Computed, Expr, ExprNode, LearnResult, Rules, RulesFunction, RulesTable, Tier } from '@formatai/shared';
 import { limits, tiers } from '@formatai/shared';
 
 export interface LimitProblem {
@@ -52,6 +52,21 @@ function exprChildren(expr: Expr): Expr[] {
     visitValue(value, (child) => children.push(child));
   }
   return children;
+}
+
+/** A window node's `by` / `order` columns are references too, but plain strings a generic child walk does not see. */
+function windowRefIds(expr: Expr): string[] {
+  if (!('op' in expr) || expr.op !== 'window') return [];
+  return [...(expr.by ?? []), ...(expr.order ?? []).map((k) => k.column)];
+}
+
+type WindowNode = Extract<ExprNode, { op: 'window' }>;
+
+/** Every across-row function call in `expr` (and its children). */
+function windowNodes(expr: Expr, into: WindowNode[] = []): WindowNode[] {
+  if ('op' in expr && expr.op === 'window') into.push(expr);
+  for (const child of exprChildren(expr)) windowNodes(child, into);
+  return into;
 }
 
 function exprDepth(expr: Expr): number {
@@ -102,6 +117,7 @@ function nodeCountForId(id: string, computedById: ReadonlyMap<string, Computed>,
   for (const child of exprChildren(computed.expr)) {
     total += sumReferencedComputedNodes(child, computedById, ctx, visiting);
   }
+  for (const id of windowRefIds(computed.expr)) total += nodeCountForId(id, computedById, ctx, visiting);
   visiting.delete(id);
   return total;
 }
@@ -116,6 +132,7 @@ function sumReferencedComputedNodes(
   if ('const' in expr || 'param' in expr) return 0;
   let total = 0;
   for (const child of exprChildren(expr)) total += sumReferencedComputedNodes(child, computedById, ctx, visiting);
+  for (const id of windowRefIds(expr)) total += nodeCountForId(id, computedById, ctx, visiting);
   return total;
 }
 
@@ -192,6 +209,9 @@ function findDuplicateTableKeys(table: RulesTable): unknown[] {
  * has. Counted here as at most one rule for the whole `transform.sort` list (zero when
  * it's empty), not one per key.
  *
+ * Docs/proposals/window-operations.md: each across-row (window) function call counts as one rule too, on top of the output column
+ * it feeds (like sort and group, a window is a step of its own).
+ *
  * SPEC 21 v4: each `summaryRows` entry (`output.summaryRows` and
  * `transform.group.summaryRows`) counts as one rule too. The deprecated
  * `grandTotal`/`subtotal` were never counted on their own (folded into "group" above,
@@ -211,6 +231,7 @@ function countRules(rules: LearnResult | Rules): number {
   const validations = rules.validations.length;
   const outputSummaryRows = rules.output.summaryRows?.length ?? 0;
   const groupSummaryRows = rules.transform.group?.summaryRows?.length ?? 0;
+  const windows = rules.transform.computed.reduce((n, c) => n + windowNodes(c.expr).length, 0);
   return (
     functions +
     tables +
@@ -222,7 +243,8 @@ function countRules(rules: LearnResult | Rules): number {
     group +
     validations +
     outputSummaryRows +
-    groupSummaryRows
+    groupSummaryRows +
+    windows
   );
 }
 
@@ -272,6 +294,28 @@ export function checkLimits(rules: LearnResult | Rules, tier: Tier): LimitProble
       });
     }
   });
+
+  // ----- across-row functions: how many, and how many columns each `by:` / `order:` names (docs/proposals/window-operations.md) -----
+  const windows: { path: string; node: WindowNode }[] = [];
+  for (const { path, expr } of topLevelExprs) for (const node of windowNodes(expr)) windows.push({ path, node });
+  if (windows.length > limits.rules.maxWindowOps) {
+    problems.push({
+      kind: 'limit',
+      path: 'transform.computed',
+      message: `${windows.length} across-row functions (runningSum, rank, ...) exceed the maximum of ${limits.rules.maxWindowOps} per file`,
+    });
+  }
+  for (const { path, node } of windows) {
+    for (const [what, n] of [['by', node.by?.length ?? 0], ['order', node.order?.length ?? 0]] as const) {
+      if (n > limits.rules.maxWindowKeys) {
+        problems.push({
+          kind: 'limit',
+          path,
+          message: `${node.fn}() names ${n} columns in ${what}:, more than the maximum of ${limits.rules.maxWindowKeys}`,
+        });
+      }
+    }
+  }
 
   // ----- function and table counts (SPEC 8.3: 20 functions, 20 tables of up to 500 rows) -----
   if (functions.length > limits.rules.maxFunctions) {

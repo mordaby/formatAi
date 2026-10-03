@@ -4,7 +4,7 @@
 // (SPEC 9.6).
 import { formulaRulesToWire } from '@formatai/engine';
 import {
-  LEARN_SYSTEM_PROMPT_V5,
+  LEARN_SYSTEM_PROMPT_V7,
   learnResultWireJsonSchema,
   limits,
   promptVersion,
@@ -62,7 +62,7 @@ export interface LlmCallRecord {
 }
 
 /** Every `RepairProblem` kind, for `problemCounts` (SPEC 15: counts only, never text). */
-const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'diff', 'rowCount', 'layout'] as const;
+const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'fixedMismatch', 'diff', 'rowCount', 'layout', 'unsupportedDespiteEvidence'] as const;
 
 export function countProblems(problems: readonly RepairProblem[]): Record<RepairProblem['kind'], number> {
   const counts = Object.fromEntries(REPAIR_PROBLEM_KINDS.map((k) => [k, 0])) as Record<RepairProblem['kind'], number>;
@@ -152,7 +152,7 @@ async function callAndCheck(
   const schema = learnResultWireJsonSchema();
 
   try {
-    const result = await completeFn({ system: LEARN_SYSTEM_PROMPT_V5, content, schema, model, purpose }, env);
+    const result = await completeFn({ system: LEARN_SYSTEM_PROMPT_V7, content, schema, model, purpose }, env);
     const { problems, rules } = runChecks(result.json, payload, { tier });
     const record: LlmCallRecord = {
       purpose,

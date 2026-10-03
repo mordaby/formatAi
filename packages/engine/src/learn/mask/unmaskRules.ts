@@ -73,7 +73,17 @@ const STRUCTURAL_KEYS = new Set<string>([
   'delimiter',
   'encoding',
   'quote',
+  // More fixed words (never a data word; they matter once a rules file is MASKED, see `maskRules`: a real word here would turn into a fake one):
+  'headerRow', // 'auto'
+  'sheetName', // a label, sent real with the example's layout
+  'direction', // 'rtl' | 'ltr'
+  'language', // 'he' | 'en'
+  'keep', // Dedupe.keep
+  'action', // Dedupe.action
 ]);
+
+/** Summary-row `cells` map an OUTPUT HEADER to an aggregate name: both structural, so the whole subtree is left alone. */
+const STRUCTURAL_SUBTREE_KEY = 'cells';
 
 /** The one dictionary in the schema whose object *keys* (not just values) are
  * real data words: `transform.valueMaps[].map` maps a real "from" value to a
@@ -92,28 +102,34 @@ function unmaskString(s: string, fakeToReal: ReadonlyMap<string, string>): strin
     .join('');
 }
 
-function unmaskValue(
-  value: unknown,
-  keyContext: string | undefined,
-  fakeToReal: ReadonlyMap<string, string>,
-): unknown {
+function mapValue(value: unknown, keyContext: string | undefined, fn: (s: string) => string): unknown {
+  if (keyContext === STRUCTURAL_SUBTREE_KEY) return value;
   if (Array.isArray(value)) {
-    return value.map((item) => unmaskValue(item, keyContext, fakeToReal));
+    return value.map((item) => mapValue(item, keyContext, fn));
   }
   if (value !== null && typeof value === 'object') {
     const isOpenWordDictionary = keyContext === OPEN_WORD_DICTIONARY_KEY;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const newKey = isOpenWordDictionary ? unmaskString(k, fakeToReal) : k;
-      out[newKey] = unmaskValue(v, k, fakeToReal);
+      const newKey = isOpenWordDictionary ? fn(k) : k;
+      out[newKey] = mapValue(v, k, fn);
     }
     return out;
   }
   if (typeof value === 'string') {
     if (keyContext !== undefined && STRUCTURAL_KEYS.has(keyContext)) return value;
-    return unmaskString(value, fakeToReal);
+    return fn(value);
   }
   return value; // number, boolean, null
+}
+
+/**
+ * Returns a deep copy of `rules` with `fn` applied to every constant: every string that is not under a
+ * structural key (see STRUCTURAL_KEYS), plus the keys of the one open word dictionary. The shared walk behind
+ * `unmaskRules` (fake -> real) and `maskRules` (real -> fake, for the rules a completion call sends).
+ */
+export function mapRuleConstants<T>(rules: T, fn: (s: string) => string): T {
+  return mapValue(rules, undefined, fn) as T;
 }
 
 /**
@@ -125,5 +141,21 @@ function unmaskValue(
  * across schema versions/additions.
  */
 export function unmaskRules<T>(rules: T, masker: Pick<Masker, 'fakeToReal'>): T {
-  return unmaskValue(rules, undefined, masker.fakeToReal) as T;
+  return mapRuleConstants(rules, (s) => unmaskString(s, masker.fakeToReal));
+}
+
+/**
+ * The inverse of `unmaskRules`: a deep copy of `rules` (real Expr trees, not formula text) with every constant
+ * masked like the samples are (SPEC 7.2) - the `complete.fixed` of a completion call. A pure-digit constant is
+ * masked like an ID cell (so it matches a masked ID in the samples), a constant with a letter like text, and a
+ * constant with neither (a separator, a date) stays; label words the payload sends real stay real. Structural
+ * fields are untouched, exactly as in `unmaskRules`.
+ */
+export function maskRules<T>(rules: T, masker: Pick<Masker, 'maskText' | 'maskIdLike'>): T {
+  return mapRuleConstants(rules, (s) => {
+    if (/^[0-9]{1,9}$/.test(s)) return masker.maskIdLike(s);
+    // No letter at all (a separator, a date like 2026-01-31, a number written as text): sent real, like numbers and dates are in the samples.
+    if (!/\p{L}/u.test(s)) return s;
+    return masker.maskText(s);
+  });
 }

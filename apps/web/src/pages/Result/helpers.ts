@@ -2,9 +2,62 @@
 // column, and defaults for the things the map's "Add" buttons create.
 import type { PayloadCell } from '@formatai/shared';
 import { effectiveEndSummaryRows, lineIds, sourceOptions, type EditableRules, type EditAction } from '../../editor';
+import { editorConfig } from '../../editor/config';
 import { outputColumnType } from '../../editor/rulesUtil';
 import type { Line } from '../../rulesText';
-import type { LiveCheckResult } from '../../worker/editorApi';
+import type { ColumnCheck, LiveCheckResult } from '../../worker/editorApi';
+
+/** The rule for this column mostly fails against the example: fewer than `mostlyFailsBelow` of the counted rows match in it. */
+export function isFailingColumn(check: ColumnCheck | undefined): boolean {
+  if (!check || !check.inExample || check.total <= 0) return false;
+  return check.matched / check.total < editorConfig.mostlyFailsBelow;
+}
+
+/**
+ * The output columns that have no rule yet: nothing fills them (`from: null`), or the rules list them as unsupported (the AI step
+ * has not worked them out, or their values are not in the input). They are left out of the comparison with the example, and the
+ * preview shows them empty (never with the example's values, which would look like a working rule).
+ */
+export function columnsWithoutRule(rules: EditableRules): Set<string> {
+  const headers = new Set<string>();
+  for (const c of rules.output.columns) if (c.from === null) headers.add(c.header);
+  for (const u of rules.unsupported) if (rules.output.columns.some((c) => c.header === u.outputColumn)) headers.add(u.outputColumn);
+  return headers;
+}
+
+/** Where one output column's rule doesn't reproduce the example, for the notice on its line and above the preview. */
+export interface ColumnMismatch {
+  /** Position in `rules.output.columns` (and in the live check's `perColumn`). */
+  index: number;
+  header: string;
+  /** Rows of the example that don't match in this column (exact). */
+  count: number;
+  /** The first of them, by row number, as many as `mismatchRowsShown` (the check lists cell mismatches up to a cap, so these can be fewer than `count`). */
+  rows: number[];
+  /** There are more rows than the ones listed. */
+  more: boolean;
+  /** Mostly failing: the notice says the rule doesn't reproduce the example instead of counting rows. */
+  failing: boolean;
+}
+
+/** One entry per output column of the rules whose values don't all match the example, in column order. */
+export function columnMismatches(live: LiveCheckResult | null | undefined, rules: EditableRules): ColumnMismatch[] {
+  if (!live) return [];
+  const out: ColumnMismatch[] = [];
+  live.perColumn.forEach((check, index) => {
+    if (!check.inExample || check.total <= 0 || check.matched >= check.total) return;
+    // Only columns the rules have (a column the example has and the rules don't is not a rule to fix).
+    if (rules.output.columns[index]?.header !== check.header) return;
+    const rows = new Set<number>();
+    for (const m of live.mismatches) {
+      if (m.columnIndex === index || (m.columnIndex < 0 && m.column === check.header)) rows.add(m.exampleRow);
+    }
+    const sorted = [...rows].sort((x, y) => x - y);
+    const count = check.total - check.matched;
+    out.push({ index, header: check.header, count, rows: sorted.slice(0, editorConfig.mismatchRowsShown), more: count > sorted.slice(0, editorConfig.mismatchRowsShown).length, failing: isFailingColumn(check) });
+  });
+  return out;
+}
 
 /** Indexes into `rules.assumptions` that belong to this line (what "Keep" dismisses). */
 export function assumptionIndexes(rules: EditableRules, line: Line): number[] {

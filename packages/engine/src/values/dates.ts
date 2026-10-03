@@ -32,6 +32,56 @@ function monthName(m: number, language: 'he' | 'en', style: 'full' | 'short'): s
   return full.slice(0, 3);
 }
 
+// DECISION (weekday numbers): 1 = Sunday ... 7 = Saturday, the Israeli week (and Excel's
+// default WEEKDAY). Computed on the real (proleptic Gregorian) calendar, not from Excel's
+// serial: Excel's serials before 1900-03-01 are off by one (its fake 1900-02-29), which
+// would give the wrong weekday for those few dates.
+export function weekdayOfYmd(ymd: Ymd): number {
+  const dt = new Date(0);
+  dt.setUTCFullYear(ymd.y, ymd.m - 1, ymd.d); // setUTCFullYear, so years 0-99 are not read as 1900-1999
+  return dt.getUTCDay() + 1;
+}
+
+// DECISION (weekday names, `ddd`/`dddd` in date formats): Sunday first, to match
+// `weekdayOfYmd`. Hebrew follows the Windows/Excel he-IL names: "יום ראשון" in full and
+// "יום א'" abbreviated (Saturday is "שבת" in both); English is the usual Sunday...Saturday.
+export const WEEKDAY_NAMES: {
+  he: { full: string[]; short: string[] };
+  en: { full: string[]; short: string[] };
+} = {
+  he: {
+    full: ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'שבת'],
+    short: ["יום א'", "יום ב'", "יום ג'", "יום ד'", "יום ה'", "יום ו'", 'שבת'],
+  },
+  en: {
+    full: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+    short: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+  },
+};
+
+function weekdayName(ymd: Ymd, language: 'he' | 'en', style: 'full' | 'short'): string {
+  return WEEKDAY_NAMES[language][style][weekdayOfYmd(ymd) - 1] ?? '';
+}
+
+// Month names accepted when PARSING (`toDate`'s `MMMM` / `MMM`). DECISION: parsing is
+// lenient and language-independent - either token takes the full or the abbreviated name,
+// in Hebrew or English (English ignores case), because no name in one language is a name
+// in the other and a real file is rarely perfectly consistent. Two spellings beyond the
+// formatter's own names are accepted: Hebrew "מרס" (March) and English "Sept".
+const MONTH_BY_NAME: ReadonlyMap<string, number> = (() => {
+  const m = new Map<string, number>();
+  for (let i = 1; i <= 12; i++) {
+    for (const language of ['he', 'en'] as const) {
+      for (const style of ['full', 'short'] as const) {
+        m.set(monthName(i, language, style).toLowerCase(), i);
+      }
+    }
+  }
+  m.set('מרס', 3);
+  m.set('sept', 9);
+  return m;
+})();
+
 function daysInMonth(y: number, m: number): number {
   const standard = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (m === 2) {
@@ -87,14 +137,18 @@ export function ymdToSerial(ymd: Ymd): number {
   return n >= 60 ? n + 1 : n;
 }
 
-type FieldTok = 'D' | 'M' | 'Y';
+// 'N' = a month NAME (`MMMM` / `MMM`; only when `names` is on, see `parseDateWithFormat`).
+type FieldTok = 'D' | 'M' | 'Y' | 'N';
 
-/** Builds a regex + capture-group map for a D/DD/M/MM/YY/YYYY token format (parsing only). */
-function tokenizeParseFormat(format: string): { regex: RegExp; groups: FieldTok[] } {
+/** Builds a regex + capture-group map for a D/DD/M/MM/YY/YYYY token format (parsing only).
+ * With `names`, `MMMM` and `MMM` also match a month name (a run of letters, looked up later). */
+function tokenizeParseFormat(format: string, names = false): { regex: RegExp; groups: FieldTok[] } {
   const groups: FieldTok[] = [];
   let pattern = '^';
   let i = 0;
   while (i < format.length) {
+    if (names && format.startsWith('MMMM', i)) { pattern += '(\\p{L}+)'; groups.push('N'); i += 4; continue; }
+    if (names && format.startsWith('MMM', i)) { pattern += '(\\p{L}+)'; groups.push('N'); i += 3; continue; }
     if (format.startsWith('YYYY', i)) { pattern += '(\\d{4})'; groups.push('Y'); i += 4; continue; }
     if (format.startsWith('DD', i)) { pattern += '(\\d{2})'; groups.push('D'); i += 2; continue; }
     if (format.startsWith('MM', i)) { pattern += '(\\d{2})'; groups.push('M'); i += 2; continue; }
@@ -105,28 +159,70 @@ function tokenizeParseFormat(format: string): { regex: RegExp; groups: FieldTok[
     i += 1;
   }
   pattern += '$';
-  return { regex: new RegExp(pattern), groups };
+  return { regex: new RegExp(pattern, names ? 'u' : ''), groups };
 }
 
-function extractFields(value: string, format: string): { day: number; month: number; year: number } | null {
-  const { regex, groups } = tokenizeParseFormat(format);
-  const m = regex.exec(value);
-  if (!m) return null;
-  let day = NaN;
-  let month = NaN;
-  let year = NaN;
-  groups.forEach((g, idx) => {
-    const raw = m[idx + 1] as string;
-    const num = parseInt(raw, 10);
-    if (g === 'D') day = num;
-    else if (g === 'M') month = num;
-    else if (g === 'Y') {
-      // DECISION: two-digit years pivot at 50: 00-49 -> 2000s, 50-99 -> 1900s.
-      year = raw.length <= 2 ? (num < 50 ? 2000 + num : 1900 + num) : num;
-    }
-  });
-  if (Number.isNaN(day) || Number.isNaN(month) || Number.isNaN(year)) return null;
-  return { day, month, year };
+interface DateFields {
+  day: number;
+  month: number;
+  year: number;
+}
+
+/** Compiles a parse format once; the returned reader extracts the date fields of one text. */
+function compileFieldReader(format: string, names: boolean): (value: string) => DateFields | null {
+  const { regex, groups } = tokenizeParseFormat(format, names);
+  // DECISION: a format with a month and a year but no day (`MMMM YYYY`, `MM/YYYY`) means the
+  // 1st of that month - for the name-aware reader (toDate) only; the reader behind
+  // `inputFormats` keeps requiring all three fields, as it always has.
+  const dayOptional = names && !groups.includes('D');
+  return (value) => {
+    const m = regex.exec(value);
+    if (!m) return null;
+    let day = dayOptional ? 1 : NaN;
+    let month = NaN;
+    let year = NaN;
+    groups.forEach((g, idx) => {
+      const raw = m[idx + 1] as string;
+      if (g === 'N') {
+        month = MONTH_BY_NAME.get(raw.toLowerCase()) ?? NaN;
+        return;
+      }
+      const num = parseInt(raw, 10);
+      if (g === 'D') day = num;
+      else if (g === 'M') month = num;
+      else if (g === 'Y') {
+        // DECISION: two-digit years pivot at 50: 00-49 -> 2000s, 50-99 -> 1900s.
+        year = raw.length <= 2 ? (num < 50 ? 2000 + num : 1900 + num) : num;
+      }
+    });
+    if (Number.isNaN(day) || Number.isNaN(month) || Number.isNaN(year)) return null;
+    return { day, month, year };
+  };
+}
+
+function extractFields(value: string, format: string): DateFields | null {
+  return compileFieldReader(format, false)(value);
+}
+
+/**
+ * Compiles a `toDate` format (the same D/DD/M/MM/YY/YYYY tokens and literal separators as
+ * `inputFormats`, plus the month-name tokens `MMMM` / `MMM`) into a reader: text -> a valid
+ * calendar date, or null (no match, an unknown month name, or an impossible date such as
+ * 31/02). Matching is exact (the whole trimmed text), never fuzzy.
+ */
+export function compileDateParser(format: string): (text: string) => Ymd | null {
+  const read = compileFieldReader(format, true);
+  return (text) => {
+    const f = read(text.trim());
+    if (!f) return null;
+    const ymd: Ymd = { y: f.year, m: f.month, d: f.day };
+    return isValidYmd(ymd) ? ymd : null;
+  };
+}
+
+/** One-shot form of `compileDateParser`. */
+export function parseDateWithFormat(text: string, format: string): Ymd | null {
+  return compileDateParser(format)(text);
 }
 
 const PLAIN_NUMBER_RE = /^-?\d+(\.\d+)?$/;
@@ -190,6 +286,7 @@ function stripBrackets(format: string): string {
  * "MMMM YYYY") or Excel style ("dd/mm/yyyy", "mmmm yyyy", with optional
  * `[$-40D]`-style locale prefixes, quoted "..." literals and backslash escapes).
  * Matching is case-insensitive: d/D and y/Y are the same, m/M always means month.
+ * `ddd` / `dddd` are the weekday name (short / full) in `language`.
  */
 export function formatYmd(ymd: Ymd, format: string, language: 'he' | 'en'): string {
   const stripped = stripBrackets(format);
@@ -213,8 +310,10 @@ export function formatYmd(ymd: Ymd, format: string, language: 'he' | 'en'): stri
     const four = stripped.slice(i, i + 4).toLowerCase();
     if (four === 'yyyy') { out += String(ymd.y); i += 4; continue; }
     if (four === 'mmmm') { out += monthName(ymd.m, language, 'full'); i += 4; continue; }
+    if (four === 'dddd') { out += weekdayName(ymd, language, 'full'); i += 4; continue; }
     const three = stripped.slice(i, i + 3).toLowerCase();
     if (three === 'mmm') { out += monthName(ymd.m, language, 'short'); i += 3; continue; }
+    if (three === 'ddd') { out += weekdayName(ymd, language, 'short'); i += 3; continue; }
     const two = stripped.slice(i, i + 2).toLowerCase();
     if (two === 'yy') { out += padLeft(String(((ymd.y % 100) + 100) % 100), 2, '0'); i += 2; continue; }
     if (two === 'dd') { out += padLeft(String(ymd.d), 2, '0'); i += 2; continue; }
@@ -231,7 +330,7 @@ export function formatYmd(ymd: Ymd, format: string, language: 'he' | 'en'): stri
 /**
  * Converts a token-style date format ("DD/MM/YYYY", "MMMM YYYY") to an Excel
  * numFmt code ("dd/mm/yyyy", "mmmm yyyy"). Prefixes `[$-40D]` when the format
- * contains a month name and `language` is 'he', so Excel shows Hebrew month
+ * contains a month or weekday name and `language` is 'he', so Excel shows Hebrew
  * names. Excel-style input is returned normalized (idempotent).
  */
 export function toExcelDateFormat(format: string, language: 'he' | 'en'): string {
@@ -254,8 +353,10 @@ export function toExcelDateFormat(format: string, language: 'he' | 'en'): string
     const four = core.slice(i, i + 4).toLowerCase();
     if (four === 'yyyy') { out += 'yyyy'; i += 4; continue; }
     if (four === 'mmmm') { out += 'mmmm'; hasMonthName = true; i += 4; continue; }
+    if (four === 'dddd') { out += 'dddd'; hasMonthName = true; i += 4; continue; }
     const three = core.slice(i, i + 3).toLowerCase();
     if (three === 'mmm') { out += 'mmm'; hasMonthName = true; i += 3; continue; }
+    if (three === 'ddd') { out += 'ddd'; hasMonthName = true; i += 3; continue; }
     const two = core.slice(i, i + 2).toLowerCase();
     if (two === 'yy') { out += 'yy'; i += 2; continue; }
     if (two === 'dd') { out += 'dd'; i += 2; continue; }

@@ -100,7 +100,7 @@ describe('Home', () => {
 });
 
 describe('pre-flight (screen 2)', () => {
-  it('unknown columns: lists them with the SPEC 6.4 copy; Continue goes ahead, Cancel goes back', async () => {
+  it('unknown columns are no gate: no "One thing to check" screen, no Continue - the learn goes straight to the AI step', async () => {
     const { engine, learn } = fakeEngine(async (host) => {
       const r = await host.callLearn(PAYLOAD_SKIP);
       return learnResult({ path: 'llm', rules: r.rules });
@@ -112,28 +112,11 @@ describe('pre-flight (screen 2)', () => {
       fireEvent.click(learnButton());
     });
 
-    await waitFor(() => screen.getByRole('heading', { name: 'One thing to check first' }));
-    const status = screen.getByRole('status');
-    expect(status.textContent).toContain("These columns have values that don't appear in your input file. They probably come from another source, which isn't supported yet. We'll learn everything else and leave these empty.");
-    expect(within(status).getByText('Assigned Warehouse')).toBeTruthy();
-    expect(api.learn).not.toHaveBeenCalled(); // nothing is sent until the user goes on
-
-    // Cancel: back to the form, files kept.
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => screen.getByRole('button', { name: /Learn the format/ }));
-    expect(screen.getByText('crm.csv')).toBeTruthy();
-
-    // Again, and this time Continue.
-    await act(async () => {
-      fireEvent.click(learnButton());
-    });
-    await waitFor(() => screen.getByRole('button', { name: 'Continue' }));
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    });
     await waitFor(() => expect(api.learn).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('heading', { name: 'One thing to check first' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
     await waitFor(() => screen.getByRole('button', { name: 'Start over' }));
-    expect(learn).toHaveBeenCalledTimes(2);
+    expect(learn).toHaveBeenCalledTimes(1);
   });
 
   it('rows not aligned: "Try anyway" runs the learn again, knowing the user said so', async () => {
@@ -208,11 +191,15 @@ describe('pre-flight (screen 2)', () => {
     expect(screen.getByText('Sign in to keep going.')).toBeTruthy();
   });
 
-  it('reads in Hebrew too', async () => {
-    const { engine } = fakeEngine(async (host) => {
-      await host.callLearn(PAYLOAD_SKIP);
-      return learnResult({ path: 'llm' });
-    });
+  it('reads in Hebrew too (the "rows could not be matched" screen; the info note about unknown columns is not part of it)', async () => {
+    const { engine } = fakeEngine(async () =>
+      learnResult({
+        path: 'blocked',
+        rules: null,
+        verification: null,
+        preflight: { status: 'warn', issues: [{ code: 'unknownOutputColumns', severity: 'info', params: { count: 1 } }, { code: 'rowsNotAligned', severity: 'warn' }], skipColumns: [] },
+      }),
+    );
     renderApp({ engine, lang: 'he' });
     fireEvent.change(screen.getByLabelText('דוגמת קלט'), { target: { files: [csv('a.csv')] } });
     fireEvent.change(screen.getByLabelText('דוגמת פלט'), { target: { files: [csv('b.csv')] } });
@@ -221,8 +208,9 @@ describe('pre-flight (screen 2)', () => {
       fireEvent.click(screen.getByRole('button', { name: /ללמוד את הפורמט/ }));
     });
     await waitFor(() => screen.getByRole('heading', { name: 'דבר אחד לבדוק קודם' }));
-    expect(screen.getByRole('button', { name: 'המשך' })).toBeTruthy();
-    expect(screen.getByRole('status').textContent).toContain('לעמודות האלה יש ערכים שלא מופיעים בקובץ הקלט שלכם.');
+    expect(screen.getByRole('button', { name: 'נסו בכל זאת' })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toContain('לא הצלחנו להתאים שורות בין שני הקבצים.');
+    expect(screen.getByRole('status').textContent).not.toContain('שלב ה-AI ינסה אותן');
   });
 });
 

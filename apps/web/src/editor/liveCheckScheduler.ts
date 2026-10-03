@@ -7,7 +7,7 @@
 //    never queueing more than the newest one.
 //  - `apply` runs the same check on every row (above 5,000 example rows the live check only sees a subset).
 //  - Static checks (SPEC 9.2 layers 1-5) run in the same cycle, so problems show as soon as they exist.
-import type { Format, Tier } from '@formatai/shared';
+import type { Format, SourceStructure, Tier } from '@formatai/shared';
 import { editorConfig } from './config';
 import type { LiveCheckResult, StaticCheckOptions, StaticProblem } from '../worker/editorApi';
 import type { EngineCallOptions, LiveCheckOptions } from '../worker/engineClient';
@@ -16,7 +16,7 @@ import type { EditableRules } from './types';
 /** The part of the engine client the scheduler needs (a fake in tests). */
 export interface CheckEngine {
   liveCheck(exampleId: string, rules: EditableRules, options?: LiveCheckOptions, opts?: EngineCallOptions): Promise<LiveCheckResult>;
-  fullCheck(exampleId: string, rules: EditableRules, options?: { exceptions?: number[] }, opts?: EngineCallOptions): Promise<LiveCheckResult>;
+  fullCheck(exampleId: string, rules: EditableRules, options?: { exceptions?: number[]; onlyColumns?: number[] }, opts?: EngineCallOptions): Promise<LiveCheckResult>;
   staticChecks(rules: EditableRules, options: StaticCheckOptions, opts?: EngineCallOptions): Promise<StaticProblem[]>;
 }
 
@@ -25,6 +25,8 @@ export interface CheckInput {
   exceptions: number[];
   /** `EditorState.rev`: which version of the rules this is. */
   rev: number;
+  /** SPEC 21 v5 item 1: compare only these output columns (the local partial result). Undefined = every column. */
+  onlyColumns?: number[];
 }
 
 export interface LiveCheckState {
@@ -51,6 +53,8 @@ export interface SchedulerOptions {
   exampleId: string | undefined;
   tier: Tier;
   format?: Format | undefined;
+  /** The existing source the conversion is about to join (SPEC 8.15): turns on the source lock. */
+  source?: SourceStructure | undefined;
   debounceMs?: number;
 }
 
@@ -166,17 +170,18 @@ export class LiveCheckScheduler {
     this.fullWanted = false;
     const waiters = this.waiters;
     this.waiters = [];
-    const { engine, exampleId, tier, format } = this.options;
+    const { engine, exampleId, tier, format, source } = this.options;
     const exceptions = input.exceptions;
+    const only = input.onlyColumns ? { onlyColumns: input.onlyColumns } : {};
     this.set({ status: 'checking' });
 
     const [check, stat] = await Promise.allSettled([
       exampleId === undefined || this.exampleGone
         ? Promise.resolve(null)
         : wantFull
-          ? engine.fullCheck(exampleId, input.rules, { exceptions })
-          : engine.liveCheck(exampleId, input.rules, { exceptions }),
-      engine.staticChecks(input.rules, { tier, ...(format ? { format } : {}) }),
+          ? engine.fullCheck(exampleId, input.rules, { exceptions, ...only })
+          : engine.liveCheck(exampleId, input.rules, { exceptions, ...only }),
+      engine.staticChecks(input.rules, { tier, ...(format ? { format } : {}), ...(source ? { source } : {}) }),
     ]);
     this.inFlight = false;
 

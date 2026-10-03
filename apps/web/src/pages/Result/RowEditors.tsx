@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { sourceOptions, type ExpandInput, type FilterInput } from '../../editor';
 import { useI18n, type MessageKey } from '../../i18n';
 import { Button, InlineMessage, Switch } from '../../ui';
-import { CheckField, ChoiceGroup, FormSection, ProblemList, SelectField, useEdit, type EditorCtx, type Option } from './fields';
+import { CheckField, ChoiceGroup, FormSection, ProblemList, SelectField, SourceField, useEdit, type EditorCtx, type Option } from './fields';
 
 // ---------- filters ----------
 
@@ -47,7 +47,7 @@ export function FilterEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index:
     );
   }
 
-  const columns = sourceOptions(rules).map((s): Option => ({ value: s.id, label: s.label }));
+  const columns = sourceOptions(rules, { exampleInput: ctx.available }).map((s): Option => ({ value: s.id, label: s.label }));
   const change = (next: typeof draft, coalesce?: string): void => {
     setDraft(next);
     const list = next.list
@@ -66,7 +66,7 @@ export function FilterEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index:
   return (
     <div className="editor-form">
       <p className="editor-form__lead">{t('editor.filter.keep')}</p>
-      <SelectField label={t('editor.filter.column')} value={draft.column} options={columns} onChange={(column) => change({ ...draft, column })} />
+      <SourceField ctx={ctx} label={t('editor.filter.column')} value={draft.column} options={columns} onChange={(column) => change({ ...draft, column })} />
       <SelectField
         label={t('editor.filter.op')}
         value={draft.op}
@@ -117,7 +117,7 @@ export function DedupeEditor({ ctx }: { ctx: EditorCtx }) {
   const { rules } = ctx;
   const dedupe = rules.transform.dedupe;
   const edit = useEdit(ctx);
-  const inputs = sourceOptions(rules).filter((s) => s.kind === 'input');
+  const inputs = sourceOptions(rules, { exampleInput: ctx.available }).filter((s) => s.kind === 'input' || s.kind === 'available');
   const keys = dedupe && dedupe.keys !== 'all' ? dedupe.keys : [];
 
   return (

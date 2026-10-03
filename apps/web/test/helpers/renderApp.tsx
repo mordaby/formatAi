@@ -1,10 +1,12 @@
-import { tiers, type LearnPayload, type LearnResult } from '@formatai/shared';
+import { tiers, type LearnPayload, type LearnResult, type MeUser } from '@formatai/shared';
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
 import { vi } from 'vitest';
 import { App } from '../../src/app/App';
 import type { Api } from '../../src/api';
+import type { AuthApi } from '../../src/api/auth';
+import type { RegistryApi } from '../../src/api/registry';
 import { I18nProvider, type Lang } from '../../src/i18n';
 import { ServicesProvider } from '../../src/services';
 import type { LearnHost, LearnOutput } from '../../src/worker/engineApi';
@@ -66,7 +68,7 @@ export interface FakeEngine {
   inspect: ReturnType<typeof vi.fn>;
 }
 
-export function fakeEngine(impl: LearnImpl = async () => learnResult(), inspect?: () => unknown, extra: Partial<Record<'liveCheck' | 'fullCheck' | 'staticChecks' | 'convert', unknown>> = {}): FakeEngine {
+export function fakeEngine(impl: LearnImpl = async () => learnResult(), inspect?: () => unknown, extra: Record<string, unknown> = {}): FakeEngine {
   const learn = vi.fn(async (_args: unknown, host: LearnHost) => impl(host));
   const inspectFn = vi.fn(async () => (inspect ? inspect() : { readable: true, rows: 1204, columns: 8, direction: 'ltr' }));
   const engine = {
@@ -78,19 +80,67 @@ export function fakeEngine(impl: LearnImpl = async () => learnResult(), inspect?
     liveCheck: vi.fn(async () => liveResult()),
     fullCheck: vi.fn(async () => liveResult()),
     staticChecks: vi.fn(async () => []),
+    // Reading an example pair again (a saved source's optional check), and a file's headers (Add a source).
+    loadExample: vi.fn(async () => ({ ok: true, exampleId: 'ex-loaded', inputRows: 3, outputRows: 3 })),
+    readHeaders: vi.fn(async () => ({ ok: true, headers: [], sheetName: 'Sheet1', direction: 'ltr', rows: 3 })),
     terminate: vi.fn(),
     ...extra,
   } as unknown as EngineClient;
   return { engine, learn, inspect: inspectFn };
 }
 
-export function fakeApi(over: Partial<Api> = {}): Api & { learn: ReturnType<typeof vi.fn>; session: ReturnType<typeof vi.fn> } {
+/** A registered user, for the signed-in screens. */
+export const USER: MeUser = { id: 'u1', name: 'Dana Levi', avatarUrl: null, email: 'dana@example.com', tier: 'registered', providers: ['google'], isAdmin: false, uiLanguage: null };
+
+export type FakeApi = Api & {
+  learn: ReturnType<typeof vi.fn>;
+  session: ReturnType<typeof vi.fn>;
+  auth: { [K in keyof AuthApi]: ReturnType<typeof vi.fn> };
+  registry: { [K in keyof RegistryApi]: ReturnType<typeof vi.fn> };
+};
+
+/**
+ * A fake API: an anonymous visitor on a server with both providers, and an empty registry. Override any call
+ * (`auth` and `registry` are merged one level deep); `user` makes GET /api/me answer with that user.
+ */
+export function fakeApi(over: Partial<Omit<Api, 'auth' | 'registry'>> & { auth?: Partial<AuthApi>; registry?: Partial<RegistryApi>; user?: MeUser | null } = {}): FakeApi {
+  const { auth, registry, user, ...rest } = over;
   return {
     session: vi.fn(async () => ({ anonId: true, tier: 'free', limits: tiers.anonymous })),
     learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false })),
     repair: vi.fn(),
-    ...over,
-  } as unknown as Api & { learn: ReturnType<typeof vi.fn>; session: ReturnType<typeof vi.fn> };
+    baseUrl: '',
+    auth: {
+      providers: vi.fn(async () => ['google', 'microsoft']),
+      me: vi.fn(async () => user ?? null),
+      logout: vi.fn(async () => undefined),
+      setLanguage: vi.fn(async () => user ?? null),
+      linkStart: vi.fn(async () => 'https://accounts.example/link'),
+      quota: vi.fn(async () => ({ remaining: 3, period: 'month' })),
+      ...auth,
+    },
+    registry: {
+      listFormats: vi.fn(async () => []),
+      getFormat: vi.fn(),
+      createFormat: vi.fn(),
+      renameFormat: vi.fn(),
+      deleteFormat: vi.fn(async () => undefined),
+      attachSource: vi.fn(),
+      // The company's sources (SPEC 8.15): none unless a test says so.
+      listSources: vi.fn(async () => []),
+      getSource: vi.fn(),
+      updateSource: vi.fn(),
+      deleteSource: vi.fn(async () => undefined),
+      getConversion: vi.fn(),
+      updateConversion: vi.fn(),
+      deleteConversion: vi.fn(async () => undefined),
+      versions: vi.fn(async () => []),
+      restore: vi.fn(),
+      learnOutcome: vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' }, failedAttempts: 0, exhausted: false })),
+      ...registry,
+    },
+    ...rest,
+  } as unknown as FakeApi;
 }
 
 export function csv(name: string, body = 'a,b\n1,2\n3,4\n'): File {
@@ -102,19 +152,24 @@ export interface RenderAppOptions {
   route?: string;
   engine?: EngineClient;
   api?: Api;
+  /** Use a data router like the real app does (only that kind of router can hold back a change of screen, e.g. "Unsaved changes"). */
+  dataRouter?: boolean;
 }
 
 /** The whole app, with fake engine and API (nothing real is spawned or sent). */
-export function renderApp({ lang = 'en', route = '/', engine = fakeEngine().engine, api = fakeApi() }: RenderAppOptions = {}) {
-  return renderWithProviders(<App />, { lang, route, engine, api });
+export function renderApp({ lang = 'en', route = '/', engine = fakeEngine().engine, api = fakeApi(), dataRouter = false }: RenderAppOptions = {}) {
+  return renderWithProviders(<App />, { lang, route, engine, api, dataRouter });
 }
 
-export function renderWithProviders(ui: ReactElement, { lang = 'en', route = '/', engine = fakeEngine().engine, api = fakeApi() }: RenderAppOptions = {}) {
-  return render(
+/** What is rendered, and (with `dataRouter`) the router, to read where the app has gone. */
+export function renderWithProviders(ui: ReactElement, { lang = 'en', route = '/', engine = fakeEngine().engine, api = fakeApi(), dataRouter = false }: RenderAppOptions = {}) {
+  const router = dataRouter ? createMemoryRouter([{ path: '*', element: ui }], { initialEntries: [route] }) : undefined;
+  const view = render(
     <I18nProvider initial={lang}>
       <ServicesProvider engine={engine} api={api}>
-        <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>
+        {router ? <RouterProvider router={router} /> : <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>}
       </ServicesProvider>
     </I18nProvider>,
   );
+  return Object.assign(view, { router });
 }

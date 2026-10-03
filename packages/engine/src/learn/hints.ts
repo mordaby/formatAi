@@ -19,8 +19,8 @@
 // can (a) make sure at least one of them becomes a sample/dropped row and (b)
 // translate it into the final `failsOn` before the Hint is sent.
 
-import type { ColumnHint, ExpandHint, Hint, RowHint } from '@formatai/shared';
-import type { ColumnAnalysis, DedupeRelation, FilterRelation, PairAnalysis, Relation } from './analyze';
+import { limits, type ColumnHint, type ExpandHint, type Hint, type RowHint } from '@formatai/shared';
+import type { ColumnAnalysis, DedupeRelation, Derivation, FilterRelation, PairAnalysis, Relation, WindowFinding } from './analyze';
 import type { PreflightResult } from './preflight';
 
 /** A Hint plus the real-data row indices it fails on (coverage < 1 only),
@@ -49,6 +49,8 @@ function columnHintBody(rel: Relation): ColumnHintBody | null {
       return null;
     case 'concat':
       return { rel: 'concat', in: rel.in, separator: rel.separator };
+    case 'template':
+      return { rel: 'template', in: rel.in, parts: rel.parts };
     case 'valueMap':
       return { rel: 'valueMap', in: rel.in, pairs: rel.pairs };
     case 'constant':
@@ -69,6 +71,10 @@ function columnHintBody(rel: Relation): ColumnHintBody | null {
       return { rel: 'sum', in: rel.in, ...(rel.round !== undefined ? { round: rel.round } : {}) };
     case 'aggregate':
       return { rel: 'aggregate', in: rel.in, fn: rel.fn };
+    // An across-row relation is hinted through its WindowFinding (`windowHintCandidate`), and only when
+    // `limits.learn.window.hintsEnabled` (on since learn-v7): the fast path writes it, but it has no column hint of this kind.
+    case 'window':
+      return null;
   }
 }
 
@@ -86,6 +92,41 @@ export function bestHintableRelation(ca: ColumnAnalysis): Relation | null {
     if (relationHasHint(rel)) return rel;
   }
   return null;
+}
+
+/** A derived column's hint (SPEC 6.2 step 4 v5): `bands` when the output is a few contiguous ranges of one input
+ * column, `contains` when the output text is composed from input values (their text is inside the output cells),
+ * else `dependsOn` (the same input values always give the same output value). */
+function derivedHintCandidate(out: number, d: Derivation): HintCandidate {
+  const failingRows = d.coverage < 1 && d.failing.length > 0 ? d.failing : undefined;
+  const base = { out, coverage: d.coverage, ...(failingRows ? { failingRows } : {}) };
+  if (d.kind === 'bands') return { rel: 'bands', in: d.in, bands: d.bands, ...base };
+  if (d.kind === 'composition') return { rel: 'contains', in: d.in, ...base };
+  return { rel: 'dependsOn', in: d.in, ...base };
+}
+
+/**
+ * The `rel: 'window'` hint of an across-row finding (docs/proposals/window-operations.md section 6): a fact at coverage 1, a hint with
+ * `failsOn` below. `order` is only said where the order matters (not for a group's total or count): `'file'` for the input's row order,
+ * `'output'` when only the order the example output shows fits, or the exact keys of a `rank`.
+ */
+export function windowHintCandidate(f: WindowFinding): HintCandidate {
+  const groupFn = f.fn === 'groupSum' || f.fn === 'groupAvg' || f.fn === 'groupMin' || f.fn === 'groupMax' || f.fn === 'groupCount';
+  const failingRows = f.coverage < 1 && f.failing.length > 0 ? f.failing : undefined;
+  return {
+    out: f.out,
+    rel: 'window',
+    fn: f.fn,
+    ...(f.in.length > 0 ? { in: [f.in[0] as number] as [number] } : {}),
+    ...(f.by.length > 0 ? { by: f.by } : {}),
+    ...(groupFn ? {} : { order: f.order }),
+    ...(f.ties !== undefined ? { ties: f.ties } : {}),
+    ...(f.alt !== undefined && f.alt.length > 0
+      ? { alt: f.alt.slice(0, 3).map((a) => ({ ...(a.in !== undefined ? { in: [a.in[0] as number] as [number] } : {}), ...(a.by !== undefined ? { by: a.by } : {}) })) }
+      : {}),
+    coverage: f.coverage,
+    ...(failingRows ? { failingRows } : {}),
+  } as HintCandidate;
 }
 
 function toColumnHintCandidate(rel: Relation): HintCandidate {
@@ -166,8 +207,9 @@ function dedupeToHintCandidate(d: DedupeRelation): HintCandidate {
 /**
  * Every hint the LLM (and the local fast path) receive for this pair: one
  * per output column not in `preflight.skipColumns` (its best hintable
- * relation), the shape's expand hint when rows expand, and the dropped-rows
- * hints (dedupe, then the best filter).
+ * relation, or - for a derived column no relation explains - its `bands` /
+ * `contains` / `dependsOn` hint), the shape's expand hint when rows expand, and the
+ * dropped-rows hints (dedupe, then the best filter).
  */
 export function relationsToHints(analysis: PairAnalysis, preflight: PreflightResult): HintCandidate[] {
   const skip = new Set(preflight.skipColumns);
@@ -175,8 +217,21 @@ export function relationsToHints(analysis: PairAnalysis, preflight: PreflightRes
 
   for (const ca of analysis.columns) {
     if (skip.has(ca.out)) continue;
+    // Across rows. With the switch on (learn-v7), the window finding is the column's hint and the lookalikes it beat (a value map of the
+    // group key, a constant) are not sent. With it off the AI is not told about window functions: a column the free engine knows to be a
+    // group's total or count gets no hint at all rather than the misleading value map; any other column is hinted as before.
+    if (limits.learn.window.hintsEnabled) {
+      const finding = ca.windows?.[0];
+      if (finding !== undefined) {
+        hints.push(windowHintCandidate(finding));
+        continue;
+      }
+    } else if (ca.relations.some((r) => r.rel === 'window')) {
+      continue;
+    }
     const rel = bestHintableRelation(ca);
     if (rel) hints.push(toColumnHintCandidate(rel));
+    else if (ca.derived) hints.push(derivedHintCandidate(ca.out, ca.derived));
   }
 
   const expandHint = expandHintCandidate(analysis);

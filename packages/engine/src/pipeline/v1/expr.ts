@@ -4,9 +4,9 @@
 
 import Decimal from 'decimal.js';
 import { limits, type Expr, type ExprNode, type RulesFunction, type RulesTable } from '@formatai/shared';
-import { formatYmd, isValidYmd, type Ymd } from '../../values/dates';
+import { compileDateParser, formatYmd, isValidYmd, parseDate, weekdayOfYmd, type Ymd } from '../../values/dates';
 import { excelRound } from '../../values/numbers';
-import { padLeft } from '../../values/text';
+import { keepCharsOfClass, padLeft, titleCaseText } from '../../values/text';
 import { formatNumberText, isDateFormat } from './layout';
 import { InternalRulesError } from './rows';
 import {
@@ -16,6 +16,7 @@ import {
   dateFromSerial,
   dateFromYmd,
   decInt,
+  decText,
   normKey,
   toDate,
   toNum,
@@ -85,6 +86,11 @@ export interface CompileEnv {
   functions?: ReadonlyMap<string, Fn>;
   /** `transform.tables`, compiled once and shared the same way, for `lookup`. */
   tables?: ReadonlyMap<string, CompiledTable>;
+  /**
+   * Across-row (window) functions: the hidden row slot each window node's result is read from. The values are filled
+   * column-major by `transform.ts` before the column's expression runs (step 6); absent everywhere a window cannot run.
+   */
+  windowSlots?: ReadonlyMap<ExprNode, number>;
 }
 
 function constVal(c: string | number | boolean | null): Val {
@@ -97,11 +103,12 @@ function constVal(c: string | number | boolean | null): Val {
 function depth(e: Expr): number {
   if ('col' in e || 'const' in e || 'param' in e) return 1;
   let max = 0;
-  for (const ch of children(e)) max = Math.max(max, depth(ch));
+  for (const ch of exprChildren(e)) max = Math.max(max, depth(ch));
   return 1 + max;
 }
 
-function children(e: ExprNode): Expr[] {
+/** The direct child expressions of a node (a window's `by` / `order` columns are ids, not children). */
+export function exprChildren(e: ExprNode): Expr[] {
   switch (e.op) {
     case 'if':
       return [e.cond, e.then, e.else];
@@ -111,6 +118,10 @@ function children(e: ExprNode): Expr[] {
       return [e.key];
     case 'call':
       return e.args;
+    case 'dateLiteral':
+      return [];
+    case 'window':
+      return e.arg === undefined ? [] : [e.arg];
     case 'add':
     case 'sub':
     case 'mul':
@@ -129,6 +140,7 @@ function children(e: ExprNode): Expr[] {
     case 'max':
     case 'mod':
     case 'dateDiff':
+    case 'makeDate':
       return e.args;
     default:
       return [e.arg];
@@ -171,6 +183,12 @@ function completeYears(a: Ymd, b: Ymd): number {
   let years = b.y - a.y;
   if (b.m < a.m || (b.m === a.m && b.d < a.d)) years -= 1;
   return years;
+}
+
+/** A date the new date ops may produce: a real calendar date in the 1900-9999 range (a year below
+ * 1900 is never read as 1900 + year, which `Date.UTC` would do for 0-99). */
+function strictDate(ymd: Ymd): DateVal | null {
+  return ymd.y >= 1900 && ymd.y <= 9999 ? dateFromYmd(ymd) : null;
 }
 
 /** Compiles an expression. Throws InternalRulesError on an unknown column or excess depth. */
@@ -545,6 +563,99 @@ function compile(e: Expr, env: CompileEnv): Fn {
       return dateUnary(c(e.arg), (d) => dateFromYmd({ y: d.y, m: d.m, d: lastDayOfMonth(d.y, d.m) }));
     }
 
+    // ---- added after learn-v6: weekday, makeDate, toDate, dateLiteral, keepChars, titleCase, find ----
+    // DECISION: weekday is 1 = Sunday ... 7 = Saturday (weekdayOfYmd); an empty date gives empty.
+    case 'weekday':
+      return dateUnary(c(e.arg), (d) => decInt(weekdayOfYmd(d)));
+    // DECISION: makeDate(year, month, day). Any empty part gives empty, no flag (like every
+    // date op on an empty date). A part that isn't a number flags "notNumber"; whole numbers
+    // that don't make a real date between 1900-01-01 and 9999-12-31 (month 13, 31 February,
+    // a 2-digit year, a fraction) give empty and flag "notDate" with the parts as the value.
+    case 'makeDate': {
+      const fs = e.args.map(c);
+      return (r, cx) => {
+        const parts: Decimal[] = [];
+        let anyEmpty = false;
+        for (const f of fs) {
+          const v = f(r, cx);
+          const n = toNum(v);
+          if (n === undefined) {
+            report(cx, 'flag.expr.notNumber', v);
+            return null;
+          }
+          if (n === null) anyEmpty = true;
+          else parts.push(n);
+        }
+        if (anyEmpty) return null;
+        const [y, m, d] = parts as [Decimal, Decimal, Decimal];
+        const d0 = y.isInteger() && m.isInteger() && d.isInteger() ? strictDate({ y: y.toNumber(), m: m.toNumber(), d: d.toNumber() }) : null;
+        if (d0 === null) {
+          report(cx, 'flag.expr.notDate', `${decText(y)}-${decText(m)}-${decText(d)}`);
+          return null;
+        }
+        return d0;
+      };
+    }
+    // DECISION: toDate reads the text with `format` (the inputFormats tokens + MMMM/MMM month
+    // names in Hebrew or English); no match, an unknown month name or an impossible date gives
+    // empty and flags "notDate" with the text as the value. A value that is already a date is
+    // returned as it is; a number is read as its plain text (20260131 with "YYYYMMDD").
+    case 'toDate': {
+      const f = c(e.arg);
+      const parse = compileDateParser(e.format);
+      return (r, cx) => {
+        const v = f(r, cx);
+        if (v === null) return null;
+        if (v instanceof DateVal) return v;
+        const ymd = parse(toText(v));
+        const d = ymd === null ? null : strictDate(ymd);
+        if (d === null) {
+          report(cx, 'flag.expr.notDate', v);
+          return null;
+        }
+        return d;
+      };
+    }
+    // A fixed date. The schema and the formula parser only let a real YYYY-MM-DD through; a
+    // hand-written JSON tree that slips past is empty and flagged on every row instead of
+    // throwing at run time.
+    case 'dateLiteral': {
+      const ymd = parseDate(e.value, ['YYYY-MM-DD']);
+      const d = ymd === null ? null : strictDate(ymd);
+      const bad = e.value;
+      return d === null
+        ? (_r, cx) => {
+            report(cx, 'flag.expr.notDate', bad);
+            return null;
+          }
+        : () => d;
+    }
+    case 'keepChars': {
+      const cls = e.chars;
+      return textUnary(c(e.arg), (s) => keepCharsOfClass(s, cls));
+    }
+    case 'titleCase':
+      return textUnary(c(e.arg), titleCaseText);
+    // DECISION: find is 1-based in characters (code points, like substr/length), 0 when the
+    // literal text is absent, case-sensitive; an empty value stays empty (like length).
+    case 'find': {
+      const search = e.search;
+      const f = c(e.arg);
+      return (r, cx) => {
+        const v = f(r, cx);
+        if (v === null) return null;
+        const s = toText(v);
+        const i = s.indexOf(search);
+        return decInt(i < 0 ? 0 : Array.from(s.slice(0, i)).length + 1);
+      };
+    }
+
+    // The value is computed for every row before the column runs (transform.ts, window.ts); here it is just read from its hidden slot.
+    case 'window': {
+      const slot = env.windowSlots?.get(e);
+      if (slot === undefined) throw new InternalRulesError(`${e.fn}() is an across-row function and works only in a computed column`);
+      return (r) => r[slot] ?? null;
+    }
     case 'switch': {
       const cases = e.cases.map((cs) => ({ when: c(cs.when), then: c(cs.then) }));
       const els = c(e.else);

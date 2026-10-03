@@ -1,0 +1,31 @@
+{
+  "outputType": "xlsx",
+  "sheetName": "Balances",
+  "direction": "ltr",
+  "columns": [
+    { "header": "Account" },
+    { "header": "Date", "format": "dd/mm/yyyy" },
+    { "header": "Amount", "format": "#,##0.00", "numeric": true },
+    { "header": "Balance", "format": "#,##0.00", "numeric": true },
+    { "header": "Share %", "format": "0.0", "numeric": true }
+  ],
+  "merges": [],
+  "rows": [
+    { "kind": "header", "bold": true, "cells": ["Account", "Date", "Amount", "Balance", "Share %"] },
+    { "kind": "data", "sourceRow": 2, "cells": ["A", { "date": { "y": 2026, "m": 1, "d": 5 }, "serial": 46027 }, 100, 140, 50] },
+    { "kind": "data", "sourceRow": 3, "cells": ["B", { "date": { "y": 2026, "m": 1, "d": 2 }, "serial": 46024 }, 50, 50, 50] },
+    { "kind": "data", "sourceRow": 4, "cells": ["A", { "date": { "y": 2026, "m": 1, "d": 1 }, "serial": 46023 }, 40, 40, 20] },
+    { "kind": "data", "sourceRow": 5, "cells": ["B", { "date": { "y": 2026, "m": 1, "d": 9 }, "serial": 46031 }, -20, 100, -20] },
+    { "kind": "data", "sourceRow": 6, "cells": ["A", { "date": { "y": 2026, "m": 1, "d": 12 }, "serial": 46034 }, 60, 200, 30] },
+    { "kind": "data", "sourceRow": 7, "cells": ["B", { "date": { "y": 2026, "m": 1, "d": 3 }, "serial": 46025 }, 70, 120, 70] }
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 6,
+    "rowsOut": 6,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

@@ -196,3 +196,54 @@ describe('printSummary', () => {
     spy.mockRestore();
   });
 });
+
+describe('reports with modes (completion mode)', () => {
+  const full = (over: Partial<RunRecord> = {}) => record({ mode: 'full', path: 'llm', fastPath: false, classification: 'verified', tokensIn: 1000, tokensOut: 400, llmCalls: 1, payloadBytes: 8192, ...over });
+  const complete = (over: Partial<RunRecord> = {}) =>
+    record({ mode: 'complete', path: 'llm', fastPath: false, classification: 'verified', tokensIn: 300, tokensOut: 120, llmCalls: 1, payloadBytes: 3072, fixedColumns: 4, missingColumns: 2, missingParts: 1, ...over });
+
+  it('a run without modes keeps the report exactly as it was: no Mode column, no completion section, no extra CSV columns', () => {
+    const records = [record(), record({ case: 'b' })];
+    const md = buildMarkdownReport(records, '2025-01-01T00:00:00.000Z');
+    expect(md).not.toContain('| Mode |');
+    expect(md).not.toContain('Completion');
+    expect(buildCsvReport(records).split('\n')[0]!.split(',')).not.toContain('mode');
+  });
+
+  it('with both modes: a Mode column, and full vs completion side by side per case, with tokens and payload size', () => {
+    const records = [full({ case: 'budget' }), complete({ case: 'budget' })];
+    const md = buildMarkdownReport(records, '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| Model | Masking | Mode |');
+    expect(md).toContain('| haiku | off | full |');
+    expect(md).toContain('| haiku | off | complete |');
+    expect(md).toContain('## Full vs completion (side by side)');
+    expect(md).toContain('| budget | verified | 8.0 | 1000 / 400 | 1.0 | verified | 4 | 2 / 1 | 3.0 | 300 / 120 | 1.0 |');
+    // the per-case table says which mode each row is
+    expect(md).toContain('| budget | full |');
+    expect(md).toContain('| budget | complete |');
+  });
+
+  it('with complete only: the completion details (fixed and missing, and why no call was made)', () => {
+    const records = [complete({ case: 'budget' }), complete({ case: 'crm', path: 'local', llmCalls: 0, payloadBytes: 0, missingColumns: 0, missingParts: 0, completionSkipped: 'local', tokensIn: 0, tokensOut: 0 })];
+    const md = buildMarkdownReport(records, '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('## Completion details');
+    expect(md).not.toContain('side by side');
+    expect(md).toContain('| budget | verified | 4 | 2 | 1 |');
+    expect(md).toContain('| crm | verified | 4 | 0 | 0 | local |');
+  });
+
+  it('the CSV gets mode, payload and completion columns only when there are modes', () => {
+    const csv = buildCsvReport([full(), complete()]);
+    const [head, ...rows] = csv.trim().split('\n');
+    expect(head).toContain('mode,payloadBytes,fixedColumns,missingColumns,missingParts,completionSkipped,error');
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toContain('complete');
+  });
+
+  it('the stdout summary names the mode', () => {
+    const lines: string[] = [];
+    printSummary([full(), complete()], (l) => lines.push(l));
+    expect(lines.join('\n')).toContain('masking=off mode=full');
+    expect(lines.join('\n')).toContain('masking=off mode=complete');
+  });
+});

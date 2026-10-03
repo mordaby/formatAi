@@ -3,7 +3,7 @@ import { readWorkbook } from './io/read';
 import { extractTable } from './io/extractTable';
 import { writeOutput } from './io/writeOutput';
 import { runRules } from './pipeline';
-import type { OutputFileSpec, RunResult, TableDetection } from './types';
+import type { OutputFileSpec, RowDecisions, RunResult, TableDetection } from './types';
 
 export interface ConvertOptions {
   /**
@@ -13,6 +13,8 @@ export interface ConvertOptions {
    * (absent -> xlsx, per writeOutput's own default).
    */
   file?: OutputFileSpec;
+  /** SPEC 21 v5 item 5: the user's per-run decisions about flagged rows (see `RunRulesOptions.rowDecisions`). */
+  rowDecisions?: RowDecisions;
 }
 
 export type ConvertResult =
@@ -29,7 +31,7 @@ export async function convertFile(
   const wb = await readWorkbook(data, fileName);
   const extracted = extractTable(wb, rules.input);
   if (!extracted.ok) return { ok: false, error: extracted.error, detection: extracted.detection };
-  const result = runRules(rules, extracted.table, { fileName });
+  const result = runRules(rules, extracted.table, { fileName, ...(opts.rowDecisions !== undefined ? { rowDecisions: opts.rowDecisions } : {}) });
   if (!result.ok) return { ...result, detection: extracted.detection };
   const sheet = opts.file !== undefined ? { ...result.sheet, file: opts.file } : result.sheet;
   const bytes = await writeOutput(sheet);

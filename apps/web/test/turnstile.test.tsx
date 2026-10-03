@@ -7,6 +7,7 @@ import { TurnstileController, type TurnstileRenderOptions, type TurnstileWidgetA
 import { I18nProvider } from '../src/i18n';
 import { ServicesProvider } from '../src/services';
 import type { EngineClient } from '../src/worker/engineClient';
+import { fakeApi, renderApp } from './helpers/renderApp';
 
 afterEach(() => {
   cleanup();
@@ -121,6 +122,21 @@ describe('TurnstileProvider', () => {
     setup(async () => ({ anonId: true, tier: 'free', limits: tiers.anonymous, turnstileSiteKey: 'SITE' }));
     await act(async () => {});
     await waitFor(() => expect(appendChild.mock.calls.some(([node]) => (node as HTMLScriptElement).src?.startsWith('https://challenges.cloudflare.com/turnstile/v0/api.js'))).toBe(true));
+    appendChild.mockRestore();
+  });
+});
+
+describe('Home', () => {
+  it('renders no Turnstile widget for an anonymous visitor, and never loads Cloudflare\'s script (they never call the AI step)', async () => {
+    const appendChild = vi.spyOn(document.head, 'appendChild').mockImplementation((node) => node);
+    const api = fakeApi({ session: vi.fn(async () => ({ anonId: true, tier: 'free' as const, limits: tiers.anonymous, turnstileSiteKey: 'SITE' })) });
+    renderApp({ api });
+    await screen.findByRole('heading', { level: 1 });
+    await waitFor(() => expect(api.session).toHaveBeenCalled());
+    await act(async () => {});
+    expect(document.querySelector('.turnstile')).toBeNull();
+    expect(document.querySelector('[data-turnstile]')).toBeNull();
+    expect(appendChild.mock.calls.some(([node]) => (node as HTMLScriptElement).src?.startsWith('https://challenges.cloudflare.com'))).toBe(false);
     appendChild.mockRestore();
   });
 });

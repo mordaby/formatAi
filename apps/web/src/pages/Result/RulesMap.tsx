@@ -1,11 +1,14 @@
+import { aiStepPartMessages, type AiColumnNote, type AiStepPartCode } from '@formatai/shared';
 import { useId, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import type { EditableRules } from '../../editor';
-import { useI18n, type MessageKey } from '../../i18n';
+import { localize, useI18n, type MessageKey } from '../../i18n';
 import type { Line, LineStatus, RulesMapModel, Section, SectionId } from '../../rulesText';
-import { Button, Icon, type IconName } from '../../ui';
+import { Button, Icon, Spinner, type IconName } from '../../ui';
 import type { ColumnCheck } from '../../worker/editorApi';
-import { canKeep, type AddKind } from './helpers';
+import { canKeep, type AddKind, type ColumnMismatch } from './helpers';
+import { FixRuleButton, MismatchMessage } from './MismatchNotice';
 import { Sentence } from './Sentence';
+import type { AppliedNote } from './useApplied';
 
 export interface RulesMapProps {
   model: RulesMapModel;
@@ -13,12 +16,40 @@ export interface RulesMapProps {
   selectedId: string | null;
   /** Per output column, from the live check (position in `rules.output.columns`). */
   columnChecks: readonly ColumnCheck[] | undefined;
+  /** Where a column's rule doesn't reproduce the example: said on its line, with "Fix the rule". */
+  mismatches?: readonly ColumnMismatch[] | undefined;
   /** The lines are filling in one by one (learning has just finished). */
   intro: boolean;
   onSelect(line: Line): void;
   onKeep(line: Line): void;
   onReorder(from: number, to: number): void;
   onAdd(kind: AddKind): void;
+  /**
+   * SPEC 21 v5 item 1 (the local result before the AI step): the output columns (headers) and the layout parts code could
+   * not work out. The columns are marked "Needs the AI step" in the map; the parts are listed in a section of their own.
+   * `external` (a subset of `columns`): columns whose values code could not find in the input file - the line adds "may come from another source".
+   */
+  aiStep?:
+    | {
+        columns: ReadonlySet<string>;
+        external?: ReadonlySet<string>;
+        parts: readonly AiStepPartCode[];
+        /** The deep analysis with AI is working on these right now (a subset of `columns` / `parts`): they say so, and cannot be edited meanwhile. */
+        running?: { columns: ReadonlySet<string>; parts: readonly AiStepPartCode[] };
+      }
+    | undefined;
+  /** An "Add ..." button that cannot be used right now (the deep analysis is working on what it adds). */
+  addLocked?: ((kind: AddKind) => boolean) | undefined;
+  /** No example is in memory (a saved source opened for editing): a tick says "no problem found", not "matches your example". */
+  noExample?: boolean | undefined;
+  /** "Applied · now matches X of Y rows": said for a few seconds on the lines the last edit changed. */
+  applied?: AppliedNote | null | undefined;
+  /**
+   * learn-v7: what the AI step noted about the columns it could not build, by output header: its guess at the rule (shown as "The AI's guess
+   * (not applied)", never applied, never saved) and whether a function request was recorded. Said on a column's line only while that column has
+   * no rule (`needsInput`); in memory for the session only.
+   */
+  aiNotes?: ReadonlyMap<string, AiColumnNote> | undefined;
 }
 
 const STATUS_ICON: Record<LineStatus, IconName> = { matches: 'check', check: 'alert', needsInput: 'alert', edited: 'pencil' };
@@ -29,11 +60,11 @@ const STATUS_TEXT: Record<LineStatus, MessageKey> = {
   edited: 'map.status.edited',
 };
 
-function StatusIcon({ status }: { status: LineStatus }) {
+function StatusIcon({ status, label }: { status: LineStatus; label?: string }) {
   const { t } = useI18n();
   return (
     <span className={`status status--${status}`}>
-      <Icon name={STATUS_ICON[status]} size={16} title={t(STATUS_TEXT[status])} />
+      <Icon name={STATUS_ICON[status]} size={16} title={label ?? t(STATUS_TEXT[status])} />
     </span>
   );
 }
@@ -68,8 +99,8 @@ interface DragState {
   edge: 'before' | 'after';
 }
 
-export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSelect, onKeep, onReorder, onAdd }: RulesMapProps) {
-  const { t } = useI18n();
+export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, intro, onSelect, onKeep, onReorder, onAdd, aiStep, addLocked, noExample, applied, aiNotes }: RulesMapProps) {
+  const { t, lang } = useI18n();
   const [drag, setDrag] = useState<DragState | null>(null);
   const [announce, setAnnounce] = useState('');
   let lineNumber = 0;
@@ -86,17 +117,27 @@ export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSele
         {announce}
       </p>
       {model.sections.map((section) => (
-        <MapSection key={section.id} section={section} add={addButtons(section.id, rules)} onAdd={onAdd}>
+        <MapSection key={section.id} section={section} add={addButtons(section.id, rules)} addLocked={addLocked} onAdd={onAdd}>
           {section.lines.map((line) => {
             const n = lineNumber++;
             const isColumn = line.target.kind === 'column' && line.target.index !== undefined;
+            const needsAi = isColumn && aiStep?.columns.has(line.target.header ?? '') === true;
+            const mayBeExternal = needsAi && aiStep?.external?.has(line.target.header ?? '') === true;
+            const running = needsAi && aiStep?.running?.columns.has(line.target.header ?? '') === true;
             return (
               <MapLine
                 key={line.id}
                 line={line}
                 keepable={canKeep(rules, line)}
                 selected={selectedId === line.id}
-                check={isColumn ? columnChecks?.[line.target.index!] : undefined}
+                check={isColumn && !needsAi ? columnChecks?.[line.target.index!] : undefined}
+                mismatch={isColumn && !needsAi && line.status !== 'needsInput' ? mismatches?.find((m) => m.index === line.target.index) : undefined}
+                needsAi={needsAi}
+                aiNote={isColumn ? aiNotes?.get(line.target.header ?? '') : undefined}
+                mayBeExternal={mayBeExternal}
+                running={running}
+                noExample={noExample === true}
+                applied={applied?.ids.has(line.id) ? applied : undefined}
                 intro={intro}
                 order={n}
                 draggable={isColumn}
@@ -121,6 +162,23 @@ export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSele
           })}
         </MapSection>
       ))}
+      {aiStep && aiStep.parts.length > 0 && (
+        <section className="map-section map-section--ai" data-section="aiStep" data-testid="ai-step-parts">
+          <h2 className="map-section__title">{t('partial.section')}</h2>
+          <p className="muted">{t('partial.section.lead')}</p>
+          <ul className="ai-parts">
+            {aiStep.parts.map((code) => (
+              <li key={code} data-part={code} data-ai-running={aiStep.running?.parts.includes(code) || undefined}>
+                {aiStep.running?.parts.includes(code) ? <Spinner size={16} /> : <Icon name="alert" size={16} />}
+                <span>
+                  {localize(lang, aiStepPartMessages[code])}
+                  {aiStep.running?.parts.includes(code) ? <> <span className="muted">{t('deep.running')}</span></> : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {model.notes.length > 0 && (
         <ul className="map-notes">
           {model.notes.map((note, i) => (
@@ -142,11 +200,13 @@ export function RulesMap({ model, rules, selectedId, columnChecks, intro, onSele
 function MapSection({
   section,
   add,
+  addLocked,
   onAdd,
   children,
 }: {
   section: Section;
   add: { kind: AddKind; label: MessageKey }[];
+  addLocked: ((kind: AddKind) => boolean) | undefined;
   onAdd(kind: AddKind): void;
   children: ReactNode;
 }) {
@@ -161,7 +221,7 @@ function MapSection({
       {add.length > 0 && (
         <div className="map-section__add">
           {add.map((a) => (
-            <Button key={a.kind} variant="ghost" size="sm" icon="plus" onClick={() => onAdd(a.kind)}>
+            <Button key={a.kind} variant="ghost" size="sm" icon="plus" disabled={addLocked?.(a.kind) === true} onClick={() => onAdd(a.kind)}>
               {t(a.label)}
             </Button>
           ))}
@@ -176,6 +236,18 @@ interface MapLineProps {
   keepable: boolean;
   selected: boolean;
   check: ColumnCheck | undefined;
+  /** This column's rule doesn't reproduce some rows (or most) of the example. */
+  mismatch: ColumnMismatch | undefined;
+  /** The AI step still has to work this column out (SPEC 21 v5). */
+  needsAi: boolean;
+  /** learn-v7: the AI step's notes on this column (its guess, a recorded function request); said only while the column has no rule. */
+  aiNote: AiColumnNote | undefined;
+  /** With `needsAi`: code found no trace of this column's values in the input file, so it may come from another source (the AI step still tries it). */
+  mayBeExternal: boolean;
+  /** With `needsAi`: the deep analysis is working on this column right now. */
+  running: boolean;
+  noExample: boolean;
+  applied: AppliedNote | undefined;
   intro: boolean;
   order: number;
   draggable: boolean;
@@ -190,13 +262,20 @@ interface MapLineProps {
   onMove(delta: number): void;
 }
 
-function MapLine({ line, keepable, selected, check, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
+function MapLine({ line, keepable, selected, check, mismatch, needsAi, aiNote, mayBeExternal, running, noExample, applied, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
   const { t } = useI18n();
   const index = line.target.index ?? 0;
   const name = line.target.header ?? '';
   const differs = check !== undefined && check.inExample && check.matched < check.total;
   const showCount = check !== undefined && check.inExample && check.total > 0;
-  const attention = line.status === 'check' || line.status === 'needsInput';
+  // Rows of the example this column's rule doesn't reproduce: said on the line (with how to fix it) whatever the line's other status is.
+  const attention = line.status === 'check' || line.status === 'needsInput' || needsAi;
+  const statusLabel = running ? t('deep.running') : needsAi ? t('partial.section') : noExample && line.status === 'matches' ? t('map.status.unchecked') : t(STATUS_TEXT[line.status]);
+  const reason = running ? t('deep.running.reason') : needsAi ? t(mayBeExternal ? 'partial.line.reason.external' : 'partial.line.reason') : line.statusReason;
+  // learn-v7: the AI step's guess and the recorded function request, only for a column that still has no rule (once the user fills it in, they are history).
+  const noRule = line.status === 'needsInput' || needsAi;
+  const guess = noRule && !running ? aiNote?.explanation : undefined;
+  const requested = noRule && !running && aiNote?.functionRecorded === true;
 
   const edgeOf = (e: DragEvent<HTMLElement>): 'before' | 'after' => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -215,6 +294,8 @@ function MapLine({ line, keepable, selected, check, intro, order, draggable, dra
       style={{ '--i': Math.min(order, 28) } as CSSProperties}
       data-line-id={line.id}
       data-status={line.status}
+      data-ai-step={needsAi || undefined}
+      data-ai-running={running || undefined}
       data-selected={selected || undefined}
       data-dragging={dragging || undefined}
       data-drop={drag}
@@ -257,7 +338,7 @@ function MapLine({ line, keepable, selected, check, intro, order, draggable, dra
           </button>
         )}
         <button type="button" className="map-line__main" aria-current={selected ? 'true' : undefined} onClick={() => onSelect(line)}>
-          <StatusIcon status={line.status} />
+          <StatusIcon status={line.status} {...(needsAi ? { label: t('partial.section') } : noExample && line.status === 'matches' ? { label: t('map.status.unchecked') } : {})} />
           <span className="map-line__text">
             <Sentence parts={line.parts} />
           </span>
@@ -268,10 +349,16 @@ function MapLine({ line, keepable, selected, check, intro, order, draggable, dra
           )}
         </button>
       </div>
-      {attention && line.statusReason && (
-        <div className="map-line__note">
+      {applied && (
+        <p className="map-line__applied" role="status" data-fading={applied.fading || undefined} data-testid="applied">
+          <Icon name="check" size={14} />
+          <span>{applied.text}</span>
+        </p>
+      )}
+      {mismatch && (
+        <div className="map-line__note" data-mismatch={mismatch.failing ? 'failing' : 'some'} data-testid="column-mismatch">
           <p>
-            <span className="map-line__notelabel">{t(STATUS_TEXT[line.status])}</span> {line.statusReason}
+            <MismatchMessage mismatch={mismatch} />
           </p>
           <div className="map-line__actions">
             {keepable && (
@@ -279,9 +366,38 @@ function MapLine({ line, keepable, selected, check, intro, order, draggable, dra
                 {t('map.keep')}
               </Button>
             )}
-            <Button variant="secondary" size="sm" onClick={() => onSelect(line)}>
-              {t(line.status === 'needsInput' ? 'map.fill' : 'map.change')}
-            </Button>
+            <FixRuleButton header={name} variant="secondary" onFix={() => onSelect(line)} />
+          </div>
+        </div>
+      )}
+      {!mismatch && attention && reason && (
+        <div className="map-line__note">
+          <p>
+            <span className="map-line__notelabel">{statusLabel}</span> {reason}
+          </p>
+          {guess ? (
+            <p className="map-line__guess" data-testid="ai-guess">
+              <span className="map-line__notelabel">{t('ai.guess.label')}</span> <bdi>{guess}</bdi>
+            </p>
+          ) : null}
+          {requested ? (
+            <p className="map-line__requested muted" data-testid="function-recorded">
+              {t('ai.functionRecorded')}
+            </p>
+          ) : null}
+          <div className="map-line__actions">
+            {keepable && (
+              <Button variant="secondary" size="sm" onClick={() => onKeep(line)}>
+                {t('map.keep')}
+              </Button>
+            )}
+            {running ? (
+              <Spinner size={14} />
+            ) : (
+              <Button variant="secondary" size="sm" onClick={() => onSelect(line)}>
+                {t(line.status === 'needsInput' || needsAi ? 'map.fill' : 'map.change')}
+              </Button>
+            )}
           </div>
         </div>
       )}

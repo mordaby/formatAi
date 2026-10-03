@@ -10,8 +10,8 @@
 // boolean." Leaves (`col`, `const`, `param`) are not operations and have no entry here;
 // their types come from the column/param declaration or the literal's own JS type
 // (see `typeCheck.ts`'s `inferConstType`).
-import type { ValueType } from '@formatai/shared';
-import { VALUE_TYPES } from '@formatai/shared';
+import type { ExprNode, ValueType, WindowFn } from '@formatai/shared';
+import { KEEP_CHARS_CLASSES, VALUE_TYPES, WINDOW_FNS } from '@formatai/shared';
 
 export type SigType = ValueType;
 
@@ -86,6 +86,14 @@ export type SigOp =
   | 'dateAdd'
   | 'dateDiff'
   | 'endOfMonth'
+  | 'weekday'
+  | 'makeDate'
+  | 'toDate'
+  | 'dateLiteral'
+  | 'keepChars'
+  | 'titleCase'
+  | 'find'
+  | 'window'
   | 'if'
   | 'switch'
   | 'coalesce'
@@ -129,6 +137,8 @@ export type ResultSpec =
  * `round.digits`, `substr.start`/`length`, `padLeft.char`) are plain literals already
  * validated by the zod schema and have no entry here. */
 export type ArgSpec =
+  /** No Expr child at all: the op is written entirely from literal fields (`dateLiteral`). */
+  | { shape: 'none' }
   /** Exactly one Expr child (the `arg` field), of the given type. */
   | { shape: 'unary'; type: SigType | 'any' }
   /** A fixed-length tuple of Expr children (the `args` field), all the same type. */
@@ -148,7 +158,9 @@ export type ArgSpec =
   | { shape: 'lookup' }
   /** `call`: each of `args[]` is checked against the callee's declared `params[].type`
    * by `typeCheck.ts` (arity is already checked by `checkRules`). */
-  | { shape: 'call' };
+  | { shape: 'call' }
+  /** `window`: the column `arg` (typed per function, see WINDOW_SIGNATURES) plus `by`/`order` column ids of any type. */
+  | { shape: 'window' };
 
 // ---------- Formula syntax (learn-v5): the LLM/editor TEXT form of these same ops ----------
 // SPEC 8.3/LEARN_PROMPT learn-v5: the LLM writes every expression as formula text (e.g.
@@ -202,6 +214,16 @@ export interface OpSignature {
   doc: string;
   /** The formula-text form of this op (see above). */
   formula: FormulaForm;
+  /**
+   * Whether the AI prompt (LEARN_PROMPT.md's "# Operations", `promptOpsSync.test.ts`) documents
+   * this op. Omitted means true. `false` marks an op the formula parser, the editor's Advanced
+   * view and the engine all support, but that the prompt does not mention yet (it ships with a
+   * later prompt version): the sync test then skips it, and the API's LLM-answer check parses
+   * formulas with `promptOpsOnly`, so such a name is an unknown function there. Delete the
+   * flag when the prompt documents the op. (learn-v7 documented every op: no op carries the flag
+   * today; the mechanism stays for the next op that is added before its prompt version.)
+   */
+  inPrompt?: false;
 }
 
 function call(fn: string, params: FormulaParam[]): FormulaForm {
@@ -282,6 +304,38 @@ export const OP_SIGNATURES: Readonly<Record<SigOp, OpSignature>> = {
   dateDiff: { op: 'dateDiff', args: { shape: 'fixedSameType', type: 'date', count: 2 }, result: integerResult, doc: '(date, date) -> integer', formula: call('dateDiff', [{ name: 'a', kind: 'expr' }, { name: 'b', kind: 'expr' }, { name: 'unit', kind: { enum: ['days', 'months', 'years'] } }]) },
   endOfMonth: { op: 'endOfMonth', args: { shape: 'unary', type: 'date' }, result: dateResult, doc: '(date) -> date', formula: call('endOfMonth', [arg]) },
 
+  // ---- Added after learn-v6, documented in the prompt by learn-v7 (an op not yet in the prompt would carry `inPrompt: false`, see OpSignature.inPrompt) ----
+  // DECISION: weekday numbers follow the Israeli week: 1 = Sunday ... 7 = Saturday (also Excel's
+  // default WEEKDAY). Weekday NAMES are the `ddd`/`dddd` tokens of dateFormat/toText.
+  weekday: { op: 'weekday', args: { shape: 'unary', type: 'date' }, result: integerResult, doc: '(date) -> integer (1 = Sunday ... 7 = Saturday)', formula: call('weekday', [arg]) },
+  // DECISION: the three parts are decimal-typed (integer widens): a numeric column read as decimal
+  // still works; a non-whole number, or a date that does not exist (month 13, 31 February, year
+  // before 1900), gives an empty result and a "not a date" flag. An empty part gives an empty result.
+  makeDate: { op: 'makeDate', args: { shape: 'fixedSameType', type: 'decimal', count: 3 }, result: dateResult, doc: '(year, month, day) -> date (an impossible date flags the row)', formula: call('makeDate', [{ name: 'year', kind: 'expr' }, { name: 'month', kind: 'expr' }, { name: 'day', kind: 'expr' }]) },
+  // Reads TEXT (a text/idLike column or expression) with the same tokens as `inputFormats` (D, DD, M, MM,
+  // YY, YYYY, literal separators) plus the month names MMMM / MMM in Hebrew or English. No day in the
+  // format (`MMMM YYYY`) means the 1st. A text that does not match flags the row.
+  toDate: { op: 'toDate', args: { shape: 'unary', type: 'text' }, result: dateResult, doc: '(text) -> date (a text that does not match the format flags the row)', formula: call('toDate', [arg, { name: 'format', kind: 'string' }]) },
+  // DECISION: a date constant is its own op, written `date("2026-01-31")` (ISO only, checked when the
+  // formula is read: a date that does not exist is a parse error) - rather than letting a text constant
+  // stand in for a date, which would loosen the "only integer->decimal and idLike->text widen" rule.
+  dateLiteral: { op: 'dateLiteral', args: { shape: 'none' }, result: dateResult, doc: '() -> date (a fixed date, YYYY-MM-DD)', formula: call('date', [{ name: 'value', kind: 'string' }]) },
+  // `keepChars` classes (closed set, no patterns): digits = Unicode decimal digits; letters = Unicode
+  // letters (Hebrew letters count; niqqud, punctuation and spaces do not); lettersAndDigits = both.
+  keepChars: { op: 'keepChars', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text (only the characters of the class)', formula: call('keepChars', [arg, { name: 'chars', kind: { enum: KEEP_CHARS_CLASSES } }]) },
+  // DECISION: a word starts at the beginning of the text and after a space (any whitespace) or a hyphen;
+  // its first letter is upper-cased, the rest lower-cased ("o'neil" -> "O'neil", "jean-luc" -> "Jean-Luc",
+  // "3rd" stays "3rd"). Hebrew has no case and is unchanged.
+  titleCase: { op: 'titleCase', args: { shape: 'unary', type: 'text' }, result: textResult, doc: '(text|idLike) -> text (first letter of each word upper case, the rest lower)', formula: call('titleCase', [arg]) },
+  // DECISION: 1-based, counted in characters (code points, like substr/length); 0 when `search` is not
+  // there; case-sensitive; literal text only. An empty text stays empty (like length).
+  find: { op: 'find', args: { shape: 'unary', type: 'text' }, result: integerResult, doc: '(text|idLike) -> integer (position of the first occurrence of the literal text, 0 when absent)', formula: call('find', [arg, { name: 'search', kind: 'string' }]) },
+
+  // ---- Across rows (docs/proposals/window-operations.md): ONE node, 11 functions (WINDOW_SIGNATURES below). ----
+  // In the AI prompt since learn-v7 (before it was `inPrompt: false`: the API's LLM-answer parse, `promptOpsOnly`, took these names for
+  // unknown functions). The formula parser reads `runningSum(amount, by: account)`.
+  window: { op: 'window', args: { shape: 'window' }, result: dynamicResult, doc: 'across rows: runningSum, groupSum, groupAvg, groupMin, groupMax, groupCount, previous, next, fillDown, rowNumber, rank (named arguments by: and order:)', formula: special },
+
   // ---- Logic (SPEC 8.3: "conditions -> boolean"; if/switch/coalesce unify branches) ----
   if: { op: 'if', args: { shape: 'if' }, result: unifyResult, doc: '(boolean, T, T) -> T', formula: call('if', [{ name: 'cond', kind: 'expr' }, { name: 'then', kind: 'expr' }, { name: 'else', kind: 'expr' }]) },
   // switch's shape (variadic cond/value pairs, then a trailing else) doesn't fit the
@@ -331,3 +385,76 @@ export const OP_SIGNATURES: Readonly<Record<SigOp, OpSignature>> = {
   or: { op: 'or', args: { shape: 'variadicSameType', type: 'boolean', min: 1 }, result: booleanFixed, doc: '(boolean, ...) -> boolean', formula: call('or', [{ name: 'args', kind: 'exprRest', min: 1 }]) },
   not: { op: 'not', args: { shape: 'unary', type: 'boolean' }, result: booleanFixed, doc: '(boolean) -> boolean', formula: call('not', [arg]) },
 };
+
+// ---------- Across-row ("window") functions ----------
+// One `window` node, eleven functions. This table is the single source for what each function takes (the formula parser, the stored-JSON
+// check in typeCheck, the editor and, once learn-v7 ships, the prompt) and what it returns. Semantics: pipeline/v1/window.ts.
+
+/** What kind of column a window function's `arg` must be. */
+export type WindowArgType = 'numeric' | 'numericOrDate' | 'any';
+
+/** How the type of a window function's result is determined. */
+export type WindowResult = 'numericPreserve' | 'decimal' | 'integer' | 'argType';
+
+export interface WindowSignature {
+  fn: WindowFn;
+  /** The column the function reads: always given, optional (`groupCount`) or not taken (`rowNumber`, `rank`). */
+  arg: 'required' | 'optional' | 'none';
+  argType: WindowArgType;
+  /** `order:` - not for the group functions (the order does not change a group's value), required for `rank`. */
+  order: 'optional' | 'required' | 'none';
+  /** `ties:` (`min` or `dense`) is for `rank` only. */
+  ties: boolean;
+  result: WindowResult;
+  /** A short human-readable signature, for the editor and the prompt. */
+  doc: string;
+}
+
+function win(
+  fn: WindowFn,
+  arg: WindowSignature['arg'],
+  argType: WindowArgType,
+  order: WindowSignature['order'],
+  result: WindowResult,
+  doc: string,
+  ties = false,
+): WindowSignature {
+  return { fn, arg, argType, order, ties, result, doc };
+}
+
+export const WINDOW_SIGNATURES: Readonly<Record<WindowFn, WindowSignature>> = {
+  runningSum: win('runningSum', 'required', 'numeric', 'optional', 'numericPreserve', 'runningSum(x[, by: g][, order: k]) -> sum of x from the first row of the group through this one'),
+  groupSum: win('groupSum', 'required', 'numeric', 'none', 'numericPreserve', "groupSum(x[, by: g]) -> the group's total of x, on every row"),
+  groupAvg: win('groupAvg', 'required', 'numeric', 'none', 'decimal', "groupAvg(x[, by: g]) -> the group's average of x (exact, unrounded), on every row"),
+  groupMin: win('groupMin', 'required', 'numericOrDate', 'none', 'argType', "groupMin(x[, by: g]) -> the group's smallest x (a number or a date), on every row"),
+  groupMax: win('groupMax', 'required', 'numericOrDate', 'none', 'argType', "groupMax(x[, by: g]) -> the group's largest x (a number or a date), on every row"),
+  groupCount: win('groupCount', 'optional', 'any', 'none', 'integer', 'groupCount([x][, by: g]) -> rows in the group (with x: rows where x is not empty), on every row'),
+  previous: win('previous', 'required', 'any', 'optional', 'argType', 'previous(x[, by: g][, order: k]) -> x on the row before (empty on the first row)'),
+  next: win('next', 'required', 'any', 'optional', 'argType', 'next(x[, by: g][, order: k]) -> x on the row after (empty on the last row)'),
+  fillDown: win('fillDown', 'required', 'any', 'optional', 'argType', 'fillDown(x[, by: g][, order: k]) -> the last x that is not empty, up to this row'),
+  rowNumber: win('rowNumber', 'none', 'any', 'optional', 'integer', 'rowNumber([by: g][, order: k]) -> 1, 2, 3 ... within the group'),
+  rank: win('rank', 'none', 'any', 'required', 'integer', 'rank(order: k[, by: g][, ties: min|dense]) -> position by k, first = 1; equal keys share a rank', true),
+};
+
+const WINDOW_FN_NAMES: ReadonlySet<string> = new Set<string>(WINDOW_FNS);
+
+export function isWindowFn(name: string): name is WindowFn {
+  return WINDOW_FN_NAMES.has(name);
+}
+
+/**
+ * Why a window node does not have the shape its function takes, or `undefined` when it does: a missing or surplus column, `order` on a group
+ * function, `ties` on anything but `rank`, `rank` without `order`. Used by the formula parser (with an offset) and by `typeCheck` for stored JSON.
+ */
+export function windowShapeProblem(node: Extract<ExprNode, { op: 'window' }>): string | undefined {
+  const sig = WINDOW_SIGNATURES[node.fn];
+  if (sig === undefined) return `unknown across-row function "${String(node.fn)}"`;
+  if (sig.arg === 'required' && node.arg === undefined) return `${node.fn}() needs a column, e.g. ${node.fn}(amount)`;
+  if (sig.arg === 'none' && node.arg !== undefined) {
+    return `${node.fn}() takes no column; it works on rows (${sig.order === 'required' ? 'say what to rank by with order: ...' : 'use by: and order: to choose how'})`;
+  }
+  if (sig.order === 'none' && node.order !== undefined) return `${node.fn}() does not take order: the order does not change a group's value`;
+  if (sig.order === 'required' && node.order === undefined) return `${node.fn}() needs order: to say what to rank by, e.g. ${node.fn}(order: sales desc)`;
+  if (!sig.ties && node.ties !== undefined) return `${node.fn}() does not take ties:`;
+  return undefined;
+}

@@ -16,6 +16,13 @@ export const editorConfig = {
   previewRows: 50,
   /** Cell-level mismatches returned (the counts are always exact; only the list is capped). */
   maxMismatches: 200,
+  /**
+   * A column that matches fewer than this share of the counted example rows doesn't reproduce the example yet: the notice on it says
+   * "The rule for X doesn't reproduce your example yet" instead of listing rows (they would be most of them).
+   */
+  mostlyFailsBelow: 0.9,
+  /** How many row numbers a column's "N rows don't match this rule (rows 12, 57, ...)" notice lists before the "...". */
+  mismatchRowsShown: 5,
   /** SPEC 8.11 "Calculate": up to 3 terms. */
   maxCalcTerms: 3,
 } as const;

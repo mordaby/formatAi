@@ -3,7 +3,7 @@ import type { Validation } from '@formatai/shared';
 import { useState } from 'react';
 import { sourceOptions } from '../../editor';
 import { useI18n, type MessageKey } from '../../i18n';
-import { ChoiceGroup, NumberField, ProblemList, SelectField, useEdit, type EditorCtx, type Option } from './fields';
+import { ChoiceGroup, NumberField, ProblemList, SelectField, SourceField, useEdit, type EditorCtx, type Option } from './fields';
 import { RemoveButton } from './RowEditors';
 
 type Rule = Validation['rule'];
@@ -38,7 +38,7 @@ export function CheckEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index: 
 
   const on = v.on ?? 'input';
   const columns: Option[] =
-    on === 'output' ? rules.output.columns.map((c) => ({ value: c.header, label: c.header })) : sourceOptions(rules).map((s) => ({ value: s.id, label: s.label }));
+    on === 'output' ? rules.output.columns.map((c) => ({ value: c.header, label: c.header })) : sourceOptions(rules, { exampleInput: ctx.available }).map((s) => ({ value: s.id, label: s.label }));
   const set = (next: Validation, coalesce?: string): void => void edit.run({ type: 'updateValidation', index, validation: next }, coalesce ? { coalesce } : undefined);
   const base = { on, column: v.column, severity: v.severity };
 
@@ -52,11 +52,15 @@ export function CheckEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index: 
           { value: 'output', label: t('editor.check.on.output') },
         ]}
         onChange={(next) => {
-          const first = next === 'output' ? rules.output.columns[0]?.header : sourceOptions(rules)[0]?.id;
+          const first = next === 'output' ? rules.output.columns[0]?.header : sourceOptions(rules, { exampleInput: ctx.available })[0]?.id;
           if (first !== undefined) set({ ...v, on: next, column: first } as Validation);
         }}
       />
-      <SelectField label={t('editor.check.column')} value={v.column} options={columns} onChange={(column) => set({ ...v, column } as Validation)} />
+      {on === 'output' ? (
+        <SelectField label={t('editor.check.column')} value={v.column} options={columns} onChange={(column) => set({ ...v, column } as Validation)} />
+      ) : (
+        <SourceField ctx={ctx} label={t('editor.check.column')} value={v.column} options={columns} onChange={(column) => set({ ...v, column } as Validation)} />
+      )}
       <SelectField
         label={t('editor.check.rule')}
         value={v.rule}

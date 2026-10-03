@@ -10,8 +10,11 @@ import {
   redo,
   resetEditor,
   undo,
+  withFormat,
+  withSource,
 } from './model';
-import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState } from './types';
+import { lockProblem, type EditLock } from './lock';
+import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, ExampleInputColumn, FormatInfo, SourceInfo } from './types';
 
 export interface ApplyActionOptions {
   /**
@@ -19,12 +22,15 @@ export interface ApplyActionOptions {
    * Any other edit, undo, redo or save ends the run.
    */
   coalesce?: string;
+  /** The example input's columns: an edit that uses one no rule declares yet declares it in the same undoable step. */
+  available?: readonly ExampleInputColumn[] | undefined;
 }
 
 export class EditorStore {
   private state: EditorState;
   private readonly listeners = new Set<() => void>();
   private coalesceKey: string | undefined;
+  private lock: EditLock | null = null;
 
   constructor(rules: EditableRules, options: EditorOptions = {}) {
     this.state = createEditorState(rules, options);
@@ -43,22 +49,36 @@ export class EditorStore {
     for (const l of this.listeners) l();
   }
 
+  /** While set (the deep analysis with AI is working), edits of what it works on - and of the shape of the columns - are refused with a `locked` problem. */
+  setLock = (lock: EditLock | null): void => {
+    this.lock = lock;
+  };
+
+  /** Whether edits are being refused right now (`undo`/`redo` are too: they would put back what the analysis is working on). */
+  get locked(): boolean {
+    return this.lock !== null;
+  }
+
   /** Applies one edit; problems leave the editor exactly as it was. */
   apply = (action: EditAction, options: ApplyActionOptions = {}): ActionResult => {
+    const refused = this.lock ? lockProblem(action, this.state.rules, this.lock) : null;
+    if (refused) return { ok: false, problems: [refused] };
     const key = options.coalesce;
     const merge = key !== undefined && key !== '' && key === this.coalesceKey;
-    const { state, result } = applyEdit(this.state, action, { merge });
+    const { state, result } = applyEdit(this.state, action, { merge, available: options.available });
     if (result.ok && result.changed) this.coalesceKey = key === '' ? undefined : key;
     this.set(state);
     return result;
   };
 
   undo = (): void => {
+    if (this.lock) return;
     this.coalesceKey = undefined;
     this.set(undo(this.state));
   };
 
   redo = (): void => {
+    if (this.lock) return;
     this.coalesceKey = undefined;
     this.set(redo(this.state));
   };
@@ -75,6 +95,19 @@ export class EditorStore {
   markSaved = (rules?: EditableRules): void => {
     this.coalesceKey = undefined;
     this.set(markSaved(this.state, rules));
+  };
+
+  /**
+   * The conversion now belongs to a format (a learn that has just been saved as one): from here on an edit of the output side is a change
+   * to the format (SPEC 8.12). The rules, the undo history and `rev` stay as they are (nothing needs checking again).
+   */
+  setFormat = (format: FormatInfo | null): void => {
+    this.set(withFormat(this.state, format));
+  };
+
+  /** The conversion's source is now known (a learn that has just been saved): an edit of the input side is a change to the source (SPEC 8.15). */
+  setSource = (source: SourceInfo | null): void => {
+    this.set(withSource(this.state, source));
   };
 
   /** Start over from other rules. */

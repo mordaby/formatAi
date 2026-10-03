@@ -1,4 +1,4 @@
-// The column editor (SPEC 8.11): a name, "How is it made?" with seven ways, and the output format with a live preview.
+// The column editor (SPEC 8.11): a name, "How is it made?" with eight ways, and the output format with a live preview.
 import { COLUMN_TYPES, type ColumnType, type PayloadCell } from '@formatai/shared';
 import { Fragment, useState } from 'react';
 import {
@@ -16,13 +16,13 @@ import { useI18n, type MessageKey } from '../../i18n';
 import type { Line } from '../../rulesText';
 import { Button, InlineMessage } from '../../ui';
 import type { LiveCheckResult } from '../../worker/editorApi';
-import { CheckField, ChoiceGroup, FormSection, NumberField, ProblemList, SelectField, TextField, useEdit, type EditorCtx, type Option } from './fields';
+import { CheckField, ChoiceGroup, FormSection, NumberField, ProblemList, SelectField, SourceField, TextField, useEdit, type EditorCtx, type Option } from './fields';
 import { exampleValues } from './helpers';
 import { formatPreview } from './formatPreview';
 
 type Kind = ColumnMethod['kind'];
 
-const KINDS: readonly Kind[] = ['copy', 'calculate', 'join', 'partOfText', 'translate', 'fixed', 'empty'];
+const KINDS: readonly Kind[] = ['copy', 'calculate', 'join', 'partOfText', 'translate', 'fixed', 'runningSum', 'empty'];
 const KIND_LABEL: Record<Kind, MessageKey> = {
   copy: 'editor.col.kind.copy',
   calculate: 'editor.col.kind.calculate',
@@ -30,6 +30,7 @@ const KIND_LABEL: Record<Kind, MessageKey> = {
   partOfText: 'editor.col.kind.partOfText',
   translate: 'editor.col.kind.translate',
   fixed: 'editor.col.kind.fixed',
+  runningSum: 'editor.col.kind.runningSum',
   empty: 'editor.col.kind.empty',
   formula: 'editor.col.kind.formula',
 };
@@ -61,6 +62,9 @@ function starter(kind: Kind, sources: readonly SourceOption[], current: ColumnMe
       return { kind, source: pick((s) => isTextLike(s.type)), pairs: [], onMissing: 'keep' };
     case 'fixed':
       return { kind, value: '' };
+    case 'runningSum':
+      // Adds up the column they were already using when it is a number; the file's own order until they choose another.
+      return { kind, column: pick((s) => isNumeric(s.type)), orderBy: 'file' };
     case 'empty':
       return { kind };
     case 'formula':
@@ -90,7 +94,7 @@ export function ColumnEditor({ ctx, index, line, live, onRenamed, onRemoved, onM
   });
   if (!col || !draft) return null;
 
-  const sources = sourceOptions(rules, { forColumn: index });
+  const sources = sourceOptions(rules, { forColumn: index, exampleInput: ctx.available });
   const examples = exampleValues(live, index);
   const wants = line && (line.status === 'needsInput' || line.status === 'check') && line.statusReason;
 
@@ -141,7 +145,7 @@ export function ColumnEditor({ ctx, index, line, live, onRenamed, onRemoved, onM
         }}
       />
 
-      <MethodForm draft={draft} sources={sources} setMethod={setMethod} />
+      <MethodForm ctx={ctx} draft={draft} sources={sources} setMethod={setMethod} />
 
       <ProblemList problems={edit.problems} />
 
@@ -167,9 +171,10 @@ export function ColumnEditor({ ctx, index, line, live, onRenamed, onRemoved, onM
   );
 }
 
-// ---------- the seven forms ----------
+// ---------- the eight forms ----------
 
 interface MethodFormProps {
+  ctx: EditorCtx;
   draft: ColumnMethod;
   sources: readonly SourceOption[];
   setMethod(next: ColumnMethod, coalesce?: string): void;
@@ -179,13 +184,13 @@ function sourceChoices(sources: readonly SourceOption[]): Option[] {
   return sources.map((s) => ({ value: s.id, label: s.label }));
 }
 
-function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
+function MethodForm({ ctx, draft, sources, setMethod }: MethodFormProps) {
   const { t } = useI18n();
   switch (draft.kind) {
     case 'copy':
       return (
         <FormSection>
-          <SelectField label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
+          <SourceField ctx={ctx} label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
           <NumberField
             label={t('editor.col.pad')}
             hint={t('editor.col.padHint')}
@@ -202,14 +207,15 @@ function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
         </FormSection>
       );
     case 'calculate':
-      return <CalculateForm draft={draft} sources={sources} setMethod={setMethod} />;
+      return <CalculateForm ctx={ctx} draft={draft} sources={sources} setMethod={setMethod} />;
     case 'join':
       return (
         <FormSection>
           <p className="field__label">{t('editor.col.joinColumns')}</p>
           {draft.columns.map((c, i) => (
             <div className="row" key={i}>
-              <SelectField
+              <SourceField
+                ctx={ctx}
                 className="row__grow"
                 hideLabel
                 label={t('editor.col.joinColumn', { n: i + 1 })}
@@ -239,12 +245,14 @@ function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
             </Button>
           </div>
           <TextField label={t('editor.col.separator')} hint={t('editor.col.separatorHint')} value={draft.separator} onChange={(separator) => setMethod({ ...draft, separator }, 'separator')} />
+          <TextField label={t('editor.col.joinBefore')} hint={t('editor.col.joinFixedHint')} value={draft.before ?? ''} onChange={(before) => setMethod(withFixed(draft, 'before', before), 'joinBefore')} />
+          <TextField label={t('editor.col.joinAfter')} value={draft.after ?? ''} onChange={(after) => setMethod(withFixed(draft, 'after', after), 'joinAfter')} />
         </FormSection>
       );
     case 'partOfText':
       return (
         <FormSection>
-          <SelectField label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
+          <SourceField ctx={ctx} label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
           <ChoiceGroup
             label={t('editor.col.part')}
             value={draft.part}
@@ -258,9 +266,11 @@ function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
         </FormSection>
       );
     case 'translate':
-      return <TranslateForm draft={draft} sources={sources} setMethod={setMethod} />;
+      return <TranslateForm ctx={ctx} draft={draft} sources={sources} setMethod={setMethod} />;
     case 'fixed':
       return <FixedForm draft={draft} setMethod={setMethod} />;
+    case 'runningSum':
+      return <RunningSumForm ctx={ctx} draft={draft} sources={sources} setMethod={setMethod} />;
     case 'empty':
       return <p className="muted">{t('editor.col.emptyNote')}</p>;
     case 'formula':
@@ -278,6 +288,14 @@ function MethodForm({ draft, sources, setMethod }: MethodFormProps) {
   }
 }
 
+/** The join with its fixed text at the start or the end set (an empty text removes it). */
+function withFixed(draft: Extract<ColumnMethod, { kind: 'join' }>, side: 'before' | 'after', text: string): ColumnMethod {
+  const { before, after, ...rest } = draft;
+  const fixed = { ...(before ? { before } : {}), ...(after ? { after } : {}) };
+  delete fixed[side];
+  return { ...rest, ...fixed, ...(text === '' ? {} : { [side]: text }) };
+}
+
 // ---------- Calculate: blocks, not typed ----------
 
 const OPS: readonly { value: CalcOp; label: string }[] = [
@@ -287,7 +305,7 @@ const OPS: readonly { value: CalcOp; label: string }[] = [
   { value: '/', label: '÷' },
 ];
 
-function CalculateForm({ draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'calculate' }> }) {
+function CalculateForm({ ctx, draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'calculate' }> }) {
   const { t } = useI18n();
   const usable = sources.filter((s) => isNumeric(s.type) || isTextLike(s.type));
   const setTerm = (i: number, term: CalcTerm): void => setMethod({ ...draft, terms: draft.terms.map((x, k) => (k === i ? term : x)) }, `term:${i}`);
@@ -310,7 +328,9 @@ function CalculateForm({ draft, sources, setMethod }: MethodFormProps & { draft:
                 />
               )}
               <div className="calc__block">
-                <SelectField
+                <SourceField
+                  ctx={ctx}
+                  valuePrefix="col:"
                   hideLabel
                   label={t('editor.col.calcTerm', { n: i + 1 })}
                   value={value}
@@ -318,12 +338,14 @@ function CalculateForm({ draft, sources, setMethod }: MethodFormProps & { draft:
                     ...usable.map((s): Option => ({ value: `col:${s.id}`, label: isTextLike(s.type) ? `${s.label} (${t('editor.col.textAsNumber')})` : s.label })),
                     { value: '#number', label: t('editor.col.aNumber') },
                   ]}
-                  onChange={(v) => {
+                  onChange={(v, typed) => {
                     if (v === '#number') setTerm(i, { number: 1 });
                     else {
                       const id = v.slice(4);
                       const src = usable.find((s) => s.id === id);
-                      setTerm(i, isTextLike(src?.type) ? { column: id, toNumber: true } : { column: id });
+                      // A column just typed in is not in the list yet: what the person said it holds decides.
+                      const text = src ? isTextLike(src.type) : typed !== undefined && (typed.type === 'text' || typed.type === 'idLike');
+                      setTerm(i, text ? { column: id, toNumber: true } : { column: id });
                     }
                   }}
                 />
@@ -369,12 +391,12 @@ function CalculateForm({ draft, sources, setMethod }: MethodFormProps & { draft:
 
 // ---------- Translate values ----------
 
-function TranslateForm({ draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'translate' }> }) {
+function TranslateForm({ ctx, draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'translate' }> }) {
   const { t } = useI18n();
   const setPair = (i: number, patch: Partial<TranslatePair>): void => setMethod({ ...draft, pairs: draft.pairs.map((p, k) => (k === i ? { ...p, ...patch } : p)) }, `pair:${i}`);
   return (
     <FormSection>
-      <SelectField label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
+      <SourceField ctx={ctx} label={t('editor.col.source')} value={draft.source} options={sourceChoices(sources)} onChange={(source) => setMethod({ ...draft, source })} />
       <table className="pairs">
         <thead>
           <tr>
@@ -421,6 +443,54 @@ function TranslateForm({ draft, sources, setMethod }: MethodFormProps & { draft:
         ]}
         onChange={(onMissing) => setMethod({ ...draft, onMissing })}
       />
+    </FormSection>
+  );
+}
+
+// ---------- Running total ----------
+
+const NO_GROUP = '#none';
+const FILE_ORDER = '#file';
+
+function RunningSumForm({ ctx, draft, sources, setMethod }: MethodFormProps & { draft: Extract<ColumnMethod, { kind: 'runningSum' }> }) {
+  const { t } = useI18n();
+  // The column to add up is a number (the one already chosen stays in the list, whatever it is, so the form never lies about it).
+  const numeric = sources.filter((s) => isNumeric(s.type) || s.id === draft.column);
+  const everything = sourceChoices(sources);
+  const order = draft.orderBy;
+  // The rules remove duplicates before the total is calculated, so a total never counts a copy that is not in the file made.
+  const removesDuplicates = ctx.rules.transform.dedupe?.action === 'remove';
+  const withGroup = (groupBy: string | undefined): ColumnMethod => ({ kind: 'runningSum', column: draft.column, ...(groupBy === undefined ? {} : { groupBy }), orderBy: draft.orderBy });
+  return (
+    <FormSection>
+      <SourceField ctx={ctx} label={t('editor.col.running.column')} value={draft.column} options={sourceChoices(numeric)} onChange={(column) => setMethod({ ...draft, column })} />
+      <SourceField
+        ctx={ctx}
+        label={t('editor.col.running.groupBy')}
+        value={draft.groupBy ?? NO_GROUP}
+        options={[{ value: NO_GROUP, label: t('editor.col.running.noGroup') }, ...everything]}
+        onChange={(v) => setMethod(withGroup(v === NO_GROUP ? undefined : v))}
+      />
+      <SourceField
+        ctx={ctx}
+        valuePrefix="col:"
+        label={t('editor.col.running.orderBy')}
+        value={order === 'file' ? FILE_ORDER : `col:${order.column}`}
+        options={[{ value: FILE_ORDER, label: t('editor.col.running.fileOrder') }, ...sources.map((s): Option => ({ value: `col:${s.id}`, label: s.label }))]}
+        onChange={(v) => setMethod({ ...draft, orderBy: v === FILE_ORDER ? 'file' : { column: v.slice(4), dir: order === 'file' ? 'asc' : order.dir } })}
+      />
+      {order !== 'file' && (
+        <ChoiceGroup
+          label={t('editor.col.running.direction')}
+          value={order.dir}
+          options={[
+            { value: 'asc', label: t('editor.col.running.asc') },
+            { value: 'desc', label: t('editor.col.running.desc') },
+          ]}
+          onChange={(dir) => setMethod({ ...draft, orderBy: { column: order.column, dir } })}
+        />
+      )}
+      {removesDuplicates && <p className="muted">{t('editor.col.running.dedupeNote')}</p>}
     </FormSection>
   );
 }

@@ -21,6 +21,12 @@ coverage/
 eval/reports/
 eval/.cache/
 
+# rule catalogue: the generator is committed, what it generates is not
+eval/catalogue/report.md
+eval/catalogue/report.csv
+eval/catalogue/results.json
+eval/catalogue/.cache/
+
 # logs
 *.log
 npm-debug.log*
@@ -38,3 +44,6 @@ Thumbs.db
 
 # Excel lock files
 ~$*
+
+# owner sample files for local diagnosis (never committed)
+local-samples/

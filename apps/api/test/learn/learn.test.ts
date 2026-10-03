@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V5, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT_V7, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
 import {
+  allUnsupportedWireJson,
   basicPayload,
   correctRules,
   correctRulesWireJson,
+  derivableColumnPayload,
+  derivableColumnWireJson,
+  externalColumnPayload,
+  externalColumnRules,
+  externalColumnWireJson,
+  gaveUpOnDerivableWireJson,
   schemaBrokenRulesJson,
   wrongRoundingWireJson,
 } from './fixtures.js';
@@ -31,6 +38,49 @@ async function withServerRepairRounds<T>(rounds: number, fn: () => Promise<T>): 
     mutable.serverRepairRounds = original;
   }
 }
+
+describe('learn() with the fake provider: the learn-v7 prompt, the wire schema and the notes round trip', () => {
+  const request = { name: 'lookupStorageSite', purpose: 'Finds the storage site of an item from a table kept elsewhere.', args: [{ name: 'item', type: 'text' as const }], returns: 'text' as const };
+
+  it('sends the learn-v7 prompt and a wire schema that carries functionRequest and explanation, and returns both on the answer', async () => {
+    const fake = createFakeProvider();
+    const noted = { ...externalColumnRules(), unsupported: [{ outputColumn: 'Warehouse', reasonCode: 'externalData' as const, functionRequest: request, explanation: 'Looks like the storage site of the item.' }] };
+    const { toWire } = await import('@formatai/shared');
+    const { formulaRulesToWire } = await import('@formatai/engine');
+    fake.enqueue({ json: toWire(formulaRulesToWire(noted) as never) });
+
+    const outcome = await learn(externalColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.verified).toBe(true);
+    expect(outcome.rules?.unsupported).toEqual(noted.unsupported);
+    const sent = fake.calls[0]!;
+    expect(sent.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(sent.system).toContain('functionRequest');
+    expect(sent.system).toContain('runningSum(x)');
+    const unsupportedItem = (sent.schema as { properties: { unsupported: { items: { properties: Record<string, unknown> } } } }).properties.unsupported.items;
+    expect(Object.keys(unsupportedItem.properties).sort()).toEqual(['explanation', 'functionRequest', 'outputColumn', 'reasonCode']);
+    expect(outcome.calls[0]).toMatchObject({ promptVersion: 'learn-v7' });
+    // the ledger record is counts only: nothing of the notes
+    expect(JSON.stringify(outcome.calls)).not.toMatch(/storage site|lookupStorageSite|explanation/);
+  });
+
+  it('a window function in the answer round-trips like any other formula (the prompt documents it)', async () => {
+    const fake = createFakeProvider();
+    const rules = correctRules();
+    const withWindow = {
+      ...rules,
+      transform: { ...rules.transform, computed: [...rules.transform.computed, { id: 'running', type: 'decimal' as const, expr: { op: 'window' as const, fn: 'runningSum' as const, arg: { col: 'amount' } } }] },
+    };
+    const { toWire } = await import('@formatai/shared');
+    const { formulaRulesToWire } = await import('@formatai/engine');
+    const wire = toWire(formulaRulesToWire(withWindow) as never) as unknown as { transform: { computed: { expr: string }[] } };
+    expect(wire.transform.computed.at(-1)!.expr).toBe('runningSum(amount)');
+    fake.enqueue({ json: wire });
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    expect(outcome.problems).toEqual([]);
+    expect(outcome.rules?.transform.computed.at(-1)?.expr).toMatchObject({ op: 'window', fn: 'runningSum' });
+  });
+});
 
 describe('learn()', () => {
   it('verifies on the first call when the model gets it right immediately', async () => {
@@ -138,8 +188,8 @@ describe('learn()', () => {
 
     // Every call uses the identical, unchanging system prompt (SPEC 9.1) - no
     // conversation history is ever built up.
-    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT_V5);
-    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT_V5);
+    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
 
     // The learn call: exactly one content block, the cached payload.
     expect(learnCall!.content).toHaveLength(1);
@@ -152,6 +202,75 @@ describe('learn()', () => {
     expect(repairCall!.content[1]!.cache).toBeUndefined();
     expect(repairCall!.content[1]!.text).toContain('"mode":"repair"');
     expect(repairCall!.content[1]!.text.endsWith(REPAIR_INSTRUCTION)).toBe(true);
+  });
+});
+
+describe('learn(): an honest "cannot produce this column"', () => {
+  it('verifies on the first call: the column reported as unsupported is not compared, so there is nothing to repair or escalate (exactly 1 call)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: externalColumnWireJson() });
+
+    const outcome = await learn(externalColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(fake.calls).toHaveLength(1);
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn']);
+    expect(outcome.calls[0]).toMatchObject({ outcome: 'verified' });
+    expect(outcome.verified).toBe(true);
+    expect(outcome.problems).toEqual([]);
+    expect(outcome.rules).toEqual(externalColumnRules());
+  });
+
+  it('every column unsupported is no verified learn: it is repaired once and escalated like any failing attempt, and ends not verified', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: allUnsupportedWireJson() }); // learn
+    fake.enqueue({ json: allUnsupportedWireJson() }); // repair
+    fake.enqueue({ json: allUnsupportedWireJson() }); // escalation
+
+    const outcome = await learn(externalColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn', 'repair', 'escalation']);
+    expect(outcome.verified).toBe(false);
+    expect(outcome.problems.every((p) => p.kind === 'reference')).toBe(true);
+  });
+});
+
+describe('learn(): an unsupported column the app found a relation for', () => {
+  it('is repaired once: the repair call carries the problem, and the answer that writes the rule verifies (2 calls, no escalation)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: gaveUpOnDerivableWireJson() }); // learn: gives up on Warehouse
+    fake.enqueue({ json: derivableColumnWireJson() }); // repair: writes the rule
+
+    const outcome = await learn(derivableColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn', 'repair']);
+    expect(outcome.calls[0]).toMatchObject({ outcome: 'needsRepair' });
+    expect(outcome.calls[0]!.problemCounts.unsupportedDespiteEvidence).toBe(1);
+    expect(outcome.calls[1]!.problemCounts.unsupportedDespiteEvidence).toBe(0);
+    expect(outcome.verified).toBe(true);
+    expect(outcome.rules?.unsupported).toEqual([]);
+    const repairText = fake.calls[1]!.content[1]!.text;
+    expect(repairText).toContain('"kind":"unsupportedDespiteEvidence"');
+    expect(repairText).toContain('the app found it is built from \\"Site\\" (copy); write a rule for it.');
+  });
+
+  it('a model that stands by "unsupported" is repaired once, escalated once, and ends not verified - the rules it gave are still returned (the browser decides)', async () => {
+    const fake = createFakeProvider();
+    for (let i = 0; i < 3; i++) fake.enqueue({ json: gaveUpOnDerivableWireJson() });
+
+    const outcome = await learn(derivableColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn', 'repair', 'escalation']);
+    expect(outcome.verified).toBe(false);
+    expect(outcome.problems.map((p) => p.kind)).toEqual(['unsupportedDespiteEvidence']);
+    expect(outcome.rules?.unsupported).toEqual([{ outputColumn: 'Warehouse', reasonCode: 'externalData' }]);
+  });
+
+  it('a column with no hint is still accepted on the first call (nothing to repair)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: externalColumnWireJson() });
+    const outcome = await learn(externalColumnPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    expect(fake.calls).toHaveLength(1);
+    expect(outcome.verified).toBe(true);
   });
 });
 

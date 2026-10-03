@@ -141,7 +141,7 @@ function runChecks(
       const v = row.v[slot] ?? null;
       const failure = check(v, row.o);
       if (failure === null) continue;
-      if (val.severity === 'block') {
+      if (val.severity === 'block' && ctx.keepRows?.has(row.o.rowNumber) !== true) {
         blocked[i] = val;
         continue;
       }

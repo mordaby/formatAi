@@ -105,6 +105,15 @@ describe('explainStaticProblems', () => {
     expect(lines('output.sheetName', 'formatLock')).toBeUndefined();
   });
 
+  it('says the source lock in plain words, naming the input column the rules declare (SPEC 8.15)', () => {
+    const header = rules.input.columns[1]!.header;
+    const [p] = explainStaticProblems(rules, [{ layer: 'sourceLock', kind: 'sourceMismatch', path: 'input.columns[1].type', message: `column "${header}": type must equal the source's "text", got "decimal"` }]);
+    expect(p).toMatchObject({ layer: 'sourceLock', code: 'sourceLock.sourceMismatch', where: `Input column "${header}"` });
+    expect(p!.text).toBe(`Input column "${header}" doesn't match the source you chose: column "${header}": type must equal the source's "text", got "decimal".`);
+    // (a reading option has no column of its own)
+    expect(explainStaticProblems(rules, [{ layer: 'sourceLock', kind: 'sourceMismatch', path: 'input.headerRow', message: "must equal the source's headerRow 1, got 3" }])[0]!.where).toBe('The input');
+  });
+
   it('names functions and tables by name', () => {
     const r = { ...rules, transform: { ...rules.transform, functions: [{ name: 'netOf', params: [], returns: 'decimal' as const, body: { const: 1 } }], tables: [{ name: 'rates', columns: ['k'], rows: [] }] } };
     expect(explainStaticProblems(r, [at('transform.functions[0].body')])[0]).toMatchObject({ lineId: 'fn:netOf', where: 'Function "netOf"' });

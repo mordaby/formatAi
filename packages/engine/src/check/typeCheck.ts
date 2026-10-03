@@ -22,10 +22,11 @@ import type {
   RowFilter,
   Rules,
   RulesTable,
+  SummaryAgg,
   SummaryRow,
   Validation,
 } from '@formatai/shared';
-import { fits, OP_SIGNATURES, unify, type ArgSpec, type ResultSpec, type SigType } from './signatures';
+import { fits, OP_SIGNATURES, unify, WINDOW_SIGNATURES, windowShapeProblem, type ArgSpec, type ResultSpec, type SigType } from './signatures';
 
 export interface TypeProblem {
   kind: 'type';
@@ -71,6 +72,29 @@ function inferConstType(v: ExprConstValue): SigType | undefined {
   if (typeof v === 'boolean') return 'boolean';
   if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'decimal';
   return 'text';
+}
+
+/**
+ * The type an output column shows once its `agg` is applied (summary output, `group.showDetailRows: false`, SPEC 8.6): a count is an integer
+ * whatever is counted (a text or id column too), an average a decimal, a sum a number (an integer for integers), and min / max / first / last
+ * keep the source type. Without a summary output (no group, or one that shows its detail rows) the engine ignores `agg`, so the column
+ * keeps the type of what it reads.
+ */
+function typeAfterAgg(agg: SummaryAgg | undefined, source: SigType, summaryOutput: boolean): SigType {
+  if (!summaryOutput || agg === undefined) return source;
+  switch (agg) {
+    case 'count':
+      return 'integer';
+    case 'average':
+      return 'decimal';
+    case 'sum':
+      return source === 'integer' ? 'integer' : 'decimal';
+    case 'min':
+    case 'max':
+    case 'first':
+    case 'last':
+      return source;
+  }
 }
 
 function suggestionFor(expected: SigType, actual: SigType): string | undefined {
@@ -233,6 +257,11 @@ function inferType(
     case 'dateFormat':
     case 'dateAdd':
     case 'endOfMonth':
+    case 'weekday':
+    case 'toDate':
+    case 'keepChars':
+    case 'titleCase':
+    case 'find':
     case 'isEmpty':
     case 'notEmpty':
     case 'oneOf':
@@ -247,9 +276,10 @@ function inferType(
       return resolveResult(sig.result, [argType]);
     }
 
-    // ---- Group B: a fixed two-element `args` tuple, homogeneous expected type ----
+    // ---- Group B: a fixed-length `args` tuple (2 or 3), homogeneous expected type ----
     case 'mod':
-    case 'dateDiff': {
+    case 'dateDiff':
+    case 'makeDate': {
       const sig = OP_SIGNATURES[expr.op];
       const argSpec = sig.args as Extract<ArgSpec, { shape: 'fixedSameType' }>;
       const types = expr.args.map((a, i) => inferType(a, scope, ctx, `${path}.args[${i}]`, problems));
@@ -297,6 +327,48 @@ function inferType(
     }
 
     // ---- Group E: irregular shapes ----
+    // A literal op with no Expr child: its type is fixed (date). The literal itself is
+    // validated by the schema/parser, not here.
+    case 'dateLiteral':
+      return resolveResult(OP_SIGNATURES.dateLiteral.result, []);
+
+    // An across-row function (docs/proposals/window-operations.md): its column must suit the function (a number to add up, a number or a
+    // date for min/max, anything to carry down); the group and order columns can be of any type. Stored JSON gets the same shape check
+    // the formula parser gives text (a column where one is needed, no order on a group total, rank needs an order).
+    case 'window': {
+      const shape = windowShapeProblem(expr);
+      if (shape !== undefined) {
+        problems.push({ kind: 'type', path, message: shape });
+        return undefined;
+      }
+      const sig = WINDOW_SIGNATURES[expr.fn];
+      let argType: SigType | undefined;
+      if (expr.arg !== undefined) {
+        if (!('col' in expr.arg)) {
+          problems.push({ kind: 'type', path: `${path}.arg`, message: `${expr.fn}() reads a column id; make a computed column first for anything calculated` });
+          return undefined;
+        }
+        argType = inferType(expr.arg, scope, ctx, `${path}.arg`, problems);
+        if (argType !== undefined && sig.argType === 'numeric' && !fits(argType, 'decimal')) {
+          const hint = argType === 'text' || argType === 'idLike' ? '; use toNumber in a computed column first' : '';
+          problems.push({ kind: 'type', path: `${path}.arg`, message: `expected decimal, got ${argType}${hint}` });
+        } else if (argType !== undefined && sig.argType === 'numericOrDate' && !fits(argType, 'decimal') && argType !== 'date') {
+          const hint = argType === 'text' || argType === 'idLike' ? '; use toNumber or a date column first (in a computed column)' : '';
+          problems.push({ kind: 'type', path: `${path}.arg`, message: `expected decimal or date, got ${argType}${hint}` });
+        }
+      }
+      switch (sig.result) {
+        case 'numericPreserve':
+          return argType === 'integer' ? 'integer' : 'decimal';
+        case 'decimal':
+          return 'decimal';
+        case 'integer':
+          return 'integer';
+        case 'argType':
+          return argType;
+      }
+    }
+
     case 'if': {
       const condType = inferType(expr.cond, scope, ctx, `${path}.cond`, problems);
       checkArgFits(condType, 'boolean', `${path}.cond`, problems);
@@ -613,12 +685,14 @@ export function typeCheck(rules: LearnResult | Rules, opts?: TypeCheckOptions): 
   // ----- output columns vs. opts.outputTypes (SPEC 9.2: "Each output column's result
   // type must fit its output type") -----
   if (opts?.outputTypes) {
+    const summaryOutput = rules.transform.group !== undefined && !rules.transform.group.showDetailRows;
     rules.output.columns.forEach((col, i) => {
       if (col.from === null) return;
       const declaredRaw = opts.outputTypes?.[col.header];
       if (declaredRaw === undefined) return;
-      const srcType = finalTypes.get(col.from);
-      if (srcType === undefined) return;
+      const readType = finalTypes.get(col.from);
+      if (readType === undefined) return;
+      const srcType = typeAfterAgg(col.agg, readType, summaryOutput);
       const family = familyOf(declaredRaw);
       const nominal = family ? FAMILY_NOMINAL[family] : undefined;
       if (nominal && !fits(srcType, nominal)) {

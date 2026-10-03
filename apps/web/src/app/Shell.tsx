@@ -2,8 +2,8 @@ import { useEffect, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { LanguageToggle } from '../components/LanguageToggle';
 import { useI18n } from '../i18n';
-import { Button } from '../ui';
-import { useSignIn } from './SignIn';
+import { AccountMenu, AuthNoticeBar } from './AccountMenu';
+import { useMe } from './Me';
 import { useReducedMotion } from './useReducedMotion';
 
 /**
@@ -13,7 +13,7 @@ import { useReducedMotion } from './useReducedMotion';
  */
 export function Shell({ children }: { children: ReactNode }) {
   const { t, dir, lang } = useI18n();
-  const signIn = useSignIn();
+  const { user } = useMe();
   const reduced = useReducedMotion();
 
   // Dialogs render in a portal outside this element, so the class also goes on <html>.
@@ -35,13 +35,17 @@ export function Shell({ children }: { children: ReactNode }) {
             </span>
           </Link>
           <div className="app-header__actions">
+            {user ? (
+              <Link className="app-header__link" to="/formats">
+                {t('account.myFormats')}
+              </Link>
+            ) : null}
             <LanguageToggle />
-            <Button variant="secondary" size="sm" onClick={() => signIn.open('save')}>
-              {t('header.signIn')}
-            </Button>
+            <AccountMenu />
           </div>
         </div>
       </header>
+      <AuthNoticeBar />
       {children}
       <footer className="app-footer">
         <div className="app-footer__inner">

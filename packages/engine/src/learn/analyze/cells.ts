@@ -95,6 +95,11 @@ export function decimalsOf(numKey: string): number {
   return dot < 0 ? 0 : numKey.length - dot - 1;
 }
 
+/** Significant digits of a canonical decimal text ("1.17" 3, "0.854701" 6, "120" 2, "0.5" 1): how round a constant is. */
+export function significantDigits(numKey: string): number {
+  return new Decimal(numKey).sd();
+}
+
 // ---------- dates ----------
 
 const YMD_MEMO = new Map<number, Ymd>();

@@ -1,0 +1,20 @@
+{
+  "outputType": "csv",
+  "lines": [
+    "Category,Item,Qty,Previous qty",
+    "Tools,Hammer,5,",
+    "Tools,Saw,7,5",
+    "Tools,Drill,2,7",
+    "Paint,Brush,9,2",
+    "Paint,Roller,4,9"
+  ],
+  "flags": [],
+  "summary": {
+    "rowsIn": 5,
+    "rowsOut": 5,
+    "rowsFiltered": 0,
+    "duplicatesRemoved": [],
+    "duplicatesFlagged": 0,
+    "blockedRows": []
+  }
+}

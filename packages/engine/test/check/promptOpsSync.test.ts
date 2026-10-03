@@ -3,13 +3,19 @@
 // editor and the prompt." This test guards the "and the prompt" half of that sentence,
 // for learn-v5's formula syntax: every operation `OP_SIGNATURES` knows about must be
 // documented in LEARN_PROMPT.md's "# Operations" section, either as its infix symbol
-// (add/sub/mul/div/eq/ne/gt/gte/lt/lte) or as its function-call form `name(` (everything
+// (add/sub/mul/div/eq/ne/gt/gte/lt/lte) or as its function-call form (everything
 // else) - so the LLM is never asked to use an operation it hasn't been told about.
+//
+// learn-v7 documented every op (the seven date/text ops added after learn-v6 and the eleven window
+// functions), so NO op is held back any more. The mechanism stays for the next op added before its prompt
+// version: an op flagged `inPrompt: false` is skipped here - and must really be ABSENT from the prompt:
+// the day the prompt documents it, the flag has to go (otherwise the API's LLM-answer check would keep
+// rejecting an op the model was told to use).
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V5 } from '@formatai/shared';
-import { OP_SIGNATURES, type SigOp } from '../../src/check/signatures';
+import { LEARN_SYSTEM_PROMPT_V7 } from '@formatai/shared';
+import { OP_SIGNATURES, WINDOW_SIGNATURES, type SigOp } from '../../src/check/signatures';
 
-/** The "# Operations" section of LEARN_PROMPT §2 (learn-v5): from "# Operations" to the
+/** The "# Operations" section of LEARN_PROMPT §2 (learn-v6): from "# Operations" to the
  * "# Example" heading that follows it. Also documents functions/tables/rowFilters/
  * dedupe/expand/valueMaps/sort/group/titleRows/validations/output.file - this test only
  * checks that every OP_SIGNATURES op is mentioned somewhere in it. */
@@ -19,28 +25,64 @@ function extractOperationsSection(prompt: string): string {
   return match[1] as string;
 }
 
-describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3, learn-v5 formulas)', () => {
-  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT_V5);
-  const ops = Object.keys(OP_SIGNATURES) as SigOp[];
+/** The text that names an op in the prompt: its infix symbol, or `name(` for a call form
+ * (the formula's own function name, which can differ from the op's name: `dateLiteral` is
+ * written `date(...)`), or the bare word for the two irregular ops (switch, call). */
+function mentions(section: string, op: SigOp): boolean {
+  const formula = OP_SIGNATURES[op].formula;
+  if (formula.form === 'infix') return section.includes(formula.symbol);
+  if (formula.form === 'call') return section.includes(`${formula.fn}(`);
+  return new RegExp(`\\b${op}\\b`).test(section);
+}
 
-  it('every OP_SIGNATURES op appears in the prompt formula list', () => {
-    const missing = ops.filter((op) => {
-      const formula = OP_SIGNATURES[op].formula;
-      if (formula.form === 'infix') return !section.includes(formula.symbol);
-      if (formula.form === 'call') return !section.includes(`${op}(`);
-      // 'special' (switch, call): documented by name, not a fixed call form.
-      return !new RegExp(`\\b${op}\\b`).test(section);
-    });
-    expect(missing).toEqual([]);
+describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3, learn-v6 formulas)', () => {
+  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT_V7);
+  const ops = Object.keys(OP_SIGNATURES) as SigOp[];
+  const inPrompt = ops.filter((op) => OP_SIGNATURES[op].inPrompt !== false);
+  const notInPrompt = ops.filter((op) => OP_SIGNATURES[op].inPrompt === false);
+
+  it('every OP_SIGNATURES op that is meant to be in the prompt appears in the prompt formula list', () => {
+    expect(inPrompt.filter((op) => !mentions(section, op))).toEqual([]);
   });
 
-  it('every call-form op is documented with its own fixed function name', () => {
-    for (const op of ops) {
+  it('every call-form op that is in the prompt is documented with its own fixed function name', () => {
+    for (const op of inPrompt) {
       const formula = OP_SIGNATURES[op].formula;
       if (formula.form === 'call') {
-        expect(section, `expected "${op}(" in the prompt's Operations section`).toContain(`${op}(`);
+        expect(section, `expected "${formula.fn}(" in the prompt's Operations section`).toContain(`${formula.fn}(`);
       }
     }
+  });
+
+  it('an op flagged inPrompt: false is really not in the prompt yet (drop the flag when it ships)', () => {
+    expect(notInPrompt.filter((op) => mentions(section, op))).toEqual([]);
+  });
+
+  it('learn-v7: no op is held back from the prompt (every OP_SIGNATURES op, including the seven date/text ops and window, is documented)', () => {
+    expect(notInPrompt).toEqual([]);
+    expect([...inPrompt].sort()).toEqual([...ops].sort());
+    for (const op of ['weekday', 'makeDate', 'toDate', 'dateLiteral', 'keepChars', 'titleCase', 'find', 'window'] as SigOp[]) {
+      expect(mentions(section, op), op).toBe(true);
+    }
+  });
+
+  // The across-row functions are one op (`window`) with eleven names; every name must be in the prompt as `name(`.
+  it('the eleven across-row function names are all in the prompt', () => {
+    const names = Object.keys(WINDOW_SIGNATURES);
+    expect(names).toHaveLength(11);
+    expect(names.filter((n) => !section.includes(`${n}(`))).toEqual([]);
+  });
+
+  it('the prompt documents the window arguments (named by:/order:/ties:, column-only) and the window hint', () => {
+    for (const text of ['by:', 'order:', 'ties:', 'FILE ORDER', 'rel "window"', 'plain column ids']) {
+      expect(LEARN_SYSTEM_PROMPT_V7, text).toContain(text);
+    }
+  });
+
+  it('the prompt documents the optional functionRequest and explanation of an unsupported entry, with the privacy wording', () => {
+    expect(LEARN_SYSTEM_PROMPT_V7).toContain('functionRequest');
+    expect(LEARN_SYSTEM_PROMPT_V7).toContain('explanation');
+    expect(LEARN_SYSTEM_PROMPT_V7).toMatch(/no examples and no values from the data of any kind/);
   });
 
   it('the six comparison symbols and four arithmetic symbols are all documented', () => {

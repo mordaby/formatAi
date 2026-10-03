@@ -10,10 +10,16 @@
 //
 // Tone (SPEC 16.3): plain words, say exactly what happened and what to do.
 
+import { convertEn, convertHe } from './convert';
+import { accountEn, accountHe } from './account';
+import { formatsEn, formatsHe } from './formats';
 import { resultEn, resultHe } from './result';
 
 export const en = {
   ...resultEn,
+  ...accountEn,
+  ...formatsEn,
+  ...convertEn,
   'app.name': 'formatAI',
   'app.tagline': 'Teach a format once. Use it every month.',
 
@@ -43,7 +49,6 @@ export const en = {
   'flow.status.verified': 'Verified',
   'flow.status.notVerified': 'Not fully matching your example',
   'flow.blocked': "We can't learn from these files",
-  'flow.warn.continue': 'Continue',
   'flow.warn.tryAnyway': 'Try anyway',
   'flow.cancel': 'Cancel',
 
@@ -93,8 +98,6 @@ export const en = {
   'signIn.kept': 'What you have learned survives signing in, so nothing has to be redone.',
   'signIn.google': 'Continue with Google',
   'signIn.microsoft': 'Continue with Microsoft',
-  'signIn.soon': 'Coming soon',
-  'signIn.soonNote': 'Signing in opens soon. Until then you can try the tool without an account.',
 
   'steps.label': 'Steps',
   'steps.upload': 'Upload',
@@ -151,7 +154,7 @@ export const en = {
 
   // SPEC 16.1 screen 2: pre-flight
   'preflight.warnTitle': 'One thing to check first',
-  'preflight.columnsLead': 'Columns we will leave empty',
+  'learning.unexplained.lead': 'Columns we could not find in your input file',
   'preflight.tryAnywayNote': 'Trying anyway counts as a learn.',
   'preflight.changeFiles': 'Choose other files',
   'preflight.side.input': 'the example input',
@@ -187,6 +190,9 @@ export type MessageKey = keyof typeof en;
 
 export const he: Record<MessageKey, string> = {
   ...resultHe,
+  ...accountHe,
+  ...formatsHe,
+  ...convertHe,
   'app.name': 'formatAI',
   'app.tagline': 'מלמדים פורמט פעם אחת. משתמשים בו כל חודש.',
 
@@ -214,7 +220,6 @@ export const he: Record<MessageKey, string> = {
   'flow.status.verified': 'מאומת',
   'flow.status.notVerified': 'לא תואם במלואו לדוגמה שלך',
   'flow.blocked': 'אי אפשר ללמוד מהקבצים האלה',
-  'flow.warn.continue': 'המשך',
   'flow.warn.tryAnyway': 'נסו בכל זאת',
   'flow.cancel': 'ביטול',
 
@@ -262,8 +267,6 @@ export const he: Record<MessageKey, string> = {
   'signIn.kept': 'מה שכבר נלמד נשמר גם אחרי ההתחברות, כך שלא צריך לעשות שוב כלום.',
   'signIn.google': 'המשך עם Google',
   'signIn.microsoft': 'המשך עם Microsoft',
-  'signIn.soon': 'בקרוב',
-  'signIn.soonNote': 'ההתחברות תיפתח בקרוב. בינתיים אפשר לנסות את הכלי גם בלי חשבון.',
 
   'steps.label': 'שלבים',
   'steps.upload': 'העלאה',
@@ -317,7 +320,7 @@ export const he: Record<MessageKey, string> = {
   'sendPanel.json': 'הנתונים שנשלחו (JSON)',
 
   'preflight.warnTitle': 'דבר אחד לבדוק קודם',
-  'preflight.columnsLead': 'עמודות שנשאיר ריקות',
+  'learning.unexplained.lead': 'עמודות שלא מצאנו בקובץ הקלט שלכם',
   'preflight.tryAnywayNote': 'ניסיון בכל זאת נחשב ללמידה.',
   'preflight.changeFiles': 'בחירת קבצים אחרים',
   'preflight.side.input': 'קובץ הקלט לדוגמה',

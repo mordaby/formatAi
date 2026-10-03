@@ -1,13 +1,15 @@
-import { useLayoutEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useLearnSession } from '../app/LearnSession';
+import { useMe } from '../app/Me';
 import { useSignIn } from '../app/SignIn';
-import { TurnstileSlot } from '../app/Turnstile';
 import type { LearnFlowStatus } from '../flow/learnFlow';
 import { Stepper, type StepNumber } from '../ui';
+import { HomeActions } from './HomeActions';
 import { HomeForm } from './HomeForm';
 import { HomeHowItWorks } from './HomeHowItWorks';
 import { LearningError } from './LearningError';
+import { LearningNotReady } from './LearningNotReady';
 import { LearningPreflight } from './LearningPreflight';
 import { LearningProgress } from './LearningProgress';
 import { isRunning, useProgressVisible, useStepHistory } from './learningSteps';
@@ -17,6 +19,7 @@ function stepFor(status: LearnFlowStatus): StepNumber {
   switch (status) {
     case 'idle':
     case 'blocked':
+    case 'notReady':
     case 'done':
       return 1;
     default:
@@ -32,7 +35,11 @@ function stepFor(status: LearnFlowStatus): StepNumber {
 export default function Home() {
   const session = useLearnSession();
   const signIn = useSignIn();
+  const me = useMe();
   const navigate = useNavigate();
+  const location = useLocation();
+  // "Teach a new format" from My formats comes here with the two zones already open.
+  const [teaching, setTeaching] = useState((location.state as { teach?: boolean } | null)?.teach === true);
   const { flow } = session;
   const { state } = flow;
 
@@ -47,6 +54,9 @@ export default function Home() {
     previous.current = state.status;
   }, [state.status, navigate]);
 
+  // SPEC 16.1 screen 5: a signed-in user who has formats starts from "Convert a file"; teaching a new one is the other button.
+  const offerConvert = me.user !== null && (me.formatCount ?? 0) > 0 && state.status === 'idle' && !teaching && session.input === null && session.output === null;
+
   let view;
   if (state.status === 'warn' || state.status === 'blocked') {
     view = (
@@ -58,6 +68,8 @@ export default function Home() {
         onSignIn={() => signIn.open('keepGoing')}
       />
     );
+  } else if (state.status === 'notReady') {
+    view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.reset} />;
   } else if (state.status === 'error') {
     view = <LearningError key="error" error={state.error} onRetry={session.begin} onChangeFiles={flow.reset} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (progressVisible && (isRunning(state) || state.status === 'done')) {
@@ -72,6 +84,8 @@ export default function Home() {
         onCancel={flow.cancel}
       />
     );
+  } else if (offerConvert) {
+    view = <HomeActions key="actions" onTeach={() => setTeaching(true)} />;
   } else {
     view = <HomeForm key="form" busy={isRunning(state)} />;
   }
@@ -79,9 +93,8 @@ export default function Home() {
   return (
     <main id="main" className="page home" tabIndex={-1}>
       <section className="tool">
-        <Stepper current={stepFor(state.status)} />
+        {offerConvert ? null : <Stepper current={stepFor(state.status)} />}
         {view}
-        <TurnstileSlot key="turnstile" />
       </section>
       {state.status === 'idle' || state.status === 'done' ? <HomeHowItWorks /> : null}
     </main>

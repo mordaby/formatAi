@@ -3,7 +3,7 @@
 // browser's job, SPEC 5 A step 6, the hold-out test since the LLM only saw up to 12
 // rows), run the candidate rules through the deterministic engine, and diff the result
 // against what the payload says each sample should produce.
-import { formatYmd, runRules, serialToYmd, ymdToSerial } from '@formatai/engine';
+import { columnsReportedUnsupported, formatYmd, runRules, serialToYmd, ymdToSerial } from '@formatai/engine';
 import type { InputTable, OutCell, OutRow } from '@formatai/engine';
 import type {
   LearnPayload,
@@ -148,8 +148,10 @@ function compareRow(
   actualRow: OutRow | undefined,
   sample: number,
   familyRow: number | undefined,
+  ignore: ReadonlySet<number>,
 ): boolean {
   for (let out = 0; out < expectedRow.length; out++) {
+    if (ignore.has(out)) continue;
     const expected = expectedRow[out] ?? null;
     const actualCell = actualRow?.cells[out];
     if (cellsEqual(expected, actualCell)) continue;
@@ -166,6 +168,74 @@ function compareRow(
   return true;
 }
 
+/** Whether `v` (an expression tree, or anything inside one) holds an across-row (window) function call. */
+function hasWindowCall(v: unknown): boolean {
+  if (Array.isArray(v)) return v.some(hasWindowCall);
+  if (typeof v !== 'object' || v === null) return false;
+  if ((v as { op?: unknown }).op === 'window') return true;
+  return Object.values(v).some(hasWindowCall);
+}
+
+/** Whether `v` (an expression tree) reads one of the column ids in `ids`. */
+function readsColumnOf(v: unknown, ids: ReadonlySet<string>): boolean {
+  if (ids.size === 0) return false;
+  if (Array.isArray(v)) return v.some((x) => readsColumnOf(x, ids));
+  if (typeof v !== 'object' || v === null) return false;
+  const col = (v as { col?: unknown }).col;
+  if (typeof col === 'string' && ids.has(col)) return true;
+  return Object.values(v).some((x) => readsColumnOf(x, ids));
+}
+
+/**
+ * The output columns whose value depends on rows other than the one they are written for, so they cannot be checked on the sample table:
+ *   - a summary output (`group.showDetailRows: false`, SPEC 8.6): every column with an `agg` other than `first` (a sum, count, average, min,
+ *     max or last over the group). The samples hold ONE input row per group - the group's first row - so such a column over the sample table
+ *     is the first row's own value, never the group's total; the correct rules would "differ" on every sample, and the repair call would be
+ *     pushed away from them. (`first` is the first row's value: it is compared.)
+ *   - a column read from a computed column that uses a window function (`runningSum`, `groupSum`, `previous`, `rank` ...), directly or through
+ *     another computed column: over the sample rows only, a running total, a group total or a rank is not the one over the file.
+ * The browser's full verification compares all of them on every row of the real example (SPEC 9.2 layer 8).
+ */
+function columnsReadingOtherRows(rules: LearnResult | Rules): number[] {
+  const crossRow = new Set<string>();
+  for (const c of rules.transform.computed) {
+    if (hasWindowCall(c.expr) || readsColumnOf(c.expr, crossRow)) crossRow.add(c.id);
+  }
+  const summaryOutput = rules.transform.group !== undefined && !rules.transform.group.showDetailRows;
+  const out: number[] = [];
+  rules.output.columns.forEach((col, i) => {
+    if (col.from === null) return;
+    if (crossRow.has(col.from) || (summaryOutput && (col.agg ?? 'first') !== 'first')) out.push(i);
+  });
+  return out;
+}
+
+/**
+ * The output columns that are not compared with the samples.
+ *
+ * Plain learn: a column the answer honestly reports as unsupported (`from: null` AND an `unsupported` entry, any reason code - typically
+ * `externalData`: its values are not in the input) is left empty on purpose, so it is never a diff: SPEC 4/8.10, a partial, correct rules
+ * file beats a complete, wrong one, and "needs your input" is not an error. Every other column is compared, as it always was - a `from: null`
+ * column WITHOUT an entry never gets here (layer 2 rejects it), and a column with a `from` is compared even if the answer also lists it.
+ * (That the answer produced SOMETHING is `runChecks`' business, not a comparison.)
+ *
+ * Completion mode: the AI step is answerable for the columns it was asked to produce (`complete.columns`) and nothing else: the other
+ * columns are the user's own rules (checked against the whole example in the browser, and kept by the fixed lock - they may depart from
+ * the example on purpose), and a listed column the answer reports as unsupported is left empty on purpose (that the answer produced anything
+ * at all is the fixed lock's business).
+ */
+function columnsNotCompared(rules: LearnResult | Rules, payload: LearnPayload): ReadonlySet<number> {
+  // (Both modes: a column that reads other rows is checked on the whole file by the browser, never on the samples - see its own doc.)
+  const ignore = new Set<number>(columnsReadingOtherRows(rules));
+  if (!payload.complete) {
+    for (const i of columnsReportedUnsupported(rules)) ignore.add(i);
+    return ignore;
+  }
+  const produced = new Set(payload.complete.columns.filter((i) => rules.output.columns[i]?.from != null));
+  for (let i = 0; i < payload.output.columns.length; i++) if (!produced.has(i)) ignore.add(i);
+  return ignore;
+}
+
 /**
  * SPEC 9.2 layer 7: runs `rules` on the payload's samples and dropped rows, and diffs
  * the result. Each sample's expected output row(s) - a family: all rows, in order -
@@ -175,6 +245,7 @@ function compareRow(
  * problem, in addition to (not instead of) any `diff` problems.
  */
 export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload): RepairProblem[] {
+  const ignore = columnsNotCompared(rules, payload);
   const table = buildSampleInputTable(payload);
   const result = runRules(rules, table, {});
   const ctx: DiffCtx = { problems: [], diffCount: 0 };
@@ -215,7 +286,7 @@ export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload):
     expectedTotal += expectedRows.length;
 
     for (let r = 0; r < expectedRows.length; r++) {
-      if (!compareRow(ctx, expectedRows[r]!, actualRows[r], i, family ? r : undefined)) {
+      if (!compareRow(ctx, expectedRows[r]!, actualRows[r], i, family ? r : undefined, ignore)) {
         stop = true;
         return;
       }
@@ -261,7 +332,8 @@ export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload):
     }
   });
 
-  if (expectedTotal !== dataRows.length) {
+  // (Not once the diff cap stopped the walk: `expectedTotal` only counts the samples reached, so the two numbers would not be comparable.)
+  if (!stop && expectedTotal !== dataRows.length) {
     ctx.problems.push({ kind: 'rowCount', expected: expectedTotal, actual: dataRows.length });
   }
 

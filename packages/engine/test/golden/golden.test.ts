@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { RulesSchema } from '@formatai/shared';
+import { RulesSchema, checkRules } from '@formatai/shared';
 import type { Rules } from '@formatai/shared';
 import { convertFile } from '../../src/convert';
 import { checkLimits, typeCheck } from '../../src/check';
@@ -112,6 +112,10 @@ const CASES = [
   'fixed-fan-out-debit-credit',
   'summary-by-agent',
   'win1255-csv-rename',
+  // Across-row (window) functions: balance per account in date order, share of the account total, rank and row numbers (he, rtl), fill down (csv)
+  'window-balance-share',
+  'window-rank-rownumber-he',
+  'window-fill-down-csv',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -503,5 +507,19 @@ describe('registry pair (SPEC 8.12): freight-carrier-a / freight-carrier-b share
     expect(problems).toContainEqual(
       expect.objectContaining({ kind: 'formatMismatch', path: 'output.columns[3].header' }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Across-row (window) cases: the rules files are clean in every layer too (the output itself is checked cell by cell above).
+// ---------------------------------------------------------------------------
+
+describe.each(['window-balance-share', 'window-rank-rownumber-he', 'window-fill-down-csv'] as const)('golden case (across rows): %s', (name) => {
+  it('rules parse with RulesSchema, and pass checkRules, typeCheck and checkLimits', () => {
+    const { rules } = loadCase(name);
+    expect(RulesSchema.safeParse(rules).success).toBe(true);
+    expect(checkRules(rules)).toEqual([]);
+    expect(typeCheck(rules)).toEqual([]);
+    expect(checkLimits(rules, 'paid')).toEqual([]);
   });
 });

@@ -4,9 +4,10 @@
 // no UI language and no user identity.
 
 import { z } from 'zod';
+import { AI_STEP_PART_CODES, type AiStepPartCode } from './aiReadiness';
 import { limits } from './config/limits';
 import type { Format } from './format';
-import type { OutputFile } from './rules/schema';
+import type { OutputFile, WindowFn, WindowTies } from './rules/schema';
 
 /** A sample cell. Numbers are JSON numbers; real Excel dates are ISO "YYYY-MM-DD" strings; text dates stay as written. */
 export type PayloadCell = string | number | boolean | null;
@@ -127,12 +128,27 @@ interface HintBase {
 
 type Round = { round?: number };
 
+/**
+ * One band of a `bands` hint: the output value for input values below `lt` and/or at or above `gte`
+ * (numbers for a numeric input column, ISO "YYYY-MM-DD" text for a date column). The first band has only
+ * `lt`, the last only `gte`, the ones between have both.
+ */
+export interface Band {
+  lt?: number | string;
+  gte?: number | string;
+  value: PayloadCell;
+}
+
 export type ColumnHint = HintBase & { out: number } & (
   | { rel: 'copy'; in: [number] }
   | { rel: 'normalize'; in: [number] }
   | { rel: 'padLeft'; in: [number]; length: number; char?: string }
   | { rel: 'substr'; in: [number]; from: 'start' | 'end' | number; length: number }
   | { rel: 'concat'; in: number[]; separator: string }
+  // Fixed text around and between 1-2 input values (`12345:"Cohen"` from ID and Name). `parts` is the output text
+  // in order: a string is fixed text, `{ in: n }` is the value of input column n (a column may appear twice).
+  // `in` lists the columns used, once each. Sent only at coverage 1 (see `limits.learn.template`).
+  | { rel: 'template'; in: number[]; parts: (string | { in: number })[] }
   | { rel: 'valueMap'; in: [number]; pairs: [string, string][] }
   | { rel: 'constant'; in: []; value: PayloadCell }
   | { rel: 'dateFormat'; in: [number]; from: string; to: string }
@@ -145,6 +161,35 @@ export type ColumnHint = HintBase & { out: number } & (
   // analysis's summaryRelations actually tests for a summary output's columns
   // (SPEC 8.6 v4) - LEARN_PROMPT.md §3 updated to match.
   | { rel: 'aggregate'; in: [number]; fn: SummaryAgg }
+  // v5 amendment (derived columns, SPEC 6.2 step 4): no simple relation explains the column, but the
+  // input DETERMINES it (a functional dependency seen on repeated input values), so the AI can solve it.
+  // `dependsOn`: the same values of the `in` columns always give the same output value.
+  | { rel: 'dependsOn'; in: number[] }
+  // `bands`: sorted by the `in` column, the output values form a few contiguous ranges (<= 5 breakpoints).
+  | { rel: 'bands'; in: [number]; bands: Band[] }
+  // `contains` (composition, beyond the light `template`): a text column composed from input values. The value of
+  // each `in` column is inside the output cell on the coverage's share of the rows; `in` is ordered by where
+  // the value first appears in the output text. The fixed text around the values is not sent: the samples show it.
+  | { rel: 'contains'; in: number[] }
+  // learn-v7 (docs/proposals/window-operations.md): the column is an ACROSS-ROW (window) function of the input rows - a running
+  // total, a group's total on every row, the previous row's value, a rank, a row number ... Computed on all rows, in the input's
+  // row order. Sent since learn-v7, which documents window functions in the system prompt (`limits.learn.window.hintsEnabled`).
+  | {
+      rel: 'window';
+      fn: WindowFn;
+      /** The column the function reads; absent for `rowNumber`, `rank` and `groupCount()`. */
+      in?: [number];
+      /** Columns that split the rows into groups; absent: all rows are one group. */
+      by?: number[];
+      /**
+       * 'file': the input's row order (no `order:` argument). 'output': only the order the example output shows fits (copy the
+       * output's sort into `order:`). Or the exact keys (`rank`, or `order:` known).
+       */
+      order?: 'file' | 'output' | { in: number; dir: 'asc' | 'desc' }[];
+      ties?: WindowTies;
+      /** Other columns that fit equally well (at most 3): the model picks the real key or amount. */
+      alt?: { in?: [number]; by?: number[] }[];
+    }
 );
 
 export type RowHint = HintBase &
@@ -172,6 +217,24 @@ export type ExpandHint = HintBase &
 
 export type Hint = ColumnHint | RowHint | ExpandHint;
 
+/**
+ * Completion mode (LEARN_PROMPT "Completing a partial rules file"): the user already has part of the rules, and only
+ * what is listed here is missing. The AI step copies `fixed` and produces the rest; code checks that every fixed
+ * element came back unchanged (`checkFixedLock` in the engine, the `fixedMismatch` problem).
+ */
+export interface CompletePayload {
+  /**
+   * The current rules, in the WIRE form the AI step itself writes (expressions as formula text, open dictionaries as
+   * `{ key, value }` pairs), exactly as they are on the user's screen. With masking on, the constants inside are
+   * masked with the same map as the samples (and unmasked again when the answer comes back, like any other constant).
+   */
+  fixed: Record<string, unknown>;
+  /** Output column positions (0-based, as in `output.columns[].i`) the AI step has to produce. */
+  columns: number[];
+  /** Layout parts the AI step has to produce (`AiStepPartCode`: rows, droppedRows, sort, group, summaryRows, dateTitle, blankRows). */
+  parts: AiStepPartCode[];
+}
+
 export interface LearnPayload {
   masking: boolean;
   input: {
@@ -192,12 +255,17 @@ export interface LearnPayload {
     layout: Format['layout'];
     validations: Format['outputValidations'];
   };
+  /** Completion mode only: the rules to keep, and what is missing (see `CompletePayload`). */
+  complete?: CompletePayload;
   /** Up to 12 pairs, or up to 6 families when rows expand. */
   samples: Sample[];
   /** Up to 5 input rows that don't appear in the output. */
   dropped?: PayloadCell[][];
   hints: Hint[];
-  /** Output column positions that can't be produced from the input. */
+  /**
+   * Output column positions the user explicitly marked to skip (they get `"from": null`). Absent in practice: a column code could not
+   * explain is NOT sent here - it goes to the AI step like any other (it may answer `unsupported` with `externalData`).
+   */
   skipColumns?: number[];
 }
 
@@ -226,8 +294,17 @@ export type RepairProblem =
   | { kind: 'rowCount'; expected: number; actual: number }
   | { kind: 'layout'; message: string }
   | { kind: 'formatMismatch'; path: string; message: string }
+  /** Completion mode: an element of `complete.fixed` changed (or is missing) in the answer, or a listed column was not produced. */
+  | { kind: 'fixedMismatch'; path: string; message: string }
   | { kind: 'type'; path: string; message: string }
-  | { kind: 'limit'; path?: string; message: string };
+  | { kind: 'limit'; path?: string; message: string }
+  /**
+   * The answer reports output column `out` as unsupported, but the app's own pair analysis found how it is built (the payload carries a
+   * hint for it: a copy, template, composition, dependency, bands, value map, window ... of input columns). An honest "cannot be produced"
+   * is no mismatch, but giving up on a column code can already trace to the input is worth one repair round (`unsupportedDespiteEvidence`,
+   * `unsupportedEvidence.ts`). The message names columns and the hint kind only, never a value.
+   */
+  | { kind: 'unsupportedDespiteEvidence'; out: number; message: string };
 
 export interface RepairBlock<Rules = unknown> {
   mode: 'repair';
@@ -300,6 +377,13 @@ export const LearnPayloadSchema = z.looseObject({
     columns: z.array(PayloadColumnSchema).min(1).max(limits.payload.maxColumns),
   }),
   target: z.looseObject({}).optional(),
+  complete: z
+    .looseObject({
+      fixed: z.looseObject({}),
+      columns: z.array(z.number().int().min(0)).max(limits.payload.maxColumns),
+      parts: z.array(z.enum(AI_STEP_PART_CODES)).max(AI_STEP_PART_CODES.length),
+    })
+    .optional(),
   samples: z.array(SampleSchema).min(1).max(MAX_SAMPLES),
   dropped: z.array(z.array(PayloadCellSchema)).max(limits.payload.maxDropped).optional(),
   hints: z.array(z.unknown()),

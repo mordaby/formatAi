@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@10.34.6",
   "scripts": {
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm -r --workspace-concurrency=1 --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "build": "pnpm -r --if-present build",
     "eval": "pnpm --filter @formatai/eval run eval",

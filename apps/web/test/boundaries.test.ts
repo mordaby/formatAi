@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 const sources = import.meta.glob('/src/**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 // liveCheck.ts is the rules editor's half of the worker (engineMethods.ts registers it): it runs in the worker too.
-const ALLOWED = new Set(['/src/worker/engineMethods.ts', '/src/worker/liveCheck.ts']);
+const ALLOWED = new Set(['/src/worker/engineMethods.ts', '/src/worker/liveCheck.ts', '/src/worker/convertMethods.ts']);
 const VALUE_IMPORT = /import\s+(?!type\b)[^;]*?from\s+['"]@formatai\/engine['"]/;
 const SIDE_EFFECT_IMPORT = /import\s+['"]@formatai\/engine['"]/;
 

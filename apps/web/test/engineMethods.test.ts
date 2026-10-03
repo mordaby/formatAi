@@ -2,9 +2,10 @@
 // RPC runtime and client, in-process. This is not a substitute for the browser check (the
 // bundling of ExcelJS/SheetJS for a real Worker), but it pins the behaviour of the methods:
 // progress, the masking key, host calls, and the transfer of bytes.
-import type { LearnPayload, LearnResult } from '@formatai/shared';
+import { completionPlan, formulaRulesFromWire } from '@formatai/engine';
+import { fromWire, LearnResultSchema, type LearnPayload, type LearnResult } from '@formatai/shared';
 import { describe, expect, it, vi } from 'vitest';
-import type { ConvertOutput, LearnOutput, LearnProgress, VerifyOutput } from '../src/worker/engineApi';
+import type { ConvertOutput, LearnOutput, LearnProgress, LoadExampleOutput, VerifyOutput } from '../src/worker/engineApi';
 import { engineMethods } from '../src/worker/engineMethods';
 import { RpcRemoteError } from '../src/worker/rpcClient';
 import { loopback } from './helpers/loopback';
@@ -23,6 +24,29 @@ function renamePair(prefix = 'C') {
   return {
     input: 'Customer ID,First Name,Last Name,Email\n' + rows.map((r) => `${r.id},${r.f},${r.l},${r.email}`).join('\n') + '\n',
     output: 'Contact ID,Last Name,First Name,Email Address\n' + rows.map((r) => `${r.id},${r.l},${r.f},${r.email}`).join('\n') + '\n',
+  };
+}
+
+/** The check digit that makes a 9-digit Israeli ID number valid, for the 8 digits before it. */
+function withCheckDigit(eight: string): string {
+  let sum = 0;
+  [...eight].forEach((ch, i) => {
+    const n = Number(ch) * (i % 2 === 0 ? 1 : 2);
+    sum += n > 9 ? n - 9 : n;
+  });
+  return eight + String((10 - (sum % 10)) % 10);
+}
+
+/** The rename pair, but the input also has an ID number column (some with their leading zero lost) that the output leaves out. */
+function withUnusedIdColumn() {
+  const ids = Array.from({ length: 8 }, (_, i) => {
+    const id = withCheckDigit(i < 2 ? `0${String(1234567 + i)}` : String(31234567 + i)); // two of them start with 0
+    return id.replace(/^0+/, ''); // stored as a number: the leading zero is lost
+  });
+  const rows = FIRST.map((f, i) => ({ id: `C-${1000 + i}`, f, l: LAST[i]!, national: ids[i]! }));
+  return {
+    input: 'Customer ID,First Name,Last Name,ID Number\n' + rows.map((r) => `${r.id},${r.f},${r.l},${r.national}`).join('\n') + '\n',
+    output: 'Contact ID,Last Name,First Name\n' + rows.map((r) => `${r.id},${r.l},${r.f}`).join('\n') + '\n',
   };
 }
 
@@ -64,6 +88,36 @@ describe('engine methods, through the worker RPC', () => {
     expect(fractions.length).toBeGreaterThan(2);
     expect(fractions).toEqual([...fractions].sort((a, b) => a - b));
     expect(fractions[fractions.length - 1]).toBe(1);
+  });
+
+  it('learn: hands the editor the columns of the example input, including one no rule uses (headers and facts about the values only)', async () => {
+    const client = loopback(engineMethods);
+    const pair = withUnusedIdColumn();
+    const { args, transfer } = learnArgs(pair, true);
+    const res = await client.call<LearnOutput>('learn', args, { transfer });
+
+    expect(res.path).toBe('local');
+    // No learned rule reads the ID number, so the rules do not declare it...
+    expect(res.rules?.input.columns.map((c) => c.header)).not.toContain('ID Number');
+    // ...but the example input's columns come with the result, in file order, so a dropdown can still offer it.
+    expect(res.exampleInput?.map((c) => c.header)).toEqual(['Customer ID', 'First Name', 'Last Name', 'ID Number']);
+    expect(res.exampleInput?.find((c) => c.header === 'ID Number')).toMatchObject({ type: 'idLike', israeliId: true, leadingZerosLost: true, maxLength: 9 });
+    expect(res.exampleInput?.find((c) => c.header === 'First Name')).toMatchObject({ type: 'text' });
+    // Nothing but headers and facts: none of the cell values are in it.
+    expect(JSON.stringify(res.exampleInput)).not.toContain('Gal');
+    expect(res.exampleId).toBeTruthy();
+  });
+
+  it('loadExample: reads the example files of a saved source again and returns the same columns', async () => {
+    const client = loopback(engineMethods);
+    const pair = withUnusedIdColumn();
+    const input = enc(pair.input);
+    const output = enc(pair.output);
+    const res = await client.call<LoadExampleOutput>('loadExample', { input: { name: 'in.csv', bytes: input }, output: { name: 'out.csv', bytes: output } }, { transfer: [input, output] });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.exampleInput.map((c) => c.header)).toEqual(['Customer ID', 'First Name', 'Last Name', 'ID Number']);
+    expect(res.exampleInput.find((c) => c.header === 'ID Number')).toMatchObject({ type: 'idLike', israeliId: true });
   });
 
   it('learn: moves the file bytes to the worker (the caller no longer holds them)', async () => {
@@ -112,6 +166,48 @@ describe('engine methods, through the worker RPC', () => {
     const again = learnArgs(llmPair(), true);
     await client.call('learn', again.args, { transfer: again.transfer, host: { callLearn } });
     expect(JSON.stringify(payloads[1])).toBe(sent);
+  });
+
+  it('learn in completion mode: the rules to keep go out as complete.fixed, the example of the screen is kept under its id, and the answer comes back with the lock and what it produced', async () => {
+    const client = loopback(engineMethods);
+    // The local result first (what a visitor gets): Item is built, Size needs the AI step.
+    const local = learnArgs(llmPair(), false);
+    const first = await client.call<LearnOutput>('learn', { ...local.args, ai: 'notAllowed' as const }, { transfer: local.transfer });
+    expect(first.path).toBe('partial');
+    expect(first.exampleOutputColumns).toBe(2);
+    const plan = completionPlan(first.rules!, { parts: first.partial!.needsAiParts });
+    expect(plan.columns).toEqual([1]);
+
+    // Then the AI step, for that column only. The fake server answers with the fixed rules plus a rule for Size.
+    const payloads: LearnPayload[] = [];
+    const callLearn = vi.fn(async (payload: LearnPayload) => {
+      payloads.push(payload);
+      const fixed = LearnResultSchema.parse(formulaRulesFromWire(fromWire(payload.complete!.fixed)).rules);
+      const answer: LearnResult = {
+        ...fixed,
+        input: { ...fixed.input, columns: [...fixed.input.columns, { id: 'qty', header: 'Qty', type: 'integer' }] },
+        transform: {
+          ...fixed.transform,
+          computed: [...fixed.transform.computed, { id: 'size', type: 'text', expr: { op: 'if', cond: { op: 'gte', args: [{ col: 'qty' }, { const: 10 }] }, then: { const: 'bulk' }, else: { const: 'single' } } }],
+        },
+        output: { ...fixed.output, columns: fixed.output.columns.map((c) => (c.header === 'Size' ? { ...c, from: 'size' } : c)) },
+      };
+      return { rules: answer, problems: [], calls: [] };
+    });
+    const again = learnArgs(llmPair(), false);
+    const res = await client.call<LearnOutput>(
+      'learn',
+      { ...again.args, ai: 'allowed' as const, complete: { fixedRules: first.rules!, columns: plan.columns, parts: plan.parts }, keepExampleId: first.exampleId },
+      { transfer: again.transfer, host: { callLearn } },
+    );
+
+    expect(callLearn).toHaveBeenCalledTimes(1);
+    expect(payloads[0]!.complete).toMatchObject({ columns: [1], parts: [] });
+    expect(res.path).toBe('llm');
+    expect(res.completion).toEqual({ columns: [1], parts: [], fixedProblems: [], matches: true, produced: { columns: 1, parts: 0 } });
+    expect(res.verification?.verified).toBe(true);
+    // The Result screen's live check goes on with the example it already holds.
+    expect(res.exampleId).toBe(first.exampleId);
   });
 
   it('learn: masking off sends the sample rows as they are', async () => {

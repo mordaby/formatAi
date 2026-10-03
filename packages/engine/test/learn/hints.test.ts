@@ -141,8 +141,8 @@ describe('relationsToHints: one hint per relation kind', () => {
     expect(hintOut(hints, 11)).toEqual({ rel: 'sum', in: [0, 5, 6], out: 11, coverage: 1 });
   });
 
-  it('unknown (external) column gets no hint and is in skipColumns', () => {
-    expect(pf.skipColumns).toContain(16);
+  it('unknown (external) column gets no hint, and is NOT in skipColumns (the AI step tries it)', () => {
+    expect(pf.skipColumns).toEqual([]);
     expect(hintOut(hints, 16)).toBeUndefined();
   });
 });

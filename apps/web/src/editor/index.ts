@@ -8,6 +8,8 @@
 //   editor.apply(action)   -> { ok: true, changed } | { ok: false, problems: EditProblem[] }   (see EditAction)
 //   editor.state           -> rules, edited (line ids), exceptions, dirty, formatChange, format, rev
 //   readColumnMethod(rules, i) / sourceOptions(rules)      what a column editor shows
+//   sourceOptions(rules, { exampleInput })                 also the example input's columns no rule declares yet (kind 'available');
+//   editor.apply(action, { available: exampleInput })      an edit that uses one declares it first, in the same undo step
 //   advancedJsonOf(rules)  / { type: 'setAdvancedJson' }   the Advanced view
 //   check.state.live       "Matches X of Y rows", per-column counts, preview (mismatches first), layout problems
 //   check.apply()          the check on every row (above 5,000 example rows the live check sees a subset)
@@ -15,6 +17,8 @@
 //                          | verified | differences (N)
 export * from './model';
 export { EditorStore, type ApplyActionOptions } from './store';
+export { lockProblem, type EditLock } from './lock';
+export { mergeRules } from './merge';
 export { useEditor, type UseEditor } from './useEditor';
 export { useLiveCheck, type UseLiveCheck, type UseLiveCheckOptions } from './useLiveCheck';
 export { LiveCheckScheduler, type CheckEngine, type CheckInput, type LiveCheckState, type SchedulerOptions } from './liveCheckScheduler';

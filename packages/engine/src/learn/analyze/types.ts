@@ -15,6 +15,7 @@
 //  - "sheet row"        = 0-based row index in the output sheet (`output.sheet.rows`)
 
 import type {
+  Band,
   InputLayout,
   OutputLayout,
   PayloadCell,
@@ -22,6 +23,8 @@ import type {
   SummaryAgg,
   SummaryRowLayout,
   TitleRowLayout,
+  WindowFn,
+  WindowTies,
 } from '@formatai/shared';
 import type { DelimitedSniffResult } from '../../io/detectFileSpec';
 import type { OutputFileSpec, RawCell, RawSheet, TableDetection, TableIssue } from '../../types';
@@ -288,6 +291,13 @@ export type RelationBody =
   /** Whole part of a split: index is 1-based, negative counts from the end (the engine's split). */
   | { rel: 'split'; in: [number]; separator: string; index: number }
   | { rel: 'concat'; in: number[]; separator: string; skipEmpty: boolean }
+  /**
+   * Fixed text around and between 1-2 input values, identical on every row (`<id>:"<name>"`). `parts` is the
+   * output text in order: a string is fixed text (never empty), `{ in: n }` is the value of column n (a column
+   * may appear twice). `in` lists the columns used, once each, in order of first use. Coverage is always 1:
+   * a template that fails on any row is not reported (SPEC 6.2 step 4; `limits.learn.template`).
+   */
+  | { rel: 'template'; in: number[]; parts: (string | { in: number })[] }
   | { rel: 'valueMap'; in: [number]; pairs: [string, string][] }
   | { rel: 'constant'; in: []; value: PayloadCell }
   /**
@@ -298,23 +308,112 @@ export type RelationBody =
   | { rel: 'dateFormat'; in: [number]; from: string; to: string }
   /** The output is the number rendered as text with this Excel-style format. */
   | { rel: 'numberFormat'; in: [number]; format: string }
-  | ({ rel: 'mulConst' | 'addConst'; in: [number]; const: number; /** exact decimal text of const */ constText: string } & Round)
+  | ({
+      rel: 'mulConst' | 'addConst';
+      in: [number];
+      const: number;
+      /** exact decimal text of const */
+      constText: string;
+      /**
+       * mulConst only: the output is the input DIVIDED by this constant (x / 1.17), `const` being its reciprocal (0.854701...).
+       * Set instead of a plain factor when the divisor has fewer significant digits than the factor: the roundest of the
+       * two readings is the real one (an exact rate), and it does not drift on next month's values.
+       */
+      divisor?: number;
+      /** exact decimal text of `divisor` */
+      divisorText?: string;
+    } & Round)
   | ({ rel: 'add' | 'sub' | 'mul' | 'div'; in: [number, number] } & Round)
   | ({ rel: 'sum'; in: number[] } & Round)
   /** Summary shapes: the output value is this aggregate of the group's input rows. */
-  | { rel: 'aggregate'; in: [number]; fn: SummaryAgg };
+  | { rel: 'aggregate'; in: [number]; fn: SummaryAgg }
+  /**
+   * Across rows, and ORDER-INDEPENDENT (the only window patterns the free engine writes): every row shows its group's total of
+   * `in[0]` (`groupSum`), or how many rows its group has (`groupCount`, `in` empty). The group is the rows with the same value
+   * of the `by` column. Exact on every aligned row (coverage 1) or not built; see windows.ts. The order-dependent and other window
+   * patterns are `WindowFinding`s (hints only).
+   */
+  | { rel: 'window'; fn: 'groupSum' | 'groupCount'; in: number[]; by: [number] };
 
 export type RelationKind = RelationBody['rel'];
 
+/** What a window finding orders its rows by: the input's row order, the order the output shows, or exact sort keys. */
+export type WindowOrder = 'file' | 'output' | { in: number; dir: 'asc' | 'desc' }[];
+
+/**
+ * An across-row (window) pattern one output column follows (docs/proposals/window-operations.md): `fn` of `in` over the groups of
+ * `by`, in `order`. Computed on all aligned rows with exact decimal arithmetic, in the INPUT's row order (what the engine will run), so a
+ * finding at coverage 1 is a fact. `built`: the free engine writes it as a rule (a group's total, a count per group); every other
+ * finding is a hint for the AI step and is only sent once learn-v7 documents window functions (`limits.learn.window.hintsEnabled`).
+ */
+export interface WindowFinding {
+  out: number;
+  fn: WindowFn;
+  /** The column read: `[x]`, none for `rowNumber`, `rank` and `groupCount`. */
+  in: number[];
+  /** The group columns (one); none = all rows are one group. */
+  by: number[];
+  order: WindowOrder;
+  ties?: WindowTies;
+  coverage: number;
+  matched: number;
+  total: number;
+  /** Aligned-row indices where it fails, ascending, capped. */
+  failing: number[];
+  failCount: number;
+  built: boolean;
+  /** Other (column, group) readings that fit just as well, at most 3: the pattern is exact on the example but ambiguous. */
+  alt?: { in?: number[]; by?: number[] }[];
+}
+
 export type Relation = RelationStats & RelationBody;
+
+/**
+ * SPEC 6.2 step 4 (v5): an output column no relation explains, but that the INPUT determines - a functional
+ * dependency with real evidence (see derived.ts) - or that is COMPOSED from input values (their text sits inside the
+ * output cells, e.g. `<id> - <first> <last>`, beyond the light `template`). The AI can solve such a column (e.g.
+ * `Size = "bulk" if Qty >= 10 else "single"`), so it is NOT external data: it is not skipped, and it counts as
+ * "needs the AI step".
+ */
+export type Derivation = { coverage: number; /** Aligned rows where it fails, ascending, capped. */ failing: number[]; failCount: number } & (
+  | {
+      kind: 'category';
+      /** The determining input (or created family) columns: 1, or 2 together. */
+      in: number[];
+      /** Distinct values (or value pairs) of the determining columns. */
+      keys: number;
+    }
+  | {
+      kind: 'bands';
+      in: [number];
+      /** Contiguous ranges of the input column with one output value each (<= 5 breakpoints). */
+      bands: Band[];
+    }
+  | {
+      kind: 'composition';
+      /** The input columns whose value sits inside the output text, ordered by where they first appear in it. */
+      in: number[];
+    }
+);
 
 export interface ColumnAnalysis {
   out: number;
   header: string;
   /** Best first: coverage desc, then the simplest. Only relations with coverage >= minCoverage. */
   relations: Relation[];
-  /** No relation reached minCoverage: the values don't come from the input (SPEC 6.4 skipColumns). */
+  /** No relation reached minCoverage (SPEC 6.2 "unknown"). Whether it is external data or derived: see `derived`. */
   unknown: boolean;
+  /**
+   * Unknown columns only: set when the input determines the values (a `derived` column, solvable by the AI).
+   * An unknown column with `derived === null` is EXTERNAL data: its values don't come from the input file
+   * (SPEC 6.4: wording only, the AI step still tries it) - see `isExternalColumn`.
+   */
+  derived: Derivation | null;
+  /**
+   * Across-row (window) patterns this column follows, best first: a built one (see `Relation` `window`) and/or hint-only ones. Only
+   * set when found; the free engine builds the order-independent ones from `relations`, never from here.
+   */
+  windows?: WindowFinding[];
 }
 
 // ---------- Dropped rows ----------

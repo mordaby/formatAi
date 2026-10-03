@@ -1,7 +1,7 @@
 // SPEC 8.3 (v3) / LEARN_PROMPT §"Operations": every operation added in the v3
 // amendments parses, and an obviously-invalid variant of each is rejected.
 import { describe, expect, it } from 'vitest';
-import { ExprSchema } from '../src/rules/schema';
+import { ExprSchema, isIsoDateLiteral } from '../src/rules/schema';
 
 function expectValid(expr: unknown): void {
   const result = ExprSchema.safeParse(expr);
@@ -154,5 +154,50 @@ describe('ExprSchema: new v3 operations', () => {
 
   it('rejects a made-up leaf shape', () => {
     expectInvalid({ notALeaf: 'x' });
+  });
+});
+
+describe('ExprSchema: date and text operations added after learn-v6', () => {
+  it('parses weekday, makeDate, toDate, dateLiteral, keepChars, titleCase and find', () => {
+    expectValid({ op: 'weekday', arg: { col: 'd' } });
+    expectValid({ op: 'makeDate', args: [{ col: 'y' }, { col: 'm' }, { const: 1 }] });
+    expectValid({ op: 'toDate', arg: { col: 't' }, format: 'D MMMM YYYY' });
+    expectValid({ op: 'dateLiteral', value: '2026-01-31' });
+    expectValid({ op: 'keepChars', arg: { col: 't' }, chars: 'digits' });
+    expectValid({ op: 'keepChars', arg: { col: 't' }, chars: 'letters' });
+    expectValid({ op: 'keepChars', arg: { col: 't' }, chars: 'lettersAndDigits' });
+    expectValid({ op: 'titleCase', arg: { col: 't' } });
+    expectValid({ op: 'find', arg: { col: 't' }, search: ' - ' });
+  });
+
+  it('rejects the wrong shape for each', () => {
+    expectInvalid({ op: 'weekday', args: [{ col: 'd' }] });
+    expectInvalid({ op: 'makeDate', args: [{ col: 'y' }, { col: 'm' }] }); // exactly three parts
+    expectInvalid({ op: 'makeDate', args: [{ col: 'y' }, { col: 'm' }, { col: 'd' }, { col: 'x' }] });
+    expectInvalid({ op: 'toDate', arg: { col: 't' } }); // format required
+    expectInvalid({ op: 'toDate', arg: { col: 't' }, format: '' });
+    expectInvalid({ op: 'keepChars', arg: { col: 't' }, chars: 'symbols' }); // a closed set, never a pattern
+    expectInvalid({ op: 'keepChars', arg: { col: 't' }, chars: '[0-9]' });
+    expectInvalid({ op: 'keepChars', arg: { col: 't' } });
+    expectInvalid({ op: 'titleCase', arg: { col: 't' }, extra: 1 });
+    expectInvalid({ op: 'find', arg: { col: 't' }, search: '' }); // a literal to look for
+    expectInvalid({ op: 'find', arg: { col: 't' }, search: { col: 'x' } }); // never an expression
+  });
+
+  it('dateLiteral only takes a real YYYY-MM-DD date between 1900 and 9999', () => {
+    for (const ok of ['1900-01-01', '2024-02-29', '1900-02-29', '9999-12-31', '2026-12-31']) expectValid({ op: 'dateLiteral', value: ok });
+    for (const bad of ['2026-02-30', '2025-02-29', '1900-02-30', '2026-13-01', '2026-00-10', '2026-01-00', '2026-1-5', '26-01-05', '31/01/2026', '2026-01-31T00:00', '1899-12-31', '10000-01-01', '', 'today', '2026-01-3x']) {
+      expectInvalid({ op: 'dateLiteral', value: bad });
+    }
+    expectInvalid({ op: 'dateLiteral', value: 20260131 });
+    expectInvalid({ op: 'dateLiteral' });
+  });
+
+  it('isIsoDateLiteral agrees', () => {
+    expect(isIsoDateLiteral('2026-01-31')).toBe(true);
+    expect(isIsoDateLiteral('2026-02-29')).toBe(false);
+    expect(isIsoDateLiteral('2028-02-29')).toBe(true);
+    expect(isIsoDateLiteral('2100-02-29')).toBe(false);
+    expect(isIsoDateLiteral('2000-02-29')).toBe(true);
   });
 });

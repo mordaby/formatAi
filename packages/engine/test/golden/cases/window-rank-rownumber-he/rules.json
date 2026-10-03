@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "name": "דירוג ומספור מוכרים",
+  "input": {
+    "sheet": { "pick": "first" },
+    "headerRow": "auto",
+    "columns": [
+      { "id": "seller", "header": "מוכר", "type": "text", "required": true },
+      { "id": "sales", "header": "מכירות", "type": "integer", "required": true },
+      { "id": "region", "header": "אזור", "type": "text", "required": true }
+    ]
+  },
+  "transform": {
+    "computed": [
+      { "id": "sellerRank", "type": "integer", "expr": { "op": "window", "fn": "rank", "order": [ { "column": "sales", "dir": "desc" } ] } },
+      { "id": "regionRank", "type": "integer", "expr": { "op": "window", "fn": "rank", "by": ["region"], "order": [ { "column": "sales", "dir": "desc" } ], "ties": "dense" } },
+      { "id": "seqNo", "type": "integer", "expr": { "op": "window", "fn": "rowNumber" } },
+      { "id": "seqInRegion", "type": "integer", "expr": { "op": "window", "fn": "rowNumber", "by": ["region"] } }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "דירוג",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "columns": [
+      { "header": "מס\"ד", "from": "seqNo" },
+      { "header": "מוכר", "from": "seller" },
+      { "header": "אזור", "from": "region" },
+      { "header": "מכירות", "from": "sales", "format": "#,##0" },
+      { "header": "דירוג", "from": "sellerRank" },
+      { "header": "דירוג באזור", "from": "regionRank" },
+      { "header": "מס\"ד באזור", "from": "seqInRegion" }
+    ],
+    "headerStyle": { "bold": true }
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "meta": { "source": "examplePair", "status": "verified" }
+}

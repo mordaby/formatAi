@@ -183,3 +183,43 @@ export function formatFingerprint(rules: EditableRules): string {
     outputValidations: sortedValidations(rules.validations.filter((v) => (v.on ?? 'input') === 'output')),
   });
 }
+
+// ---------- the source side (SPEC 8.15) ----------
+
+const sortedStrings = (list: readonly string[] | undefined): string[] => [...(list ?? [])].sort();
+
+/** The input validations as a source keeps them: by the input column's header, `on: "input"` dropped, as a sorted set. */
+function inputValidationKeys(rules: EditableRules): string[] {
+  const idToHeader = new Map(rules.input.columns.map((c) => [c.id, c.header] as const));
+  return rules.validations
+    .filter((v) => (v.on ?? 'input') !== 'output')
+    .map((v) => {
+      const { on: _on, ...rest } = v;
+      return stable({ ...rest, column: idToHeader.get(v.column) ?? v.column });
+    })
+    .sort();
+}
+
+/**
+ * Whether `after` changes the INPUT side of `before` - what SPEC 8.15 calls editing the source: the sheet pick, header row, stop rule
+ * or input checks differ, or a column it declares has another header, aliases, type, padding or date formats - or is a column
+ * `before` did not declare. The mirror (for the main thread, which can't load the engine) of what the server's source lock treats
+ * as a source edit.
+ *
+ * DECISION: a column the rules stop declaring is NOT a change: a source keeps its columns (a conversion may read a subset). A column
+ * `after` declares that `before` did not counts as one, although the source may already have it: the browser doesn't know the source's
+ * other columns, and the answer after saving says what really happened (`sourceChanged`).
+ */
+export function inputSideChanged(before: EditableRules, after: EditableRules): boolean {
+  const reading = (r: EditableRules): string => stable({ sheet: r.input.sheet, headerRow: r.input.headerRow, stopAt: r.input.stopAt });
+  if (reading(before) !== reading(after)) return true;
+  if (inputValidationKeys(before).join('\u0000') !== inputValidationKeys(after).join('\u0000')) return true;
+
+  const was = new Map(before.input.columns.map((c) => [c.id, c] as const));
+  const shape = (c: EditableRules['input']['columns'][number]): string =>
+    stable({ header: c.header, aliases: sortedStrings(c.aliases), type: c.type, padLeft: c.padLeft, inputFormats: c.inputFormats });
+  return after.input.columns.some((c) => {
+    const old = was.get(c.id);
+    return old === undefined || shape(old) !== shape(c);
+  });
+}

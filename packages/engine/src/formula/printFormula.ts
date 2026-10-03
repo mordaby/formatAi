@@ -96,6 +96,19 @@ function callN(fn: string, parts: readonly string[]): string {
   return `${fn}(${parts.join(', ')})`;
 }
 
+/** `runningSum(amount, by: account, order: (date, id desc))`: the column, then the named arguments in the order by, order, ties. */
+function printWindow(e: Extract<ExprNode, { op: 'window' }>): string {
+  const parts: string[] = [];
+  if (e.arg !== undefined) parts.push(printExpr(e.arg));
+  if (e.by !== undefined) parts.push(`by: ${e.by.length === 1 ? (e.by[0] as string) : `(${e.by.join(', ')})`}`);
+  if (e.order !== undefined) {
+    const keys = e.order.map((k) => (k.dir === 'desc' ? `${k.column} desc` : k.column));
+    parts.push(`order: ${keys.length === 1 ? (keys[0] as string) : `(${keys.join(', ')})`}`);
+  }
+  if (e.ties !== undefined) parts.push(`ties: ${e.ties}`);
+  return callN(e.fn, parts);
+}
+
 type InfixOp = 'add' | 'sub' | 'mul' | 'div' | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte';
 
 function printCall(e: Exclude<ExprNode, { op: InfixOp }>): string {
@@ -153,6 +166,22 @@ function printCall(e: Exclude<ExprNode, { op: InfixOp }>): string {
       return callN('dateDiff', [printExpr(e.args[0]), printExpr(e.args[1]), printStringLiteral(e.unit)]);
     case 'endOfMonth':
       return call1('endOfMonth', e.arg);
+    case 'weekday':
+      return call1('weekday', e.arg);
+    case 'makeDate':
+      return callN('makeDate', e.args.map(printExpr));
+    case 'toDate':
+      return callN('toDate', [printExpr(e.arg), printStringLiteral(e.format)]);
+    case 'dateLiteral':
+      return callN('date', [printStringLiteral(e.value)]);
+    case 'keepChars':
+      return callN('keepChars', [printExpr(e.arg), printStringLiteral(e.chars)]);
+    case 'titleCase':
+      return call1('titleCase', e.arg);
+    case 'find':
+      return callN('find', [printExpr(e.arg), printStringLiteral(e.search)]);
+    case 'window':
+      return printWindow(e);
     case 'if':
       return callN('if', [printExpr(e.cond), printExpr(e.then), printExpr(e.else)]);
     case 'switch': {

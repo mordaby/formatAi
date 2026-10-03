@@ -4,10 +4,12 @@
 // masking mode x run, and writes a report.
 //
 //   pnpm eval --models <a>,<b> --masking on,off --runs 3 [--provider anthropic|openai|claude-cli|fake]
-//             [--cases <substring>] [--out <dir>] [--no-escalation]
+//             [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]
 //
 // Defaults: provider from env (LLM_PROVIDER / .env, see apps/api/src/env.ts), models =
-// the provider's configured firstTry model, masking on and off, runs 1.
+// the provider's configured firstTry model, masking on and off, runs 1, mode full.
+// --mode complete runs the local partial result first (no LLM) and then the AI step on what is missing only, the local rules kept as
+// a fixed part (LEARN_PROMPT "Completing a partial rules file"); --mode both runs both and the report puts them side by side.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +39,8 @@ export async function main(argv: readonly string[]): Promise<void> {
     throw new Error(args.cases ? `no eval cases match "${args.cases}"` : 'no eval cases found under eval/cases/');
   }
 
-  console.log(`Running ${cases.length} case(s) x ${models.length} model(s) x ${maskingModes.length} masking mode(s) x ${args.runs} run(s), provider=${provider}.`);
+  const modeNote = args.modes.length === 1 && args.modes[0] === 'full' ? '' : ` x mode ${args.modes.join('+')}`;
+  console.log(`Running ${cases.length} case(s) x ${models.length} model(s) x ${maskingModes.length} masking mode(s) x ${args.runs} run(s)${modeNote}, provider=${provider}.`);
 
   const startedAt = new Date();
   const records = await runMatrix({
@@ -47,6 +50,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     runs: args.runs,
     provider,
     noEscalation: args.noEscalation,
+    modes: args.modes,
     onProgress: (line) => console.log(`  ${line}`),
   });
 

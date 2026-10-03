@@ -1,6 +1,7 @@
 // Plain-language he/en text for every unsupported and assumption code (SPEC 8.10,
 // tone per SPEC 16.3: no jargon, say exactly what's true and what the user can do).
 // The LLM never writes UI text (SPEC 16.2); this dictionary is the only source of it.
+import type { AiLearnPeriod } from '../config/tiers';
 import type {
   ApiErrorCode,
   AssumptionReasonCode,
@@ -114,8 +115,8 @@ export const preflightBlockMessages: Record<PreflightBlockReason, Localized> = {
 
 export const preflightWarnMessages: Record<PreflightWarnReason, Localized> = {
   unknownOutputColumns: {
-    en: "These columns have values that don't appear in your input file. They probably come from another source, which isn't supported yet. We'll learn everything else and leave these empty.",
-    he: 'לעמודות האלה יש ערכים שלא מופיעים בקובץ הקלט שלכם. הם כנראה מגיעים ממקור אחר, ואפשרות זו עדיין לא נתמכת. נלמד את כל השאר ונשאיר את אלה ריקות.',
+    en: "We couldn't find these columns' values in your input file. The AI step will try them; if they come from another source they'll stay empty.",
+    he: 'לא מצאנו את הערכים של העמודות האלה בקובץ הקלט שלכם. שלב ה-AI ינסה אותן; אם הן מגיעות ממקור אחר, הן יישארו ריקות.',
   },
   rowsNotAligned: {
     en: 'We couldn’t match rows between the two files. Are they from the same data?',
@@ -238,6 +239,76 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
     en: 'Too many requests. Wait a minute and try again.',
     he: 'יותר מדי בקשות. המתינו דקה ונסו שוב.',
   },
+  // SPEC 21 v5: the AI step needs a sign-in. The UI puts the local result first and adds the counts
+  // ("We worked out N of M columns ... K need the AI step"); the number of AI learns comes from config.
+  signInForAi: {
+    en: 'Sign in free to finish this with the AI step.',
+    he: 'התחברו בחינם כדי להשלים את זה בעזרת שלב ה-AI.',
+  },
+  // The version for an answer that did not count anything (a further try on a pair that already stopped).
+  // The one that counted a learn is `aiAttemptsExhaustedMessages.counted`.
+  aiAttemptsExhausted: {
+    en: "We already tried this pair of files several times and the result still didn't match your example. Check that the output was made from this exact input and that its hand edits are marked, then start again with the corrected files.",
+    he: 'כבר ניסינו את זוג הקבצים הזה כמה פעמים והתוצאה עדיין לא תאמה לדוגמה שלכם. בדקו שהפלט נוצר בדיוק מקובץ הקלט הזה ושסימנתם את השורות שתוקנו ידנית, והתחילו מחדש עם הקבצים המתוקנים.',
+  },
+  signInRequired: {
+    en: 'Sign in to save formats and use them again.',
+    he: 'התחברו כדי לשמור פורמטים ולהשתמש בהם שוב.',
+  },
+  notFound: {
+    en: "We couldn't find that. It may have been deleted.",
+    he: 'לא מצאנו את זה. ייתכן שזה נמחק.',
+  },
+  invalidRequest: {
+    en: 'Something went wrong with this request. Please try again.',
+    he: 'משהו השתבש בבקשה הזו. אנא נסו שוב.',
+  },
+  invalidRules: {
+    en: "These rules can't be saved yet. Fix the marked problems and try again.",
+    he: 'אי אפשר לשמור את הכללים האלה עדיין. תקנו את הבעיות המסומנות ונסו שוב.',
+  },
+  formatMismatch: {
+    en: "This file's output doesn't match the format. See which columns differ and fix them, or save it as a new format.",
+    he: 'הפלט של הקובץ הזה לא תואם לפורמט. ראו אילו עמודות שונות ותקנו אותן, או שמרו אותו כפורמט חדש.',
+  },
+  nameTaken: {
+    en: 'You already have a source with that name. Choose a different name.',
+    he: 'כבר יש לכם מקור בשם הזה. בחרו שם אחר.',
+  },
+  // SPEC 8.15: the conversion's input side has to match its source (the source lock).
+  sourceMismatch: {
+    en: "This file's columns don't match the source it belongs to. See which columns differ and fix them, or save it as a new source.",
+    he: 'העמודות של הקובץ הזה לא תואמות למקור שאליו הוא שייך. ראו אילו עמודות שונות ותקנו אותן, או שמרו אותו כמקור חדש.',
+  },
+  sourceInUse: {
+    en: 'This source still feeds a format. Remove it from its formats first.',
+    he: 'המקור הזה עדיין מזין פורמט. הסירו אותו מהפורמטים שלו קודם.',
+  },
+  aliasConflict: {
+    en: 'That column name is already used for a different column in this source.',
+    he: 'שם העמודה הזה כבר משמש עמודה אחרת במקור הזה.',
+  },
+  versionConflict: {
+    en: 'This was changed somewhere else in the meantime. Reload it and try again.',
+    he: 'זה שונה בינתיים במקום אחר. טענו מחדש ונסו שוב.',
+  },
+  unavailable: {
+    en: 'Saving is not available right now. Please try again later.',
+    he: 'השמירה לא זמינה כרגע. אנא נסו שוב מאוחר יותר.',
+  },
+};
+
+// SPEC 21 v5 item 3: what the user is told when the failed-attempt cap is reached. `counted` = this answer
+// is the one that counted the pair as one AI learn.
+export const aiAttemptsExhaustedMessages: Record<'counted' | 'notCounted', Localized> = {
+  counted: {
+    en: "We tried this pair of files several times and the result still didn't match your example. This counted as one AI learn. Check that the output was made from this exact input and that its hand edits are marked, then start again with the corrected files.",
+    he: 'ניסינו את זוג הקבצים הזה כמה פעמים והתוצאה עדיין לא תאמה לדוגמה שלכם. זה נספר כלמידת AI אחת. בדקו שהפלט נוצר בדיוק מקובץ הקלט הזה ושסימנתם את השורות שתוקנו ידנית, והתחילו מחדש עם הקבצים המתוקנים.',
+  },
+  notCounted: {
+    en: "We already tried this pair of files several times and the result still didn't match your example. Check that the output was made from this exact input and that its hand edits are marked, then start again with the corrected files.",
+    he: 'כבר ניסינו את זוג הקבצים הזה כמה פעמים והתוצאה עדיין לא תאמה לדוגמה שלכם. בדקו שהפלט נוצר בדיוק מקובץ הקלט הזה ושסימנתם את השורות שתוקנו ידנית, והתחילו מחדש עם הקבצים המתוקנים.',
+  },
 };
 
 // Text for each `limitHit { limit }` (SPEC 11).
@@ -253,5 +324,42 @@ export const limitMessages: Record<LimitCode, Localized> = {
   repairsPerLearn: {
     en: 'We already tried an extra fix for this one.',
     he: 'כבר ניסינו תיקון נוסף עבור הלמידה הזו.',
+  },
+  // SPEC 21 v5: generic text; `aiLearnsLimitMessages` has one per `period`.
+  aiLearns: {
+    en: "You've used all your AI learns for now.",
+    he: 'ניצלתם את כל למידות ה-AI שלכם לעכשיו.',
+  },
+  savedFormats: {
+    en: "You've saved as many formats as your plan allows. Delete one to make room.",
+    he: 'שמרתם את מספר הפורמטים המרבי שהתוכנית שלכם מאפשרת. מחקו אחד כדי לפנות מקום.',
+  },
+  newFormatsPerMonth: {
+    en: "You've created all the new formats your plan allows this month.",
+    he: 'יצרתם את כל הפורמטים החדשים שהתוכנית שלכם מאפשרת החודש.',
+  },
+  sourcesPerFormat: {
+    en: "This format already has as many sources as your plan allows.",
+    he: 'לפורמט הזה כבר יש את מספר המקורות המרבי שהתוכנית שלכם מאפשרת.',
+  },
+  rulesPerFormat: {
+    en: 'This format has more rules than your plan allows. Simplify it, or upgrade.',
+    he: 'בפורמט הזה יש יותר כללים ממה שהתוכנית שלכם מאפשרת. פשטו אותו או שדרגו.',
+  },
+};
+
+// SPEC 21 v5: the text for `limitHit { limit: 'aiLearns', period }`, by the period the quota is counted over.
+export const aiLearnsLimitMessages: Record<Exclude<AiLearnPeriod, 'unlimited'>, Localized> = {
+  lifetime: {
+    en: "You've used all your AI learns.",
+    he: 'ניצלתם את כל למידות ה-AI שלכם.',
+  },
+  month: {
+    en: "You've used all your AI learns for this month. They come back next month.",
+    he: 'ניצלתם את כל למידות ה-AI של החודש. הן יתחדשו בחודש הבא.',
+  },
+  day: {
+    en: "You've used all your AI learns for today. They come back tomorrow.",
+    he: 'ניצלתם את כל למידות ה-AI של היום. הן יתחדשו מחר.',
   },
 };

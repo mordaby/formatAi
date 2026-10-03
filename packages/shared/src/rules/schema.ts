@@ -16,6 +16,7 @@ import {
 // time), so re-using it here creates no runtime dependency on payload.ts, only a
 // type-level one - and avoids two independently-declared literal unions drifting apart.
 import type { SummaryAgg } from '../payload';
+import { limits } from '../config/limits';
 
 // ---------- Column type (SPEC 8.1) ----------
 
@@ -54,6 +55,66 @@ export const ValueTypeSchema = z.enum(VALUE_TYPES);
 // by the schema itself.
 
 export type ExprConstValue = string | number | boolean | null;
+
+/** `keepChars`' closed set of named character classes (Unicode-aware: Hebrew letters are letters). */
+export const KEEP_CHARS_CLASSES = ['digits', 'letters', 'lettersAndDigits'] as const;
+export type KeepCharsClass = (typeof KEEP_CHARS_CLASSES)[number];
+
+/**
+ * True for a real calendar date written YYYY-MM-DD, between 1900-01-01 and 9999-12-31 (the range
+ * the engine's dates can hold). Used by the `dateLiteral` schema and the formula parser; character
+ * checks only, no regular expression.
+ */
+export function isIsoDateLiteral(s: string): boolean {
+  if (s.length !== 10 || s[4] !== '-' || s[7] !== '-') return false;
+  const digits = (from: number, to: number): number | undefined => {
+    let n = 0;
+    for (let i = from; i < to; i++) {
+      const c = s.charCodeAt(i) - 48;
+      if (c < 0 || c > 9) return undefined;
+      n = n * 10 + c;
+    }
+    return n;
+  };
+  const y = digits(0, 4);
+  const m = digits(5, 7);
+  const d = digits(8, 10);
+  if (y === undefined || m === undefined || d === undefined) return false;
+  if (y < 1900 || m < 1 || m > 12 || d < 1) return false;
+  // 1900 counts as a leap year, like Excel (and the engine's own calendar).
+  const leap = y === 1900 || (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  const days = m === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31;
+  return d <= days;
+}
+
+/**
+ * Across-row ("window") functions (SPEC 8.3, docs/proposals/window-operations.md): one node, `window`, whose `fn`
+ * names one of these. Allowed only inside `transform.computed[].expr`; evaluated in step 6 over the rows that remain
+ * after filters, duplicates and expand.
+ */
+export const WINDOW_FNS = [
+  'runningSum',
+  'groupSum',
+  'groupAvg',
+  'groupMin',
+  'groupMax',
+  'groupCount',
+  'previous',
+  'next',
+  'fillDown',
+  'rowNumber',
+  'rank',
+] as const;
+export type WindowFn = (typeof WINDOW_FNS)[number];
+
+export const WINDOW_TIES = ['min', 'dense'] as const;
+export type WindowTies = (typeof WINDOW_TIES)[number];
+
+/** One `order:` key of a window. Named `column`, not `col`: generic expression walkers treat any object with `col` as an Expr leaf. */
+export interface WindowOrderKey {
+  column: string;
+  dir: 'asc' | 'desc';
+}
 
 /** `param` is a leaf usable only inside a `transform.functions[].body` (SPEC 8.14);
  * `checkRules` rejects it everywhere else, and rejects `col` inside a function body. */
@@ -106,6 +167,25 @@ export type ExprNode =
     ))
   | { op: 'dateDiff'; args: [Expr, Expr]; unit: 'days' | 'months' | 'years' }
   | { op: 'endOfMonth'; arg: Expr }
+  // Added after learn-v6 (formula text only so far - see `inPrompt` in the engine's OP_SIGNATURES):
+  /** 1 = Sunday ... 7 = Saturday. */
+  | { op: 'weekday'; arg: Expr }
+  /** (year, month, day) -> a date; an impossible date is empty and flagged. */
+  | { op: 'makeDate'; args: [Expr, Expr, Expr] }
+  /** Text read with a date format (D, DD, M, MM, MMMM, MMM, YY, YYYY + literal separators). */
+  | { op: 'toDate'; arg: Expr; format: string }
+  /** A fixed date, written YYYY-MM-DD (formula: date("2026-01-31")). Has no Expr children. */
+  | { op: 'dateLiteral'; value: string }
+  | { op: 'keepChars'; arg: Expr; chars: KeepCharsClass }
+  | { op: 'titleCase'; arg: Expr }
+  /** 1-based position of the first occurrence of `search` (literal text), 0 when absent. */
+  | { op: 'find'; arg: Expr; search: string }
+  /**
+   * Across-row function (formula: `runningSum(amount, by: account, order: date)`). `arg` is a column id (`{col}`) in v1;
+   * `by` partitions the rows (none = all rows); `order` sorts each partition (none = file order); `ties` is for `rank`.
+   * Which of the fields each function takes is in the engine's WINDOW_SIGNATURES.
+   */
+  | { op: 'window'; fn: WindowFn; arg?: Expr; by?: string[]; order?: WindowOrderKey[]; ties?: WindowTies }
   | { op: 'if'; cond: Expr; then: Expr; else: Expr }
   | { op: 'switch'; cases: { when: Expr; then: Expr }[]; else: Expr }
   | { op: 'coalesce'; args: Expr[] }
@@ -238,6 +318,30 @@ export function buildExprSchema(child: z.ZodType<Expr>): z.ZodType<Expr> {
         unit: z.enum(['days', 'months', 'years']),
       }),
       z.strictObject({ op: z.literal('endOfMonth'), arg: child }),
+      z.strictObject({ op: z.literal('weekday'), arg: child }),
+      z.strictObject({ op: z.literal('makeDate'), args: z.tuple([child, child, child]) }),
+      z.strictObject({ op: z.literal('toDate'), arg: child, format: z.string().min(1) }),
+      z.strictObject({
+        op: z.literal('dateLiteral'),
+        value: z.string().refine(isIsoDateLiteral, 'must be a real date written YYYY-MM-DD'),
+      }),
+      z.strictObject({ op: z.literal('keepChars'), arg: child, chars: z.enum(KEEP_CHARS_CLASSES) }),
+      z.strictObject({ op: z.literal('titleCase'), arg: child }),
+      z.strictObject({ op: z.literal('find'), arg: child, search: z.string().min(1) }),
+      z.strictObject({
+        op: z.literal('window'),
+        fn: z.enum(WINDOW_FNS),
+        // v1: the argument is a column id. (The type says Expr, so allowing more later changes no stored file.)
+        arg: child
+          .refine((e) => 'col' in e, 'a window function reads a column id; make a computed column first for anything calculated')
+          .optional(),
+        by: z.array(z.string().min(1)).min(1).optional(),
+        order: z
+          .array(z.strictObject({ column: z.string().min(1), dir: z.enum(['asc', 'desc']) }))
+          .min(1)
+          .optional(),
+        ties: z.enum(WINDOW_TIES).optional(),
+      }),
       z.strictObject({
         op: z.literal('if'),
         cond: child,
@@ -942,14 +1046,64 @@ export const ValidationSchema = z.discriminatedUnion('rule', [
 
 // ---------- unsupported / assumptions (SPEC 8.10) ----------
 
+// learn-v7 (issue #40, SPEC 8.10): for a column the language cannot express the AI step may add a FUNCTION REQUEST (the function it
+// would need: a camelCase name, one neutral sentence, typed arguments, a return type - and NO example or value of any kind) and a short
+// plain-language EXPLANATION of the rule it sees. Both are optional extras: neither is ever executed or part of the rules, and neither is
+// ever stored with them (SPEC 15): the request is value-filtered and recorded by the API, the explanation is shown to the user in the
+// session only. `stripAiNotes` (./aiNotes.ts) removes both from any rules that are cached, saved or sent back to the AI step.
+
+/** The caps of the two notes live in config (`limits.learn.notes`); the schema and the prompt both read them from there. */
+export const FUNCTION_REQUEST_LIMITS = limits.learn.notes;
+
+/** camelCase: starts with a lower-case Latin letter, then letters and digits only. */
+export const FUNCTION_REQUEST_NAME_PATTERN = /^[a-z][A-Za-z0-9]*$/;
+
+export interface FunctionRequestArg {
+  name: string;
+  type: ValueType;
+}
+export interface FunctionRequest {
+  name: string;
+  purpose: string;
+  args: FunctionRequestArg[];
+  returns: ValueType;
+}
+
+/**
+ * `constrained: true` is the real gate (`LearnResultSchema`): the name pattern and the length caps are enforced. The WIRE schema
+ * (`wire.ts`) is built with `constrained: false`: structured-output providers do not all accept `pattern` / `maxLength` / `maxItems`, so
+ * the limits are said in the prompt and enforced here, after the call - a note that breaks them is dropped by the API (never a repair).
+ */
+export function buildFunctionRequestSchema(constrained: boolean): z.ZodType<FunctionRequest> {
+  const L = FUNCTION_REQUEST_LIMITS;
+  const identifier = constrained ? z.string().max(L.maxNameChars).regex(FUNCTION_REQUEST_NAME_PATTERN) : z.string();
+  const arg = z.strictObject({ name: identifier, type: ValueTypeSchema });
+  return z.strictObject({
+    name: identifier,
+    purpose: constrained ? z.string().min(1).max(L.maxPurposeChars) : z.string(),
+    args: constrained ? z.array(arg).max(L.maxArgs) : z.array(arg),
+    returns: ValueTypeSchema,
+  }) as unknown as z.ZodType<FunctionRequest>;
+}
+export const FunctionRequestSchema = buildFunctionRequestSchema(true);
+
 export interface Unsupported {
   outputColumn: string;
   reasonCode: UnsupportedReasonCode;
+  /** learn-v7: the function the language lacks for this column (value-free; recorded by the API, never saved with the rules). */
+  functionRequest?: FunctionRequest;
+  /** learn-v7: one short plain-language description of the rule the AI sees, in the output headers' language (a guess; in-session only, never stored). */
+  explanation?: string;
 }
-export const UnsupportedSchema = z.strictObject({
-  outputColumn: z.string(),
-  reasonCode: z.enum(UNSUPPORTED_REASON_CODES),
-});
+export function buildUnsupportedSchema(constrained: boolean): z.ZodType<Unsupported> {
+  return z.strictObject({
+    outputColumn: z.string(),
+    reasonCode: z.enum(UNSUPPORTED_REASON_CODES),
+    functionRequest: buildFunctionRequestSchema(constrained).optional(),
+    explanation: (constrained ? z.string().max(FUNCTION_REQUEST_LIMITS.maxExplanationChars) : z.string()).optional(),
+  }) as unknown as z.ZodType<Unsupported>;
+}
+export const UnsupportedSchema = buildUnsupportedSchema(true);
 
 export interface Assumption {
   outputColumn?: string;

@@ -1,6 +1,8 @@
 // Framework-free i18n core (SPEC 16.2): language detection, cookie, <html lang dir>,
 // and typed message lookup. No dependencies; React glue is in ./react.tsx.
 import {
+  aiAttemptsExhaustedMessages,
+  aiLearnsLimitMessages,
   apiErrorMessages,
   assumptionMessages,
   flagMessages,
@@ -9,6 +11,7 @@ import {
   preflightWarnMessages,
   unsupportedMessages,
   type ApiErrorCode,
+  type AiLearnPeriod,
   type AssumptionReasonCode,
   type FlagMessageKey,
   type LimitCode,
@@ -131,7 +134,7 @@ export type CodeMessage =
   | { kind: 'preflight'; code: PreflightBlockReason | PreflightWarnReason; params?: MessageParams }
   | { kind: 'flag'; code: FlagMessageKey | (string & {}); params?: MessageParams }
   /** An API error code; `limitHit` is shown as the text for its specific `limit` when there is one. */
-  | { kind: 'apiError'; code: ApiErrorCode; limit?: LimitCode | undefined };
+  | { kind: 'apiError'; code: ApiErrorCode; limit?: LimitCode | undefined; period?: AiLearnPeriod | undefined; counted?: boolean | undefined };
 
 export function codeText(lang: Lang, msg: CodeMessage): string {
   switch (msg.kind) {
@@ -145,8 +148,12 @@ export function codeText(lang: Lang, msg: CodeMessage): string {
       const text = block ?? warn;
       return text ? localize(lang, text, msg.params) : msg.code;
     }
-    case 'apiError':
+    case 'apiError': {
+      // SPEC 21 v5: the AI-learn quota and the failed-attempt stop each say more than the generic text.
+      if (msg.code === 'limitHit' && msg.limit === 'aiLearns' && msg.period && msg.period !== 'unlimited') return localize(lang, aiLearnsLimitMessages[msg.period]);
+      if (msg.code === 'aiAttemptsExhausted' && msg.counted !== undefined) return localize(lang, aiAttemptsExhaustedMessages[msg.counted ? 'counted' : 'notCounted']);
       return localize(lang, msg.code === 'limitHit' && msg.limit ? limitMessages[msg.limit] : apiErrorMessages[msg.code]);
+    }
     case 'flag': {
       const text = (flagMessages as Record<string, Localized>)[msg.code];
       // Flag keys come from the engine; an unknown key shows as itself rather than crashing the page.

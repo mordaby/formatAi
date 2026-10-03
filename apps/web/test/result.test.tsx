@@ -1,16 +1,14 @@
 import type { Flag } from '@formatai/engine';
-import { assumptionMessages, tiers, unsupportedMessages, type LearnResult, type PayloadCell, type Rules } from '@formatai/shared';
-import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import type { ReactElement } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { assumptionMessages, tiers, unsupportedMessages, type Rules } from '@formatai/shared';
+import { cleanup, createEvent, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ordersRules } from '../src/editor/testkit';
-import { en, he, I18nProvider, type Lang, type MessageKey } from '../src/i18n';
+import { en, he, type MessageKey } from '../src/i18n';
 import { FormatChange } from '../src/pages/Result/EditorPanel';
 import { getResultSession } from '../src/pages/Result/session';
-import type { LiveCheckResult, PreviewRow } from '../src/worker/editorApi';
 import type { LearnOutput } from '../src/worker/engineApi';
-import { csv, fakeApi, fakeEngine, learnResult, liveResult, renderApp } from './helpers/renderApp';
+import { learnResult } from './helpers/renderApp';
+import { badge, columnOrder, DIFFERING_ROWS, HEADERS, line, openLine, openResult, renderWith, strip } from './helpers/resultKit';
 
 beforeEach(() => {
   document.cookie = 'lang=; Path=/; Max-Age=0';
@@ -21,106 +19,6 @@ afterEach(() => {
   document.documentElement.lang = '';
   document.documentElement.dir = '';
 });
-
-// ---------------------------------------------------------------------------
-// A fake worker for the rules editor: it "runs" the rules by looking at the one thing the tests change (the Total
-// column's calculation) and answers the way the real live check would: rows that differ come first, exceptions are
-// left out of every count.
-// ---------------------------------------------------------------------------
-
-const ROWS = 30;
-const original = ordersRules();
-const originalCalc = JSON.stringify(original.transform.computed);
-const HEADERS = original.output.columns.map((c) => c.header);
-const TOTAL = HEADERS.indexOf('Total');
-const DIFFERING_ROWS = [3, 4, 5, 6, 7];
-
-function makeLive(rules: LearnResult | Rules, exceptions: number[] = [], opts: { rows?: number; partial?: boolean } = {}): LiveCheckResult {
-  const rows = opts.rows ?? ROWS;
-  const changed = JSON.stringify(rules.transform.computed) !== originalCalc;
-  const bad = changed ? DIFFERING_ROWS.filter((r) => !exceptions.includes(r)) : [];
-  const width = HEADERS.length;
-  const row = (exampleRow: number, ok: boolean): PreviewRow => {
-    const expected: PayloadCell[] = HEADERS.map((_, c) => (c === TOTAL ? 100 + exampleRow : `v${exampleRow}.${c}`));
-    const actual = [...expected];
-    if (!ok) actual[TOTAL] = 1;
-    return { exampleRow, inputRow: exampleRow, ok, source: [], expected, actual, badColumns: ok ? [] : [TOTAL] };
-  };
-  const good = Array.from({ length: rows }, (_, i) => i + 2).filter((r) => !bad.includes(r) && !exceptions.includes(r));
-  const total = rows - exceptions.length;
-  return liveResult({
-    verified: bad.length === 0 && !opts.partial,
-    matched: total - bad.length,
-    total,
-    differences: bad.length,
-    perColumn: HEADERS.map((header, c) => ({ header, inExample: c < width, matched: c === TOTAL ? total - bad.length : total, total })),
-    mismatches: bad.map((exampleRow) => ({ exampleRow, column: 'Total', columnIndex: TOTAL, expected: 100 + exampleRow, actual: 1 })),
-    mismatchCount: bad.length,
-    preview: [...bad.map((r) => row(r, false)), ...good.map((r) => row(r, true))].slice(0, 50),
-    partial: opts.partial ?? false,
-    checkedInputRows: opts.partial ? 2000 : rows,
-    totalInputRows: rows,
-  });
-}
-
-interface Setup {
-  rules?: LearnResult | Rules;
-  lang?: 'en' | 'he';
-  rows?: number;
-  partial?: boolean;
-  convert?: unknown;
-  staticProblems?: unknown[];
-  /** The worker has no example in memory (or the learn kept none). */
-  noExample?: boolean;
-}
-
-async function openResult(setup: Setup = {}) {
-  const rules = setup.rules ?? ordersRules();
-  const liveCheck = vi.fn(async (_id: string, r: LearnResult | Rules, o?: { exceptions?: number[] }) => makeLive(r, o?.exceptions ?? [], { rows: setup.rows ?? ROWS, partial: setup.partial ?? false }));
-  const fullCheck = vi.fn(async (_id: string, r: LearnResult | Rules, o?: { exceptions?: number[] }) => makeLive(r, o?.exceptions ?? [], { rows: setup.rows ?? ROWS }));
-  const staticChecks = vi.fn(async () => setup.staticProblems ?? []);
-  const convert = vi.fn(async () => setup.convert ?? undefined);
-  const { engine } = fakeEngine(
-    async () =>
-      learnResult({ rules, exampleId: setup.noExample ? undefined : 'ex1', verification: { verified: true, matched: 3, total: 3, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } }) as LearnOutput,
-    undefined,
-    { liveCheck, fullCheck, staticChecks, convert },
-  );
-  const api = fakeApi();
-  renderApp({ engine, api, lang: setup.lang ?? 'en' });
-
-  const en = (setup.lang ?? 'en') === 'en';
-  fireEvent.change(screen.getByLabelText(en ? 'Example input' : 'דוגמת קלט'), { target: { files: [csv('orders.csv')] } });
-  fireEvent.change(screen.getByLabelText(en ? 'Example output' : 'דוגמת פלט'), { target: { files: [csv('Orders report.csv')] } });
-  await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
-  const learn = screen.getByRole('button', { name: en ? /Learn the format/ : /ללמוד את הפורמט/ }) as HTMLButtonElement;
-  await act(async () => {
-    fireEvent.click(learn);
-  });
-  await screen.findByTestId('rules-map');
-  await waitFor(() => expect(setup.noExample ? staticChecks : liveCheck).toHaveBeenCalled());
-  return { liveCheck, fullCheck, staticChecks, convert, api };
-}
-
-const line = (id: string): HTMLElement => {
-  const el = document.querySelector(`[data-line-id="${id}"]`);
-  if (!el) throw new Error(`no line ${id}: ${[...document.querySelectorAll('[data-line-id]')].map((e) => e.getAttribute('data-line-id')).join(', ')}`);
-  return el as HTMLElement;
-};
-const openLine = (id: string): void => {
-  fireEvent.click(within(line(id)).getAllByRole('button').find((b) => b.classList.contains('map-line__main'))!);
-};
-const strip = (): string => screen.getByTestId('live-check-text').textContent ?? '';
-function renderWith(ui: ReactElement, lang: Lang = 'en') {
-  return render(
-    <I18nProvider initial={lang}>
-      <MemoryRouter>{ui}</MemoryRouter>
-    </I18nProvider>,
-  );
-}
-
-const badge = (): string => screen.getByTestId('status-badge').textContent ?? '';
-const columnOrder = (): string[] => [...document.querySelectorAll('[data-section="columns"] [data-line-id]')].map((e) => e.getAttribute('data-line-id')!);
 
 // ---------------------------------------------------------------------------
 
@@ -337,68 +235,7 @@ describe('the format-change note (SPEC 8.12)', () => {
   });
 });
 
-describe('one-off exceptions', () => {
-  async function withDifferences() {
-    const ctx = await openResult();
-    openLine('col:Total');
-    const terms = screen.getAllByRole('combobox', { name: /^Item \d$/ }) as HTMLSelectElement[];
-    fireEvent.change(terms[1]!, { target: { value: 'col:qty' } });
-    await waitFor(() => expect(strip()).toBe('Matches 25 of 30 rows in your example'));
-    return ctx;
-  }
-
-  it('shows mismatching rows first, each as "your example" and "this rule", with the differing cell in amber', async () => {
-    await withDifferences();
-    const first = document.querySelector('tr.pv__note') as HTMLElement;
-    expect(first.getAttribute('data-row')).toBe('3');
-    expect(first.textContent).toContain('Row 3 differs in:');
-    expect(within(first).getByRole('button', { name: 'This row was fixed by hand' })).toBeTruthy();
-    const rows = [...document.querySelectorAll('.pv tbody tr')];
-    // note, example, rule, then the next mismatch...
-    expect(rows[1]!.textContent).toContain('Your example');
-    expect(rows[2]!.textContent).toContain('This rule');
-    expect(rows[2]!.querySelectorAll('.pv__diff').length).toBe(1);
-  });
-
-  it('marking a row excludes it from the count; "Count it again" (or undo) brings it back', async () => {
-    await withDifferences();
-    fireEvent.click(within(document.querySelector('tr.pv__note[data-row="3"]') as HTMLElement).getByRole('button', { name: 'This row was fixed by hand' }));
-    await waitFor(() => expect(strip()).toBe('Matches 25 of 29 rows in your example'));
-    expect(badge()).toBe('1 column needs your input');
-    const list = screen.getByTestId('exceptions');
-    expect(list.textContent).toContain('1 row is counted as fixed by hand');
-    expect(list.textContent).toContain('Row 3');
-    expect(document.querySelector('tr.pv__note[data-row="3"]')).toBeNull();
-
-    fireEvent.click(within(list).getByRole('button', { name: 'Count it again' }));
-    await waitFor(() => expect(strip()).toBe('Matches 25 of 30 rows in your example'));
-    expect(screen.queryByTestId('exceptions')).toBeNull();
-
-    // Mark two, then undo one step.
-    fireEvent.click(within(document.querySelector('tr.pv__note[data-row="3"]') as HTMLElement).getByRole('button', { name: 'This row was fixed by hand' }));
-    await waitFor(() => screen.getByTestId('exceptions'));
-    fireEvent.click(within(document.querySelector('tr.pv__note[data-row="4"]') as HTMLElement).getByRole('button', { name: 'This row was fixed by hand' }));
-    await waitFor(() => expect(screen.getByTestId('exceptions').textContent).toContain('2 rows are counted as fixed by hand'));
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    await waitFor(() => expect(screen.getByTestId('exceptions').textContent).toContain('1 row is counted as fixed by hand'));
-  });
-
-  it('the live check is told about the exceptions (and only the check: the rules are untouched)', async () => {
-    const { liveCheck } = await withDifferences();
-    fireEvent.click(within(document.querySelector('tr.pv__note[data-row="5"]') as HTMLElement).getByRole('button', { name: 'This row was fixed by hand' }));
-    await waitFor(() => expect(liveCheck.mock.calls.at(-1)![2]).toMatchObject({ exceptions: [5] }));
-  });
-});
-
 describe('the live check strip', () => {
-  it('says how many rows match, and only says "sample" with an Apply button when the check saw a subset', async () => {
-    const { fullCheck } = await openResult({ partial: true, rows: 9000 });
-    await waitFor(() => expect(strip()).toBe('Checking a 2,000-row sample. Apply to check all rows.'));
-    fireEvent.click(within(screen.getByRole('region', { name: 'Check against your example' })).getByRole('button', { name: 'Apply' }));
-    await waitFor(() => expect(fullCheck).toHaveBeenCalled());
-    await waitFor(() => expect(strip()).toBe('Matches 9,000 of 9,000 rows in your example'));
-  });
-
   it('without an example only the static checks run, and it says so', async () => {
     const { liveCheck, staticChecks } = await openResult({ noExample: true });
     await waitFor(() => expect(strip()).toContain("Your example isn't in memory any more"));
@@ -425,7 +262,7 @@ describe('the free tier', () => {
     fireEvent.click(more);
     const dialog = await screen.findByRole('dialog', { name: 'Sign in' });
     expect(dialog.textContent).toContain("Sign in to save this format and reuse it on next month's file.");
-    expect(within(dialog).getByText('Continue with Google')).toBeTruthy();
+    expect(await within(dialog).findByText('Continue with Google')).toBeTruthy();
     expect(within(dialog).getByText('Continue with Microsoft')).toBeTruthy();
   });
 

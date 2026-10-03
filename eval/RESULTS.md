@@ -26,3 +26,43 @@ Variance: `insurer-commission-control` and `stock-count-warehouse-report` each m
 **Usage via the dev CLI is not representative of API cost.** Averages per LLM learn: 1.78 calls, ~48k cached input tokens, ~18k output tokens, ~162 s. Our own prompt + schema + payload is ~12k tokens; the rest is Claude Code's own session overhead and (likely) thinking tokens. Measure real per-learn cost with `--provider anthropic` (API key) before setting budgets.
 
 Next: run Sonnet 5 on the same set (escalation slot), `--runs 3`, and an API-key run for true cost.
+
+## 2026-10-01 — learn-v6: full learn vs "complete what's missing"
+
+- **Provider:** `claude-cli` (dev, subscription), **Haiku 4.5**, masking on, 1 run, no escalation, `--mode both`. 17 cases (8 need the AI step).
+
+| | full | complete |
+|---|---|---|
+| Expectation met | 94% | 94% |
+| AI learns verified 1st call / after repair | 75% / 88% | 75% / 88% |
+| Hold-out correct | 100% | 93% |
+| Avg AI calls per learn | 1.75 | 1.62 |
+| Avg output tokens per learn (CLI, incl. thinking) | 17.5k | 15.3k |
+
+- Completion shines when most columns are already fixed: `budget-columns-to-rows` 1.5k vs 16.3k output tokens, `registry-supplier-a` 1.2k vs 20k, both verified on the 1st call.
+- It is the wrong tool when nothing is fixed: `purchase-orders-supplier-summary` (summary output, 0 of 5 columns solved) failed after 3 calls in completion mode and verified in full mode.
+- Misses differ by mode (full missed `stock-count-warehouse-report`, completion verified it) — partly run-to-run variance at 1 run per case.
+- learn-v6 did not regress full learns (94%, in line with learn-v5).
+- **Change made:** "Finish with the AI step" uses completion only when ≥ 50% of the fillable output columns already have a rule (`limits.learn.completionMinFixedShare`), otherwise the full learn.
+
+## 2026-10-02 — learn-v7 (new date/text ops, window functions, function requests, AI's guess)
+
+- **Provider:** `claude-cli`, **Haiku 4.5**, masking on, 1 run, no escalation, `--mode both`. Report `eval/reports/2026-10-02T15-51-21-499Z/`.
+
+| | v6 complete | v7 complete | v6 full | v7 full |
+|---|---|---|---|---|
+| Expectation met | 94% | **94%** | 94% | **82%** |
+| Verified 1st / after repair | 75% / 88% | 67% / 89% | 75% / 88% | 67% / 78% |
+| Hold-out correct | 93% | 93% | 100% | 86% |
+| Avg output tokens per learn | 15.3k | 14.6k | 17.5k | 18.8k |
+
+- Completion mode (the app's default when ≥ 50% of columns are solved) held steady.
+- Full-mode misses: `registry-supplier-c` (the AI marked a derivable column `externalData` and the new "honest unsupported" rule accepted it without repair), `purchase-orders-supplier-summary` (summary output; fails in both modes, verified in v6 full — suspected interference from the new window functions), `stock-count-warehouse-report` (also missed in v6 full: variance).
+- Follow-up: repair when the AI gives up despite code's evidence; check window guidance vs summary outputs; re-run the 3 cases.
+- **Offline diagnosis (fake provider, no LLM) and fixes, same day.** `purchase-orders-supplier-summary`: the payload is clean (`summary: true`, group + `aggregate` hints, no window hint - windows are only detected for row-per-row shapes), so it was not the window text. The API's own checks could never be clean for the RIGHT answer: the type check ignored an output column's `agg` (the count of an id column "is not an integer"), the sample run diffed every group against a table that holds one row per group, and a bogus `rowCount` was added once the diff cap stopped the walk. Fixed in code, no prompt change (`promptVersion` stays `learn-v7`): the reference answer now verifies on the first call, masking on and off (`eval/test/caseAnswers.test.ts`). The same sample-run guard now also leaves window-function columns out of the sample diff. `registry-supplier-c`: giving up on a column the payload has a hint for is now a problem (`unsupportedDespiteEvidence`) for the server repair round and the browser's repair call; a column with no hint stays an honest unsupported. Not yet re-measured with a real model.
+
+### Re-run after the fixes (2026-10-02, 4 cases, both modes)
+
+- `registry-supplier-c`: verified in both modes (the `unsupportedDespiteEvidence` repair worked); `stock-count-warehouse-report`: verified in both modes.
+- `purchase-orders-supplier-summary`: still fails in both modes with Haiku and no escalation, although the reference answer now verifies on the first call (the checks were the blocker before). In the app, escalation to Sonnet is the safety net — to confirm in a Sonnet run.
+- Three "verified on the example, failed next month" results in the registry cases: AI rules that don't generalize — measured systematically by the catalogue's AI column next.

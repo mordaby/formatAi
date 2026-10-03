@@ -127,3 +127,50 @@ describe('error mapping', () => {
     expect(((await api.session().catch((e: unknown) => e)) as ApiError).code).toBe('server');
   });
 });
+
+// SPEC 8.15: the registry client - a conversion's source is decided by the server when it is saved (the source objects have no screen in the
+// MVP: only the list of their names is read, for Add a source).
+describe('registry: sources', () => {
+  const conversion = { id: 'C1', formatId: 'F1', sourceId: 'S1', sourceName: 'Supplier A' };
+  const call = (fetchMock: ReturnType<typeof vi.fn>, n = 0): [string, RequestInit] => fetchMock.mock.calls[n]! as [string, RequestInit];
+
+  it('attachSource(): POSTs the source choice and the example input\'s headers, and answers with the WHOLE response (source, sourceReused)', async () => {
+    const answer = { conversion, source: { id: 'S1', name: 'Supplier A', formats: 1 }, sourceReused: { id: 'S1', name: 'Supplier A' } };
+    const { api, fetchMock } = apiWith(() => json(answer, { status: 201 }));
+    const body = { rules, status: 'verified', acceptedDifferences: 0, exampleExceptions: [], learnPath: 'local', masking: true, sourceId: 'S1', inputHeaders: ['Code', 'Name'] } as unknown as Parameters<typeof api.registry.attachSource>[1];
+    await expect(api.registry.attachSource('F 1', body)).resolves.toEqual(answer);
+    const [url, init] = call(fetchMock);
+    expect(url).toBe('https://api.test/api/formats/F%201/conversions');
+    expect(init.method).toBe('POST');
+    expect(sentBody(fetchMock)).toMatchObject({ sourceId: 'S1', inputHeaders: ['Code', 'Name'] });
+  });
+
+  it('createFormat(): passes newSource and inputHeaders through, and the answer names the source', async () => {
+    const answer = { format: { id: 'F1' }, conversion, source: { id: 'S1', name: 'Supplier A', formats: 1 } };
+    const { api, fetchMock } = apiWith(() => json(answer, { status: 201 }));
+    const body = { name: 'Orders', rules, status: 'verified', acceptedDifferences: 0, exampleExceptions: [], learnPath: 'local', masking: true, newSource: { name: 'Supplier A' }, inputHeaders: ['Code'] } as unknown as Parameters<typeof api.registry.createFormat>[0];
+    await expect(api.registry.createFormat(body)).resolves.toEqual(answer);
+    expect(call(fetchMock)[0]).toBe('https://api.test/api/formats');
+    expect(sentBody(fetchMock)).toMatchObject({ newSource: { name: 'Supplier A' }, inputHeaders: ['Code'] });
+  });
+
+  it('listSources(): GET, unwrapped - and the client has no other call on the source objects (no screen for them in the MVP)', async () => {
+    const source = { id: 'S1', name: 'Supplier A', conversions: [] };
+    const { api, fetchMock } = apiWith(() => json({ sources: [source] }));
+    await expect(api.registry.listSources()).resolves.toEqual([source]);
+    expect(call(fetchMock, 0)[0]).toBe('https://api.test/api/sources');
+    expect(call(fetchMock, 0)[1].method).toBe('GET');
+    expect(Object.keys(api.registry).filter((k) => /source/i.test(k)).sort()).toEqual(['attachSource', 'listSources']);
+  });
+
+  it('a 422 sourceMismatch keeps its problems (the source lock\'s findings), a 409 nameTaken maps to its code', async () => {
+    const problems = [{ kind: 'sourceMismatch', path: 'input.columns[1].type', message: 'column "Price": type must equal the source\'s "decimal", got "text"' }];
+    const { api } = apiWith(() => json({ error: 'sourceMismatch', problems }, { status: 422 }));
+    const err = (await api.registry.attachSource('F1', {} as never).catch((e: unknown) => e)) as ApiError;
+    expect(err.code).toBe('sourceMismatch');
+    expect(err.problems).toEqual(problems);
+
+    const taken = apiWith(() => json({ error: 'nameTaken' }, { status: 409 }));
+    expect(((await taken.api.registry.attachSource('F1', {} as never).catch((e: unknown) => e)) as ApiError).code).toBe('nameTaken');
+  });
+});

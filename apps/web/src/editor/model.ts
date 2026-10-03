@@ -5,17 +5,17 @@
 import { applyRulesAction, type RulesAction } from './actions';
 import { parseAdvancedJson } from './advanced';
 import { editorConfig } from './config';
-import { editedLines, formatFingerprint } from './lines';
+import { editedLines, formatFingerprint, inputSideChanged } from './lines';
 import { fail, isProblems } from './problems';
-import { isStored, sameContent } from './rulesUtil';
-import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, EditProblem, FormatInfo, Snapshot } from './types';
+import { availableInputs, isStored, referencedIds, sameContent, withInputColumns } from './rulesUtil';
+import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, EditProblem, ExampleInputColumn, FormatInfo, Snapshot, SourceInfo } from './types';
 import { validateEdit } from './validate';
 
 export * from './types';
 export { applyColumnMethod, readColumnMethod, methodSources, mismatchMessage } from './columnMethod';
 export { advancedJsonOf, parseAdvancedJson } from './advanced';
-export { editedLines, formatFingerprint, lineIds, lineIdsOf } from './lines';
-export { sourceOptions, effectiveEndSummaryRows, effectiveGroupSummaryRows } from './rulesUtil';
+export { editedLines, formatFingerprint, inputSideChanged, lineIds, lineIdsOf } from './lines';
+export { sourceOptions, availableInputs, effectiveEndSummaryRows, effectiveGroupSummaryRows } from './rulesUtil';
 export { validateEdit } from './validate';
 
 // ---------- exceptions ----------
@@ -36,12 +36,14 @@ function derive(state: EditorState, rules: EditableRules, exceptions: number[]):
   const edited = new Set<string>(state.baseEdited);
   for (const id of editedLines(state.baseline, rules)) edited.add(id);
   const formatChange = state.format !== null && formatFingerprint(rules) !== formatFingerprint(state.saved.rules);
+  const sourceChange = state.source !== null && inputSideChanged(state.saved.rules, rules);
   return {
     ...state,
     rules,
     exceptions,
     edited,
     formatChange,
+    sourceChange,
     dirty: !sameSnapshot({ rules, exceptions }, state.saved),
     rev: state.rev + 1,
   };
@@ -62,6 +64,8 @@ export function createEditorState(rules: EditableRules, options: EditorOptions =
     dirty: false,
     formatChange: false,
     format,
+    source: options.source ?? null,
+    sourceChange: false,
     rev: 0,
     baseline: rules,
     baseEdited: base,
@@ -75,6 +79,11 @@ export function createEditorState(rules: EditableRules, options: EditorOptions =
 export interface ApplyOptions {
   /** Fold this edit into the previous undo step (typing in one field is one step, not one per key). */
   merge?: boolean;
+  /**
+   * The example input's columns (SPEC 8.11). An edit that uses one no rule declares yet (its id is the one
+   * `sourceOptions` gave it) declares it first, in the same undoable step.
+   */
+  available?: readonly ExampleInputColumn[] | undefined;
 }
 
 export interface EditOutcome {
@@ -87,7 +96,40 @@ function pushPast(state: EditorState): Snapshot[] {
   return past.length > state.historyCap ? past.slice(past.length - state.historyCap) : past;
 }
 
-function nextRules(state: EditorState, action: EditAction): { rules: EditableRules; exceptions: number[] } | EditProblem[] {
+/** The plain step, then the check every edit gets (SPEC 9.2 layers 1-2). */
+function stepAndValidate(rules: EditableRules, action: EditAction): EditableRules | EditProblem[] {
+  const out = applyRulesAction(rules, action as RulesAction);
+  if (isProblems(out)) return out;
+  const problems = validateEdit(rules, out);
+  return problems.length > 0 ? problems : out;
+}
+
+/**
+ * The same step with the example input's undeclared columns declared, keeping only those the step ended up using. Used
+ * when the plain step failed: choosing a column of the example that no rule declares yet is one edit that declares it and
+ * uses it (undo takes both back).
+ */
+function stepDeclaring(
+  rules: EditableRules,
+  action: EditAction,
+  available: readonly ExampleInputColumn[] | undefined,
+  failed: EditProblem[],
+): EditableRules | EditProblem[] {
+  const candidates = availableInputs(rules, available);
+  if (candidates.length === 0) return failed;
+  const all = withInputColumns(rules, candidates.map((c) => c.column));
+  const out = applyRulesAction(all, action as RulesAction);
+  if (isProblems(out)) return out;
+  const used = referencedIds(out);
+  const keep = new Set(candidates.filter((c) => used.has(c.id)).map((c) => c.id));
+  if (keep.size === 0) return failed;
+  const declared = out.input.columns.filter((c) => keep.has(c.id) || !candidates.some((k) => k.id === c.id));
+  const next = { ...out, input: { ...out.input, columns: declared } } as EditableRules;
+  const problems = validateEdit(rules, next);
+  return problems.length > 0 ? problems : next;
+}
+
+function nextRules(state: EditorState, action: EditAction, available?: readonly ExampleInputColumn[]): { rules: EditableRules; exceptions: number[] } | EditProblem[] {
   switch (action.type) {
     case 'markException':
     case 'unmarkException': {
@@ -104,17 +146,16 @@ function nextRules(state: EditorState, action: EditAction): { rules: EditableRul
       return isProblems(parsed) ? parsed : { rules: parsed, exceptions: state.exceptions };
     }
     default: {
-      const out = applyRulesAction(state.rules, action as RulesAction);
-      if (isProblems(out)) return out;
-      const problems = validateEdit(state.rules, out);
-      return problems.length > 0 ? problems : { rules: out, exceptions: state.exceptions };
+      let out = stepAndValidate(state.rules, action);
+      if (isProblems(out) && available && available.length > 0) out = stepDeclaring(state.rules, action, available, out);
+      return isProblems(out) ? out : { rules: out, exceptions: state.exceptions };
     }
   }
 }
 
 /** Applies one edit. Problems leave the state untouched; an edit that changes nothing adds no undo step. */
 export function applyEdit(state: EditorState, action: EditAction, options: ApplyOptions = {}): EditOutcome {
-  const next = nextRules(state, action);
+  const next = nextRules(state, action, options.available);
   if (isProblems(next)) return { state, result: { ok: false, problems: next } };
   const changed = !sameSnapshot({ rules: next.rules, exceptions: next.exceptions }, { rules: state.rules, exceptions: state.exceptions });
   if (!changed) return { state, result: { ok: true, changed: false } };
@@ -151,6 +192,16 @@ export function markSaved(state: EditorState, rules: EditableRules = state.rules
   const saved: Snapshot = { rules, exceptions: state.exceptions };
   const base: EditorState = { ...state, saved };
   return { ...derive(base, rules, state.exceptions), rev: state.rev };
+}
+
+/** The conversion belongs to a format (or no longer does): the format-change flag follows. Not an edit: `rev` and the history stay. */
+export function withFormat(state: EditorState, format: FormatInfo | null): EditorState {
+  return { ...state, format, formatChange: format !== null && formatFingerprint(state.rules) !== formatFingerprint(state.saved.rules) };
+}
+
+/** The conversion's source is known (or no longer is): the source-change flag follows. Not an edit: `rev` and the history stay. */
+export function withSource(state: EditorState, source: SourceInfo | null): EditorState {
+  return { ...state, source, sourceChange: source !== null && inputSideChanged(state.saved.rules, state.rules) };
 }
 
 /** Start over from other rules (a different conversion, or rules the server sent back after a save). */

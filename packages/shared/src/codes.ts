@@ -58,8 +58,9 @@ export type PreflightBlockReason = (typeof PREFLIGHT_BLOCK_REASONS)[number];
 // DECISION: same rationale as PREFLIGHT_BLOCK_REASONS above - SPEC 6.4 lists these
 // as prose ("Some output columns are unknown", "Rows couldn't be aligned"), coded
 // here as a closed enum so preflight results and i18n share one vocabulary. Unlike
-// a block, the user can continue past a warn (skipColumns confirmation, or "try
-// anyway"), and doing so still counts as a learn.
+// a block, the user can continue past a warn ("try anyway"), and doing so still counts
+// as a learn. `unknownOutputColumns` is informational only (severity 'info', never a stop):
+// the AI step tries those columns, and what it can't produce stays empty.
 export const PREFLIGHT_WARN_REASONS = ['unknownOutputColumns', 'rowsNotAligned'] as const;
 export type PreflightWarnReason = (typeof PREFLIGHT_WARN_REASONS)[number];
 
@@ -112,9 +113,52 @@ export const API_ERROR_CODES = [
   'budgetExhausted',
   // 429: too many requests from one IP in a minute.
   'rateLimited',
+  // 403 (SPEC 21 v5): the AI step is for signed-in users only. The local result is shown first.
+  'signInForAi',
+  // 409 (SPEC 21 v5): the failed-attempt cap on this example pair was reached; `counted` says whether it
+  // was counted as one AI learn by this very answer.
+  'aiAttemptsExhausted',
+  // ---- registry (M3, SPEC 8.12) ----
+  // 401: saving, listing and editing formats needs a sign-in.
+  'signInRequired',
+  // 404: no such format / conversion / version - also when it belongs to someone else.
+  'notFound',
+  // 400: malformed registry request body (never says what was wrong).
+  'invalidRequest',
+  // 422: the rules file failed the checks (structure, references, types, limits); `problems` says which.
+  'invalidRules',
+  // 422: attach / restore - the rules don't reproduce the format; `problems` are `formatMismatch` ones.
+  'formatMismatch',
+  // 409: another source of yours already has that name (source names are the company's, SPEC 8.15).
+  'nameTaken',
+  // 422 (SPEC 8.15): the conversion's input side doesn't match its source (the source lock); `problems` are `sourceMismatch` ones.
+  'sourceMismatch',
+  // 409 (SPEC 8.15): a source that still feeds a format can't be deleted.
+  'sourceInUse',
+  // 409: that alias already names another input column of the conversion.
+  'aliasConflict',
+  // 409: the conversion/format was changed by someone else since `baseVersion`.
+  'versionConflict',
+  // 503: the registry needs the database, which is not configured.
+  'unavailable',
 ] as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 
 /** The `limit` that accompanies `limitHit` (also the `limit_hit { limit }` event prop, SPEC 11). */
-export const LIMIT_CODES = ['learnsPerDay', 'learnsPerMonth', 'repairsPerLearn'] as const;
+export const LIMIT_CODES = [
+  // Legacy (M2, before the AI-only-for-signed-in rule): the API no longer sends these two.
+  'learnsPerDay',
+  'learnsPerMonth',
+  'repairsPerLearn',
+  // 429: the user's AI-learn quota for its period is used up (`period` accompanies it).
+  'aiLearns',
+  // 403: saved formats (registered: lifetime total; delete frees a slot).
+  'savedFormats',
+  // 429: paid tier's new formats this calendar month (DECISION 9).
+  'newFormatsPerMonth',
+  // 403: sources (conversions) per format.
+  'sourcesPerFormat',
+  // 403: rules per format (functions, tables, columns, filters, ... SPEC 8.14).
+  'rulesPerFormat',
+] as const;
 export type LimitCode = (typeof LIMIT_CODES)[number];

@@ -6,6 +6,7 @@
 // touches, so the full files themselves never have to be re-read here.
 
 import type {
+  Band,
   ColumnHint,
   Format,
   Hint,
@@ -23,6 +24,7 @@ import type { RawCell } from '../types';
 import { toPayloadColumn } from './analyze';
 import type { Family, PairAnalysis, SummaryRowAnalysis, TitleRowAnalysis } from './analyze';
 import { isoOfSerial } from './analyze/cells';
+import { completePayloadOf, fixedLabelTexts, type CompleteOptions } from './complete';
 import { relationsToHints, type HintCandidate } from './hints';
 import { splitWords, type Masker } from './mask';
 import type { PreflightResult } from './preflight';
@@ -38,6 +40,8 @@ export interface BuildPayloadOptions {
   masker?: Masker;
   /** SPEC 8.12/A2: attach mode. The existing format this input must produce. */
   target?: Format;
+  /** Completion mode: the rules to keep and what is missing; `payload.complete` carries them (constants masked like the samples). */
+  complete?: CompleteOptions;
   caps?: PayloadCaps;
 }
 
@@ -263,8 +267,9 @@ function extractWords(texts: readonly string[]): Set<string> {
   return words;
 }
 
-function collectLabelTexts(analysis: PairAnalysis, target?: Format): string[] {
+function collectLabelTexts(analysis: PairAnalysis, target?: Format, complete?: CompleteOptions): string[] {
   const texts: string[] = [];
+  if (complete) texts.push(...fixedLabelTexts(complete.fixedRules));
   for (const t of analysis.layout.titleRows) if (t.text) texts.push(t.text);
   for (const s of analysis.layout.summaryRows) if (s.label) texts.push(s.label);
   if (analysis.layout.groupBy?.summaryRows) {
@@ -357,6 +362,18 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
   if (h.rel === 'constant') {
     const outType = analysis.output.profile[h.out]?.type ?? 'text';
     return { ...h, value: masker.maskCell(h.value, outType) };
+  }
+  if (h.rel === 'template') {
+    // The fixed text is masked like any other text in the payload: a word that also sits in the (masked) sample
+    // cells gets the same fake word, so the hint and the samples agree. Punctuation and label words stay real.
+    const parts = h.parts.map((p) => (typeof p === 'string' ? masker.maskText(p) : p));
+    return { ...h, parts };
+  }
+  if (h.rel === 'bands') {
+    // The thresholds are numbers or ISO dates (sent real, SPEC 7.2); the band values are output cells, masked like samples.
+    const outType = analysis.output.profile[h.out]?.type ?? 'text';
+    const bands: Band[] = h.bands.map((band) => ({ ...band, value: masker.maskCell(band.value, outType) }));
+    return { ...h, bands };
   }
   return h;
 }
@@ -487,7 +504,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
   if (masker) {
     const dataWords = collectDataWords(analysis, pairPriority, familyPriority, droppedPriority);
     const labelWords = new Set<string>();
-    for (const w of extractWords(collectLabelTexts(analysis, opts.target))) if (!dataWords.has(w)) labelWords.add(w);
+    for (const w of extractWords(collectLabelTexts(analysis, opts.target, opts.complete))) if (!dataWords.has(w)) labelWords.add(w);
     masker.addLabelWords(labelWords);
   }
 
@@ -554,6 +571,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
     if (droppedBuilt.length > 0) payload.dropped = droppedBuilt;
     if (preflight.skipColumns.length > 0) payload.skipColumns = preflight.skipColumns;
     if (opts.target) payload.target = buildTargetPayload(opts.target, masker);
+    if (opts.complete) payload.complete = completePayloadOf(opts.complete, masker);
 
     return { payload, sampleRows: samplesBuilt.sampleRows };
   };

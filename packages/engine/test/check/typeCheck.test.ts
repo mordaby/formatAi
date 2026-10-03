@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { RulesSchema, type LearnResult } from '@formatai/shared';
+import { RulesSchema, type Expr, type LearnResult } from '@formatai/shared';
 import { typeCheck } from '../../src/check/typeCheck';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -256,6 +256,63 @@ describe('typeCheck: opts.inputProfile / opts.outputTypes', () => {
   });
 });
 
+describe('typeCheck: a summary output column has the type its agg gives (SPEC 8.6)', () => {
+  /** Group by `dept`, one row per group (showDetailRows false); the output columns are `cols`. */
+  function summaryOutput(cols: { header: string; from: string; agg?: 'sum' | 'count' | 'min' | 'max' | 'average' | 'first' | 'last' }[], showDetailRows = false): LearnResult {
+    return baseRules({
+      input: {
+        sheet: { pick: 'first' },
+        headerRow: 'auto',
+        columns: [
+          { id: 'poNo', header: 'PO No', type: 'idLike' },
+          { id: 'dept', header: 'Dept', type: 'text' },
+          { id: 'qty', header: 'Qty', type: 'integer' },
+          { id: 'amount', header: 'Amount', type: 'decimal' },
+        ],
+      },
+      transform: { computed: [], valueMaps: [], sort: [], group: { by: 'dept', showDetailRows } },
+      output: { sheetName: 'Out', direction: 'ltr', language: 'en', titleRows: [], columns: cols },
+    });
+  }
+  const types = { Orders: 'integer', 'Total Qty': 'integer', Total: 'decimal', Average: 'decimal', Latest: 'text' };
+
+  it('a count is an integer whatever it counts: the count of an id or text column fits an integer output column', () => {
+    const rules = summaryOutput([{ header: 'Orders', from: 'poNo', agg: 'count' }]);
+    expect(typeCheck(rules, { outputTypes: types })).toEqual([]);
+    expect(typeCheck(summaryOutput([{ header: 'Orders', from: 'dept', agg: 'count' }]), { outputTypes: types })).toEqual([]);
+  });
+
+  it('a sum and an average are numbers: they fit a numeric output column, and not a text one', () => {
+    const ok = summaryOutput([
+      { header: 'Total Qty', from: 'qty', agg: 'sum' },
+      { header: 'Total', from: 'amount', agg: 'sum' },
+      { header: 'Average', from: 'amount', agg: 'average' },
+    ]);
+    expect(typeCheck(ok, { outputTypes: types })).toEqual([]);
+    const bad = summaryOutput([
+      { header: 'Latest', from: 'qty', agg: 'sum' },
+      { header: 'Latest', from: 'qty', agg: 'count' },
+    ]);
+    expect(typeCheck(bad, { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]', 'output.columns[1]']);
+  });
+
+  it('first, last, min and max keep the type of what they read', () => {
+    expect(typeCheck(summaryOutput([{ header: 'Latest', from: 'dept', agg: 'first' }]), { outputTypes: types })).toEqual([]);
+    expect(typeCheck(summaryOutput([{ header: 'Total', from: 'dept', agg: 'last' }]), { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]']);
+  });
+
+  it('a column with no agg is still the type of what it reads (a text column is no integer)', () => {
+    expect(typeCheck(summaryOutput([{ header: 'Orders', from: 'poNo' }]), { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]']);
+  });
+
+  it('without a summary output the engine ignores agg, so it does not change the type: no group, or a group that shows its detail rows', () => {
+    const detail = summaryOutput([{ header: 'Orders', from: 'poNo', agg: 'count' }], true);
+    expect(typeCheck(detail, { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]']);
+    const noGroup = { ...detail, transform: { ...detail.transform, group: undefined } } as LearnResult;
+    expect(typeCheck(noGroup, { outputTypes: types }).map((p) => p.path)).toEqual(['output.columns[0]']);
+  });
+});
+
 describe('typeCheck: summary rows (SPEC 8.12 v4)', () => {
   function summaryRules(cells: Record<string, 'sum' | 'count' | 'min' | 'max' | 'average' | 'first' | 'last'>): LearnResult {
     return baseRules({
@@ -334,5 +391,76 @@ describe('typeCheck: golden rules files', () => {
     const json = JSON.parse(fs.readFileSync(path.join(goldenCasesDir, name, 'rules.json'), 'utf8')) as unknown;
     const rules = RulesSchema.parse(json);
     expect(typeCheck(rules)).toEqual([]);
+  });
+});
+
+describe('typeCheck: date and text operations added after learn-v6', () => {
+  const columns: LearnResult['input']['columns'] = [
+    { id: 'txt', header: 'Txt', type: 'text' },
+    { id: 'code', header: 'Code', type: 'idLike' },
+    { id: 'when', header: 'When', type: 'date' },
+    { id: 'year', header: 'Year', type: 'integer' },
+    { id: 'month', header: 'Month', type: 'decimal' },
+    { id: 'day', header: 'Day', type: 'integer' },
+  ];
+  /** One computed column `c` of the given declared type, over the columns above. */
+  const check = (type: LearnResult['transform']['computed'][number]['type'], expr: Expr) =>
+    typeCheck(
+      baseRules({
+        input: { sheet: { pick: 'first' }, headerRow: 'auto', columns },
+        transform: { computed: [{ id: 'c', type, expr }], valueMaps: [], sort: [] },
+      }),
+    );
+
+  it('each op has its documented result type', () => {
+    expect(check('integer', { op: 'weekday', arg: { col: 'when' } })).toEqual([]);
+    expect(check('date', { op: 'makeDate', args: [{ col: 'year' }, { col: 'month' }, { col: 'day' }] })).toEqual([]);
+    expect(check('date', { op: 'toDate', arg: { col: 'txt' }, format: 'D MMMM YYYY' })).toEqual([]);
+    expect(check('date', { op: 'dateLiteral', value: '2026-01-31' })).toEqual([]);
+    expect(check('text', { op: 'keepChars', arg: { col: 'txt' }, chars: 'digits' })).toEqual([]);
+    expect(check('text', { op: 'titleCase', arg: { col: 'txt' } })).toEqual([]);
+    expect(check('integer', { op: 'find', arg: { col: 'txt' }, search: '-' })).toEqual([]);
+  });
+
+  it('the results compose with the existing ops', () => {
+    // makeDate -> weekday; toDate -> dateAdd; date literal into dateDiff; find into a comparison; idLike into a text op.
+    expect(check('integer', { op: 'weekday', arg: { op: 'makeDate', args: [{ col: 'year' }, { const: 1 }, { const: 1 }] } })).toEqual([]);
+    expect(check('date', { op: 'dateAdd', arg: { op: 'toDate', arg: { col: 'txt' }, format: 'DD/MM/YYYY' }, days: 30 })).toEqual([]);
+    expect(check('integer', { op: 'dateDiff', args: [{ col: 'when' }, { op: 'dateLiteral', value: '2026-12-31' }], unit: 'days' })).toEqual([]);
+    expect(check('boolean', { op: 'gt', args: [{ op: 'find', arg: { col: 'txt' }, search: '@' }, { const: 0 }] })).toEqual([]);
+    expect(check('boolean', { op: 'lt', args: [{ col: 'when' }, { op: 'dateLiteral', value: '2026-06-01' }] })).toEqual([]);
+    expect(check('text', { op: 'titleCase', arg: { col: 'code' } })).toEqual([]);
+  });
+
+  it('a date op is a date: it does not fit a text or number column, and needs toText', () => {
+    const p = check('text', { op: 'makeDate', args: [{ col: 'year' }, { col: 'month' }, { col: 'day' }] });
+    expect(p).toEqual([{ kind: 'type', path: 'transform.computed[0].expr', message: 'expected text, got date; use toText' }]);
+    expect(check('decimal', { op: 'weekday', arg: { col: 'when' } })).toEqual([]); // integer widens to decimal
+    expect(check('integer', { op: 'find', arg: { col: 'txt' }, search: 'x' })).toEqual([]);
+  });
+
+  it('rejects the wrong argument types, with precise paths and repair hints', () => {
+    expect(check('integer', { op: 'weekday', arg: { col: 'txt' } })).toEqual([
+      { kind: 'type', path: 'transform.computed[0].expr.arg', message: 'expected date, got text' },
+    ]);
+    expect(check('date', { op: 'toDate', arg: { col: 'when' }, format: 'DD/MM/YYYY' })).toEqual([
+      { kind: 'type', path: 'transform.computed[0].expr.arg', message: 'expected text, got date; use toText' },
+    ]);
+    expect(check('date', { op: 'makeDate', args: [{ col: 'txt' }, { col: 'month' }, { col: 'day' }] })).toEqual([
+      { kind: 'type', path: 'transform.computed[0].expr.args[0]', message: 'expected decimal, got text; use toNumber' },
+    ]);
+    expect(check('text', { op: 'keepChars', arg: { col: 'year' }, chars: 'digits' })).toEqual([
+      { kind: 'type', path: 'transform.computed[0].expr.arg', message: 'expected text, got integer; use toText' },
+    ]);
+    expect(check('text', { op: 'titleCase', arg: { col: 'when' } })).toHaveLength(1);
+    expect(check('integer', { op: 'find', arg: { col: 'month' }, search: '1' })).toHaveLength(1);
+  });
+
+  it('text where a date is declared is still an error: only makeDate / toDate / date() build a date', () => {
+    expect(check('date', { col: 'txt' })).toEqual([
+      { kind: 'type', path: 'transform.computed[0].expr', message: 'expected date, got text' },
+    ]);
+    expect(check('date', { op: 'concat', args: [{ col: 'txt' }, { const: '-01' }] })).toHaveLength(1);
+    expect(check('integer', { op: 'dateDiff', args: [{ col: 'when' }, { const: '2026-12-31' }], unit: 'days' })).toHaveLength(1);
   });
 });

@@ -3,14 +3,15 @@
 import { randomUUID } from 'node:crypto';
 import { formulaRulesToWire } from '@formatai/engine';
 import { toWire, type LearnPayload, type LearnResult } from '@formatai/shared';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll } from 'vitest';
 import { connectDb, ensureIndexes, type AppDb } from '../../src/db.js';
 import { loadEnv, type Env } from '../../src/env.js';
 import type { CompleteFn } from '../../src/learn/index.js';
 import type { CompleteRequest, CompleteResult } from '../../src/llm/index.js';
-import type { LlmCallDoc } from '../../src/models.js';
+import type { FunctionRequestDoc, LlmCallDoc } from '../../src/models.js';
+import type { Identity } from '../../src/protection/identity.js';
 import { createMemoryStore, createMongoStore, type ProtectionStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
 import { basicPayload, correctRules, correctRulesWireJson } from '../learn/fixtures.js';
@@ -23,6 +24,10 @@ export interface StoreHandle {
   /** A usage counter's current value (0 when absent). */
   counter(key: string): Promise<number>;
   cacheEntryCount(): Promise<number>;
+  /** Every cached rules entry (the JSON strings), for "never in the cache" assertions. */
+  cacheRules(): Promise<string[]>;
+  /** The `function_requests` documents, by key (learn-v7). */
+  functionRequests(): Promise<FunctionRequestDoc[]>;
 }
 
 export interface StoreKit {
@@ -43,6 +48,8 @@ export const memoryKit: StoreKit = {
       ledger: async () => store.ledger,
       counter: async (key) => store.counter(key),
       cacheEntryCount: async () => store.cacheEntries.size,
+      cacheRules: async () => [...store.cacheEntries.values()].map((d) => d.rules),
+      functionRequests: async () => [...store.functionRequests.values()].map((d) => structuredClone(d)),
     };
   },
 };
@@ -73,6 +80,7 @@ export function mongoKit(): StoreKit {
         db.budgets.deleteMany({}),
         db.learnCache.deleteMany({}),
         db.llmCalls.deleteMany({}),
+        db.functionRequests.deleteMany({}),
       ]);
       const store = createMongoStore(db);
       return {
@@ -80,6 +88,8 @@ export function mongoKit(): StoreKit {
         ledger: () => db.llmCalls.find({}, { projection: { _id: 0 } }).toArray() as Promise<LlmCallDoc[]>,
         counter: async (key) => (await db.usageCounters.findOne({ key }))?.count ?? 0,
         cacheEntryCount: () => db.learnCache.countDocuments(),
+        cacheRules: async () => (await db.learnCache.find({}).toArray()).map((d) => d.rules),
+        functionRequests: () => db.functionRequests.find({}, { projection: { _id: 0 } }).toArray() as Promise<FunctionRequestDoc[]>,
       };
     },
   };
@@ -173,6 +183,29 @@ export interface HarnessOptions {
 export interface RequestOptions {
   cookie?: string;
   ip?: string;
+  /**
+   * Who is calling (the tests stub the identity, see `stubIdentify`): a user id (24 hex characters, see
+   * `testUserId`), or `null` for an anonymous visitor. `learn()` and the other POSTs default to
+   * `TEST_USER`; `get()` defaults to anonymous unless given.
+   */
+  user?: string | null;
+  tier?: 'registered' | 'paid';
+}
+
+/** A valid MongoDB id (24 hex characters) for test user number `n`. */
+export const testUserId = (n: number): string => n.toString(16).padStart(24, '0');
+/** The signed-in test user `learn()` calls as unless told otherwise. */
+export const TEST_USER = testUserId(1);
+
+const USER_HEADER = 'x-test-user';
+const TIER_HEADER = 'x-test-tier';
+
+/** Stands in for the session lookup: the identity comes from two test-only request headers. */
+export function stubIdentify(req: FastifyRequest): Identity {
+  const user = req.headers[USER_HEADER];
+  if (typeof user !== 'string') return { kind: 'anon', anonId: req.anonId };
+  const tier = req.headers[TIER_HEADER] === 'paid' ? 'paid' : 'registered';
+  return { kind: 'user', userId: user, tier, anonId: req.anonId, isAdmin: false };
 }
 
 export interface Harness {
@@ -181,7 +214,7 @@ export interface Harness {
   clock: { current: Date };
   post(url: string, body: unknown, opts?: RequestOptions): Promise<LightMyRequestResponse>;
   get(url: string, opts?: RequestOptions): Promise<LightMyRequestResponse>;
-  /** POST /api/learn with a valid payload and Turnstile token unless overridden. */
+  /** POST /api/learn with a valid payload as the signed-in `TEST_USER` unless overridden. */
   learn(body?: Record<string, unknown>, opts?: RequestOptions): Promise<LightMyRequestResponse>;
   close(): Promise<void>;
 }
@@ -212,16 +245,23 @@ export async function createHarness(kit: StoreKit, opts: HarnessOptions = {}): P
     store: handle.store,
     fetch: opts.fetch,
     now,
+    identify: stubIdentify,
   });
 
-  const inject = (method: 'GET' | 'POST', url: string, body: unknown, o: RequestOptions) =>
-    app.inject({
+  const inject = (method: 'GET' | 'POST', url: string, body: unknown, o: RequestOptions) => {
+    const user = o.user === undefined ? (method === 'POST' ? TEST_USER : null) : o.user;
+    return app.inject({
       method,
       url,
       remoteAddress: o.ip ?? nextIp(),
-      headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(o.cookie ? { cookie: o.cookie } : {}) },
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(o.cookie ? { cookie: o.cookie } : {}),
+        ...(user ? { [USER_HEADER]: user, [TIER_HEADER]: o.tier ?? 'registered' } : {}),
+      },
       payload: body === undefined ? undefined : JSON.stringify(body),
     });
+  };
 
   return {
     app,
@@ -230,7 +270,7 @@ export async function createHarness(kit: StoreKit, opts: HarnessOptions = {}): P
     post: (url, body, o = {}) => inject('POST', url, body, o),
     get: (url, o = {}) => inject('GET', url, undefined, o),
     learn: (body = {}, o = {}) =>
-      inject('POST', '/api/learn', { payload: basicPayload(), turnstileToken: 'good', ...body }, o),
+      inject('POST', '/api/learn', { payload: basicPayload(), ...body }, o),
     close: () => app.close(),
   };
 }

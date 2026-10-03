@@ -55,3 +55,46 @@ describe('formulaRulesToWire/FromWire round trip over real rules files', () => {
     });
   }
 });
+
+describe('formulaRulesFromWire: promptOpsOnly (the API reading an LLM answer)', () => {
+  const wire = (expr: string) => ({
+    schemaVersion: 1,
+    input: { sheet: { pick: 'first' }, headerRow: 'auto', columns: [{ id: 'd', header: 'D', type: 'date' }] },
+    transform: { computed: [{ id: 'c', type: 'integer', expr }], valueMaps: [], sort: [] },
+    output: { sheetName: 'Out', direction: 'ltr', language: 'en', titleRows: [], columns: [{ header: 'C', from: 'c' }] },
+    validations: [],
+    unsupported: [],
+    assumptions: [],
+  });
+
+  it('reads every op the same way for the editor and for an LLM answer (learn-v7 documents them all: none is held back)', () => {
+    const full = formulaRulesFromWire(wire('weekday(d)'));
+    expect(full.problems).toEqual([]);
+    expect((full.rules as { transform: { computed: { expr: unknown }[] } }).transform.computed[0]?.expr).toEqual({ op: 'weekday', arg: { col: 'd' } });
+
+    const llm = formulaRulesFromWire(wire('weekday(d)'), { promptOpsOnly: true });
+    expect(llm.problems).toEqual([]);
+    expect((llm.rules as { transform: { computed: { expr: unknown }[] } }).transform.computed[0]?.expr).toEqual({ op: 'weekday', arg: { col: 'd' } });
+  });
+
+  it('also applies inside function bodies, row filters and fan-out rows', () => {
+    const rules = {
+      ...wire('1'),
+      input: { sheet: { pick: 'first' }, headerRow: 'auto', columns: [], rowFilters: [{ expr: 'find(t, "x") > 0' }] },
+      transform: {
+        computed: [],
+        valueMaps: [],
+        sort: [],
+        functions: [{ name: 'dow', params: [{ name: 'x', type: 'date' }], returns: 'integer', body: 'weekday(x)' }],
+        expand: { mode: 'fixedFanOut', rows: [{ set: { n: 'find(t, "x")' } }] },
+      },
+    };
+    const kinds = (r: { rules: unknown }) => {
+      const j = JSON.stringify(r.rules);
+      return { call: j.includes('"op":"call"'), weekday: j.includes('"op":"weekday"'), find: j.includes('"op":"find"') };
+    };
+    const normal = kinds(formulaRulesFromWire(rules));
+    expect(normal).toEqual({ call: false, weekday: true, find: true });
+    expect(kinds(formulaRulesFromWire(rules, { promptOpsOnly: true }))).toEqual(normal);
+  });
+});

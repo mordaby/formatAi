@@ -1,5 +1,5 @@
-// The Result screen's header: the format's name (renameable in place), the status badge, undo and redo, and the one
-// primary button (SPEC 16.1 screen 4).
+// The Result screen's header: the format's name (renameable in place), the status badge, undo and redo, "Unsaved changes" while the
+// rules differ from the saved (or learned) ones, and the one primary button (SPEC 16.1 screen 4).
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
@@ -76,7 +76,8 @@ function FormatName({ name, onRename }: { name: string; onRename(name: string): 
 
 export interface ResultHeaderProps {
   name: string;
-  onRename(name: string): void;
+  /** Without it the title is plain text (a saved source is renamed from its format's page). */
+  onRename?: ((name: string) => void) | undefined;
   badge: ReactNode;
   /** How the format was learned: on this computer, or with the server's help (the privacy line under the title). */
   learnedNote: string;
@@ -84,22 +85,19 @@ export interface ResultHeaderProps {
   canRedo: boolean;
   onUndo(): void;
   onRedo(): void;
-  /** "Save format and download": opens the sign-in wall for a visitor who has not signed in. */
-  onSave(): void;
-  saveDisabled: boolean;
-  /** A line under the button: what the free tier does (anonymous only). */
-  hint?: string | undefined;
+  /** The rules differ from the last saved (or learned) version: "Unsaved changes" sits next to the Save button. */
+  unsaved?: boolean | undefined;
+  /** The header's primary action(s): "Save format and download", "Finish with the AI step", "Save changes", and the line under it. */
+  actions: ReactNode;
 }
 
-export function ResultHeader({ name, onRename, badge, learnedNote, canUndo, canRedo, onUndo, onRedo, onSave, saveDisabled, hint }: ResultHeaderProps) {
+export function ResultHeader({ name, onRename, badge, learnedNote, canUndo, canRedo, onUndo, onRedo, unsaved, actions }: ResultHeaderProps) {
   const { t } = useI18n();
   return (
     <header className="result-head">
       <div className="result-head__heading">
         <div className="result-head__title">
-          <h1>
-            <FormatName name={name} onRename={onRename} />
-          </h1>
+          <h1>{onRename ? <FormatName name={name} onRename={onRename} /> : <Cell value={name} />}</h1>
           {badge}
         </div>
         <p className="muted">{learnedNote}</p>
@@ -109,12 +107,16 @@ export function ResultHeader({ name, onRename, badge, learnedNote, canUndo, canR
           <Button variant="ghost" size="sm" icon="undo" disabled={!canUndo} onClick={onUndo} aria-label={t('result.undo')} title={t('result.undo')} />
           <Button variant="ghost" size="sm" icon="redo" disabled={!canRedo} onClick={onRedo} aria-label={t('result.redo')} title={t('result.redo')} />
         </div>
-        <div className="result-head__save">
-          <Button variant="primary" onClick={onSave} disabled={saveDisabled}>
-            {t('result.save')}
-          </Button>
-          {hint ? <p className="muted">{hint}</p> : null}
-        </div>
+        {/* Always in the page (empty when there is nothing to say), so a screen reader hears it appear. */}
+        <span className="result-head__unsaved" role="status" data-testid="unsaved-changes">
+          {unsaved ? (
+            <>
+              <Icon name="pencil" size={16} />
+              {t('result.unsaved')}
+            </>
+          ) : null}
+        </span>
+        <div className="result-head__save">{actions}</div>
       </div>
     </header>
   );

@@ -44,6 +44,22 @@ describe('LearningProgress', () => {
     expect(screen.getByText('Checking against your example')).toBeTruthy();
   });
 
+  it('says, while the AI step works, which columns code found no trace of in the input (informational: the AI step tries them)', () => {
+    show({ status: 'learning', attempt: 'learn', unexplained: ['Assigned Warehouse', 'Label'], sent: [] }, ['reading', 'checking', 'learning']);
+    const note = screen.getByTestId('unexplained-note');
+    expect(note.textContent).toContain("We couldn't find these columns' values in your input file. The AI step will try them; if they come from another source they'll stay empty.");
+    expect(within(note).getByText('Assigned Warehouse')).toBeTruthy();
+    expect(within(note).getByText('Label')).toBeTruthy();
+    // No buttons to confirm anything: the only action is still Cancel.
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+    cleanup();
+    show({ status: 'learning', attempt: 'learn', sent: [] }, ['reading', 'checking', 'learning']);
+    expect(screen.queryByTestId('unexplained-note')).toBeNull();
+    cleanup();
+    show({ status: 'learning', attempt: 'learn', unexplained: ['Label'], sent: [] }, ['reading', 'checking', 'learning'], 'he');
+    expect(screen.getByTestId('unexplained-note').textContent).toContain('לא מצאנו את הערכים של העמודות האלה בקובץ הקלט שלכם. שלב ה-AI ינסה אותן; אם הן מגיעות ממקור אחר, הן יישארו ריקות.');
+  });
+
   it('marks everything done once finished', () => {
     show({ status: 'done', result: {} as never, sent: [] }, ['reading', 'checking']);
     expect(screen.getAllByRole('listitem').every((li) => li.getAttribute('data-state') === 'done')).toBe(true);
@@ -77,7 +93,7 @@ describe('step tracking', () => {
     expect(stepKeyOf({ status: 'idle', sent: [] })).toBeUndefined();
     expect(stepKeyOf({ status: 'reading', sent: [] })).toBe('reading');
     expect(stepKeyOf({ status: 'learning', attempt: 'repair', sent: [] })).toBe('learningRepair');
-    expect(isRunning({ status: 'warn', reason: 'tryAnyway', issues: [], columns: [], sent: [] })).toBe(false);
+    expect(isRunning({ status: 'warn', reason: 'tryAnyway', issues: [], sent: [] })).toBe(false);
     expect(isRunning({ status: 'verifying', sent: [] })).toBe(true);
   });
 
@@ -93,7 +109,7 @@ describe('step tracking', () => {
     rerender(<Probe state={checking(0.3)} />);
     rerender(<Probe state={checking(0.6)} />);
     expect(steps()).toBe('reading,checking');
-    rerender(<Probe state={{ status: 'warn', reason: 'confirmSkipColumns', issues: [], columns: [], sent: [] }} />);
+    rerender(<Probe state={{ status: 'warn', reason: 'tryAnyway', issues: [], sent: [] }} />);
     rerender(<Probe state={{ status: 'learning', attempt: 'learn', sent: [] }} />);
     expect(steps()).toBe('reading,checking,learning');
     rerender(<Probe state={{ status: 'verifying', sent: [] }} />);

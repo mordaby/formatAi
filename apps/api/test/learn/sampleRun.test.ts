@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LearnPayload, LearnResult } from '@formatai/shared';
 import { buildSampleInputTable, runOnSamples } from '../../src/learn/index.js';
-import { basicPayload, correctRules, wrongRoundingRules } from './fixtures.js';
+import { basicPayload, correctRules, externalColumnPayload, externalColumnRules, wrongRoundingRules } from './fixtures.js';
 
 describe('runOnSamples', () => {
   it('reports no problems when the rules exactly reproduce every sample', () => {
@@ -226,5 +226,138 @@ describe('buildSampleInputTable', () => {
     };
     const table = buildSampleInputTable(payload);
     expect(table.rows[0]![1]).toEqual({ v: '2024-03-15' });
+  });
+});
+
+describe('runOnSamples: a column reported as unsupported', () => {
+  it('is not compared with the samples (it would differ on every row): from null + an unsupported entry, any reason code', () => {
+    expect(runOnSamples(externalColumnRules(), externalColumnPayload())).toEqual([]);
+    expect(runOnSamples(externalColumnRules('hiddenByMasking'), externalColumnPayload())).toEqual([]);
+  });
+
+  it('does not hide a real difference in another column', () => {
+    const rules = externalColumnRules();
+    const wrong: LearnResult = { ...rules, transform: { ...rules.transform, computed: [{ id: 'total', type: 'decimal', expr: { op: 'mul', args: [{ col: 'amount' }, { const: 1 }] } }] } };
+    const problems = runOnSamples(wrong, externalColumnPayload());
+    expect(problems).toContainEqual({ kind: 'diff', out: 1, sample: 0, expected: 20, actual: 10 });
+    expect(problems.some((p) => p.kind === 'diff' && p.out === 2)).toBe(false);
+  });
+
+  it('is still compared when the answer does NOT report it (a column with no entry is a mismatch like any other)', () => {
+    const noEntry: LearnResult = { ...externalColumnRules(), unsupported: [] };
+    const problems = runOnSamples(noEntry, externalColumnPayload());
+    expect(problems).toContainEqual({ kind: 'diff', out: 2, sample: 0, expected: 'North', actual: null });
+  });
+});
+
+// The sample table holds only the sample rows: one row per group of a summary output, a few rows of the file. A column that reads OTHER rows
+// can never match the example there, whatever the rules are - so the right rules must not be "diffed" (the repair call would be pushed away
+// from them); the browser's full verification compares those columns on every row.
+describe('runOnSamples: columns that read other rows are not compared with the samples', () => {
+  const summaryPayload = (): LearnPayload => ({
+    ...basicPayload(),
+    input: {
+      ...basicPayload().input,
+      columns: [
+        { i: 0, header: 'PO No', type: 'text' },
+        { i: 1, header: 'Supplier', type: 'text' },
+        { i: 2, header: 'Qty', type: 'integer' },
+        { i: 3, header: 'Amount', type: 'decimal' },
+      ],
+    },
+    output: {
+      ...basicPayload().output,
+      layout: { ...basicPayload().output.layout, summary: true, groupBy: { out: 0, blankRowsAfter: 0 } },
+      columns: [
+        { i: 0, header: 'Supplier', type: 'text' },
+        { i: 1, header: 'Orders', type: 'integer' },
+        { i: 2, header: 'Total Qty', type: 'integer' },
+        { i: 3, header: 'Total Amount', type: 'decimal' },
+        { i: 4, header: 'Avg Order Value', type: 'decimal' },
+      ],
+    },
+    // the group's FIRST input row, and the group's row
+    samples: [
+      { in: ['PO-1', 'Acme', 40, 1529.98], out: ['Acme', 6, 185, 6035.63, 1005.94] },
+      { in: ['PO-12', 'Globex', 9, 925.04], out: ['Globex', 4, 102, 4480.59, 1120.15] },
+      { in: ['PO-7', 'Initech', 19, 1622.75], out: ['Initech', 5, 79, 6768.54, 1353.71] },
+    ],
+  });
+
+  const summaryRules = (totalAmountAgg: 'sum' | 'first' = 'sum'): LearnResult => ({
+    schemaVersion: 1,
+    input: {
+      sheet: { pick: 'first' },
+      headerRow: 'auto',
+      columns: [
+        { id: 'poNo', header: 'PO No', type: 'text' },
+        { id: 'supplier', header: 'Supplier', type: 'text' },
+        { id: 'qty', header: 'Qty', type: 'integer' },
+        { id: 'amount', header: 'Amount', type: 'decimal' },
+      ],
+    },
+    transform: { computed: [], valueMaps: [], sort: [{ column: 'supplier', dir: 'asc' }], group: { by: 'supplier', showDetailRows: false } },
+    output: {
+      sheetName: 'Out',
+      direction: 'ltr',
+      language: 'en',
+      titleRows: [],
+      columns: [
+        { header: 'Supplier', from: 'supplier', agg: 'first' },
+        { header: 'Orders', from: 'poNo', agg: 'count' },
+        { header: 'Total Qty', from: 'qty', agg: 'sum' },
+        { header: 'Total Amount', from: 'amount', agg: totalAmountAgg },
+        { header: 'Avg Order Value', from: 'amount', agg: 'average' },
+      ],
+    },
+    validations: [],
+    unsupported: [],
+    assumptions: [],
+  });
+
+  it('a summary output: the sum, count and average over the one sample row of each group are not diffs (the right rules have no problem)', () => {
+    expect(runOnSamples(summaryRules(), summaryPayload())).toEqual([]);
+  });
+
+  it('a summary output: a column that is only the first row\'s value (agg "first") is still compared - it is wrong here, and the sample says so', () => {
+    const problems = runOnSamples(summaryRules('first'), summaryPayload());
+    expect(problems).toContainEqual({ kind: 'diff', out: 3, sample: 0, expected: 6035.63, actual: 1529.98 });
+    expect(problems.every((p) => p.kind === 'diff' && p.out === 3)).toBe(true);
+  });
+
+  const windowPayload = (): LearnPayload => ({
+    ...basicPayload(),
+    // rows 1 and 2 of the sample are far apart in the file: the running total over the file is not the one over the sample rows
+    samples: [
+      { in: ['A1', 10], out: ['A1', 10] },
+      { in: ['A2', 5], out: ['A2', 40] },
+    ],
+  });
+
+  const runningRules = (viaHelper = false): LearnResult => {
+    const rules = correctRules();
+    const running = { id: 'running', type: 'decimal' as const, expr: { op: 'window' as const, fn: 'runningSum' as const, arg: { col: 'amount' } } };
+    const computed = viaHelper ? [running, { id: 'shown', type: 'decimal' as const, expr: { op: 'add' as const, args: [{ col: 'running' }, { const: 0 }] } }] : [running];
+    return { ...rules, transform: { ...rules.transform, computed }, output: { ...rules.output, columns: [{ header: 'ID', from: 'id' }, { header: 'Total', from: viaHelper ? 'shown' : 'running' }] } };
+  };
+
+  it('a window function: the running total over the sample rows is not the one over the file, so that column is not a diff - directly or through another computed column', () => {
+    expect(runOnSamples(runningRules(), windowPayload())).toEqual([]);
+    expect(runOnSamples(runningRules(true), windowPayload())).toEqual([]);
+  });
+
+  it('every other column next to it is still compared', () => {
+    const rules = runningRules();
+    const wrongId: LearnResult = { ...rules, output: { ...rules.output, columns: [{ header: 'ID', from: 'amount' }, rules.output.columns[1]!] } };
+    const problems = runOnSamples(wrongId, windowPayload());
+    expect(problems.some((p) => p.kind === 'diff' && p.out === 0)).toBe(true);
+    expect(problems.some((p) => p.kind === 'diff' && p.out === 1)).toBe(false);
+  });
+
+  it('a rowCount problem is not reported once the diff cap stopped the walk (the samples reached are not all of them)', () => {
+    const samples = Array.from({ length: 12 }, (_, i) => ({ in: [`A${i}`, 10], out: [`A${i}`, 20] }));
+    const problems = runOnSamples(wrongRoundingRules(), { ...basicPayload(), samples });
+    expect(problems.filter((p) => p.kind === 'diff')).toHaveLength(10);
+    expect(problems.some((p) => p.kind === 'rowCount')).toBe(false);
   });
 });

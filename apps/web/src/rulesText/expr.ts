@@ -6,7 +6,7 @@
 // The printer is imported from the engine's pure `formula` entry point, never from the barrel:
 // the main thread must not load the spreadsheet libraries.
 import { printFormula } from '@formatai/engine/formula';
-import type { Expr, ExprConstValue, ExprLeaf } from '@formatai/shared';
+import type { Expr, ExprConstValue, ExprLeaf, ExprNode } from '@formatai/shared';
 import type { Names } from './names';
 import { joinWith, nm, normalize, partsText, quoted, txt, val } from './parts';
 import type { Phrasebook } from './phrases';
@@ -70,6 +70,15 @@ function mapLeaves(e: Expr, f: (leaf: ExprLeaf) => Expr): Expr {
     out.else = sub(e.else);
   }
   if (e.op === 'lookup') out.key = sub(e.key);
+  if (e.op === 'window') {
+    // An across-row function names its group and order columns as ids; they are renamed like any column (a result that is not a column stays as it is).
+    const ref = (id: string): string => {
+      const r = f({ col: id });
+      return 'col' in r ? r.col : id;
+    };
+    if (e.by !== undefined) out.by = e.by.map(ref);
+    if (e.order !== undefined) out.order = e.order.map((k) => ({ ...k, column: ref(k.column) }));
+  }
   return out as unknown as Expr;
 }
 
@@ -330,6 +339,30 @@ export function conditionParts(e: Expr, ctx: Ctx, nested = false): Part[] {
   }
 }
 
+const WINDOW_GROUP_FNS: ReadonlySet<string> = new Set(['groupSum', 'groupAvg', 'groupMin', 'groupMax', 'groupCount']);
+
+/**
+ * An across-row (window) function as a sentence: "running total of Amount per Agent, in file order",
+ * "rank by Sales (descending), equal values share a rank", "the total of Amount per Department".
+ */
+function windowParts(e: Extract<ExprNode, { op: 'window' }>, ctx: Ctx): Part[] {
+  const { t, and } = ctx.book;
+  const x = e.arg === undefined ? [] : operand(e.arg, ctx);
+  const keys = joinWith(
+    (e.order ?? []).map((k): Part[] => [idPart(ctx, k.column), ...(k.dir === 'desc' ? [txt(' '), ...t('sort.desc.plain')] : [])]),
+    ctx.book.raw('win.then'),
+  );
+  const head = e.fn === 'groupCount' ? t(e.arg === undefined ? 'expr.win.groupCount' : 'expr.win.groupCountOf', { x }) : t(`expr.win.${e.fn}`, { x, keys });
+  const isGroupFn = WINDOW_GROUP_FNS.has(e.fn);
+  const hasBy = e.by !== undefined && e.by.length > 0;
+  // "per Agent" follows the head after a space; the order, or what ties mean, comes after a comma.
+  const group: Part[] | undefined = hasBy ? t('win.perGroup', { by: and((e.by ?? []).map((id): Part[] => [idPart(ctx, id)])) }) : isGroupFn ? t('win.allRows') : undefined;
+  const after: Part[][] = [];
+  if (e.fn === 'rank') after.push(t(e.ties === 'dense' ? 'win.tiesDense' : 'win.tiesMin'));
+  else if (!isGroupFn) after.push(e.order !== undefined && e.order.length > 0 ? t('win.orderBy', { keys }) : t('win.fileOrder'));
+  return normalize([...head, ...(group ? [txt(' '), ...group] : []), ...after.flatMap((p) => [txt(', '), ...p])]);
+}
+
 function prose(e: Expr, ctx: Ctx, top: boolean): Part[] {
   const { t, tn, and } = ctx.book;
   if ('col' in e) return [idPart(ctx, e.col)];
@@ -443,6 +476,8 @@ function prose(e: Expr, ctx: Ctx, top: boolean): Part[] {
         ],
         ' ',
       );
+    case 'window':
+      return windowParts(e, ctx);
     case 'eq':
     case 'ne':
     case 'gt':

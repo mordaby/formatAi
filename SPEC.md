@@ -6,7 +6,7 @@
 > - After each milestone, stop and report what was built, what was skipped, and any decision you had to make.
 > - Items marked **DECISION** are listed in section 20. They are not settled: use the default given there and leave a `// DECISION:` comment in the code.
 > - The exact LLM prompt lives in `LEARN_PROMPT.md`. Keep that file and this spec in sync.
-> - This is **v3**. Section 21 lists what changed since v1 and the amendments to the M0 code that was already built.
+> - This is **v6**. Section 21 lists what changed since v1 and the amendments to the M0 code that was already built.
 
 ## 1. What we're building
 
@@ -16,8 +16,8 @@ Companies receive files from other parties (suppliers' price lists, insurers' co
 
 Three words, used the same way everywhere (code, UI, docs):
 - **Format:** the shape of a file the company produces: columns, types, layout, file type and checks. Formats belong to the company (8.12).
-- **Source:** one kind of incoming file, e.g. one supplier's price list.
-- **Conversion:** the rules that turn one source into one format. A format usually has several conversions.
+- **Source:** one kind of incoming file, e.g. one supplier's price list, or a master file that is updated all the time but keeps its structure. Sources belong to the company too (8.15). A source can feed several formats, and a format can be fed by several sources.
+- **Conversion:** the rules that turn one source into one format: a link between a source and a format. A format usually has several conversions, and a source can have several too.
 
 How it works:
 1. The user provides an example input file and the output file they make from it by hand.
@@ -76,6 +76,10 @@ How it works:
 - Ready-made formats (templates) for common systems, e.g. Priority load screens.
 - Comparing a run with the previous run of the same conversion (row count, totals) and flagging unusual changes.
 - A customer-hosted LLM endpoint (9.6).
+- Learn a new format from a known source (the payload carries the source; only the output is new).
+- Run all formats of a source in one click after the source file was updated.
+- A Sources tab: the company's sources with their columns and the formats each one feeds (8.15); rename, and delete when unused.
+- Choosing a saved source as the input of a conversion, instead of dropping a file.
 - Learning from an input file plus a text description, and from a description alone.
 - A side-by-side, merge-style view for resolving flags.
 
@@ -168,7 +172,7 @@ Keep this in mind in the schema (`meta.source`, `meta.status`), but don't build 
 
 ### C. Convert a file
 The user drops a file on **Convert a file** (on Home, or on a format's page). They don't have to say which source it is:
-- code matches the file's headers against the input signature of every saved conversion (8.12), and either picks the conversion or asks the user to choose among the top matches;
+- code matches the file's headers against every saved **source** (8.15), and either picks the source or asks the user to choose among the top matches. If the source feeds one format, its conversion runs; if it feeds several, the user picks the format(s), or "all";
 - missing required columns stop the run with a clear message;
 - extra columns are ignored;
 - renamed columns are matched through aliases or offered to the user for mapping. A confirmed mapping is saved as a new alias.
@@ -220,13 +224,13 @@ The example output is checked more loosely, because a report may contain title, 
      - **fixed fan-out:** every family has the same size (2–5), and each position in the family follows its own pattern (e.g. position 1 = "חובה" with the amount, position 2 = "זכות" with the negative amount).
      - Families that fit none of these are **row expansion**, which isn't supported.
 4. **Test relations** for every output data column, on every aligned row. Each relation gets a **coverage** (the share of rows where it holds):
-   - text: `copy`, `normalize` (trim, case, quote marks and geresh), `padLeft`, `substr` (prefix, suffix, fixed position), `concat` (whole words from 2+ input columns with a separator), `valueMap` (a consistent correspondence with an input column, at most 50 distinct values), `constant`;
+   - text: `copy`, `normalize` (trim, case, quote marks and geresh), `padLeft`, `substr` (prefix, suffix, fixed position), `concat` (whole words from 2+ input columns with a separator), `template` (short fixed text around/between at most 2 input columns, e.g. `<id>:"<name>"` — tried only when nothing simpler explains the column, used only when it holds on every row and exactly one template fits; limits in config), `valueMap` (a consistent correspondence with an input column, at most 50 distinct values), `constant`;
    - formats: `dateFormat` (from → to), `numberFormat`;
    - numbers: `mulConst`, `addConst`, `add`, `sub`, `mul` and `div` between two input columns, and `sum` of several columns, each with rounding detection;
    - summaries: `aggregate` (sum, count, min or max per group);
    - dropped rows: `filter` (an input column whose values separate kept rows from dropped rows: a set of values, emptiness, or a numeric threshold);
    - dropped rows: `dedupe` (the dropped rows are copies of kept rows, either on every column or on a key column; records whether the first or the last copy was kept);
-   - anything else: `unknown`.
+   - anything else: `unknown`. An unknown column is then split: **derived** when its values are determined by input column(s) — a category that always follows one or two input columns (repeated keys), or contiguous bands of a numeric or date column (e.g. `Qty < 10 → single`, `>= 10 → bulk`), or text composed from input values (an input column's value appears inside the output cell on most rows, e.g. `312345002 - Dana Cohen`) — sent to the LLM with a `dependsOn`, `bands` or `contains` hint; or **external** when nothing in the input determines it (only these are "another source").
    Inside a family, each output row is tested against its source input row, together with the columns the family pattern creates (label, value, part).
 5. **Detect layout:**
    - title rows (and whether they contain a date or month);
@@ -253,7 +257,7 @@ Pre-flight blocks the learn when any of these is true:
 Each block shows a specific message in the UI language and records `preflight { status: "block", reason }`.
 
 ### 6.4 Warn and continue
-- **Some output columns are `unknown`.** Show them before learning: "These columns have values that don't appear in your input file. They probably come from another source, which isn't supported yet. We'll learn everything else and leave these empty." If the user continues, they are sent as `skipColumns`, so the LLM spends nothing on them.
+- **Some output columns are external** (unknown and not derived, see 6.2 step 4): an informational note only, never a stop, with no Continue/Cancel: "We couldn't find these columns' values in your input file. The AI step will try them; if they come from another source they'll stay empty." They are NOT skipped: they go to the AI step as normal output columns (it may answer `unsupported` with `externalData`), so `skipColumns` holds only columns the user explicitly marks to skip (nothing sets it today). "Code found no relation" is not certainty (21 v7 note).
 - **Rows couldn't be aligned.** Show "We couldn't match rows between the two files. Are they from the same data?" with a **Try anyway** button. Trying anyway counts as a learn.
 
 ### 6.5 Local fast path
@@ -313,7 +317,8 @@ The full field list and an example are in `LEARN_PROMPT.md`. In short:
 - hints;
 - `skipColumns`;
 - `output.file`, detected by code from the example output (8.13);
-- `target`, only when adding a source to an existing format (8.12).
+- `target`, only when adding a source to an existing format (8.12);
+- `complete`, only when the AI step is asked to finish a partial rules file (21, v6 item 8): the user's current rules in wire form (constants masked like the samples) and what is missing.
 
 Hard caps (config): 60 columns, 12 pairs, 5 dropped rows, 40 characters per cell, 48 KB per payload.
 
@@ -417,7 +422,7 @@ This example comes from commission control, one of many domains. Nothing in the 
 3. **Row filters.**
 4. **Duplicates** (8.4).
 5. **Expand** (8.5).
-6. **Computed columns.** These run after expand, so calculations apply to each new row.
+6. **Computed columns.** These run after expand, so calculations apply to each new row. A column that holds an across-row ("window") function (8.3) is calculated over all the rows that remain (after filters, duplicates and expand), in file order unless the function says otherwise, and before value maps, sort, group and validations; a row a `block` validation later leaves out is still counted in it, and the run summary says how many ("N blocked rows are included in calculated totals", a count only). Columns without a window run row by row exactly as before.
 7. **Value maps.**
 8. **Sort.** The sort is stable: ties keep the input order, so the rows of one family stay together unless the sort separates them.
 9. **Group.** Detail rows, summary rows (8.6, 8.12) and spacing.
@@ -438,6 +443,7 @@ Expressions are an AST that the engine interprets. There is no regex and no code
 - **Text:** `concat`, `substr{start,length}`, `trim`, `upper`, `lower`, `replaceText{find,with}` (literal text only), `padLeft{length,char}`, `split{separator,index}` (1-based; negative counts from the end), `length`
 - **Conversion:** `toNumber` (a value that doesn't parse raises a flag), `toText{format?}` (number or date format)
 - **Dates:** `datePart{year|month|day}`, `dateFormat{format}`, `dateAdd{days|months|years}`, `dateDiff{unit: days|months|years}`, `endOfMonth`
+- **Added after learn-v6** (editor and formula text only; see below): `weekday`, `makeDate`, `toDate{format}`, `dateLiteral{value}` (formula `date("YYYY-MM-DD")`), `keepChars{chars: digits|letters|lettersAndDigits}`, `titleCase`, `find{search}`
 - **Logic:** `if{cond,then,else}`, `switch{cases: [{when, then}], else}`, `coalesce`
 - **Lookup:** `lookup{table, key, return, onMissing: flag|empty|keep}` against a constant table in `transform.tables` (8.14)
 - **Calls:** `call{fn, args}` to a function in `transform.functions` (8.14)
@@ -449,9 +455,25 @@ Expressions are an AST that the engine interprets. There is no regex and no code
 
 If the provider's structured output doesn't support recursive schemas: since learn-v5, this no longer applies to expressions at all - they're formula text (a plain string) on the wire, not a nested schema of any depth. It would still apply to any other genuinely recursive field the rules language might grow later.
 
+**Added after learn-v6** (formula spelling in brackets). They are in the rules language, the formula parser, the type checker, the engine and the editor's Advanced view, and since learn-v7 (21, v10 note) in the AI prompt too: no op is held back any more (`inPrompt: false` in `OP_SIGNATURES` is a mechanism for the next op added before its prompt version; the API reads an LLM answer with `promptOpsOnly` and `promptOpsSync` requires every other op to be in the prompt).
+- `weekday(date)` -> integer, 1 = Sunday ... 7 = Saturday (the Israeli week, Excel's default). Real calendar, so also right before 1900-03-01.
+- `makeDate(year, month, day)` -> date. Whole numbers only; an impossible date (month 13, 31 February, a 2-digit year, before 1900 or after 9999) is empty and flagged ("needs a date here"); an empty part is an empty result without a flag.
+- `toDate(text, "format")` -> date. The `inputFormats` tokens (`D`, `DD`, `M`, `MM`, `YY`, `YYYY`, literal separators) plus the month-name tokens `MMMM` and `MMM`, in Hebrew or English whichever the text uses (either token takes the full or the short name, English ignores case; Hebrew "מרס" and English "Sept" are accepted). A format with a month and a year but no day means the 1st (`"MMMM YYYY"`: "ינואר 2026" / "January 2026"). The whole text must match; no match, an unknown month name or an impossible date is empty and flagged. Hebrew "in <month>" is a literal: `"D בMMMM YYYY"`. `inputFormats` itself is unchanged (numeric tokens only).
+- `date("2026-01-31")` (op `dateLiteral`) -> date. A fixed date, ISO only, checked when the formula is read (a date that does not exist is a parse error). This is how a rule says "days until a fixed date" or "before 2026-06-01"; the engine still has no clock. A text constant never stands in for a date: text where a date is declared stays a type error, and only `makeDate`, `toDate` and `date()` build dates.
+- `keepChars(text, "digits" | "letters" | "lettersAndDigits")` -> text. A closed set of named classes, never a pattern (no regex): digits are Unicode decimal digits, letters are Unicode letters (Hebrew letters count; niqqud, punctuation and spaces do not). Nothing left is empty.
+- `titleCase(text)` -> text. A word starts at the beginning and after any whitespace or hyphen; its first letter becomes upper case and the rest lower case ("jean-luc PICARD" -> "Jean-Luc Picard", "o'neil" -> "O'neil", "3RD" -> "3rd"). Hebrew is unchanged.
+- `find(text, "search")` -> integer. The 1-based position (in characters) of the first occurrence of the literal text, 0 when it is not there; case-sensitive; empty text stays empty; an empty search is not allowed.
+
+**Across rows: window functions** (formula spelling; one AST node `{ op: "window", fn, arg?, by?, order?, ties? }`; `schemaVersion` stays 1). Allowed only in a computed column's formula (`transform.computed[].expr`): a window in a row filter, a fan-out value or a function body is a parse error (and a `checkRules` problem for stored JSON). They are written with **named arguments**, `runningSum(amount, by: account, order: date)`; a positional `by` or `order` is rejected (the lexer has one new token, `:`). The column (`x`), every `by:` column and every `order:` column are plain **column ids** in v1, never expressions: anything calculated goes in a helper computed column first (the formula parser says so, with an offset). `by: g` or `by: (g1, g2)` splits the rows into groups (no `by:` = all rows; an empty group value is a group of its own, as in `group.by`); `order: k`, `order: k desc` or `order: (k1, k2 desc)` sorts each group before the function looks at it (empty keys last, either direction; equal keys keep file order). **Without `order:` a window walks the rows in file order**: the order they have right before step 6 (after filters, duplicates and expand; an expand family's rows in family order), whatever the output `sort` later does. The result is stored per row like any computed value, so sort, group, summary rows, validations and the output see an ordinary column (`last` of a running sum is the closing balance). Value maps run after, so a window reads the values before they are translated. A window raises no flags of its own (a cell that did not parse was flagged where it was read, and is skipped, as `sum` skips it).
+- `runningSum(x)`: sum of `x` from the group's first row through this one; empty and non-numeric `x` add nothing; empty until the first number. `groupSum(x)`, `groupAvg(x)` (exact quotient, unrounded, like the `average` summary), `groupMin(x)`, `groupMax(x)` (a number or a date): the whole group's value on every row, empty when it has no number. `groupCount()` / `groupCount(x)`: rows in the group / rows where `x` is not empty (never empty).
+- `previous(x)`, `next(x)`: `x` on the row before / after in group order (any type; empty on the first / last row). `fillDown(x)`: the last non-empty `x` up to this row. `rowNumber()`: 1, 2, 3 ... in group order. `rank(order: k)`: position by the order keys, first = 1; equal keys share a rank (`ties: min`, the default, gives 1, 1, 3; `ties: dense` 1, 1, 2); an empty first key gives an empty rank and is not counted.
+- `order:` is not allowed on the group functions (it would not change their value) and is required on `rank`; `ties:` is for `rank` only. Types: `runningSum`/`groupSum` need a numeric column (`expected decimal, got text; use toNumber in a computed column first`) and give an integer for an integer column, else a decimal; `groupAvg` a decimal; `groupMin`/`groupMax` a number or a date, of the column's type; `previous`/`next`/`fillDown` any type, the column's; `groupCount`/`rowNumber`/`rank` an integer. A share of the total is not a function: `round(amount / groupSum(amount, by: dept) * 100, 1)` (division keeps its divide-by-zero flag).
+- **Limits** (config): at most 8 window functions per file (`limits.rules.maxWindowOps`) and 3 columns in one `by:` or `order:` (`maxWindowKeys`); each window counts as one rule (like sort and group), and its `by:`/`order:` columns follow the computed chain into the node budget. A function named like one of the eleven (`rank`, `next`, `previous` ...) is refused when a rules file is made (it would be read as the built-in); a stored file is never refused for it. Since learn-v7 the prompt documents the eleven functions (named arguments, column-only arguments, file order by default, the types) and the `rel: "window"` hint is sent.
+- **Determinism and cost:** decimal.js only, summed strictly in walk order; groups by the same identity dedupe and group use; one group map per distinct `by` and one sorted index per distinct (`by`, `order`), cached for the run, then one pass per window (about 20 ms for four windows at 5,000 rows, 0.1-0.2 s at 20,000).
+
 **Row filters:** `{ column, op, value? }` for simple cases, or `{ expr }` where expr is any condition. op is one of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `isEmpty`, `notEmpty`, `oneOf` or `notOneOf` (value is an array). Several filters are ANDed.
 
-**Date format tokens:** `D`, `DD`, `M`, `MM`, `MMMM`, `YY`, `YYYY`. `MMMM` is the month name in `output.language`, e.g. ספטמבר or September.
+**Date format tokens:** `D`, `DD`, `M`, `MM`, `MMMM`, `YY`, `YYYY`. `MMMM` is the month name in `output.language`, e.g. ספטמבר or September. `MMM` is the short month name. Added after learn-v6: `ddd` and `dddd` (short and full weekday name in `output.language`: Thu / Thursday, "יום ה'" / "יום חמישי"; Saturday is שבת). In an output column's Excel number format `ddd`/`dddd` stay Excel's own weekday codes (with the Hebrew locale prefix for Hebrew).
 
 ### 8.4 Duplicates
 `transform.dedupe: { keys: [ids] | "all", keep: "first" | "last", action: "remove" | "flag" }`
@@ -520,7 +542,7 @@ The LLM writes **codes, not prose**. The UI turns every code into Hebrew or Engl
   - `externalData`
   - `pivot`
   - `rowExpansion`
-  - `crossRowCalculation`
+  - `crossRowCalculation` (only for what the window functions of 8.3 cannot say: values over rows a filter removes, a rolling N-row window, anything across files; a running total, a group total, a rank, a row number or the previous row's value are expressible)
   - `hiddenByMasking`
   - `ambiguous`
   - `other`
@@ -538,6 +560,9 @@ The LLM writes **codes, not prose**. The UI turns every code into Hebrew or Engl
   They are shown as "Please check" items next to the column in the rules map.
 - Log all codes. They are the roadmap for which operations to add next.
 
+**Function requests and explanations (learn-v7, issue #40).** An unsupported entry may carry two optional extras, both written by the AI step, neither ever part of the rules:
+- **`functionRequest: { name, purpose, args: [{ name, type }], returns }`** - set when the missing piece is a FUNCTION the language lacks. `name` and the argument names are camelCase (at most 40 characters), `purpose` is one neutral sentence (at most 160), at most 6 arguments, `type` / `returns` a value type (8.3). It carries NO example and no value of any kind (not even a made-up one). The strict schema enforces the limits; the wire schema omits the `pattern` / `maxLength` / `maxItems` keywords (not every structured-output provider accepts them), so a request that breaks a limit is dropped by the API, never a reason to fail or repair a learn. **Value filter before it is stored:** a request is rejected - counted, not stored, and removed from the answer - when its name, purpose or argument names contain anything that occurs in the payload: a sample or dropped-row cell, a hint value (masked fakes or real, as sent); words of 3 or more characters are compared case-insensitively, numbers (also those inside text cells) exactly. What passes is recorded in `function_requests` (13): deduplicated on the normalized name plus the signature, counted per distinct HASHED owner, with a best-effort catalogue topic. Nothing here opens a GitHub issue; the admin (M4) adds the threshold and the "open an issue" click (issue #41 builds approved functions through a gated PR). The user is told "This needs a function we don't have yet - we've recorded it." only when the request was kept.
+- **`explanation`** (at most 200 characters, in the language of the output headers) - one short plain-language description of the rule the AI sees, for a column it could not build. It may mention values (it arrives masked, like the payload) and is shown ONLY to the user, in the session: "The AI's guess (not applied): ..." next to "Fill in" on the map line and in the Deep analysis panel. It is never executed, never applied, never stored, cached or logged, and never saved with a format (15). Supported columns keep their deterministic rules text; only unsupported columns can carry a guess.
 ### 8.11 The rules map and its editor
 The rules map is where users read, fix and add rules. It is generated from the JSON in the UI language, and every change is written back to the JSON.
 
@@ -558,13 +583,20 @@ The rules map is where users read, fix and add rules. It is generated from the J
 - **Calculate:** built from blocks, not typed.
   - Each term is a column or a number, joined by an operator (+ − × ÷), with up to 3 terms and optional rounding.
   - In the MVP, conditions (if … then … otherwise) and text functions are available only in the Advanced JSON view.
-- **Join text:** pick the columns and a separator.
+- **Join text:** pick the columns, a separator, and optional fixed text before and after (e.g. an ID and a name: `ID: 012345678 - Dana`).
 - **Part of text:** the first or last N characters.
 - **Translate values:** a two-column table (value in the input → value in the output). For values not in the list, the user chooses between flagging them and keeping them as they are.
 - **Fixed value.**
+- **Running total** ("סכום מצטבר"): the column to add up (a number), optionally "start again for each [column]", and how the rows are added up, a required choice: "File order" (as the rows appear in your file) or a column with a direction (lowest first / highest first). When the rules remove duplicates (`dedupe` with `action: "remove"`) it says "Duplicates are removed before the total is calculated." It writes `runningSum(...)` (8.3) into a generated computed column typed from the source column, and reads back as this choice only for exactly that shape (one column, at most one group and one order column); every other across-row function (group total, rank, row number, previous / next, fill down), and any running total written differently, is written in Advanced and shows as "Formula". The rules map describes every window function in a plain sentence, e.g. "running total of Amount per Agent, in file order".
 - **Leave empty.**
 
 Every column also has an output number or date format, with a preview.
+
+**Source dropdowns list every input column.** A learned rules file declares only the input columns some rule reads, so the columns of the example INPUT that no rule uses (an ID number, say) would be missing from every dropdown that picks an input column (copy, calculate, join, part of text, translate, filters, duplicate keys, sort, group, checks, title month). So:
+- The worker returns the example input's columns with the learn result (and with `loadExample`): header plus profile facts (type, `israeliId`, `leadingZerosLost`, `serialDates`, longest length, date format). Headers only, never values.
+- Every such dropdown lists the columns no input column declares yet, after the declared ones, labelled by the header. Choosing one declares it (`input.columns`: a fresh camelCase id, the header exactly as in the file, the type from the profile - an id with lost leading zeros keeps `idLike` with `padLeft`, a serial date gets `excelSerial` among its `inputFormats`) **in the same undoable edit** that uses it.
+- A saved source has no example files: the dropdown offers "Another column from your input file…", a small form for the header (exactly as in the file) and what the column holds. The column is declared the same way, and the next conversion reads it by that header. Dropping the example files instead offers their columns as above.
+- "Add a column" is on the Columns section in every result state (verified, differences, the partial result, the saved-source editor).
 
 **Row editors.**
 - **Filters** read as sentences: "Keep rows where [column] [is / is not / is one of / is empty / is greater than …] [value]".
@@ -587,12 +619,13 @@ Every column also has an output number or date format, with a preview.
 - The live check must stay under 300 ms for 5,000 rows. Above that size, run it live on a 2,000-row subset, and on all rows when the user presses Apply.
 - For a column that needs input, the "your example" values show the user exactly what they're aiming for.
 
-**One-off exceptions.** A mismatched row in the preview offers "This row was fixed by hand". Once chosen, the row is left out of the example's match count and stored in `format.exampleExceptions`. Exceptions only affect checking the example; they are never applied to future files.
+**Rows the rules don't reproduce.** Where the rules don't reproduce the example, the map and the preview say so plainly per column — "N rows in your example don't match this rule (rows 12, 57, …)" or, when a column mostly fails, "The rule for <column> doesn't reproduce your example yet" — each with "Fix the rule", and the differing cells are amber. The user fixes the rule (or saves with N differences). (v5 decision: the earlier "This row was fixed by hand" exception was removed from the UI as too confusing; `format.exampleExceptions` stays in the data model and may return later inside the column editor, for outlier rows only.)
 
 **Saving.**
 - **Status:**
   - **Verified:** every row matches, not counting exceptions.
   - Otherwise the user can "Save with N differences". The status becomes `differencesAccepted`, and the badge shows N.
+  - **Columns that need your input** (`from: null`, or unsupported) are left out of the comparison, so they never count as differences: the badge says "N columns need your input" and the format saves as `userConfirmed`. Once every column has a rule, all columns are compared again.
 - **Versions:**
   - Undo and redo work within the session.
   - Every save creates a new version, and old versions can be restored from the history.
@@ -609,7 +642,7 @@ The product keeps two kinds of objects:
   - the layout parts that live in `transform`, normalized to output headers: `sort`, and `group` (by, summary rows, blank rows, showDetailRows, per-column agg);
   - output validations (`on: "output"`).
   - Summary rows (8.6) are already keyed by output header, so - unlike `sort`/`group.by` - they need no id translation to belong to the format.
-- **Conversion:** how one kind of input file (a **source**: one supplier's price list, one insurer's report, one client's export) becomes that format. It is a full, self-contained rules file (8.1) plus `formatId` and `sourceName`. The engine only ever runs a conversion; it never needs the format object at run time.
+- **Conversion:** how one kind of input file (a **source**: one supplier's price list, one insurer's report, one client's export) becomes that format. It is a full, self-contained rules file (8.1) plus `formatId` and `sourceId` (8.15). The engine only ever runs a conversion; it never needs the format object at run time.
 
 A format usually has several conversions. That is the point of the registry: the company defines its format once, and each new source is attached to it.
 
@@ -622,7 +655,7 @@ Code enforces this after every learn and every edit (9.2). A conversion that bre
 
 **Editing a format.** A change to the output side made from any conversion's rules map is a change to the format. The editor says so ("This changes the format for all N sources"), and on save the change is written to every conversion of that format. Conversions whose `from` references still resolve keep their status; the others become `needsReview`. Example files are not stored, so re-verification happens on each conversion's next run: its flags and summary are shown with a "format changed since last run" notice.
 
-**Matching a file to a conversion** (flow C, and detection in A2): code compares the file's headers with each conversion's input signature (exact, then aliases, then normalized headers, as in 8.2 step 1). Score = share of required columns found, minus a penalty for extra unknown columns. One conversion with a score ≥ 0.9 and at least 0.1 above the next is selected automatically; otherwise the user picks from the top 3. Never run automatically on a guess below the threshold (DECISION 10).
+**Matching a file to a source** (flow C, and detection in A and A2): code compares the file's headers with each source's input signature (8.15) (exact, then aliases, then normalized headers, as in 8.2 step 1). Score = share of required columns found, minus a penalty for extra unknown columns. One conversion with a score ≥ 0.9 and at least 0.1 above the next is selected automatically; otherwise the user picks from the top 3. Never run automatically on a guess below the threshold (DECISION 10).
 
 **Ready-made formats (after the MVP).** A format doesn't have to come from an example. Known system formats (e.g. Priority load screens) can ship as templates: a format object with no conversions yet. Adding a source to it is flow A2. Nothing in the data model may assume that a format was learned.
 
@@ -656,6 +689,18 @@ Reusable logic lives in the rules file itself, so it is saved, versioned and che
 
 **In the rules map**, a **Functions and tables** section lists each one as a sentence with its signature. Each has a test panel: enter arguments or a key, see the result. Every function, table, output column, filter, dedupe, expand, sort, group and validation counts as one **rule** for tier limits (11).
 
+### 8.15 Sources
+
+A **source** is one kind of incoming file the company receives or keeps: one supplier's price list, one insurer's report, or a master file (e.g. an analyst's balances file) that is updated all the time but keeps its structure. Like formats, sources belong to the company and are named by the user.
+
+- **Fields:** name; `inputSignature` (columns: header, aliases, type, required); `inputReading` (sheet pick, header row, stopAt); input validations; versions. **Structure only:** headers, types and shapes. Never values, min/max, samples or anything read from data cells.
+- **A conversion links a source to a format.** The registry is a graph: a format can be fed by several sources (many suppliers → one load file), and a source can feed several formats (one master file → several reports). The engine still runs only a conversion's self-contained rules file; it never needs the Source or Format object.
+- **The source lock.** A conversion's `input` section must match its source: every input column it declares exists in the source with the same header, aliases, type and padLeft (a conversion may use a subset of the source's columns), and its sheet pick, header row, stopAt and input validations equal the source's. Code enforces it wherever the format lock runs (after a learn, on every editor save); a conversion that breaks it is rejected like a `formatMismatch`.
+- **Editing a source** propagates to all its conversions, like a format edit (8.12): headers, aliases, types, reading options and input validations are written into every conversion's `input`; a conversion whose rules no longer resolve becomes `needsReview`. Only when the source feeds **more than one** format, an edit in the editor that changes the input side says "This changes the source for N formats" before saving (like the format-change warning); with one format there is nothing extra to say.
+- **A structural change in an incoming file** (a column renamed, missing or added) is detected once per source, when a file is matched (flow C), and the message lists every format it affects. A confirmed mapping is saved once, as an alias on the source.
+- **Saving:** flow A creates a source, a format and the conversion between them; flow A2 creates a source and a conversion. When the example input matches an existing source (the same matching and threshold as flow C), that source is reused. Every conversion has a source (`sourceId` is required); there is no migration path for data written without one.
+- **MVP:** sources are created or reused automatically and silently when a format is saved; there is no source UI yet (a Sources tab and choosing a source as the input come after the MVP). One source feeding several formats is supported by the model, and Convert and Batch handle it, but nothing advertises it.
+
 ## 9. LLM layer
 
 ### 9.1 One stateless call
@@ -672,15 +717,15 @@ The prompt text is versioned (`promptVersion`) and logged with every call.
 A rules file is accepted only after it passes these layers, in order. Every failure becomes a precise problem for the repair call (9.3). Nothing is judged by another LLM.
 1. **Structure:** zod against the schema. Unknown fields, operations and enum values are rejected.
 2. **References:** every column id, table, function and param exists; ids created by expand and by computed columns don't collide; every input header exists in the input profile; `from` is null exactly for `skipColumns` plus `unsupported`; output validations name existing output headers.
-3. **Types:** a static type check of every expression, filter and function body against the declared column types and the operation signatures (8.3). Each output column's result type must fit its output type.
+3. **Types:** a static type check of every expression, filter and function body against the declared column types and the operation signatures (8.3). Each output column's result type must fit its output type (for a summary output, the type after the column's `agg`: a count is an integer whatever it counts).
 4. **Limits and safety:** depth and node budgets, function and table counts, an acyclic call graph, unique table keys, and a rule count within the user's tier (11).
-5. **Format lock,** when the conversion belongs to a format (8.12).
+5. **Format lock,** when the conversion belongs to a format (8.12); in completion mode (21, v6 item 8) the **fixed lock** instead: every element of the rules the user already had must come back unchanged.
 6. **Overfitting lint.** Never a rejection; each finding becomes a "Please check" line with assumption code `overfitSuspected`:
    - a constant equal to a value that appears in only one input row;
    - a condition that is true for exactly one sample row;
    - a `switch`, value map or table with one entry per sample row;
    - an expression far larger than needed by any other column.
-7. **Run on the samples** in the API, and diff.
+7. **Run on the samples** in the API, and diff. A column the answer honestly reports as `unsupported` (`from: null` with an `unsupported` entry) is left out of the diff here and in step 8: it is "needs your input", not a mismatch - unless the app's own pair analysis found how that column is built (the payload carries a hint for it): giving up on it is then a problem for the repair round (`unsupportedDespiteEvidence`, from the API's checks and from the browser's verification; a model that stands by it after the repair is accepted). An answer that produces no column at all is a failure. The samples hold only some rows, so a column that reads other rows (a summary output's sum, count, average, min, max or last; the result of a window function) is not compared here either: step 8 checks it on every row.
 8. **Full verification** in the browser on every row of the real example (5 A step 6). The LLM saw at most 12 rows, so this is the hold-out test: rules that only memorized the samples fail here.
 
 The same layers 1–6 run in the browser on every save from the editor.
@@ -707,7 +752,7 @@ If the first-try model still fails after its repair round, make one attempt with
 Prices per million tokens are in config, copied from the provider's pricing page, and used to compute the cost of every call.
 
 ### 9.5 Cost controls
-- **Code first.** Pre-flight blocks, the fast path, `skipColumns` and hints (section 6) are the biggest savings.
+- **Code first.** Pre-flight blocks, the fast path and hints (section 6) are the biggest savings.
 - **Server-side limits per tier.** A "learn" is one user action that reaches the LLM, however many calls it takes.
 - **Anonymous users.** Turnstile is required, and limits apply per anonymous id AND per IP.
 - **Budgets.** A daily anonymous budget and a daily overall budget, in USD in config.
@@ -762,7 +807,7 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
 | Saved formats | none | up to 3 | up to 50 new per month (DECISION 9) |
 | Sources per format | none | 3 | unlimited |
 | Rules per format (8.14) | 30 | 30 | 300 |
-| Learns that reach the LLM | 2 per day | 10 per month | 150 per month |
+| AI learns (reach the LLM; count only when they succeed, see 21 v5) | none — sign in to use AI (the local result is shown first) | 3 per month (config: count + period lifetime | month | day) | 150 per month |
 | Fast-path learns | unlimited | unlimited | unlimited |
 | Edit rules | view only | yes | yes |
 
@@ -797,9 +842,10 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
 
 - **`users`:** identities[`{ provider, subject, tenantId?, email, emailVerified }`], name, avatarUrl, uiLanguage, tier, createdAt, lastSeenAt, anonIds[], limitOverrides?
 - **`formats`:** ownerId, name, schemaVersion, output, layout (sort and group normalized to output headers), outputValidations, origin (`learned` | `template`), versions[`{ format, editedBy, at }`], createdAt.
+- **`sources`:** ownerId, name, inputSignature `{ columns: [{ header, aliases, type, required }] }`, inputReading `{ sheet, headerRow, stopAt }`, inputValidations, versions[`{ source, editedBy, at }`], createdAt. Structure only (8.15): headers, types and shapes, never values, ranges or samples.
 - **`conversions`:**
-  - ownerId, formatId, sourceName, schemaVersion, rules (the full self-contained rules file);
-  - inputSignature `{ columns: [{ header, aliases, type, required }] }`;
+  - ownerId, sourceId (required; the source's own name is the only name), formatId, schemaVersion, rules (the full self-contained rules file);
+  - inputSignature `{ columns: [{ header, aliases, type, required }] }` (the columns this conversion uses; the source holds the full signature);
   - source, status (`verified` | `differencesAccepted` | `userConfirmed` | `draft` | `needsReview`), acceptedDifferences (count);
   - exampleExceptions: example row numbers the user marked as fixed by hand. They are used only when checking the example, never on future runs;
   - learnPath (`local` | `llm` | `cache`), masking, model, promptVersion;
@@ -812,7 +858,8 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
   - keys look like `user:<id>:<yyyy-mm>`, `anon:<id>:<yyyy-mm-dd>`, `ip:<hash>:<yyyy-mm-dd>` (HMAC of the IP; IPv6 by /64) or `repair:<learnId>` (one browser repair per learn);
   - updates use atomic `$inc`, and anon/ip keys expire through a TTL index.
 - **`budgets`:** spend totals per day (overall and anonymous: `spendUsd`, `anonSpendUsd`).
-- **`learn_cache`:** owner (`anon:<id>` / `user:<id>`), key (hash of the structure only), rules, promptVersion, createdAt; unique (owner, key), TTL in config. A cache entry is only ever returned to the same owner — never across users — and with masking on only rules without text constants are cached (their fake words belong to an earlier session key).
+- **`learn_cache`:** owner (`anon:<id>` / `user:<id>`), key (hash of the structure only), rules, promptVersion, createdAt; unique (owner, key), TTL in config. A cache entry is only ever returned to the same owner — never across users — and with masking on only rules without text constants are cached (their fake words belong to an earlier session key). The AI's `explanation` and `functionRequest` are stripped before an entry is written.
+- **`function_requests`** (learn-v7, 8.10): key (normalized name + signature, unique), name, purpose and args (as first seen), returns, topic (a catalogue topic guessed from the purpose words, or `unknown`), count, distinctOwners, ownerHashes (HMAC of the owner id under the server secret, truncated, capped by config: the raw id is never stored), firstSeen, lastSeen, status (`new`). Written by one atomic upsert after the value filter (15); holds nothing from any user's data. Indexes: key (unique), (status, distinctOwners, count), (topic, distinctOwners). Counts of requests kept and rejected go to `usage_counters` (`fnreq:recorded:<yyyy-mm>`, `fnreq:rejected:<yyyy-mm>`).
 - **`leads`:** name, email, company, role, message, language, ts.
 - **`waitlist`:** userId, email, trigger, message, ts.
 - **`feedback`:** formatId?, userId?, rating, text, ts.
@@ -874,6 +921,7 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
 - **Formula injection.** When writing CSV, prefix cells that start with `=`, `+`, `-` or `@` with an apostrophe, except in numeric columns. When writing xlsx, write values, not formulas.
 - **LLM data retention.** The business page states the LLM provider's data-retention terms accurately (check the provider's current policy).
 - **Logs** never contain cell values, file names or payloads.
+- **The AI's notes on an unsupported column (learn-v7, 8.10).** The `explanation` may mention values: it is NEVER stored, cached, logged or saved - stripped before the structure cache is written, absent from the `llm_calls` ledger (counts only), stripped from every rules file a save writes (the API strips it, and the browser strips it before sending), never sent back to the AI step (`complete.fixed`), and kept by the browser outside the rules, in memory only (not in IndexedDB either); the browser unmasks it with the session masker and shows it in the session. The `functionRequest` is STORED only after the value filter: a request that contains any payload value (sample or dropped-row cell, hint value; masked or real; case-insensitive words of 3+ characters, numbers) is rejected - counted, never stored. Who asked is kept only as a keyed hash of the owner id.
 - **Legal pages.** Privacy policy and terms, in Hebrew and English, go live before launch, along with a cookie notice. Check what Israeli privacy law requires.
 
 ## 16. Screens, languages and design
@@ -1012,7 +1060,7 @@ Stop after each milestone and report.
   - the rules editor (8.11), with the live match counter and one-off exceptions;
   - the masking switch with its explanation, and "See what we send";
   - anonymous limits, Turnstile, budgets and cache.
-- **M3: Accounts.**
+- **M3: Accounts.** (Also build the v5 changes in section 21.)
   - Google and Microsoft sign-in, and the sign-in wall;
   - the registry: formats with their sources, add a source (flow A2), convert a file with automatic matching (flow C), format edits that propagate (8.12);
   - tier config and usage counters;
@@ -1107,3 +1155,55 @@ What changed:
 ### v4 change: generic summary rows
 
 `output.grandTotal` and `transform.group.subtotal` (8.1: sum-only, one label, ids) are replaced by generic `summaryRows` (8.6, 8.12): any number of rows, each naming, by OUTPUT HEADER, the aggregate (`sum`, `count`, `min`, `max`, `average`, `first`, `last`) that fills each cell - so a summary row belongs to the format like the rest of `output`, with no id translation (8.12). A summary-output column's own `agg` (8.6) gains `average`/`last` too, for the same set either way. Each `summaryRows` entry counts as one rule (8.14). Stored rules files keep `grandTotal`/`subtotal` loading and running byte-identical; the LLM (`learn-v4`) only ever writes `summaryRows`.
+
+### v5 changes (owner decisions, 2026-09-30) — build in M3
+
+1. **AI only for signed-in users.** Free (not signed in) users get everything that runs locally — pair analysis, pre-flight, the fast path, the editor, converting — but never an LLM call. When their example needs the AI step, show the **local result first**: the rules map with every column code could explain (verified against the example) and the columns that need the AI step marked "Needs the AI step", with a popup: "We worked out N of M columns on your computer. K need the AI step — sign in free to finish (3 AI formats a month included)." The learned local rules survive sign-in (5 E). `POST /api/learn` answers 403 `{ error: 'signInForAi' }` for anonymous callers.
+2. **AI learn quota in config** per tier: `aiLearns: { count, period: 'lifetime' | 'month' | 'day' | 'unlimited' }` (registered default 3 per month, paid 150 per month; anonymous 0). Changing the numbers or the period is config only.
+3. **What counts as one AI learn:** a learn counts **once, when it succeeds** (the result verifies against the example, or the user saves it with accepted differences). A failed attempt doesn't count — but after **3 failed attempts on the same example pair** (config `maxFailedAiAttempts`) the app stops, counts it as one learn, and tells the user plainly what was tried and what to change. Repairs inside a learn never count separately.
+4. **AI readiness gate before any LLM call — minimal.** The gate blocks only what is **certain** to fail even with the AI; anything ambiguous still goes to the LLM (the AI exists to deduce rules code can't). In addition to 6.3: **block** when no output data row can be matched to an input row (there is no example pair to learn from — "the two files don't seem to come from the same data"), or when the payload still exceeds its caps after trimming (say which part is too large); the AI step **tries every column the code couldn't explain**, external ones included (no local finish when only those are left; v7 note). Few matched rows, some unmatched output rows or partly unreadable values are NOT blocked. None of this consumes a learn.
+5. **Conversion-time review of unmatched rows (flow C/D, issue #36).** When a new file converts with flagged rows, show them before the output is written; per row the user picks: change the rule (opens the editor, converts again), fix this row only (a one-off value edit, not saved to the rules), skip the row, or keep it as is. The engine takes these per-run row decisions without modifying the saved rules, and lists them in the run summary.
+
+### v6 changes: sources as first-class objects (2026-09-30)
+
+1. **Source is an object**, next to Format (1, 8.15). A conversion is a link between a source and a format, so the registry supports both many sources → one format and one source → many formats.
+2. **The source lock** (8.15), enforced wherever the format lock runs; editing a source propagates to all its conversions (like 8.12).
+3. **Flow C matches a file to a source** (5 C, 8.12); one conversion runs directly, several let the user pick the format(s) or "all". A structural change in a file is detected once per source.
+4. **Saving** creates or reuses a source (flow A: source + format + conversion; A2: source + conversion).
+5. **Data** (13): a `sources` collection; every conversion carries a required `sourceId`, and the source's own name is the only name (no copy on the conversion).
+6. **After the MVP** (3): learn a new format from a known source; run all formats of a source in one click; a Sources tab; choosing a saved source as the input.
+7. **MVP: no source UI** (8.15): sources are created or reused automatically and silently when a format is saved.
+8. **Completion mode** (`LEARN_PROMPT.md` learn-v6, 2026-09-30): "Finish with the AI step" asks the AI step for ONLY what is missing - the output columns with no rule and the layout parts the local result could not build - and keeps the rules on screen (code-solved columns and the user's edits) as a fixed part. The payload carries `complete: { fixed, columns, parts }`; code checks the answer with a **fixed lock** (`checkFixedLock`, problem kind `fixedMismatch`, fed to the repair call), and the browser replaces the rules only when the lock and the full verification both pass and something listed was produced. "Re-run all with AI" is the whole learn again, after "This replaces your current rules". Both count as one AI learn on success (v5 item 3); a completion answer is never taken from or put in the structure cache. A signed-in user's learn waits for `/api/me` and always runs with the AI step allowed; a result with columns still without a rule offers "Try these columns with AI" (completion mode for those columns).
+
+**Code amendments** (implemented; no change to the rules schema, `schemaVersion`, the engine's run-time behaviour, `LEARN_PROMPT.md` or the tiers):
+- **Shared:** `Source` / `SourceStructure` and zod schemas (`source.ts`); wire types (`api.ts`): `SignatureEntry` is now **per source**, `SourceSummary/Detail`, `UpdateSourceRequest`, `SourceChoice` (`sourceId` | `newSource` + `inputHeaders`), `sourceReused`; `ConversionSummary.sourceId` is required, `ConversionDetail.sourceFormats` and `source.formats` in the save answers say how many formats a source feeds; error codes `sourceMismatch`, `sourceInUse`.
+- **Engine (pure):** `sourceOf(rules)` and `checkSourceLock(rules, source)` next to `formatOf` / `checkFormatLock`. The lock compares header, aliases (as a set), type, `padLeft` and `inputFormats` (**the date formats are part of the lock**: they are how the column is read) of every declared column (a **subset** of the source's columns is allowed), the sheet pick, header row, `stopAt`, and the input validations (as a set, by column header). `required` is not locked: a source's flag is derived - required by at least one conversion. `input.rowFilters` are not part of a source (they say which rows a *format* wants).
+- **API:** `sources` collection (unique per owner and name, case-insensitive); conversions carry a required `sourceId` and no copy of the source's name (`meta.sourceName` inside the rules file is informational and follows a rename; answers show the source's name as `sourceName`). No stored or served path handles a conversion without a source. Saving reuses the source the example input matches (flow C's matching and threshold, on the example input's headers; a source with a required column missing is never reused, nor - in A2 - one that already feeds the format), merging new columns and aliases into it; `sourceReused` tells the client. A source edit (`PATCH /api/sources/:id`, or an input-side edit saved from a conversion's rules map) is a new source version written into every conversion of it, whatever format it feeds; conversions whose rules no longer resolve become `needsReview`. A confirmed column mapping is one alias on the source. Deleting a conversion or a format keeps its source; a source with no conversion can be deleted.
+- **Web:** flow C / D match against sources and convert to every format the source feeds (flow C asks which, or "all"; each with its own row review); a structural change is reported once per source, listing every affected format, and saved as one alias; saving creates or reuses a source silently (no note); A2 keeps its optional source-name field and has no chooser; there is no source screen and My formats shows none. An edit of the input side of a source that feeds more than one format says "This changes the source for N formats" before saving (the editor state knows the input side changed, and the conversion says how many formats its source feeds); with one format, nothing extra.
+
+### v7 note: the AI tries every unexplained column (owner decision, 2026-10-01)
+
+The AI exists to deduce what code can't, so only what is **certain** to fail is stopped or skipped. A column no detector explains (classified external internally: no relation, not derived - for example reformatted numbers or dates, or a calculation mixed in) is never removed from the AI's job: it is not in `skipColumns`, a signed-in learn calls the AI even when it is the only thing left, a guest's partial result lists it under "Needs the AI step" (with "may come from another source") and counts it in the sign-in popup's K, and "Finish with the AI step" / "Try these columns with AI" ask for every column with no rule (`completionPlan`, `fixedColumnShare`). The internal class only shapes hints and wording. The readiness gate keeps blocking only: no matched rows, and a payload over its caps after trimming.
+
+### v8 note: the AI step is opt-in, and partial results are delivered (owner decisions, 2026-10-01)
+
+- **Every learn runs the free engine first, for everyone.** No LLM call happens without the user choosing it. The result screen opens with a panel: "The free engine solved N of M fields", the missing fields and layout parts (each with a checkbox), and one primary "Run deep analysis with AI" with the cost ("uses 1 of your K AI formats this month"); "Re-run all with AI" is a secondary link there. Guests see the sign-in prompt instead. Home offers signed-in users a remembered checkbox "Deep analysis with AI if needed" (default off) that starts the same step automatically when fields are missing. This replaces the separate "Finish with the AI step" / "Try these columns with AI" buttons (v6 item 8 and v7 note).
+- **Honest partial delivery.** When fields still can't be produced (the language can't express them, or the AI answered unsupported): "This is the best we can do for now: N fields need a rule we can't build yet. We keep improving and may support them next time." The user can download the file with those fields empty, fill them in the editor, or save with them marked "needs your input". Never shown as an error.
+- **Next (issue #40, learn-v7):** missing functions are recorded as value-free function requests (name, purpose, signature; no examples of any kind), and an unsupported column may carry the AI's plain-language guess of the rule, shown in-session only and never stored. Approved functions are added through a gated PR pipeline (issue #41).
+
+### v10 note: learn-v7 shipped (owner decisions, 2026-10-01; built 2026-10-02)
+
+Prompt `learn-v7` (`LEARN_PROMPT.md`, `packages/shared/prompts/learn-v7.txt`, `LEARN_SYSTEM_PROMPT_V7`; +2.7k characters on learn-v6) and what rides with it. The real eval run is the owner's to approve; only the fake provider has been run.
+- **The prompt documents every op.** The seven date/text ops added after learn-v6 and the eleven window functions (named arguments `by:` / `order:` / `ties:`, column-only arguments, file order by default, the types), a short window paragraph, and the `rel: "window"` hint. `inPrompt: false` is gone from every op; `promptOpsSync` now requires all of them; `limits.learn.window.hintsEnabled` is ON (the free engine still builds only the order-independent patterns itself; the hint is sent for the rest). `crossRowCalculation` now means only what windows cannot say.
+- **Function requests** (8.10, 13, 15): an unsupported entry may carry a value-free `functionRequest`; the API value-filters it before storing it in the new `function_requests` collection (atomic upsert, deduplicated, distinct hashed owners, topic guess). No GitHub automation yet (M4 admin: threshold or click; issue #41: gated PR pipeline).
+- **Explanations** (8.10, 15): an unsupported entry may carry a short `explanation` (a guess, at most 200 characters, in the output headers' language). It is shown in the session only ("The AI's guess (not applied)": map line and Deep analysis panel, Hebrew and English) and never stored, cached, logged or saved. The engine takes both notes out of the rules (`LearnFromExamplesResult.aiNotes`, the explanation unmasked); the Result screen keeps them in its session object.
+- **Schema:** `unsupported[]` items gain the two optional fields (strict schema with the limits; wire schema without `pattern` / `maxLength` / `maxItems`, about 14.2k characters, under the 20k cap). A malformed note is dropped by the API, never a reason to repair. `promptVersion` is `learn-v7`; the generated `learn-result.schema.json` was stale and is regenerated (a test keeps it in sync).
+
+### v9 note: across-row (window) functions (owner decisions, 2026-10-01)
+
+One new expression node, `window`, with eleven functions (8.3): `runningSum`, `groupSum`, `groupAvg`, `groupMin`, `groupMax`, `groupCount`, `previous`, `next`, `fillDown`, `rowNumber`, `rank`. Calculated in step 6 over the rows that remain, in file order unless `order:` says otherwise, before the output sort (so a report sorted by date can carry a balance in date order with `order: date`). Design: `docs/proposals/window-operations.md`.
+
+- **The free engine builds only the order-independent patterns:** a group's total on every row (`groupSum(x, by: g)`) and a count per group (`groupCount(by: g)`), exact on every aligned row (guards: not a copy of the column, 2+ groups with a group of 2+, never the alignment key as the group; two equally fitting columns build nothing). This outranks a value map or a constant that the same cells also fit. Running totals, row numbers, previous / next, fill down and rank depend on the order of the rows: they are never built by code and are left to the AI step (hints) and to the user in the editor.
+- **Blocked rows still count.** A row later left out by a `block` validation is counted in window results (validations run after, and may read them); the run summary says "N blocked rows are included in calculated totals", a count only.
+- **Hints for the AI.** Detection and the `rel: "window"` hint shape (`{ out, rel: "window", fn, in?, by?, order?: "file" | "output" | keys, ties?, alt? (max 3), coverage, failsOn? }`) are behind `limits.learn.window.hintsEnabled`, ON since learn-v7 (v10 note), which documents window functions in the system prompt. With the switch off a column the free engine knows is a group total or count gets no hint (not the misleading value map), and every other column is hinted as before.
+- **Arguments are plain column ids** (a helper computed column for anything calculated). **Editor:** one friendly option, "Running total" (8.11); everything else through Advanced. `crossRowCalculation` (8.10) now means only what windows cannot say.

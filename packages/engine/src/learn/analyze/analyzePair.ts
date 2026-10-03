@@ -6,12 +6,14 @@
 import type { RawWorkbook } from '../../types';
 import { gather, isoOfSerial, normFast, norms, type ColumnData } from './cells';
 import { alignRows } from './align';
+import { findDerivation } from './derived';
 import { analyzeDropped } from './dropped';
 import { detectFamilies, type CreatedData, type FamilyFinding } from './families';
 import { analyzeLayout } from './layout';
 import { sampleIndices } from './prng';
 import { profileColumn } from './profile';
-import { findRelations, summaryRelations, type RelationEnv } from './relations';
+import { findRelations, MAX_RELATIONS, relationRank, sortRelations, summaryRelations, type RelationEnv } from './relations';
+import { WindowDetector } from './windows';
 import { decideHeader, explainedRate, firstRowExplained, HEADER_MIN_EXPLAINED, headerRowMayBeData } from './headerCheck';
 import { identicalSheets, readInput, readOutput, type InputData, type OutputData } from './tables';
 import type {
@@ -25,6 +27,7 @@ import type {
   PairShape,
   Relation,
   SideIssue,
+  WindowFinding,
 } from './types';
 
 export const DEFAULT_SAMPLE_SIZE = 2000;
@@ -74,7 +77,7 @@ function hebrewHeaders(headers: string[]): boolean {
 }
 
 function columnAnalysis(out: number, header: string, relations: Relation[]): ColumnAnalysis {
-  return { out, header, relations, unknown: relations.length === 0 };
+  return { out, header, relations, unknown: relations.length === 0, derived: null };
 }
 
 /** Facts the relations prove about input columns (SPEC 7.1 serialDates, leadingZerosLost). */
@@ -291,10 +294,31 @@ function analyzeSides(
     }
   } else {
     const src = [...inp.cols.map((c) => gather(c, inIdx)), ...created.map((c) => c.col)];
-    const env: RelationEnv = { src, total: K, sample, minCoverage, language };
+    const env: RelationEnv = { src, inputCount: inp.cols.length, total: K, sample, minCoverage, language };
+    // Across rows (windows.ts): only for plain 1:1 rows, and only where no simpler relation already explains the column.
+    const windowable = shape.kind === 'plain' && (alignment.method === 'key' || alignment.method === 'position');
+    let detector: WindowDetector | null = null;
     for (let o = 0; o < nCols; o++) {
-      const rels = findRelations(env, outA[o]!, o, outProfile[o]?.format);
-      columns.push(columnAnalysis(o, outSide.headers[o] ?? '', rels));
+      let rels = findRelations(env, outA[o]!, o, outProfile[o]?.format);
+      let windows: WindowFinding[] = [];
+      if (windowable && !rels.some((r) => r.coverage === 1 && relationRank(r.rel) < relationRank('window'))) {
+        detector ??= new WindowDetector({
+          src: src.slice(0, inp.cols.length),
+          inIdx,
+          profile: inProfile,
+          keyColumns: alignment.key?.in ?? [],
+          minCoverage,
+        });
+        const found = detector.detect(outA[o]!, o);
+        windows = found.findings;
+        if (found.relations.length > 0) rels = sortRelations([...rels, ...found.relations]).slice(0, MAX_RELATIONS);
+      }
+      const ca = columnAnalysis(o, outSide.headers[o] ?? '', rels);
+      if (windows.length > 0) ca.windows = windows;
+      // SPEC 6.2 step 4 (v5): an unknown column the input still determines is derived (the AI can solve it),
+      // not external data.
+      if (ca.unknown) ca.derived = findDerivation(env, outA[o]!);
+      columns.push(ca);
       progress('relations', 0.35 + (0.4 * (o + 1)) / Math.max(1, nCols));
     }
     // Fixed fan-out: relations per position in the family.
@@ -306,6 +330,7 @@ function analyzeSides(
         for (let k = 0; k < K; k++) if (pos.num[k] === p + 1) rowsP.push(k);
         const envP: RelationEnv = {
           src: src.map((c) => gather(c, rowsP)),
+          inputCount: inp.cols.length,
           total: rowsP.length,
           sample: sampleIndices(rowsP.length, sampleSize, seed + p + 1),
           minCoverage,
