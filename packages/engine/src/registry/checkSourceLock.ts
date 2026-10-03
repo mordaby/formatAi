@@ -1,8 +1,8 @@
 // SPEC 8.15 "The source lock": "A conversion's `input` section must match its source: every input column it declares
 // exists in the source with the same header, aliases, type and padLeft (a conversion may use a subset of the source's
-// columns), and its sheet pick, header row, stopAt and input validations equal the source's. Code enforces it wherever
-// the format lock runs (after a learn, on every editor save); a conversion that breaks it is rejected like a
-// `formatMismatch`."
+// columns), and its sheet pick, header row and stopAt equal the source's. Input validations are compared per column, on the
+// columns the conversion declares (21 v11 item 8) [...]. Code enforces it wherever the format lock runs (after a learn, on
+// every editor save); a conversion that breaks it is rejected like a `formatMismatch`."
 //
 // Pure, like `checkFormatLock` (checkFormatLock.ts): it reuses `sourceOf` to read the rules the same way the stored
 // source was built, then compares field by field.
