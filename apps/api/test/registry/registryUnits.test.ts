@@ -9,10 +9,12 @@ import {
   parseName,
   parseRun,
   parseSaveFields,
+  parseSourceChoice,
   parseUpdateFields,
 } from '../../src/registry/bodies.js';
 import { applyFormat, headerRenames } from '../../src/registry/propagate.js';
 import { checkRulesFile, signatureOf, withMeta, type SaveMeta } from '../../src/registry/rules.js';
+import { freeSourceName, uniqueSourceName } from '../../src/registry/sourceStore.js';
 import { edited, saveBody, sourceOne, sourceTwo } from './helpers.js';
 
 const meta: SaveMeta = {
@@ -180,6 +182,34 @@ describe('request-body validators', () => {
   it('nameKey compares names without case and extra spaces', () => {
     expect(nameKey('  Source   2 ')).toBe(nameKey('source 2'));
     expect(nameKey('Source 2')).not.toBe(nameKey('Source 3'));
+  });
+
+  it('uniqueSourceName keeps a free name and numbers a taken one: "name (2)", "name (3)", whatever the case', () => {
+    expect(uniqueSourceName([], 'orders')).toBe('orders');
+    expect(uniqueSourceName(['Supplier A'], 'orders')).toBe('orders');
+    expect(uniqueSourceName(['orders'], 'orders')).toBe('orders (2)');
+    expect(uniqueSourceName(['Orders', 'orders (2)'], 'orders')).toBe('orders (3)');
+    expect(uniqueSourceName(['ORDERS', 'Orders (2)', 'orders (4)'], 'orders')).toBe('orders (3)');
+    expect(uniqueSourceName(['ספקים', 'ספקים (2)'], 'ספקים')).toBe('ספקים (3)');
+    // the "first free Source N" default is unchanged
+    expect(freeSourceName(['Source 1', 'orders'])).toBe('Source 2');
+  });
+
+  it('uniqueSourceName never goes past the longest name: a long one is cut to make room for the number', () => {
+    const long = 'x'.repeat(limits.registry.maxNameChars);
+    const next = uniqueSourceName([long], long);
+    expect(next).toBe(`${'x'.repeat(limits.registry.maxNameChars - 4)} (2)`);
+    expect(next).toHaveLength(limits.registry.maxNameChars);
+  });
+
+  it('parseSourceChoice: a suggested name is trimmed and kept; one that cannot be a name is dropped, and the save goes on', () => {
+    expect(parseSourceChoice({ suggestedSourceName: '  orders ' })).toEqual({ suggestedSourceName: 'orders' });
+    expect(parseSourceChoice({ sourceName: 'Mine', suggestedSourceName: 'orders' })).toEqual({ sourceName: 'Mine', suggestedSourceName: 'orders' });
+    for (const bad of ['', '   ', 'a\u0000b', 'x'.repeat(limits.registry.maxNameChars + 1), 5, null, {}]) {
+      expect(parseSourceChoice({ suggestedSourceName: bad })).toEqual({});
+    }
+    // a typed name that is not one is still a bad request, as before
+    expect(parseSourceChoice({ sourceName: '' })).toBeNull();
   });
 
   it('parseSaveFields fills defaults, sorts the exceptions and drops counts that do not belong to the status', () => {

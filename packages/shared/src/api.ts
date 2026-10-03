@@ -180,8 +180,17 @@ export interface SourceChoice {
    * sources. Without it the headers the rules declare are used, which is usually a subset of the file's.
    */
   inputHeaders?: string[];
-  /** The name of the source to CREATE when neither `sourceId` nor `newSource` is given and no existing source matches (default: the first free "Source N"). */
+  /**
+   * The name of the source to CREATE when neither `sourceId` nor `newSource` is given and no existing source matches (default: the first free
+   * "Source N"). A name the user typed: in use by another source (case-insensitively) it is refused, 409 `nameTaken`.
+   */
   sourceName?: string;
+  /**
+   * A DEFAULT name for that source, derived by the client from the example input file's name (`defaultSourceName`; nothing from the file's
+   * cells): used when neither `sourceId`, `newSource` nor `sourceName` names it. Never refused for a clash - it becomes "name (2)", "name (3)"
+   * - and dropped when it is not a usable name (then "Source N").
+   */
+  suggestedSourceName?: string;
 }
 
 /** POST /api/formats body: creates the format (from the rules' output side), its source (or reuses one) and the conversion. */

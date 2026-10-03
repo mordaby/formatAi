@@ -294,8 +294,8 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
   const SUPPLIER_A = sourceSummary({ id: 'S1', name: 'Supplier A', conversions: [{ conversionId: 'C1', formatId: 'F1', formatName: 'Supplier price list', status: 'verified' }] });
 
   /** Drops both files, learns, and saves the result; resolves once attachSource has been asked. */
-  async function learnAndSave(): Promise<void> {
-    await drop('Example input', csv('supplier-b.csv'));
+  async function learnAndSave(inputName = 'supplier-b.csv'): Promise<void> {
+    await drop('Example input', csv(inputName));
     await drop('Example output', xlsx('load.xlsx'));
     await waitFor(() => expect(learnButton().disabled).toBe(false));
     await act(async () => {
@@ -329,11 +329,13 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
     expect(body(api)).toMatchObject({ sourceName: 'Supplier B', inputHeaders: ['Code', 'Name', 'Price'] });
     expect(body(api)).not.toHaveProperty('sourceId');
     expect(body(api)).not.toHaveProperty('newSource');
+    // A name the user typed is theirs: no default is sent next to it.
+    expect(body(api)).not.toHaveProperty('suggestedSourceName');
     // (never a value: the body carries the rules and the headers, not a row of the example)
     expect(JSON.stringify(body(api))).not.toContain('supplier-b.csv');
   });
 
-  it('left without a name, sends no name at all (the server names it) - and the result is headed by the file\'s name', async () => {
+  it('left without a name, sends the example input file\'s name as the default (`suggestedSourceName`) and no `sourceName` - and the result is headed by the file\'s name', async () => {
     const { api } = setup({ learn: learnWithInput });
     await screen.findByTestId('add-format-columns');
     await drop('Example input', csv('supplier-b.csv'));
@@ -348,9 +350,26 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
     fireEvent.click(screen.getByRole('button', { name: 'Add source and download' }));
     await waitFor(() => expect(api.registry.attachSource).toHaveBeenCalledTimes(1));
     expect(body(api)).not.toHaveProperty('sourceName');
-    expect(body(api)).toMatchObject({ inputHeaders: ['Code', 'Name', 'Price'] });
+    expect(body(api)).toMatchObject({ suggestedSourceName: 'supplier-b', inputHeaders: ['Code', 'Name', 'Price'] });
     // The saved message names the source the server made.
     expect(await screen.findByText('Added "Supplier B" to "Supplier price list". Your file is downloading.')).toBeTruthy();
+  });
+
+  it('the default has the date and counters of the file taken out, and is not sent when nothing is left of the name', async () => {
+    const { api } = setup({ learn: learnWithInput });
+    await screen.findByTestId('add-format-columns');
+    await learnAndSave('Supplier B 2026-09 (1).csv');
+    await waitFor(() => expect(api.registry.attachSource).toHaveBeenCalledTimes(1));
+    expect(body(api)).toMatchObject({ suggestedSourceName: 'Supplier B' });
+    cleanup();
+
+    const again = setup({ learn: learnWithInput });
+    await screen.findByTestId('add-format-columns');
+    await learnAndSave('2026-09-15.csv');
+    await waitFor(() => expect(again.api.registry.attachSource).toHaveBeenCalledTimes(1));
+    const sent = (again.api.registry.attachSource.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+    expect(sent).not.toHaveProperty('suggestedSourceName');
+    expect(sent).not.toHaveProperty('sourceName');
   });
 
   it('never runs a source check of its own in the browser: which source this becomes is the server\'s decision', async () => {

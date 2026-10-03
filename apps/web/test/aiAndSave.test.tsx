@@ -215,6 +215,8 @@ describe('Save format and download (signed in)', () => {
       expect(body).not.toHaveProperty('sourceId');
       expect(body).not.toHaveProperty('newSource');
       expect(body).not.toHaveProperty('sourceName');
+      // A new source is named after the example input file ("orders.csv"): a default the server makes unique, never a name the user chose.
+      expect(body.suggestedSourceName).toBe('orders');
       // A source that was created is not mentioned: there is no source UI in the MVP (SPEC 8.15).
       expect(await screen.findByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
       expect(screen.queryByTestId('source-reused')).toBeNull();

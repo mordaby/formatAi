@@ -191,12 +191,14 @@ export interface SourceChoiceFields {
   newSourceName?: string;
   /** Headers of the example input, to match against the owner's sources. */
   inputHeaders?: string[];
-  /** The name for the source the server creates when nothing matched (none: the server picks "Source N"). */
+  /** The name the user typed for the source the server creates when nothing matched (none: `suggestedSourceName`, else "Source N"). */
   sourceName?: string;
+  /** The client's default name (from the example input file's name): made unique, never refused. */
+  suggestedSourceName?: string;
 }
 
 /**
- * `sourceId`, `newSource`, `inputHeaders` and `sourceName` (all optional). Null for a body that names both a source and a
+ * `sourceId`, `newSource`, `inputHeaders`, `sourceName` and `suggestedSourceName` (all optional). Null for a body that names both a source and a
  * new source, or anything malformed. Over-long headers are left out of `inputHeaders` rather than failing the save: they can't
  * match anything worth matching, and the save must not depend on them.
  */
@@ -218,6 +220,11 @@ export function parseSourceChoice(body: Record<string, unknown>): SourceChoiceFi
     const name = parseName(body.sourceName);
     if (name === null) return null;
     out.sourceName = name;
+  }
+  // A default is a courtesy: one that cannot be a name is left out (the server names the source), never a reason to refuse the save.
+  if (body.suggestedSourceName !== undefined) {
+    const name = parseName(body.suggestedSourceName);
+    if (name !== null) out.suggestedSourceName = name;
   }
   if (body.inputHeaders !== undefined) {
     if (!Array.isArray(body.inputHeaders) || body.inputHeaders.length > limits.registry.maxInputHeaders) return null;

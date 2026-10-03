@@ -5,6 +5,7 @@ export * from './rules/wire';
 export * from './rules/aiNotes';
 export * from './format';
 export * from './source';
+export * from './sourceName';
 
 export * from './codes';
 export * from './i18n/messages';

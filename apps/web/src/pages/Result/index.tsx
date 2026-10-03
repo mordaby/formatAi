@@ -2,7 +2,7 @@
 // the local result before the AI step (SPEC 21 v5), the AI quota, "this looks like your format X" (SPEC 5 A2), and saving.
 // Once the learn is saved (a format and its first source) the SAME screen becomes the editor of that source: its address is the
 // source's own, the example files stay in the worker for the live check, and every further save is a new version of the source.
-import { limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
+import { defaultSourceName, limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
 import { completionPlan, fixedColumnShare, isCompletable } from '@formatai/shared';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -176,6 +176,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     // there is no source UI in the MVP. What it matches on is the example input's HEADERS (structure only - the file and its values never
     // leave the computer); the rules alone would give a subset.
     const inputHeaders = result.exampleInput?.map((c) => c.header);
+    // A new source is named after the example input file, without what changes from file to file ("orders 2026-09.xlsx" is "orders"); nothing
+    // is sent when nothing is left of the name (the server then names it "Source N"). Only the file's name is used, never a cell.
+    const suggestedSourceName = defaultSourceName(file.name);
     const body: CreateFormatRequest = {
       name,
       rules: info.rules,
@@ -184,6 +187,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       exampleExceptions: info.exceptions,
       learnPath,
       masking: session.masking,
+      ...(suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
       ...(learnPath === 'local' ? {} : { promptVersion }),
     };

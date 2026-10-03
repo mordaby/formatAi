@@ -4,7 +4,7 @@
 // learn runs in attach mode - the format is the `target`, the AI only decides how THIS input produces the format's columns - and
 // the result opens in the same map and editor, ready to save as a new conversion of the format (a link from the source to it).
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
-import { limits, promptVersion } from '@formatai/shared';
+import { defaultSourceName, limits, promptVersion } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useLearnSession } from '../../app/LearnSession';
@@ -390,6 +390,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
     const learnPath = result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
     // The example input's HEADERS (structure only): what the server matches against the company's sources (SPEC 8.15).
     const inputHeaders = result.exampleInput?.map((c) => c.header);
+    const suggestedSourceName = defaultSourceName(input.name);
     const body: AttachSourceRequest = {
       rules: info.rules,
       status: info.metaStatus,
@@ -397,8 +398,9 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
       exampleExceptions: info.exceptions,
       learnPath,
       masking,
-      // The name typed is used if the server has to create a source (nothing when the field was left empty).
-      ...(sourceName !== '' ? { sourceName } : {}),
+      // The name typed is used if the server has to create a source; left empty, the example input file's name is the default
+      // (SPEC 21 v11 item 9), and the server makes it unique. Nothing when no name is left of it ("Source N").
+      ...(sourceName !== '' ? { sourceName } : suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
       ...(learnPath === 'local' ? {} : { promptVersion }),
     };

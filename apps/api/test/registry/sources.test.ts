@@ -334,6 +334,61 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       expect(b.body.source.name).toBe('Source 2');
     });
 
+    it('a default name from the example file (`suggestedSourceName`) names a new source, and is numbered - never refused - when it is taken', async () => {
+      const first = await create(sourceOne(), { suggestedSourceName: 'orders' });
+      expect(first.status).toBe(201);
+      expect(first.body.source.name).toBe('orders');
+      expect(first.body.conversion.sourceName).toBe('orders');
+      expect((await rulesOf(first.body.conversion.id)).meta.sourceName).toBe('orders');
+      // another kind of file with the same default ("orders 2026-09.xlsx" from a different supplier): " (2)", " (3)", whatever the case
+      const second = await create(sourceTwo(), { suggestedSourceName: 'Orders' });
+      expect(second.status).toBe(201);
+      expect(second.body.source.name).toBe('Orders (2)');
+      const third = await create(edited(sourceTwo(), (r) => { r.input.columns[0]!.header = 'Other'; }), { suggestedSourceName: ' orders  ' });
+      expect(third.status).toBe(201);
+      expect(third.body.source.name).toBe('orders (3)');
+      expect((await sources()).map((s) => s.name).sort()).toEqual(['Orders (2)', 'orders', 'orders (3)']);
+      // names belong to the owner: another one is not in the way (Hebrew works like any other)
+      expect((await create(sourceOne(), { suggestedSourceName: 'orders' }, OTHER_USER)).body.source.name).toBe('orders');
+      expect((await create(sourceTwo(), { suggestedSourceName: 'ספקים' }, OTHER_USER)).body.source.name).toBe('ספקים');
+      const hebrew = await create(edited(sourceTwo(), (r) => { r.input.columns[0]!.header = 'Other'; }), { suggestedSourceName: 'ספקים' }, OTHER_USER);
+      expect(hebrew.body.source.name).toBe('ספקים (2)');
+    });
+
+    it('a name somebody chose (`sourceName` typed, or `newSource`) is still refused when taken, and wins over the default', async () => {
+      const first = await create(sourceOne(), { sourceName: 'Supplier A', suggestedSourceName: 'orders' });
+      expect(first.body.source.name).toBe('Supplier A');
+      const typed = await create(sourceTwo(), { sourceName: 'supplier a', suggestedSourceName: 'prices' });
+      expect(typed.status).toBe(409);
+      expect(typed.body).toEqual({ error: 'nameTaken' });
+      const explicit = await create(sourceTwo(), { newSource: { name: 'SUPPLIER A' }, suggestedSourceName: 'prices' });
+      expect(explicit.status).toBe(409);
+      expect(explicit.body).toEqual({ error: 'nameTaken' });
+      expect(await appDb.sources.countDocuments()).toBe(1);
+      expect(await appDb.formats.countDocuments()).toBe(1);
+      expect((await create(sourceTwo(), { newSource: { name: 'Mine' }, suggestedSourceName: 'prices' })).body.source.name).toBe('Mine');
+    });
+
+    it('a default that cannot be a name is ignored ("Source N"), and none is used when an existing source is reused', async () => {
+      for (const [i, bad] of ['', '   ', 'x'.repeat(limits.registry.maxNameChars + 1), 5].entries()) {
+        const res = await create(edited(sourceOne(), (r) => { r.input.columns[0]!.header = `Col ${i}`; }), { suggestedSourceName: bad });
+        expect(res.status).toBe(201);
+        expect(res.body.source.name).toBe(`Source ${i + 1}`);
+      }
+      await Promise.all([appDb.formats.deleteMany({}), appDb.conversions.deleteMany({}), appDb.sources.deleteMany({})]);
+      const { sourceId } = await oneSourceTwoFormats();
+      const again = await create(
+        edited(sourceOne(), (r) => {
+          r.output.columns = [{ header: 'ID', from: 'id' }];
+          r.transform.computed = [];
+        }),
+        { name: 'Ids', suggestedSourceName: 'orders' },
+      );
+      expect(again.status).toBe(201);
+      expect(again.body.sourceReused).toEqual({ id: sourceId, name: 'Supplier A' });
+      expect(await appDb.sources.countDocuments()).toBe(1);
+    });
+
     it('flow A2 reuses a matching source for the new conversion; a source that already feeds THIS format is not reused on its own', async () => {
       const { a, sourceId } = await oneSourceTwoFormats();
       // another format, fed by Source 2 (Code, Price)

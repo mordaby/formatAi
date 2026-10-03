@@ -20,6 +20,20 @@ export function freeSourceName(taken: readonly string[]): string {
   }
 }
 
+/**
+ * `name` when no other source of the owner has it, else the first free "name (2)", "name (3)", ... (compared like every source name: case and
+ * spacing do not matter). A name too long for the number is cut, so the result is never longer than `maxNameChars`.
+ */
+export function uniqueSourceName(taken: readonly string[], name: string): string {
+  const used = new Set(taken.map(nameKey));
+  if (!used.has(nameKey(name))) return name;
+  for (let n = 2; ; n++) {
+    const suffix = ` (${n})`;
+    const candidate = `${name.slice(0, limits.registry.maxNameChars - suffix.length).trimEnd()}${suffix}`;
+    if (!used.has(nameKey(candidate))) return candidate;
+  }
+}
+
 /** How many formats a source feeds: the distinct formats of its conversions (SPEC 8.15). */
 export async function countSourceFormats(d: AppDb, ownerId: ObjectId, sourceId: ObjectId): Promise<number> {
   return (await d.conversions.distinct('formatId', { ownerId, sourceId })).length;
