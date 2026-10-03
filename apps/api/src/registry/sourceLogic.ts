@@ -139,6 +139,18 @@ export interface EditMerge {
 }
 
 /**
+ * Whether an editor save changed the conversion's own input checks (as a set, by header). The source lock lets a `flag` check differ
+ * from the source's, so an edit that only adds, drops or changes one would pass it and never reach the source: this says it is still an
+ * edit of the source's checks (the editor says "this changes the source" for it), so the source takes it and the conversions that read
+ * the column follow.
+ */
+export function inputChecksEdited(after: LearnResult | Rules, before: LearnResult | Rules | null): boolean {
+  const key = (v: Validation): string => JSON.stringify(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const keys = (r: LearnResult | Rules | null): string => (r ? sourceOf(r).inputValidations.map(key).sort().join('\n') : '');
+  return keys(after) !== keys(before);
+}
+
+/**
  * The source after a conversion's editor save changed the input side (the analogue of "an edit of the output side is an edit of
  * the format", SPEC 8.12): every column the conversion declares is written to the source (a column the source lacks is added,
  * a renamed one - found through the conversion's OLD rules by id - is renamed, type / padLeft / inputFormats follow the edit,

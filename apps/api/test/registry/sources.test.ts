@@ -161,6 +161,32 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
         expect((await source(narrowFirst.body.source.id)).inputValidations).toEqual([required('ID'), required('Amount'), required('Note')]);
       });
 
+      it("an editor save that changes the conversion's input checks edits them on the source: only the conversions that read the column follow", async () => {
+        const wide = await create(readsThree(), { name: 'Wide', inputHeaders: FILE });
+        const narrow = await create(readsTwo(), { name: 'Narrow', inputHeaders: FILE });
+        const sourceId = wide.body.source.id as string;
+        const range = (column: string) => ({ column, rule: 'range', min: 0, severity: 'flag' }) as const;
+        const unique = (column: string) => ({ column, rule: 'unique', severity: 'flag' }) as const;
+        // a flag check on Note, which the narrow format does not read: the source takes it, the narrow conversion is not touched
+        const onNote = await saveRules(wide.body.conversion.id, edited(await rulesOf(wide.body.conversion.id), (r) => { r.validations.push(unique('note')); }));
+        expect(onNote.status).toBe(200);
+        expect(onNote.body).toMatchObject({ sourceChanged: true, affectedConversions: 1 });
+        expect((await source(sourceId)).inputValidations).toEqual([required('ID'), required('Amount'), required('Note'), unique('Note')]);
+        expect((await detail(narrow.body.conversion.id)).version).toBe(1);
+        expect((await rulesOf(narrow.body.conversion.id)).validations).toEqual([required('id'), required('amount')]);
+        // a flag check on Amount, which both read: the narrow conversion gets it too (it only marks rows)
+        const onAmount = await saveRules(wide.body.conversion.id, edited(await rulesOf(wide.body.conversion.id), (r) => { r.validations.push(range('amount')); }));
+        expect(onAmount.body).toMatchObject({ sourceChanged: true });
+        const doc = await source(sourceId);
+        expect(doc.inputValidations).toEqual([required('ID'), required('Amount'), required('Note'), unique('Note'), range('Amount')]);
+        expect((await rulesOf(narrow.body.conversion.id)).validations).toEqual([required('id'), required('amount'), range('amount')]);
+        expect(checkSourceLock(await rulesOf(narrow.body.conversion.id), doc)).toEqual([]);
+        expect(checkSourceLock(await rulesOf(wide.body.conversion.id), doc)).toEqual([]);
+        // an edit that leaves the checks as they were is still not a source edit
+        const same = await saveRules(narrow.body.conversion.id, edited(await rulesOf(narrow.body.conversion.id), (r) => { r.output.columns[1]!.format = '0.0'; }));
+        expect(same.body.sourceChanged).toBeUndefined();
+      });
+
       it('DECISION: a flag check only one of them has on a shared column is merged into the source; a block check is a mismatch', async () => {
         const first = await create(readsTwo(), { name: 'Plain', inputHeaders: FILE });
         const flagged = edited(readsTwo(), (r) => {
