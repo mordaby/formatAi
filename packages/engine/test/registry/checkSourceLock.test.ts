@@ -1,11 +1,12 @@
 // SPEC 8.15 "Sources": `sourceOf(rules)` extracts the source side of a conversion (input columns, reading options, input checks),
 // and `checkSourceLock(rules, source)` holds every conversion of a source to it: every input column it declares exists in the
-// source with the same header, aliases, type and padLeft (a SUBSET is allowed); its sheet pick, header row, stopAt and input
-// validations equal the source's. Synthetic, domain-neutral rules; the same shape of tests as `checkFormatLock.test.ts`.
+// source with the same header, aliases, type and padLeft (a SUBSET is allowed); its sheet pick, header row and stopAt equal the
+// source's, and its input validations agree with the source's per column (block checks must equal, flag checks may differ).
+// Synthetic, domain-neutral rules; the same shape of tests as `checkFormatLock.test.ts`.
 import { describe, expect, it } from 'vitest';
 import type { LearnResult, SourceStructure } from '@formatai/shared';
 import { checkFormatLock } from '../../src/registry/checkFormatLock';
-import { checkSourceLock } from '../../src/registry/checkSourceLock';
+import { checkSourceLock, compareInputChecks } from '../../src/registry/checkSourceLock';
 import { findSourceColumn, sourceHeaderKey, sourceOf } from '../../src/registry/sourceOf';
 
 function makeRules(over: { input?: Partial<LearnResult['input']>; validations?: LearnResult['validations'] } = {}): LearnResult {
@@ -205,15 +206,15 @@ describe('checkSourceLock', () => {
     expect(checkSourceLock(makeRules(), withStop).map((p) => p.path)).toEqual(['input.stopAt']);
   });
 
-  it('reports different input validations, compares them as a set and by header, and leaves output validations to the format', () => {
-    const check = { column: 'qty', rule: 'range', min: 0, severity: 'flag' } as const;
+  it('compares input validations as a set and by header, and leaves output validations to the format', () => {
+    const check = { column: 'qty', rule: 'range', min: 0, severity: 'block' } as const;
     const withCheck = sourceOf(makeRules({ validations: [check] }));
-    // missing, extra and different
+    // a check that leaves rows out must agree: missing, extra and different
     expect(checkSourceLock(makeRules(), withCheck).map((p) => p.path)).toEqual(['validations']);
     expect(checkSourceLock(makeRules({ validations: [check] }), source).map((p) => p.path)).toEqual(['validations']);
-    expect(checkSourceLock(makeRules({ validations: [{ ...check, min: 5 }] }), withCheck).map((p) => p.path)).toEqual(['validations']);
+    expect(checkSourceLock(makeRules({ validations: [{ ...check, min: 5 }] }), withCheck).map((p) => p.path)).toEqual(['validations', 'validations']);
     // the same checks in another order, another id for the column, and an explicit `on: 'input'`
-    const two = sourceOf(makeRules({ validations: [check, { column: 'sku', rule: 'required', severity: 'block' }] }));
+    const two = sourceOf(makeRules({ validations: [{ ...check, severity: 'flag' }, { column: 'sku', rule: 'required', severity: 'block' }] }));
     const same = makeRules({
       input: { columns: [{ id: 'quantity', header: 'Qty', type: 'integer' }, { id: 'code', header: 'SKU', aliases: ['Item Code'], type: 'idLike', padLeft: 6 }] },
       validations: [
@@ -226,6 +227,67 @@ describe('checkSourceLock', () => {
     const outputOnly = makeRules({ validations: [{ on: 'output', column: 'Code', rule: 'unique', severity: 'flag' }] });
     expect(checkSourceLock(outputOnly, source)).toEqual([]);
     expect(checkFormatLock(outputOnly, { output: sourceFormat(), layout: { sort: [] }, outputValidations: [] }).map((p) => p.path)).toContain('validations');
+  });
+
+  // The bug: two formats learned from one file that read different columns carry different "required" checks (one per column read).
+  it('DECISION: input checks are held per column, on the columns the conversion declares', () => {
+    const required = (column: string) => ({ column, rule: 'required', severity: 'flag' }) as const;
+    const wide = sourceOf(makeRules({ validations: [required('sku'), required('qty'), required('price')] }));
+    // a conversion that reads fewer columns lacks the checks on the ones it doesn't read: no problem
+    const subset = makeRules({
+      input: { columns: [{ id: 'code', header: 'SKU', aliases: ['Item Code'], type: 'idLike', padLeft: 6 }, { id: 'p', header: 'Price', type: 'decimal' }] },
+      validations: [required('code'), required('p')],
+    });
+    expect(checkSourceLock(subset, wide)).toEqual([]);
+    // ...and so does one that has no checks at all
+    expect(checkSourceLock(makeRules({ input: { columns: [{ id: 'q', header: 'Qty', type: 'integer' }] } }), wide)).toEqual([]);
+    // the other way round: the source holds fewer checks than a conversion that reads another column too
+    const narrow = sourceOf(makeRules({ validations: [required('sku')] }));
+    expect(checkSourceLock(makeRules({ validations: [required('sku'), required('qty'), required('price')] }), narrow)).toEqual([]);
+  });
+
+  it('DECISION: a flag check only one side has, on a column both read, is no mismatch; a block check is', () => {
+    const flag = { column: 'qty', rule: 'range', min: 0, severity: 'flag' } as const;
+    const block = { ...flag, severity: 'block' } as const;
+    // flag: only the conversion, only the source, or different bounds on each
+    expect(checkSourceLock(makeRules({ validations: [flag] }), source)).toEqual([]);
+    expect(checkSourceLock(makeRules(), sourceOf(makeRules({ validations: [flag] })))).toEqual([]);
+    expect(checkSourceLock(makeRules({ validations: [{ ...flag, min: 5 }] }), sourceOf(makeRules({ validations: [flag] })))).toEqual([]);
+    // block: it leaves rows out, so it would change the other conversion's output - whichever side has it
+    const onlyConversion = checkSourceLock(makeRules({ validations: [block] }), source);
+    expect(onlyConversion.map((p) => [p.kind, p.path])).toEqual([['sourceMismatch', 'validations']]);
+    expect(onlyConversion[0]!.message).toContain('"Qty"');
+    expect(checkSourceLock(makeRules(), sourceOf(makeRules({ validations: [block] }))).map((p) => p.path)).toEqual(['validations']);
+    expect(checkSourceLock(makeRules({ validations: [{ ...block, min: 5 }] }), sourceOf(makeRules({ validations: [block] }))).map((p) => p.path)).toEqual(['validations', 'validations']);
+    // a flag check against a block one is a difference too: the block one is the mismatch
+    expect(checkSourceLock(makeRules({ validations: [flag] }), sourceOf(makeRules({ validations: [block] }))).map((p) => p.path)).toEqual(['validations']);
+    // a block check on a column the conversion doesn't declare is none of its business
+    const other = makeRules({ input: { columns: [{ id: 's', header: 'SKU', aliases: ['Item Code'], type: 'idLike', padLeft: 6 }] } });
+    expect(checkSourceLock(other, sourceOf(makeRules({ validations: [block] })))).toEqual([]);
+  });
+
+  it('a check on no column of the file (a computed one) is still compared as a whole', () => {
+    const computed = { column: 'total', rule: 'range', min: 0, severity: 'flag' } as const;
+    expect(checkSourceLock(makeRules({ validations: [computed] }), source).map((p) => p.path)).toEqual(['validations']);
+    expect(checkSourceLock(makeRules(), sourceOf(makeRules({ validations: [computed] }))).map((p) => p.path)).toEqual(['validations']);
+    expect(checkSourceLock(makeRules({ validations: [computed] }), sourceOf(makeRules({ validations: [computed] })))).toEqual([]);
+  });
+
+  it('compareInputChecks says what a source gains: flag checks on shared columns it lacks, and every check on a column only the conversion reads', () => {
+    const flag = { column: 'Qty', rule: 'range', min: 0, severity: 'flag' } as const;
+    const onNew = { column: 'Weight', rule: 'required', severity: 'block' } as const;
+    const own: SourceStructure = {
+      inputSignature: { columns: [...source.inputSignature.columns, { header: 'Weight', aliases: [], type: 'decimal', required: false }] },
+      inputReading: source.inputReading,
+      inputValidations: [flag, onNew, { column: 'SKU', rule: 'required', severity: 'block' }],
+    };
+    const there: SourceStructure = { ...source, inputValidations: [{ column: 'SKU', rule: 'required', severity: 'block' }] };
+    expect(compareInputChecks(own, there)).toEqual({ problems: [], additions: [flag, onNew] });
+    // a block check on a shared column is a problem, not an addition
+    const block = { ...flag, severity: 'block' } as const;
+    const r = compareInputChecks({ ...own, inputValidations: [block] }, there);
+    expect(r.additions).toEqual([]);
+    expect(r.problems.map((p) => p.path)).toEqual(['validations', 'validations']); // the conversion's block check, and the source's SKU one
   });
 
   it('never mutates its arguments', () => {
