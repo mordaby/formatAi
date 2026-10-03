@@ -118,6 +118,79 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       expect(s.conversions.map((c: any) => c.formatName)).toEqual(['Catalog', 'Amounts']);
     });
 
+    describe('input checks are the source\'s per column (8.15 "The source lock")', () => {
+      // What the learn step does: a `required` check on every column the format reads that had no empty cell in the example.
+      const required = (column: string) => ({ column, rule: 'required', severity: 'flag' }) as const;
+      const FILE = ['ID', 'Amount', 'Note'];
+      /** Reads ID, Amount and Note out of the file. */
+      const readsThree = (): LearnResult =>
+        edited(sourceOne(), (r) => {
+          r.input.columns.push({ id: 'note', header: 'Note', type: 'text' });
+          r.output.columns = [{ header: 'ID', from: 'id' }, { header: 'Total', from: 'total' }, { header: 'Note', from: 'note' }];
+          r.validations = [required('id'), required('amount'), required('note')];
+        });
+      /** Reads one column fewer out of the same file: no Note, so no check on it. */
+      const readsTwo = (): LearnResult =>
+        edited(sourceOne(), (r) => {
+          r.validations = [required('id'), required('amount')];
+        });
+
+      it('two formats learned from the same file that read different columns share ONE source', async () => {
+        const first = await create(readsThree(), { name: 'Wide', inputHeaders: FILE });
+        const second = await create(readsTwo(), { name: 'Narrow', inputHeaders: FILE });
+        expect(first.status).toBe(201);
+        expect(second.status).toBe(201);
+        expect(second.body.sourceReused).toEqual({ id: first.body.source.id, name: first.body.source.name });
+        expect(second.body.source).toMatchObject({ id: first.body.source.id, formats: 2 });
+        expect(await appDb.sources.countDocuments()).toBe(1);
+        const [s] = await sources();
+        expect(s.conversions.map((c: any) => c.formatName)).toEqual(['Wide', 'Narrow']);
+        // nothing was added to the source (the narrow one lacks only checks on a column it doesn't read), and both honour its lock
+        const doc = await source(first.body.source.id);
+        expect(doc.version).toBe(1);
+        expect(doc.inputValidations).toEqual([required('ID'), required('Amount'), required('Note')]);
+        expect(checkSourceLock(await rulesOf(first.body.conversion.id), doc)).toEqual([]);
+        expect(checkSourceLock(await rulesOf(second.body.conversion.id), doc)).toEqual([]);
+        // ...and the narrow conversion was given no check on a column it does not have
+        expect((await rulesOf(second.body.conversion.id)).validations).toEqual([required('id'), required('amount')]);
+        // the other order works too: the wide one joins the narrow one's source and brings the checks on its extra column
+        await Promise.all([appDb.formats.deleteMany({}), appDb.conversions.deleteMany({}), appDb.sources.deleteMany({})]);
+        const narrowFirst = await create(readsTwo(), { name: 'Narrow', inputHeaders: FILE });
+        const wideSecond = await create(readsThree(), { name: 'Wide', inputHeaders: FILE });
+        expect(wideSecond.body.sourceReused).toEqual({ id: narrowFirst.body.source.id, name: narrowFirst.body.source.name });
+        expect((await source(narrowFirst.body.source.id)).inputValidations).toEqual([required('ID'), required('Amount'), required('Note')]);
+      });
+
+      it('DECISION: a flag check only one of them has on a shared column is merged into the source; a block check is a mismatch', async () => {
+        const first = await create(readsTwo(), { name: 'Plain', inputHeaders: FILE });
+        const flagged = edited(readsTwo(), (r) => {
+          r.output.columns = [{ header: 'ID', from: 'id' }, { header: 'Amount', from: 'amount' }];
+          r.transform.computed = [];
+          r.validations.push({ column: 'amount', rule: 'range', min: 0, severity: 'flag' });
+        });
+        const second = await create(flagged, { name: 'Flagged', inputHeaders: FILE });
+        expect(second.body.sourceReused).toEqual({ id: first.body.source.id, name: first.body.source.name });
+        const doc = await source(first.body.source.id);
+        expect(doc.version).toBe(2);
+        expect(doc.inputValidations).toEqual([required('ID'), required('Amount'), { column: 'Amount', rule: 'range', min: 0, severity: 'flag' }]);
+        // the first conversation is untouched (a flag never changes what it produces) and still fits the source
+        expect((await detail(first.body.conversion.id)).version).toBe(1);
+        expect(checkSourceLock(await rulesOf(first.body.conversion.id), doc)).toEqual([]);
+        expect(checkSourceLock(await rulesOf(second.body.conversion.id), doc)).toEqual([]);
+
+        // a check that leaves rows out would change the other format's output: not the same source
+        const blocking = edited(readsTwo(), (r) => {
+          r.output.columns = [{ header: 'ID', from: 'id' }];
+          r.transform.computed = [];
+          r.validations.push({ column: 'amount', rule: 'range', min: 0, severity: 'block' });
+        });
+        const third = await create(blocking, { name: 'Blocking', inputHeaders: FILE });
+        expect(third.status).toBe(201);
+        expect(third.body.sourceReused).toBeUndefined();
+        expect(await appDb.sources.countDocuments()).toBe(2);
+      });
+    });
+
     it('matches on the example input\'s headers when the client sends them, and on the declared ones otherwise', async () => {
       const { sourceId } = await oneSourceTwoFormats();
       // a conversion that reads only ID out of a file that has ID and Amount: matched thanks to inputHeaders...
