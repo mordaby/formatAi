@@ -356,12 +356,22 @@
 .bfile__name {
   overflow-wrap: anywhere;
 }
-.bfile[data-status='convertedFlags'] {
+.bfile[data-status='convertedFlags'],
+.bfile[data-status='needsAttention'] {
   background: var(--diff-tint);
   color: var(--on-diff-tint);
 }
-.bfile[data-status='convertedFlags'] .muted {
+.bfile[data-status='convertedFlags'] .muted,
+.bfile[data-status='needsAttention'] .muted {
   color: inherit;
+}
+.bfile__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  max-inline-size: 60%;
 }
 .bfile__flags {
   margin-block-start: var(--s-1);
@@ -384,6 +394,13 @@
 }
 
 @media (max-width: 640px) {
+  .bfile[data-status='needsAttention'] {
+    flex-direction: column;
+  }
+  .bfile__actions {
+    max-inline-size: none;
+    justify-content: flex-start;
+  }
   .review__tally {
     margin-inline-start: 0;
     inline-size: 100%;

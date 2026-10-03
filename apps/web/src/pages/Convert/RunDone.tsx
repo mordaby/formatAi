@@ -5,18 +5,23 @@ import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { Button } from '../../ui';
 import { isolate } from './logic';
+import { NewColumns } from './NewColumns';
 import { RunReport } from './RunReport';
-import type { Finished, Target } from './useConvertFlow';
+import type { Finished, NewColumnsNotice, Target } from './useConvertFlow';
 
 export interface RunDoneProps {
   target: Target;
   finished: Finished;
   aliasNotSaved: boolean;
+  /** "New column in this file" (SPEC 8.15), when there is one to mention. */
+  notice: NewColumnsNotice | null;
   onDownload(): void;
   onAnother(): void;
+  onDismissNotice(): void;
+  onAddColumn(format: { conversionId: string; formatId: string }): void;
 }
 
-export function RunDone({ target, finished, aliasNotSaved, onDownload, onAnother }: RunDoneProps) {
+export function RunDone({ target, finished, aliasNotSaved, notice, onDownload, onAnother, onDismissNotice, onAddColumn }: RunDoneProps) {
   const { t } = useI18n();
 
   return (
@@ -38,6 +43,7 @@ export function RunDone({ target, finished, aliasNotSaved, onDownload, onAnother
         <Cell value={finished.fileName} />
       </p>
       {aliasNotSaved ? <p className="muted">{t('conv.map.aliasNotSaved')}</p> : null}
+      {notice ? <NewColumns notice={notice} onDismiss={onDismissNotice} onAdd={onAddColumn} /> : null}
 
       <RunReport rules={target.rules} finished={finished} />
 

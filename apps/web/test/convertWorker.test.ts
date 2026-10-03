@@ -125,6 +125,51 @@ describe('convertWithDecisions', () => {
     const out = await engine().convertWithDecisions({ rules: RULES, file: file('r.csv', 'Item Code,Quantity\n00001,5\n00002,6\n'), mode: 'review', previewRows: 5 });
     expect(out).toMatchObject({ ok: false, error: { code: 'missingRequiredColumns', missing: ['Qty'] } });
   });
+
+  // "Same name, different meaning" (SPEC 21 v12): the share of rows whose used column did not parse, against limits.matching.parseFailShare.
+  it('reports a used column whose values mostly did not parse (counts only), and says nothing below the share', async () => {
+    const qtyCsv = (rows: number, bad: number): string =>
+      `Item Code,Qty,Price\n${Array.from({ length: rows }, (_, i) => `${String(i + 1).padStart(5, '0')},${i < bad ? 'abc' : '5'},1`).join('\n')}\n`;
+    const e = engine();
+    const most = await e.convertWithDecisions({ rules: RULES, file: file('a.csv', qtyCsv(10, 9)), mode: 'review', previewRows: 5 });
+    if (!most.ok) throw new Error('expected a run');
+    expect(most.unlike).toEqual([{ id: 'c_qty', header: 'Qty', type: 'integer', rows: 9 }]);
+    // Nothing but a column and counts: no value of the file is in the answer.
+    expect(JSON.stringify(most.unlike)).not.toContain('abc');
+
+    const some = await e.convertWithDecisions({ rules: RULES, file: file('a.csv', qtyCsv(10, 8)), mode: 'review', previewRows: 5 });
+    if (!some.ok) throw new Error('expected a run');
+    expect(some.unlike).toBeUndefined();
+    // The flagged rows are still there for the row review, exactly as before.
+    expect(some.flags.filter((f) => f.column === 'c_qty')).toHaveLength(8);
+  });
+
+  it('a column the rules do not use is never "different": only used columns are looked at', async () => {
+    const unused = { ...RULES, input: { ...RULES.input, columns: [...RULES.input.columns, { id: 'c_notes', header: 'Notes', type: 'integer' as const }] } };
+    const csv = `Item Code,Qty,Price,Notes\n${Array.from({ length: 10 }, (_, i) => `${String(i + 1).padStart(5, '0')},5,1,words`).join('\n')}\n`;
+    const out = await engine().convertWithDecisions({ rules: unused, file: file('a.csv', csv), mode: 'review', previewRows: 5 });
+    if (!out.ok) throw new Error('expected a run');
+    expect(out.unlike).toBeUndefined();
+  });
+});
+
+describe('columnGaps', () => {
+  it('lists, per conversion, the required columns the headers lack and the used columns that are optional - never one nothing uses', async () => {
+    const unused = { ...RULES, name: 'with-notes', input: { ...RULES.input, columns: [...RULES.input.columns, { id: 'c_notes', header: 'Notes', type: 'text' as const }] } };
+    const out = await engine().columnGaps({ headers: ['Item Code', 'Notes'], rules: [RULES, unused, { ...RULES, input: { ...RULES.input, columns: RULES.input.columns.slice(0, 1) }, output: { ...RULES.output, columns: [{ header: 'Code', from: 'c_code' }] } }] });
+    expect(out).toEqual([
+      [{ id: 'c_qty', header: 'Qty', required: true }, { id: 'c_price', header: 'Price', required: false }],
+      [{ id: 'c_qty', header: 'Qty', required: true }, { id: 'c_price', header: 'Price', required: false }],
+      [],
+    ]);
+    // A file that has them all: nothing is missing, and a declared-but-unused column is not asked for.
+    expect(await engine().columnGaps({ headers: ['Item Code', 'Qty', 'Price'], rules: [unused] })).toEqual([[]]);
+  });
+
+  it('finds a column by alias and by the normalized header, as a run does', async () => {
+    const aliased = { ...RULES, input: { ...RULES.input, columns: RULES.input.columns.map((c) => (c.id === 'c_qty' ? { ...c, aliases: ['Quantity'] } : c)) } };
+    expect(await engine().columnGaps({ headers: [' item CODE', 'Quantity', 'PRICE'], rules: [aliased] })).toEqual([[]]);
+  });
 });
 
 describe('batch (packing)', () => {

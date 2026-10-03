@@ -17,6 +17,8 @@ import type {
 import type {
   BatchArgs,
   BatchOutput,
+  ColumnGapsArgs,
+  ColumnGapsOutput,
   ConvertRunArgs,
   ConvertRunOutput,
   HeadersArgs,
@@ -150,6 +152,8 @@ export interface EngineMethodMap {
   /** Flow C/D (SPEC 5): the file's headers, matching, a run with row decisions, and the batch's zip. */
   readHeaders: { args: HeadersArgs; result: HeadersOutput; progress: never };
   matchFile: { args: MatchFileArgs; result: MatchFileOutput; progress: never };
+  /** Which columns each conversion needs that the file (its headers) does not have (SPEC 8.15, 21 v12). */
+  columnGaps: { args: ColumnGapsArgs; result: ColumnGapsOutput; progress: never };
   convertWithDecisions: { args: ConvertRunArgs; result: ConvertRunOutput; progress: never };
   batch: { args: BatchArgs; result: BatchOutput; progress: never };
 }

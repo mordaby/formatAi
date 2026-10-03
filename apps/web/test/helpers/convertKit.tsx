@@ -13,6 +13,8 @@ import { MeProvider } from '../../src/app/Me';
 import { I18nProvider, type Lang } from '../../src/i18n';
 import { fakeApi } from './renderApp';
 import { ServicesProvider } from '../../src/services';
+import type { ColumnGapsArgs } from '../../src/worker/convertApi';
+import { convertMethods } from '../../src/worker/convertMethods';
 import type { EngineClient } from '../../src/worker/engineClient';
 
 /** Supplier A's price list -> a CSV load file. "Item Code" and "Qty" are required; "Price" is optional. */
@@ -47,7 +49,10 @@ export const RULES: Rules = {
   meta: { source: 'examplePair', status: 'verified' },
 };
 
-export const csvFile = (name: string, body: string): File => new File([body], name, { type: 'text/csv' });
+/** The worker's own `columnGaps` (pure, no file): what the fake engines answer with, so these tests meet the engine's real header mapping. */
+export const realColumnGaps = (args: ColumnGapsArgs) => convertMethods.columnGaps(args);
+
+export const csvFile =(name: string, body: string): File => new File([body], name, { type: 'text/csv' });
 
 /** A price list as Supplier A sends it. Row 3 has a code that is too short and a quantity that isn't a number. */
 export const SUPPLIER_A_CSV = 'Item Code,Qty,Price,Extra\n00001,5,10.5,x\n123,abc,3,y\n00003,7,4,z\n';
@@ -135,6 +140,7 @@ export function fakeConvertApi(opts: { user?: MeUser | null; entries?: Signature
     }),
     recordRun: vi.fn(async () => undefined),
     addAlias: vi.fn(async () => undefined),
+    ignoreHeaders: vi.fn(async () => undefined),
   };
 }
 

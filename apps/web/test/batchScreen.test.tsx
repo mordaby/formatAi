@@ -11,7 +11,7 @@ import type { BatchArgs, ConvertRunOutput, MatchFileOutput } from '../src/worker
 import { createEngineClient, type EngineClient } from '../src/worker/engineClient';
 import { engineMethods } from '../src/worker/engineMethods';
 import { loopbackWorker } from './helpers/loopback';
-import { csvFile, entry, fakeConvertApi, match, PAID, renderConvert, RULES, SUPPLIER_A_CLEAN_CSV, SUPPLIER_A_CSV, sourceEntry } from './helpers/convertKit';
+import { csvFile, entry, fakeConvertApi, match, PAID, realColumnGaps, renderConvert, RULES, SUPPLIER_A_CLEAN_CSV, SUPPLIER_A_CSV, sourceEntry } from './helpers/convertKit';
 
 const { signInOpen, downloaded } = vi.hoisted(() => ({ signInOpen: vi.fn(), downloaded: vi.fn() }));
 vi.mock('../src/app/SignIn', () => ({ useSignIn: () => ({ open: signInOpen, close: vi.fn() }) }));
@@ -80,10 +80,10 @@ describe('a batch, file by file', () => {
       track(() => {
         const name = args.file.name;
         order.push(name);
-        const auto = (id: string, extra = {}): MatchFileOutput => ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id, name: id === 'c1' ? 'Supplier A' : 'Supplier B', ...extra }) } });
+        const auto = (id: string, extra = {}, headers = ['Item Code', 'Qty', 'Price']): MatchFileOutput => ({ ok: true, headers, ranked: [], pick: { kind: 'auto', match: match({ id, name: id === 'c1' ? 'Supplier A' : 'Supplier B', ...extra }) } });
         if (name === 'a.csv' || name === 'b.csv') return auto('c1');
         if (name === 'e.csv') return auto('c2');
-        if (name === 'd.csv') return auto('c1', { score: 0.9, missingRequired: ['Qty'] });
+        if (name === 'd.csv') return auto('c1', { score: 0.9, missingRequired: ['Qty'] }, ['Item Code', 'Price']);
         if (name === 'bad.csv') return { ok: false, reason: 'unreadable' };
         return { ok: true, headers: [], ranked: [], pick: { kind: 'choose', options: [match({ id: 'c1', score: 0.6 }), match({ id: 'c2', score: 0.5 })] } };
       }),
@@ -105,7 +105,7 @@ describe('a batch, file by file', () => {
       }),
     );
     const batch = vi.fn(async (_args: BatchArgs) => ({ zip: new ArrayBuffer(6), summary: new ArrayBuffer(4) }));
-    const engine = { matchFile, convertWithDecisions, batch, terminate: vi.fn() } as unknown as EngineClient;
+    const engine = { matchFile, columnGaps: vi.fn(realColumnGaps), convertWithDecisions, batch, terminate: vi.fn() } as unknown as EngineClient;
     return { engine, matchFile, convertWithDecisions, batch, order, max: () => maxInFlight };
   }
 
@@ -120,14 +120,14 @@ describe('a batch, file by file', () => {
     // One at a time, in the order the files were added.
     expect(order).toEqual(['a.csv', 'b.csv', 'e.csv', 'c.csv', 'd.csv', 'bad.csv']);
     expect(max()).toBe(1);
-    // Only files that matched clearly were converted (c.csv was ambiguous, d.csv lacks a column, bad.csv is unreadable).
+    // Only files that matched clearly were converted (c.csv was ambiguous, bad.csv is unreadable) and had every column their format needs (d.csv lacks one).
     expect(convertWithDecisions.mock.calls.map((c) => (c[0] as { file: { name: string } }).file.name)).toEqual(['a.csv', 'b.csv', 'e.csv']);
 
-    expect(screen.getByTestId('batch-counts').textContent).toBe('2 converted · 1 with flags · 3 did not match');
+    expect(screen.getByTestId('batch-counts').textContent).toBe('2 converted · 1 with flags · 2 did not match · 1 need attention');
 
     // Grouped by format, each file with its status; the ones that didn't match say why.
     const groups = within(results).getAllByTestId(/group-/);
-    expect(groups.map((g) => g.querySelector('h3')?.textContent)).toEqual(['Load file · 2 files', 'ERP load · 1 file', "Didn't match · 3 files"]);
+    expect(groups.map((g) => g.querySelector('h3')?.textContent)).toEqual(['Load file · 2 files', 'ERP load · 1 file', 'Needs attention · 1 file', "Didn't match · 2 files"]);
     const row = (name: string) => within(results).getAllByTestId('batch-file').find((r) => r.textContent?.includes(name))!;
     expect(row('a.csv').getAttribute('data-status')).toBe('converted');
     expect(row('a.csv').textContent).toContain('Converted');
@@ -136,8 +136,10 @@ describe('a batch, file by file', () => {
     expect(row('b.csv').textContent).toContain('2 flagged rows');
     expect(row('c.csv').textContent).toContain("Didn't match");
     expect(row('c.csv').textContent).toContain('More than one source fits');
-    expect(row('d.csv').textContent).toContain('Missing columns:');
-    expect(row('d.csv').textContent).toContain('Qty');
+    // d.csv lacks "Qty", which this format requires: the format needs attention, and says which column (SPEC 21 v12).
+    expect(row('d.csv').getAttribute('data-status')).toBe('needsAttention');
+    expect(row('d.csv').textContent).toContain('Needs attention');
+    expect(row('d.csv').textContent?.replace(/[⁦-⁩]/g, '')).toContain("Load file uses 'Qty', which is not in this file.");
     expect(row('bad.csv').textContent).toContain("couldn't be read");
 
     // The worker packs only what was converted, in a folder per format, plus the summary tables.
@@ -149,14 +151,14 @@ describe('a batch, file by file', () => {
       ['b.csv', 'Load file', 'Supplier A', 'Converted with flags', 10, 9, 2],
       ['e.csv', 'ERP load', 'Supplier B', 'Converted', 10, 9, 0],
       ['c.csv', '', '', "Didn't match", null, null, 0],
-      ['d.csv', '', '', "Didn't match", null, null, 0],
+      ['d.csv', 'Load file', 'Supplier A', 'Needs attention', null, null, 0],
       ['bad.csv', '', '', "Didn't match", null, null, 0],
     ]);
     expect(args.summary.flags.rows).toEqual([
       ['b.csv', 3, 'Qty', 'abc', "This isn't a whole number. We kept it as it is."],
       ['b.csv', 5, 'Qty', 'abc', "This isn't a whole number. We kept it as it is."],
     ]);
-    expect(args.summary.files.rows[4]![7]).toBe('Missing columns: Qty');
+    expect(args.summary.files.rows[4]![7]).toBe("Load file uses 'Qty', which is not in this file. It cannot be made without 'Qty'.");
 
     // The downloads.
     fireEvent.click(screen.getByRole('button', { name: 'Download all (zip)' }));
@@ -240,7 +242,7 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
       };
     });
     const batch = vi.fn(async (_args: BatchArgs) => ({ zip: new ArrayBuffer(6), summary: new ArrayBuffer(4) }));
-    const engine = { matchFile, convertWithDecisions, batch, terminate: vi.fn() } as unknown as EngineClient;
+    const engine = { matchFile, columnGaps: vi.fn(realColumnGaps), convertWithDecisions, batch, terminate: vi.fn() } as unknown as EngineClient;
     const rulesById = { c1: { ...RULES, name: 'rules-c1' }, c2: { ...RULES, name: 'rules-c2' }, c3: { ...RULES, name: 'rules-c3' } };
     return { engine, matchFile, convertWithDecisions, batch, rulesById };
   }
@@ -326,17 +328,21 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
     expect(batch.mock.calls[0]![0].summary.files.rows.map((r) => [r[1], r[3]])).toEqual([['Load file', 'Converted'], ['ERP load', "Didn't match"]]);
   });
 
-  it('a structural change is detected at source level: a file that lacks a required column of the source is not converted into any format', async () => {
+  it('a file that lacks a column every format of its source requires is converted into none of them: each says so under "Needs attention"', async () => {
     const { engine, matchFile, convertWithDecisions, rulesById } = setup();
-    matchFile.mockImplementationOnce(async () => ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: 's1', score: 0.9, missingRequired: ['Qty'] }) } }) as MatchFileOutput);
+    matchFile.mockImplementationOnce(async () => ({ ok: true, headers: ['Item Code', 'Price'], ranked: [], pick: { kind: 'auto', match: match({ id: 's1', score: 0.9, missingRequired: ['Qty'] }) } }) as MatchFileOutput);
     const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
     renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('d.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
     await screen.findByTestId('batch-results');
-    expect(screen.getByTestId('batch-file').textContent).toContain('Missing columns:');
+    // One item per (file, format), each saying which column is missing; nothing was run or reported.
+    const rows = screen.getAllByTestId('batch-file').map((r) => (r.textContent ?? '').replace(/[⁦-⁩]/g, ''));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("Load file uses 'Qty', which is not in this file.");
+    expect(rows[1]).toContain("ERP load uses 'Qty', which is not in this file.");
+    expect(screen.getByTestId('batch-counts').textContent).toBe('0 converted · 0 with flags · 0 did not match · 2 need attention');
     expect(convertWithDecisions).not.toHaveBeenCalled();
-    expect(api.conversion).not.toHaveBeenCalled();
     expect(api.recordRun).not.toHaveBeenCalled();
   });
 
@@ -350,6 +356,117 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
     await screen.findByTestId('batch-results');
     // 4 items, 2 files.
     expect(within(screen.getByTestId('batch-results')).getAllByTestId('batch-file')).toHaveLength(4);
+  });
+});
+
+describe('formats that need attention, file by file (SPEC 21 v12)', () => {
+  /** A format that also reads "Supplier SKU" (optional: it had empty cells in the example) and needs only "Item Code". */
+  const REPORT_RULES = {
+    ...RULES,
+    name: 'rules-report',
+    input: {
+      ...RULES.input,
+      columns: [
+        { id: 'c_code', header: 'Item Code', type: 'idLike' as const, required: true },
+        { id: 'c_sku', header: 'Supplier SKU', type: 'text' as const },
+        { id: 'c_notes', header: 'Notes', type: 'text' as const },
+      ],
+    },
+    output: { ...RULES.output, columns: [{ header: 'Code', from: 'c_code' }, { header: 'SKU', from: 'c_sku' }] },
+    validations: [],
+  };
+  const feeds = sourceEntry({
+    sourceId: 's1',
+    name: 'Supplier A',
+    conversions: [
+      { conversionId: 'c1', formatId: 'F1', formatName: 'Load file' },
+      { conversionId: 'c2', formatId: 'F2', formatName: 'Management report' },
+    ],
+  });
+  const rulesById = { c1: { ...RULES, name: 'rules-c1' }, c2: REPORT_RULES };
+  const plain = (el: Element | null | undefined): string => (el?.textContent ?? '').replace(/[⁦-⁩]/g, '');
+
+  function setup(unlikeFor?: (file: string, rules: string) => boolean) {
+    // a.csv has no "Supplier SKU" (and no "Notes"); b.csv has the lot.
+    const headersOf = (name: string): string[] => (name === 'b.csv' ? ['Item Code', 'Qty', 'Price', 'Supplier SKU', 'Notes'] : ['Item Code', 'Qty', 'Price']);
+    const matchFile = vi.fn(async (args: { file: { name: string } }): Promise<MatchFileOutput> => ({ ok: true, headers: headersOf(args.file.name), ranked: [], pick: { kind: 'auto', match: match({ id: 's1' }) } }));
+    const convertWithDecisions = vi.fn(async (args: { file: { name: string }; rules: { name?: string } }): Promise<ConvertRunOutput> => ({
+      ok: true,
+      written: true,
+      bytes: new ArrayBuffer(8),
+      fileType: 'csv',
+      flags: [],
+      summary: { rowsIn: 10, rowsOut: 10, rowsFiltered: 0, duplicatesRemoved: [], duplicatesFlagged: 0, blockedRows: [] },
+      preview: { name: 'Load', direction: 'ltr', language: 'en', columns: [], rows: [], merges: [] },
+      totalRows: 0,
+      ...(unlikeFor?.(args.file.name, args.rules.name ?? '') ? { unlike: [{ id: 'c_qty', header: 'Qty', type: 'integer' as const, rows: 10 }] } : {}),
+    }));
+    const batch = vi.fn(async (_args: BatchArgs) => ({ zip: new ArrayBuffer(6), summary: new ArrayBuffer(4) }));
+    const engine = { matchFile, columnGaps: vi.fn(realColumnGaps), convertWithDecisions, batch, terminate: vi.fn() } as unknown as EngineClient;
+    return { engine, convertWithDecisions, batch };
+  }
+
+  it('per file and per format: the format that needs a missing column is "needs attention" in the file\'s result and the summary, and the others are converted', async () => {
+    const { engine, convertWithDecisions, batch } = setup();
+    const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
+    renderConvert(<ConvertPage />, { api, engine });
+    await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    const results = await screen.findByTestId('batch-results');
+
+    // a.csv: the load file is made, the report is not (it uses "Supplier SKU"). b.csv: both.
+    expect(convertWithDecisions.mock.calls.map((c) => [(c[0] as { file: { name: string } }).file.name, (c[0] as { rules: { name?: string } }).rules.name])).toEqual([
+      ['a.csv', 'rules-c1'],
+      ['b.csv', 'rules-c1'],
+      ['b.csv', 'rules-report'],
+    ]);
+    expect(screen.getByTestId('batch-counts').textContent).toBe('3 converted · 0 with flags · 0 did not match · 1 need attention');
+    const groups = within(results).getAllByTestId(/group-/);
+    expect(groups.map((g) => g.querySelector('h3')?.textContent)).toEqual(['Load file · 2 files', 'Management report · 1 file', 'Needs attention · 1 file']);
+    const row = within(groups[2]!).getByTestId('batch-file');
+    expect(row.getAttribute('data-status')).toBe('needsAttention');
+    expect(plain(row)).toContain('a.csv');
+    expect(plain(row)).toContain('Needs attention');
+    expect(plain(row)).toContain("Management report uses 'Supplier SKU', which is not in this file.");
+
+    // Only what was converted is packed and reported; the summary has a line for the format that was not made, with the columns.
+    const args = batch.mock.calls[0]![0];
+    expect(args.outputs.map((o) => [o.folder, o.fileName])).toEqual([['Load file', 'a (converted).csv'], ['Load file', 'b (converted).csv'], ['Management report', 'b (converted).csv']]);
+    expect(args.summary.files.rows.map((r) => [r[0], r[1], r[3]])).toEqual([
+      ['a.csv', 'Load file', 'Converted'],
+      ['a.csv', 'Management report', 'Needs attention'],
+      ['b.csv', 'Load file', 'Converted'],
+      ['b.csv', 'Management report', 'Converted'],
+    ]);
+    expect(args.summary.files.rows[1]![7]).toBe("Management report uses 'Supplier SKU', which is not in this file.");
+    expect(api.recordRun.mock.calls.map((c) => c[0])).toEqual(['c1', 'c1', 'c2']);
+  });
+
+  it('a declared column nothing uses may be missing from the file: the format is converted (a.csv has no "Notes")', async () => {
+    const { engine } = setup();
+    const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
+    renderConvert(<ConvertPage />, { api, engine });
+    await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    const results = await screen.findByTestId('batch-results');
+    // Nothing about "Notes" anywhere.
+    expect(plain(results)).not.toContain('Notes');
+  });
+
+  it('"same name, different meaning": a format whose used column did not parse is withheld from the zip with the others converted', async () => {
+    const { engine, batch } = setup((file, rules) => file === 'a.csv' && rules === 'rules-c1');
+    const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
+    renderConvert(<ConvertPage />, { api, engine });
+    await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    const results = await screen.findByTestId('batch-results');
+    expect(screen.getByTestId('batch-counts').textContent).toBe('2 converted · 0 with flags · 0 did not match · 2 need attention');
+    const attention = within(results).getByTestId('group-attention');
+    expect(plain(attention)).toContain("The values in 'Qty' don't look like before (expected a whole number).");
+    expect(plain(attention)).toContain("Management report uses 'Supplier SKU', which is not in this file.");
+    // The withheld file is not in the zip, and nothing is reported for it.
+    expect(batch.mock.calls[0]![0].outputs.map((o) => [o.folder, o.fileName])).toEqual([['Load file', 'b (converted).csv'], ['Management report', 'b (converted).csv']]);
+    expect(api.recordRun.mock.calls.map((c) => c[0])).toEqual(['c1', 'c2']);
   });
 });
 

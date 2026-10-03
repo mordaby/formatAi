@@ -10,7 +10,7 @@ import type { BatchArgs, ConvertRunOutput, MatchFileArgs, MatchFileOutput } from
 import type { EngineClient } from '../src/worker/engineClient';
 import ConvertPage from '../src/pages/Convert';
 import { convertSession } from '../src/pages/Convert/session';
-import { csvFile, entry, fakeConvertApi, match, renderConvert, RULES, sourceEntry, SUPPLIER_A_CSV } from './helpers/convertKit';
+import { csvFile, entry, fakeConvertApi, match, realColumnGaps, renderConvert, RULES, sourceEntry, SUPPLIER_A_CSV } from './helpers/convertKit';
 
 const { signInOpen, downloaded } = vi.hoisted(() => ({ signInOpen: vi.fn(), downloaded: vi.fn() }));
 vi.mock('../src/app/SignIn', () => ({ useSignIn: () => ({ open: signInOpen, close: vi.fn() }) }));
@@ -56,8 +56,9 @@ function fakeEngine(opts: EngineOpts = {}) {
   const matchFile = vi.fn(async (args: MatchFileArgs) => opts.match ?? ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: args.signatures[0]?.id ?? 'c1' }) } } as MatchFileOutput));
   const convertWithDecisions = vi.fn(async (args: { mode: string; rowDecisions?: unknown; rules: Rules }) => (opts.run ? opts.run(args) : written()));
   const batch = vi.fn(async (_args: BatchArgs) => ({ zip: new ArrayBuffer(6), summary: new ArrayBuffer(4) }));
-  const engine = { matchFile, convertWithDecisions, batch, terminate: vi.fn() } as unknown as EngineClient;
-  return { engine, matchFile, convertWithDecisions, batch };
+  const columnGaps = vi.fn(realColumnGaps);
+  const engine = { matchFile, columnGaps, convertWithDecisions, batch, terminate: vi.fn() } as unknown as EngineClient;
+  return { engine, matchFile, columnGaps, convertWithDecisions, batch };
 }
 
 async function drop(name = 'jan.csv', body = SUPPLIER_A_CSV, label = 'Files to convert') {
@@ -146,7 +147,7 @@ describe('matching', () => {
     const { engine, convertWithDecisions } = fakeEngine({
       match: {
         ok: true,
-        headers: ['x'],
+        headers: ['Item Code', 'Qty', 'Price'],
         ranked: [],
         pick: {
           kind: 'choose',
@@ -213,14 +214,14 @@ describe('missing and renamed columns', () => {
   it('missing required columns with nothing to map stop the run and name the exact headers', async () => {
     const api = fakeConvertApi();
     const { engine, convertWithDecisions } = fakeEngine({
-      match: { ok: true, headers: ['Item Code'], ranked: [], pick: { kind: 'auto', match: match({ id: 'c1', score: 0.9, missingRequired: ['Qty', 'Item Code'], extra: [] }) } },
+      match: { ok: true, headers: ['Price'], ranked: [], pick: { kind: 'auto', match: match({ id: 'c1', score: 0.9, missingRequired: ['Item Code', 'Qty'], extra: [] }) } },
     });
     renderConvert(<ConvertPage />, { api, engine });
     await drop();
     const box = await screen.findByTestId('missing-columns');
     expect(box.textContent).toContain('This file is missing columns');
     expect(box.textContent).toContain('needs 2 columns this file does not have');
-    expect(within(screen.getByTestId('missing-list')).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Qty', 'Item Code']);
+    expect(within(screen.getByTestId('missing-list')).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Item Code', 'Qty']);
     expect(box.textContent).toContain('drop the file again');
     expect(convertWithDecisions).not.toHaveBeenCalled();
     expect(api.recordRun).not.toHaveBeenCalled();
@@ -228,7 +229,7 @@ describe('missing and renamed columns', () => {
 
   const renamed = (): MatchFileOutput => ({
     ok: true,
-    headers: ['Item Code', 'Quantity', 'Weird'],
+    headers: ['Item Code', 'Quantity', 'Price', 'Weird'],
     ranked: [],
     pick: {
       kind: 'auto',
@@ -484,7 +485,9 @@ const THREE = sourceEntry({
 });
 const rulesFor = (id: string): Rules => ({ ...RULES, name: 'rules-' + id });
 const rulesById = { c1: rulesFor('c1'), c2: rulesFor('c2'), c3: rulesFor('c3') };
-const autoSource = (over: Partial<Parameters<typeof match>[0]> = {}): MatchFileOutput => ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: 's1', ...over }) } });
+/** The headers of SUPPLIER_A_CSV: a file the three formats can all be made from. */
+const HEADERS = ['Item Code', 'Qty', 'Price', 'Extra'];
+const autoSource = (over: Partial<Parameters<typeof match>[0]> = {}, headers: string[] = HEADERS): MatchFileOutput => ({ ok: true, headers, ranked: [], pick: { kind: 'auto', match: match({ id: 's1', ...over }) } });
 const ranOrder = (calls: readonly unknown[][], mode: string): string[] =>
   calls
     .map((c) => c[0] as { mode: string; rules: Rules })
@@ -572,8 +575,8 @@ describe('a source that feeds SEVERAL formats', () => {
     expect(await screen.findByText('This file feeds 3 formats')).toBeTruthy();
     expect(screen.getByTestId('target-line').textContent).toBe('Matched to ⁨Supplier A⁩.');
     expect(['All formats', 'Load file', 'ERP load', 'Ledger'].map((n) => box(n).checked)).toEqual([true, true, true, true]);
-    // Nothing is fetched or run until the user continues.
-    expect(api.conversion).not.toHaveBeenCalled();
+    // Every format is checked against the file first (its rules are fetched for that), but nothing is run until the user continues.
+    expect(api.conversion.mock.calls.map((c) => c[0])).toEqual(['c1', 'c2', 'c3']);
     expect(convertWithDecisions).not.toHaveBeenCalled();
 
     // One box off: All is no longer fully checked (it shows "partly").
@@ -628,8 +631,8 @@ describe('a source that feeds SEVERAL formats', () => {
       ['rules-c1', { 3: { action: 'skip' } }],
       ['rules-c3', { 3: { action: 'keep' } }],
     ]);
-    // c2 was never fetched or run; a run is recorded once per conversion that ran, counts only.
-    expect(api.conversion.mock.calls.map((c) => c[0])).toEqual(['c1', 'c3']);
+    // c2 was checked (its rules fetched) but never run; the rules are fetched once, and a run is recorded once per conversion that ran, counts only.
+    expect(api.conversion.mock.calls.map((c) => c[0])).toEqual(['c1', 'c2', 'c3']);
     expect(api.recordRun.mock.calls).toEqual([
       ['c1', { rows: 3, flagged: 1 }],
       ['c3', { rows: 3, flagged: 1 }],
@@ -774,7 +777,10 @@ describe('a structural change is detected ONCE per source', () => {
     ],
   });
   const twoRules = { c1: rulesFor('c1'), c2: rulesFor('c2') };
-  const renamedMatch = (): MatchFileOutput => autoSource({ score: 0.9, missingRequired: ['Qty'], extra: ['Weird', 'Quantity'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] });
+  const renamedMatch = (): MatchFileOutput =>
+    autoSource({ score: 0.9, missingRequired: ['Qty'], extra: ['Weird', 'Quantity'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] }, ['Item Code', 'Quantity', 'Price', 'Weird']);
+  /** A file without "Qty" (required by both formats) and nothing that could stand in for it. */
+  const noQty = (): MatchFileOutput => autoSource({ score: 0.9, missingRequired: ['Qty'], extra: [] }, ['Item Code', 'Price']);
   const affected = () => within(screen.getByTestId('affected-formats')).getAllByRole('listitem').map((li) => li.textContent);
 
   it('a renamed column: the step lists EVERY format it affects, and the confirmed mapping is saved once, on the source', async () => {
@@ -824,22 +830,23 @@ describe('a structural change is detected ONCE per source', () => {
 
   it('a missing column nothing can stand in for stops the run and names every affected format', async () => {
     const api = fakeConvertApi({ entries: [two], rulesById: twoRules });
-    const { engine, convertWithDecisions } = fakeEngine({ match: autoSource({ score: 0.9, missingRequired: ['Qty'], extra: [] }) });
+    const { engine, convertWithDecisions } = fakeEngine({ match: noQty() });
     renderConvert(<ConvertPage />, { api, engine });
     await drop();
     const missing = await screen.findByTestId('missing-columns');
     expect(within(screen.getByTestId('missing-list')).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Qty']);
     expect(missing.textContent).toContain('Formats this affects:');
     expect(affected()).toEqual(['Load file', 'ERP load']);
+    // Every format was checked against the file (its rules fetched) and none can be made: nothing ran, nothing was saved.
+    expect(api.conversion.mock.calls.map((c) => c[0])).toEqual(['c1', 'c2']);
     expect(convertWithDecisions).not.toHaveBeenCalled();
-    expect(api.conversion).not.toHaveBeenCalled();
     expect(api.addAlias).not.toHaveBeenCalled();
     expect(api.recordRun).not.toHaveBeenCalled();
   });
 
   it('on ?format= only the formats of the page are listed as affected', async () => {
     const api = fakeConvertApi({ entries: [two], rulesById: twoRules });
-    const { engine } = fakeEngine({ match: autoSource({ score: 0.9, missingRequired: ['Qty'], extra: [] }) });
+    const { engine } = fakeEngine({ match: noQty() });
     renderConvert(<ConvertPage />, { api, engine, route: '/convert?format=F2' });
     await screen.findByTestId('only-format');
     await drop();
@@ -858,7 +865,388 @@ describe('a structural change is detected ONCE per source', () => {
     expect((await screen.findByTestId('missing-list')).textContent).toBe('Qty');
     expect(affected()).toEqual(['Load file', 'ERP load']);
     expect(api.addAlias).not.toHaveBeenCalled();
-    expect(api.conversion).not.toHaveBeenCalled();
+    expect(api.recordRun).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Formats that need attention (SPEC 8.15, 21 v12): what the file lacks is settled per format
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('formats that need attention', () => {
+  /** A format that also reads "Supplier SKU" (optional: it had empty cells in the example) and needs only "Item Code". */
+  const REPORT_RULES: Rules = {
+    ...RULES,
+    name: 'rules-report',
+    input: {
+      ...RULES.input,
+      columns: [
+        { id: 'c_code', header: 'Item Code', type: 'idLike', required: true },
+        { id: 'c_sku', header: 'Supplier SKU', type: 'text' },
+      ],
+    },
+    output: { ...RULES.output, columns: [{ header: 'Code', from: 'c_code' }, { header: 'SKU', from: 'c_sku' }] },
+    validations: [],
+  };
+  /** The same source feeds the load file (needs Item Code, Qty, and uses Price) and the management report (uses Supplier SKU). */
+  const TWO = sourceEntry({
+    sourceId: 's1',
+    name: 'Supplier A',
+    conversions: [
+      { conversionId: 'c1', formatId: 'F1', formatName: 'Load file' },
+      { conversionId: 'c2', formatId: 'F2', formatName: 'Management report' },
+    ],
+  });
+  const two = { c1: rulesFor('c1'), c2: REPORT_RULES };
+  const plain = (el: Element | null | undefined): string => (el?.textContent ?? '').replace(/[⁦-⁩]/g, '');
+  const box = (name: string): HTMLInputElement => screen.getByRole('checkbox', { name }) as HTMLInputElement;
+  const attentionRows = () => within(screen.getByTestId('needs-attention')).getAllByTestId('attention-format');
+  const buttonNames = (row: HTMLElement) => within(row).queryAllByRole('button').map((b) => plain(b));
+  /** "Run anyway (leave 'X' empty)": the column name inside the label is a direction isolate, so the button is found by its words. */
+  const runAnywayButton = (row: HTMLElement) => within(row).getAllByRole('button').find((b) => plain(b).startsWith('Run anyway'))!;
+
+  it('splits the formats: the one that works is made, the one that uses a missing column is listed with the column, and neither blocks the other', async () => {
+    const api = fakeConvertApi({ entries: [TWO], rulesById: two });
+    const { engine, convertWithDecisions } = fakeEngine({ match: autoSource() }); // no "Supplier SKU" in this file
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+
+    expect(await screen.findByText('Some formats need a look first')).toBeTruthy();
+    expect(box('Load file').checked).toBe(true);
+    expect(screen.queryByRole('checkbox', { name: 'Management report' })).toBeNull();
+    const [row] = attentionRows();
+    expect(plain(within(row!).getAllByTestId('attention-text')[0])).toBe("Management report uses 'Supplier SKU', which is not in this file.");
+    // The column is optional (it had empty cells in the example), so the format can still be made: "Run anyway" is offered.
+    expect(buttonNames(row!)).toEqual(['Open in editor', "Run anyway (leave 'Supplier SKU' empty)", 'Skip this time']);
+    expect(convertWithDecisions).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    // Only the working format ran; the other is still on the screen, with what to do.
+    expect(await screen.findByTestId('run-results')).toBeTruthy();
+    expect(ranOrder(convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c1']);
+    expect(api.recordRun.mock.calls.map((c) => c[0])).toEqual(['c1']);
+    expect(screen.getAllByTestId('result-format')).toHaveLength(1);
+    expect(plain(attentionRows()[0])).toContain("Management report uses 'Supplier SKU', which is not in this file.");
+    expect(buttonNames(attentionRows()[0]!)).toEqual(['Open in editor', "Run anyway (leave 'Supplier SKU' empty)"]);
+  });
+
+  it('"Run anyway" before the run makes that format too, leaving the column empty', async () => {
+    const api = fakeConvertApi({ entries: [TWO], rulesById: two });
+    const { engine, convertWithDecisions } = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText('Some formats need a look first');
+    fireEvent.click(runAnywayButton(attentionRows()[0]!));
+    expect(plain(attentionRows()[0])).toContain("Will be made, leaving 'Supplier SKU' empty");
+    // Undo puts the choice back.
+    fireEvent.click(within(attentionRows()[0]!).getByRole('button', { name: 'Undo' }));
+    expect(buttonNames(attentionRows()[0]!)).toHaveLength(3);
+    fireEvent.click(runAnywayButton(attentionRows()[0]!));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Your 2 files are ready')).toBeTruthy();
+    expect(ranOrder(convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c1', 'rules-report']);
+    expect(screen.queryByTestId('needs-attention')).toBeNull();
+  });
+
+  it('"Run anyway" on the results makes the format that was left, with what was made kept', async () => {
+    const api = fakeConvertApi({ entries: [TWO], rulesById: two });
+    const { engine, convertWithDecisions } = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    await screen.findByTestId('run-results');
+    fireEvent.click(runAnywayButton(attentionRows()[0]!));
+    expect(await screen.findByText('Your 2 files are ready')).toBeTruthy();
+    expect(screen.getAllByTestId('result-format')).toHaveLength(2);
+    expect(screen.queryByTestId('needs-attention')).toBeNull();
+    expect(ranOrder(convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c1', 'rules-report']);
+    expect(api.recordRun.mock.calls.map((c) => c[0])).toEqual(['c1', 'c2']);
+  });
+
+  it('"Skip this time" leaves the format out and says so; nothing is changed', async () => {
+    const api = fakeConvertApi({ entries: [TWO], rulesById: two });
+    const { engine, convertWithDecisions } = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText('Some formats need a look first');
+    fireEvent.click(within(attentionRows()[0]!).getByRole('button', { name: 'Skip this time' }));
+    expect(plain(attentionRows()[0])).toContain('Skipped this time');
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByTestId('run-results');
+    expect(ranOrder(convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c1']);
+    // Still listed with why, but no action is offered for a format the user skipped.
+    expect(plain(attentionRows()[0])).toContain('Skipped this time');
+    expect(buttonNames(attentionRows()[0]!)).toEqual([]);
+    expect(api.addAlias).not.toHaveBeenCalled();
+  });
+
+  it('"Open in editor" holds the file and opens that format; coming back checks the file again against the edited format', async () => {
+    const api = fakeConvertApi({ entries: [TWO], rulesById: two });
+    const first = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api, engine: first.engine });
+    await drop();
+    await screen.findByText('Some formats need a look first');
+    fireEvent.click(within(attentionRows()[0]!).getByRole('button', { name: 'Open in editor' }));
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toContain('/formats/F2/sources/c2?'));
+    expect(screen.getByTestId('location').textContent).toContain(`returnTo=${encodeURIComponent('/convert?resume=1')}`);
+    expect(convertSession.peek()).toMatchObject({ conversionId: 'c2', formatId: 'F2', again: true });
+
+    // Back from the editor, where the format no longer reads "Supplier SKU": every format is ready.
+    cleanup();
+    const edited: Rules = { ...REPORT_RULES, input: { ...REPORT_RULES.input, columns: [REPORT_RULES.input.columns[0]!] }, output: { ...REPORT_RULES.output, columns: [{ header: 'Code', from: 'c_code' }] } };
+    const after = fakeConvertApi({ entries: [TWO], rulesById: { c1: rulesFor('c1'), c2: edited } });
+    const second = fakeEngine({ match: autoSource() });
+    renderConvert(<ConvertPage />, { api: after, engine: second.engine, route: '/convert?resume=1' });
+    expect(await screen.findByText('This file feeds 2 formats')).toBeTruthy();
+    expect(second.matchFile).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('needs-attention')).toBeNull();
+    expect(box('Management report').checked).toBe(true);
+    expect(convertSession.peek()).toBeNull();
+  });
+
+  it('a column the rules use but that had empty cells in the example (optional) still needs attention when it is gone: a single-format source offers "Run anyway"', async () => {
+    const api = fakeConvertApi();
+    // "Price" feeds the "Unit price" output but is optional: the file lacks it.
+    const { engine, convertWithDecisions } = fakeEngine({ match: autoSource({ id: 'c1' }, ['Item Code', 'Qty', 'Extra']) });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    expect(await screen.findByText('This file needs a look first')).toBeTruthy();
+    expect(screen.queryByTestId('missing-columns')).toBeNull();
+    expect(plain(attentionRows()[0])).toContain("Load file uses 'Price', which is not in this file.");
+    expect(convertWithDecisions).not.toHaveBeenCalled();
+    fireEvent.click(runAnywayButton(attentionRows()[0]!));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Your file is ready')).toBeTruthy();
+    expect(convertWithDecisions).toHaveBeenCalledTimes(1);
+  });
+
+  it('a declared column nothing uses may be missing: nothing is said and the format runs at once', async () => {
+    const withNotes: Rules = { ...RULES, input: { ...RULES.input, columns: [...RULES.input.columns, { id: 'c_notes', header: 'Notes', type: 'text' }] } };
+    const api = fakeConvertApi({ rules: withNotes });
+    const { engine, convertWithDecisions } = fakeEngine({ match: autoSource({ id: 'c1' }, ['Item Code', 'Qty', 'Price']) });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    expect(await screen.findByText('Your file is ready')).toBeTruthy();
+    expect(screen.queryByTestId('needs-attention')).toBeNull();
+    expect(convertWithDecisions).toHaveBeenCalledTimes(1);
+  });
+
+  it('a missing REQUIRED column has no "Run anyway": the format says it cannot be made without it', async () => {
+    const api = fakeConvertApi({ entries: [TWO], rulesById: two });
+    // Qty is required by the load file; the file has no Qty and nothing that could stand in for it.
+    const { engine } = fakeEngine({ match: autoSource({ score: 0.9, missingRequired: ['Qty'] }, ['Item Code', 'Price', 'Supplier SKU']) });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText('Some formats need a look first');
+    // The report works (it needs Item Code and Supplier SKU); the load file is the one that needs attention.
+    expect(box('Management report').checked).toBe(true);
+    const [row] = attentionRows();
+    expect(plain(row)).toContain("Load file uses 'Qty', which is not in this file.");
+    expect(plain(row)).toContain("It cannot be made without 'Qty'.");
+    expect(buttonNames(row!)).toEqual(['Open in editor', 'Skip this time']);
+  });
+
+  it('a rename answer fixes every format at once: the formats that lacked the renamed column are all ready, and a format needing another missing column still waits', async () => {
+    const api = fakeConvertApi({ entries: [TWO], rulesById: two });
+    const { engine, convertWithDecisions } = fakeEngine({
+      match: autoSource({ score: 0.9, missingRequired: ['Qty'], extra: ['Quantity'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] }, ['Item Code', 'Quantity', 'Price']),
+    });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText('Is a column named differently?');
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    // One alias, saved once on the source; the load file now has everything, the report still lacks "Supplier SKU".
+    expect(await screen.findByText('Some formats need a look first')).toBeTruthy();
+    expect(api.addAlias).toHaveBeenCalledTimes(1);
+    expect(box('Load file').checked).toBe(true);
+    expect(plain(attentionRows()[0])).toContain("Management report uses 'Supplier SKU'");
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByTestId('run-results');
+    const rules = (convertWithDecisions.mock.calls[0]![0] as unknown as { rules: Rules }).rules;
+    expect(rules.input.columns.find((c) => c.id === 'c_qty')?.aliases).toEqual(['Quantity']);
+  });
+
+  it('with no headers read nothing is claimed: every format runs and the engine keeps its own refusal', async () => {
+    const api = fakeConvertApi({ entries: [TWO], rulesById: two });
+    const { engine } = fakeEngine({ match: autoSource({}, []) });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    expect(await screen.findByText('This file feeds 2 formats')).toBeTruthy();
+    expect(screen.queryByTestId('needs-attention')).toBeNull();
+  });
+});
+
+describe('"same name, different meaning": most of a used column\'s values did not parse as before', () => {
+  const unlike = [{ id: 'c_qty', header: 'Qty', type: 'integer' as const, rows: 9 }];
+  const plain = (el: Element | null | undefined): string => (el?.textContent ?? '').replace(/[⁦-⁩]/g, '');
+
+  it('the format is not made: it is listed with the column and the expected type, with "Open in editor" and "Run anyway" - and no review of every row', async () => {
+    const api = fakeConvertApi();
+    const { engine, convertWithDecisions } = fakeEngine({
+      run: (args) => (args.mode === 'review' ? { ...review([flag(3, 'c_qty')], { 3: [] }), unlike } : written()),
+    });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    expect(await screen.findByTestId('run-results')).toBeTruthy();
+    expect(screen.queryByText('Some rows need a look before the file is made')).toBeNull();
+    const row = within(screen.getByTestId('needs-attention')).getByTestId('attention-format');
+    expect(plain(row)).toContain("The values in 'Qty' don't look like before (expected a whole number).");
+    expect(within(row).getAllByRole('button').map((b) => b.textContent)).toEqual(['Open in editor', 'Run anyway']);
+    // Nothing was reported as a finished run: no file was made.
+    expect(api.recordRun).not.toHaveBeenCalled();
+    expect(convertWithDecisions).toHaveBeenCalledTimes(1);
+  });
+
+  it('"Run anyway" goes on to the normal review of the rows, and the values check is not made again', async () => {
+    const api = fakeConvertApi();
+    const { engine, convertWithDecisions } = fakeEngine({
+      run: (args) => (args.mode === 'review' ? { ...review([flag(3, 'c_qty')], { 3: [{ columnId: 'c_qty', header: 'Qty', value: 'abc' }] }), unlike } : written()),
+    });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByTestId('run-results');
+    fireEvent.click(screen.getByRole('button', { name: 'Run anyway' }));
+    expect(await screen.findByText('Some rows need a look before the file is made')).toBeTruthy();
+    expect(convertWithDecisions).toHaveBeenCalledTimes(2);
+    fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'Keep as is' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
+    expect(await screen.findByText('Your file is ready')).toBeTruthy();
+    expect(api.recordRun).toHaveBeenCalledWith('c1', expect.any(Object));
+  });
+
+  it("a share below the threshold is the row review's business, exactly as before", async () => {
+    const api = fakeConvertApi();
+    // The worker reports `unlike` only at or above limits.matching.parseFailShare: here it is silent, and the rows are flagged as ever.
+    const { engine } = fakeEngine({ run: () => review([flag(3, 'c_qty')], { 3: [{ columnId: 'c_qty', header: 'Qty', value: 'abc' }] }) });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    expect(await screen.findByText('Some rows need a look before the file is made')).toBeTruthy();
+    expect(screen.queryByTestId('needs-attention')).toBeNull();
+  });
+
+  it('one format among several: the others are made, and this one waits on the results', async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const { engine, convertWithDecisions } = fakeEngine({
+      match: autoSource(),
+      run: (args) => (args.rules.name === 'rules-c2' ? { ...written(), unlike } : written()),
+    });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Your 2 files are ready')).toBeTruthy();
+    expect(plain(screen.getByTestId('needs-attention'))).toContain("The values in 'Qty' don't look like before (expected a whole number).");
+    expect(ranOrder(convertWithDecisions.mock.calls, 'review')).toEqual(['rules-c1', 'rules-c2', 'rules-c3']);
+    expect(api.recordRun.mock.calls.map((c) => c[0])).toEqual(['c1', 'c3']);
+  });
+});
+
+describe('a new column in the file (SPEC 8.15)', () => {
+  const plain = (el: Element | null | undefined): string => (el?.textContent ?? '').replace(/[⁦-⁩]/g, '');
+  const withExtra = (extra: string[], over: Partial<Parameters<typeof match>[0]> = {}): MatchFileOutput => ({
+    ok: true,
+    headers: ['Item Code', 'Qty', 'Price', ...extra],
+    ranked: [],
+    pick: { kind: 'auto', match: match({ id: 'c1', extra, ...over }) },
+  });
+
+  it('is announced once after the run, quietly: the columns, that no format uses them, and nothing is added for the user', async () => {
+    const api = fakeConvertApi();
+    renderConvert(<ConvertPage />, { api, engine: fakeEngine({ match: withExtra(['Notes']) }).engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    const notice = screen.getByTestId('new-columns');
+    expect(plain(within(notice).getByTestId('new-columns-text'))).toBe("New column in this file: 'Notes'. No format uses it.");
+    expect(within(notice).getAllByRole('button').map((b) => b.textContent)).toEqual(['Add it to a format', 'Dismiss']);
+    // Showing it saves nothing and sends nothing.
+    expect(api.ignoreHeaders).not.toHaveBeenCalled();
+    expect(api.addAlias).not.toHaveBeenCalled();
+  });
+
+  it('several new columns are one notice', async () => {
+    renderConvert(<ConvertPage />, { api: fakeConvertApi(), engine: fakeEngine({ match: withExtra(['Notes', 'Created by']) }).engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    expect(plain(screen.getByTestId('new-columns-text'))).toBe("New columns in this file: 'Notes', 'Created by'. No format uses them.");
+    expect(within(screen.getByTestId('new-columns')).getByRole('button', { name: 'Add them to a format' })).toBeTruthy();
+  });
+
+  it('dismissing it is remembered on the source (names only), and the next file of that source does not show it again', async () => {
+    const api = fakeConvertApi();
+    renderConvert(<ConvertPage />, { api, engine: fakeEngine({ match: withExtra(['Notes', 'Created by']) }).engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    fireEvent.click(within(screen.getByTestId('new-columns')).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByTestId('new-columns')).toBeNull();
+    expect(api.ignoreHeaders).toHaveBeenCalledTimes(1);
+    expect(api.ignoreHeaders).toHaveBeenCalledWith('c1', ['Notes', 'Created by']);
+
+    // The same kind of file next month (same page, no reload): the source already ignores those headers.
+    fireEvent.click(screen.getByRole('button', { name: 'Convert another file' }));
+    await drop('feb.csv');
+    await screen.findByText('Your file is ready');
+    expect(screen.queryByTestId('new-columns')).toBeNull();
+    expect(api.ignoreHeaders).toHaveBeenCalledTimes(1);
+  });
+
+  it('headers the source already ignores (from its example, or dismissed before) are not new; another header still is', async () => {
+    const known = { ...entry({ conversionId: 'c1' }), ignoredHeaders: ['notes', 'Created by'] };
+    renderConvert(<ConvertPage />, { api: fakeConvertApi({ entries: [known] }), engine: fakeEngine({ match: withExtra(['Notes', 'Created by', 'Remark']) }).engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    expect(plain(screen.getByTestId('new-columns-text'))).toBe("New column in this file: 'Remark'. No format uses it.");
+    // Nothing new at all: no notice.
+    cleanup();
+    renderConvert(<ConvertPage />, { api: fakeConvertApi({ entries: [known] }), engine: fakeEngine({ match: withExtra(['NOTES']) }).engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    expect(screen.queryByTestId('new-columns')).toBeNull();
+  });
+
+  it('a column the user just said was a renamed one is not new', async () => {
+    const renamed = withExtra(['Weird', 'Quantity'], { score: 0.9, missingRequired: ['Qty'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] });
+    if (renamed.ok) renamed.headers = ['Item Code', 'Quantity', 'Price', 'Weird'];
+    renderConvert(<ConvertPage />, { api: fakeConvertApi(), engine: fakeEngine({ match: renamed }).engine });
+    await drop();
+    await screen.findByText('Is a column named differently?');
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Your file is ready');
+    expect(plain(screen.getByTestId('new-columns-text'))).toBe("New column in this file: 'Weird'. No format uses it.");
+  });
+
+  it('"Add it to a format" opens the editor of the source\'s only format, with the way back', async () => {
+    renderConvert(<ConvertPage />, { api: fakeConvertApi(), engine: fakeEngine({ match: withExtra(['Notes']) }).engine });
+    await drop();
+    await screen.findByText('Your file is ready');
+    fireEvent.click(within(screen.getByTestId('new-columns')).getByRole('button', { name: 'Add it to a format' }));
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toContain('/formats/F1/sources/c1?'));
+    expect(convertSession.peek()).toMatchObject({ conversionId: 'c1', formatId: 'F1' });
+  });
+
+  it('with several formats it asks which one, and never adds the column by itself', async () => {
+    const api = fakeConvertApi({ entries: [THREE], rulesById });
+    const { engine } = fakeEngine({ match: { ok: true, headers: [...HEADERS, 'Notes'], ranked: [], pick: { kind: 'auto', match: match({ id: 's1', extra: ['Notes'] }) } } });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    await screen.findByText('Your 3 files are ready');
+    const notice = screen.getByTestId('new-columns');
+    fireEvent.click(within(notice).getByRole('button', { name: 'Add it to a format' }));
+    expect(within(notice).getAllByRole('button').map((b) => b.textContent)).toEqual(['Load file', 'ERP load', 'Ledger', 'Dismiss']);
+    expect(screen.getByTestId('location').textContent).toBe('/convert');
+    fireEvent.click(within(notice).getByRole('button', { name: 'ERP load' }));
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toContain('/formats/F2/sources/c2?'));
+    // The formats' rules were not touched: no write of any kind went to the API.
+    expect(api.addAlias).not.toHaveBeenCalled();
+    expect(api.ignoreHeaders).not.toHaveBeenCalled();
+  });
+
+  it('the notice is in Hebrew too, with the names isolated', async () => {
+    renderConvert(<ConvertPage />, { api: fakeConvertApi(), engine: fakeEngine({ match: withExtra(['Notes']) }).engine, lang: 'he' });
+    await drop('ינואר.csv', SUPPLIER_A_CSV, 'קבצים להמרה');
+    await screen.findByText('הקובץ שלכם מוכן');
+    expect(screen.getByTestId('new-columns-text').textContent).toBe("עמודה חדשה בקובץ הזה: '⁨Notes⁩'. אף פורמט לא משתמש בה.");
+    expect(screen.getByRole('button', { name: 'להוסיף אותה לפורמט' })).toBeTruthy();
   });
 });
 

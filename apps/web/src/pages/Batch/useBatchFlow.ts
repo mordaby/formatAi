@@ -7,6 +7,11 @@
 // DECISION (SPEC 8.15): a source that feeds several formats converts the file into ALL of them, with no question asked (a batch
 // has no per-file dialogue). So the list holds one BatchItem per (file, conversion): results stay grouped by format, the zip has
 // a folder per format and the summary workbook a row per (file, format). `fileId` ties the items of one file together.
+//
+// DECISION (SPEC 21 v12): what a file lacks is settled per format, like in the single-file flow: a format whose rules need a column
+// the file does not have (required, or used though optional), or whose used column's values mostly did not parse as before, is not made
+// and its item is "needs attention" with the reason - in the file's result and in the summary - while the file's other formats are
+// converted. A batch asks nothing, so there is no "Run anyway" here: that file can be run on its own on this screen.
 import type { Flag } from '@formatai/engine';
 import type { Rules, SignatureEntry, SourceConversionRef, Tier } from '@formatai/shared';
 import { tiers } from '@formatai/shared';
@@ -19,9 +24,10 @@ import { useI18n, type I18n } from '../../i18n';
 import { useServices } from '../../services';
 import { isAcceptedFile } from '../../ui';
 import type { BatchOutputFile, SummaryTable } from '../../worker/convertApi';
-import { columnLabel, isolate, runCounts, signatureOf } from '../Convert/logic';
+import { attentionLines } from '../Convert/attention';
+import { attentionOfGaps, attentionOfUnlike, columnLabel, isolate, runCounts, signatureOf, type Attention } from '../Convert/logic';
 
-export type BatchStatus = 'queued' | 'running' | 'converted' | 'convertedFlags' | 'noMatch';
+export type BatchStatus = 'queued' | 'running' | 'converted' | 'convertedFlags' | 'noMatch' | 'needsAttention';
 
 /** Why a file didn't match (or couldn't be converted): said in plain words next to the file. */
 export type NoMatchReason =
@@ -30,6 +36,8 @@ export type NoMatchReason =
   | { kind: 'noSource' }
   | { kind: 'unsure' }
   | { kind: 'missing'; columns: string[] }
+  /** SPEC 21 v12: the format was not made because of what this file lacks (or how its values look); the others of the file were. */
+  | { kind: 'attention'; format: string; attention: Attention }
   | { kind: 'rules'; source: string }
   | { kind: 'gone' }
   | { kind: 'failed' };
@@ -113,6 +121,8 @@ export function reasonText(i18n: I18n, reason: NoMatchReason): string {
       return t('batch.reason.unsure');
     case 'missing':
       return t('batch.reason.missing', { columns: reason.columns.map(isolate).join(', ') });
+    case 'attention':
+      return attentionLines(i18n, reason.format, reason.attention).join(' ');
     case 'rules':
       return t('batch.reason.rules', { source: isolate(reason.source) });
     case 'gone':
@@ -189,10 +199,16 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
   const remove = useCallback((id: number) => setItems((list) => list.filter((i) => i.id !== id)), []);
   const clear = useCallback(() => setItems([]), []);
 
-  /** One file's conversion to one format: fetch its rules (once per batch), convert. */
+  /**
+   * One file's conversion to one format: fetch its rules (once per batch), check the format against the file's headers, convert, and
+   * check how the values read. A format that needs attention is not made (SPEC 21 v12); the others of the file still are.
+   */
   const convertTo = useCallback(
-    async (item: BatchItem, source: SignatureEntry, conv: SourceConversionRef, signal: AbortSignal): Promise<ConversionResult> => {
+    async (item: BatchItem, source: SignatureEntry, conv: SourceConversionRef, headers: readonly string[], signal: AbortSignal): Promise<ConversionResult> => {
       const failed = (reason: NoMatchReason): ConversionResult => ({ change: { status: 'noMatch', reason, conversionId: conv.conversionId, formatName: conv.formatName, sourceName: source.name } });
+      const attention = (needs: Attention): ConversionResult => ({
+        change: { status: 'needsAttention', reason: { kind: 'attention', format: conv.formatName, attention: needs }, conversionId: conv.conversionId, formatName: conv.formatName, sourceName: source.name },
+      });
       let rules = rulesCache.current.get(conv.conversionId);
       if (!rules) {
         try {
@@ -203,6 +219,11 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
         }
         rulesCache.current.set(conv.conversionId, rules);
       }
+      // What this format needs that the file does not have: the engine's own header mapping over the headers matching read (no file is
+      // parsed again). Without headers nothing is claimed, and a missing required column is still the engine's refusal below.
+      const [gaps] = headers.length > 0 ? await engine.columnGaps({ headers: [...headers], rules: [rules] }, { signal }) : [[]];
+      const missing = attentionOfGaps(gaps ?? []);
+      if (missing) return attention(missing);
       const out = await engine.convertWithDecisions({ rules, file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, mode: 'write', previewRows: 0 }, { signal });
       if (!out.ok) {
         if (out.error.code === 'missingRequiredColumns') return failed({ kind: 'missing', columns: out.error.missing ?? [] });
@@ -211,6 +232,9 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
         return failed({ kind: 'failed' });
       }
       if (!out.written) return failed({ kind: 'failed' });
+      // "Same name, different meaning": the file is withheld, not written into the zip (counts only: no value is looked at).
+      const unlike = attentionOfUnlike(out.unlike);
+      if (unlike) return attention(unlike);
       return {
         bytes: out.bytes,
         // SPEC 14.1, 15: counts only - never a value, a header or a file name.
@@ -237,16 +261,15 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
       const noMatch = (reason: NoMatchReason): ConversionResult[] => [{ change: { status: 'noMatch', reason } }];
       const matched = await engine.matchFile({ file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, signatures: entries.map(signatureOf) }, { signal });
       if (!matched.ok) return noMatch({ kind: matched.reason });
-      // Only a clear winner is used: never a guess (DECISION 10), and no per-file mapping in a batch. A structural change
-      // (a missing required column) is detected once, at source level (SPEC 8.15): the file didn't match.
+      // Only a clear winner is used: never a guess (DECISION 10), and no per-file mapping in a batch. What the file lacks (a missing
+      // required column, or one that is used) is settled per format below (SPEC 21 v12), not by stopping the whole file.
       if (matched.pick.kind !== 'auto') return noMatch({ kind: matched.pick.options.length === 0 ? 'noSource' : 'unsure' });
       const match = matched.pick.match;
-      if (match.missingRequired.length > 0) return noMatch({ kind: 'missing', columns: match.missingRequired });
       const source = entries.find((e) => e.sourceId === match.id);
       if (!source) return noMatch({ kind: 'gone' });
 
       const results: ConversionResult[] = [];
-      for (const conv of source.conversions) results.push(await convertTo(item, source, conv, signal));
+      for (const conv of source.conversions) results.push(await convertTo(item, source, conv, matched.headers, signal));
       return results;
     },
     [engine, convertTo],
@@ -259,7 +282,8 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
       const converted = finished.filter((i) => i.status === 'converted' || i.status === 'convertedFlags');
       if (converted.length === 0) return null;
 
-      const statusText = (i: BatchItem): string => t(i.status === 'converted' ? 'batch.status.converted' : i.status === 'convertedFlags' ? 'batch.status.convertedFlags' : 'batch.status.noMatch');
+      const statusText = (i: BatchItem): string =>
+        t(i.status === 'converted' ? 'batch.status.converted' : i.status === 'convertedFlags' ? 'batch.status.convertedFlags' : i.status === 'needsAttention' ? 'batch.status.needsAttention' : 'batch.status.noMatch');
       // A file that was made into several formats appears once per format, so its flag rows say which format they belong to
       // (the sheet keeps its five columns: file, row, column, value, message).
       const perFile = new Map<number, number>();

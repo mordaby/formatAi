@@ -91,13 +91,22 @@ function ConvertTool({ tier }: { tier: Tier }) {
   const restrictedName = formatId && sources.status === 'ready' ? sources.entries.flatMap((e) => e.conversions).find((c) => c.formatId === formatId)?.formatName : undefined;
   const target = targetOf(phase);
 
-  const changeRule = (): void => {
-    if (phase.kind !== 'review') return;
-    flow.holdForEditing(phase.target);
+  /** To the rules editor of one conversion, with the way back (the caller has put the file aside). */
+  const openEditor = (format: { formatId: string; conversionId: string }): void => {
     const back = `/convert?resume=1${formatId ? `&format=${encodeURIComponent(formatId)}` : ''}`;
     // The way back is the address of the page as it is now, so the browser's Back button returns here too.
     navigate(back, { replace: true });
-    navigate(editSourceUrl(phase.target.formatId, phase.target.conversionId, back));
+    navigate(editSourceUrl(format.formatId, format.conversionId, back));
+  };
+  const changeRule = (): void => {
+    if (phase.kind !== 'review') return;
+    flow.holdForEditing(phase.target);
+    openEditor(phase.target);
+  };
+  // A format that needs attention, or the new-column notice (SPEC 8.15, 21 v12): the same trip, from the formats step or the results.
+  const editFormat = (format: { formatId: string; conversionId: string }): void => {
+    flow.editFormat(format);
+    openEditor(format);
   };
 
   let body;
@@ -196,7 +205,7 @@ function ConvertTool({ tier }: { tier: Tier }) {
         {phase.kind === 'missing' ? (
           <MissingColumns sourceName={phase.source.name} formats={phase.source.conversions.map((c) => c.formatName)} missing={phase.missing} onAnotherFile={flow.reset} />
         ) : null}
-        {phase.kind === 'formats' ? <ChooseFormats source={phase.source} onContinue={flow.chooseFormats} onCancel={flow.reset} /> : null}
+        {phase.kind === 'formats' ? <ChooseFormats source={phase.source} ready={phase.ready} attention={phase.attention} onContinue={flow.chooseFormats} onEdit={editFormat} onCancel={flow.reset} /> : null}
         {phase.kind === 'review' ? (
           <ReviewRows
             target={phase.target}
@@ -212,18 +221,33 @@ function ConvertTool({ tier }: { tier: Tier }) {
             onCreate={flow.create}
           />
         ) : null}
-        {phase.kind === 'done' ? <RunDone target={phase.target} finished={phase.finished} aliasNotSaved={flow.aliasNotSaved} onDownload={flow.download} onAnother={flow.reset} /> : null}
+        {phase.kind === 'done' ? (
+          <RunDone
+            target={phase.target}
+            finished={phase.finished}
+            aliasNotSaved={flow.aliasNotSaved}
+            notice={phase.notice}
+            onDownload={flow.download}
+            onAnother={flow.reset}
+            onDismissNotice={flow.dismissNewColumns}
+            onAddColumn={editFormat}
+          />
+        ) : null}
         {phase.kind === 'results' ? (
           <RunResults
             sourceName={phase.source.name}
             results={phase.results}
             failed={phase.failed}
             aliasNotSaved={flow.aliasNotSaved}
+            notice={phase.notice}
             packing={flow.packing}
             packError={flow.packError}
             onDownloadOne={flow.downloadOne}
             onDownloadAll={flow.downloadAll}
             onAnother={flow.reset}
+            onEdit={editFormat}
+            onRunAnyway={flow.runAnyway}
+            onDismissNotice={flow.dismissNewColumns}
           />
         ) : null}
         {phase.kind === 'error' ? (
