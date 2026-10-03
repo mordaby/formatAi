@@ -59,6 +59,8 @@ export interface Setup {
   rows?: number;
   partial?: boolean;
   convert?: unknown;
+  /** The worker's run with row decisions (what "Try it on another file" calls); the fake has none unless a test gives one. */
+  convertWithDecisions?: ReturnType<typeof vi.fn>;
   staticProblems?: unknown[];
   /** The worker has no example in memory (or the learn kept none). */
   noExample?: boolean;
@@ -78,7 +80,7 @@ export async function openResult(setup: Setup = {}) {
     async () =>
       learnResult({ rules, exampleId: setup.noExample ? undefined : 'ex1', verification: { verified: true, matched: 3, total: 3, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } }) as LearnOutput,
     undefined,
-    { liveCheck, fullCheck, staticChecks, convert },
+    { liveCheck, fullCheck, staticChecks, convert, ...(setup.convertWithDecisions ? { convertWithDecisions: setup.convertWithDecisions } : {}) },
   );
   const api = setup.api ?? fakeApi();
   const { router } = renderApp({ engine, api, lang: setup.lang ?? 'en', ...(setup.dataRouter ? { dataRouter: true } : {}) });

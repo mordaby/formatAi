@@ -25,6 +25,7 @@ import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './Dee
 import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
 import { applyCompletionNotes, defaultFormatName, getResultSession, sourcePath, type SavedSource } from './session';
+import { TryAnotherFile } from './TryAnotherFile';
 import { useCompletion } from './useCompletion';
 import { useFormatMatch } from './useFormatMatch';
 import { convertAndDownload, useSave } from './useSave';
@@ -410,6 +411,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         banners={banners}
         footer={
           <>
+            <TryAnotherFile getRules={() => kept.store.getState().rules} tier={me.tier} onSignIn={() => signIn.open('save')} />
             {source && (
               <>
                 <Versions conversionId={source.conversionId} refreshKey={saver.savedVersion} onRestored={() => void reload(source)} />

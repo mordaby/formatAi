@@ -22,7 +22,7 @@ import { useServices } from '../../services';
 import type { BatchOutputFile, RowInputCell, SummaryTable } from '../../worker/convertApi';
 import { RpcRemoteError } from '../../worker/rpcClient';
 import { convertErrorText } from './errors';
-import { applyToAll, baseName, columnLabel, flaggedRowCount, reviewRows, runCounts, scopeSources, signatureOf, toRowDecisions, withAliases, type Choices, type ReviewRow, type RowChoice } from './logic';
+import { applyToAll, baseName, columnLabel, flaggedRowCount, reviewRows, runCounts, scopeSources, signatureOf, toRowDecisions, withAliases, withChoice, type Choices, type ReviewRow, type RowChoice } from './logic';
 import { convertSession } from './session';
 
 /** Everything the run needs to know about the conversion it uses (rules included, with any confirmed rename already in). */
@@ -152,7 +152,7 @@ export function toConvertError(e: unknown): ConvertError {
 }
 
 /** What the engine's error means for the user: the phase to show when a single conversion cannot run. */
-function runFailure(error: RunError): FormatFailure {
+export function runFailure(error: RunError): FormatFailure {
   if (error.code === 'missingRequiredColumns') return { kind: 'missing', columns: error.missing ?? [] };
   if (error.code === 'noTable') return { kind: 'noTable' };
   if (error.code === 'sheetNotFound') return { kind: 'sheetNotFound' };
@@ -497,10 +497,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   const setChoice = useCallback((rowNumber: number, choice: RowChoice | null) => {
     setPhase((p) => {
       if (p.kind !== 'review') return p;
-      const choices = { ...p.choices };
-      if (choice === null) delete choices[rowNumber];
-      else choices[rowNumber] = choice;
-      return { ...p, choices };
+      return { ...p, choices: withChoice(p.choices, rowNumber, choice) };
     });
   }, []);
   const keepAll = useCallback(() => setPhase((p) => (p.kind === 'review' ? { ...p, choices: applyToAll(p.rows, 'keep', p.choices) } : p)), []);

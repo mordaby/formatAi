@@ -17,6 +17,15 @@ export const resultEn = {
   'result.unsaved': 'Unsaved changes',
   'result.download': 'Download',
   'result.downloadFailed': "We couldn't prepare the file. Try again.",
+
+  // ----- "Try it on another file" (SPEC 5 A step 7) -----
+  'try.title': 'Try it on another file',
+  'try.lead': 'Runs the rules above, with your edits, on one more file. It stays on your computer and nothing is saved.',
+  'try.drop.label': 'File to try',
+  'try.drop.caption': 'The same kind of file as your example input',
+  'try.signIn': 'Sign in to download the file. Here you see its first {n} rows.',
+  'try.again': 'Run again with the current rules',
+  'try.error.rules': "The rules above have a problem, so they can't run yet. Fix what the check says and run again.",
   'result.badge.verified': 'Verified',
   'result.badge.differences.one': '1 difference',
   'result.badge.differences.other': '{n} differences',
@@ -431,6 +440,15 @@ export const resultHe: Record<keyof typeof resultEn, string> = {
   'result.unsaved': 'שינויים שלא נשמרו',
   'result.download': 'הורדה',
   'result.downloadFailed': 'לא הצלחנו להכין את הקובץ. נסו שוב.',
+
+  // ----- "Try it on another file" (SPEC 5 A step 7) -----
+  'try.title': 'לנסות על קובץ נוסף',
+  'try.lead': 'מריצים את הכללים שלמעלה, כולל השינויים שלכם, על קובץ נוסף. הוא נשאר במחשב שלכם ושום דבר לא נשמר.',
+  'try.drop.label': 'קובץ לניסיון',
+  'try.drop.caption': 'מאותו סוג של קובץ הקלט לדוגמה',
+  'try.signIn': 'התחברו כדי להוריד את הקובץ. כאן מוצגות {n} השורות הראשונות שלו.',
+  'try.again': 'להריץ שוב עם הכללים הנוכחיים',
+  'try.error.rules': 'יש בעיה בכללים שלמעלה, ולכן הם עדיין לא יכולים לרוץ. תקנו את מה שהבדיקה אומרת והריצו שוב.',
   'result.badge.verified': 'מאומת',
   'result.badge.differences.one': 'הבדל אחד',
   'result.badge.differences.other': '{n} הבדלים',

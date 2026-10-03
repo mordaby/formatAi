@@ -69,6 +69,14 @@ export function toRowDecisions(choices: Choices): RowDecisions {
   return out;
 }
 
+/** `choices` with this row's choice set, or taken away (`null`: undo). */
+export function withChoice(choices: Choices, rowNumber: number, choice: RowChoice | null): Choices {
+  const out = { ...choices };
+  if (choice === null) delete out[rowNumber];
+  else out[rowNumber] = choice;
+  return out;
+}
+
 /** The same action for every row (the bulk buttons). A row the user already fixed by hand keeps its fix. */
 export function applyToAll(rows: readonly ReviewRow[], action: 'keep' | 'skip', current: Choices): Choices {
   const out: Choices = {};
