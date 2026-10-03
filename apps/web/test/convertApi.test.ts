@@ -1,5 +1,6 @@
 // The API client of convert and batch (SPEC 5 C/D, 8.15): what it asks for and what it sends. A confirmed rename goes to the
-// SOURCE (one alias that holds for every format the source feeds), and nothing but the two column names rides along.
+// SOURCE (one alias that holds for every format the source feeds), and nothing but the two column names rides along; a dismissed
+// "new column" sends header names only.
 import type { SignatureEntry } from '@formatai/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { createConvertApi } from '../src/api/convert';
@@ -49,5 +50,17 @@ describe('recordRun', () => {
     const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
     expect(url).toBe('https://api.test/api/conversions/c1/runs');
     expect(JSON.parse(init.body as string)).toEqual({ rows: 10, flagged: 2 });
+  });
+});
+
+describe('ignoreHeaders', () => {
+  it('POST /api/sources/:id/ignored-headers with the header names and nothing else', async () => {
+    const { api, fetchMock } = clientWith(() => json({ ignoredHeaders: ['Notes'] }));
+    // Extra fields a caller might pass must not ride along: the body is built field by field.
+    await (api.ignoreHeaders as (id: string, headers: string[], extra?: unknown) => Promise<void>)('s/1', ['Notes', 'Created by'], { values: ['row 5: 12345'] });
+    const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe('https://api.test/api/sources/s%2F1/ignored-headers');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ headers: ['Notes', 'Created by'] });
   });
 });

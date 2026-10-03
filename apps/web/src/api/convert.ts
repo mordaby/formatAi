@@ -4,7 +4,7 @@
 //
 // SPEC 2/15: files never leave the browser. The only bodies sent here are `{ rows, flagged }` (counts) and
 // `{ header, alias }` (a column name the user confirmed). There is no method that takes a file, a value or a file name.
-import type { AddAliasRequest, ConversionDetail, RecordRunRequest, SignatureEntry, SignaturesResponse } from '@formatai/shared';
+import type { AddAliasRequest, ConversionDetail, IgnoreHeadersRequest, RecordRunRequest, SignatureEntry, SignaturesResponse } from '@formatai/shared';
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import { createHttp, type CreateHttpOptions } from './http';
 
@@ -20,6 +20,11 @@ export interface ConvertApi {
    * mapping is saved once, on the SOURCE, and so applies to every format the source feeds.
    */
   addAlias(sourceId: string, request: AddAliasRequest): Promise<void>;
+  /**
+   * POST /api/sources/:id/ignored-headers: the file headers the user dismissed as "new column" (SPEC 8.15). Remembered on the SOURCE so
+   * the notice does not come back every month; header names only.
+   */
+  ignoreHeaders(sourceId: string, headers: readonly string[]): Promise<void>;
 }
 
 export type CreateConvertApiOptions = CreateHttpOptions;
@@ -39,6 +44,11 @@ export function createConvertApi(options: CreateConvertApiOptions = {}): Convert
       // Built here, field by field: the only things sent are two column names the user confirmed.
       const body: AddAliasRequest = { header: req.header, alias: req.alias };
       await request('POST', `/api/sources/${encodeURIComponent(sourceId)}/aliases`, body);
+    },
+    ignoreHeaders: async (sourceId, headers) => {
+      // Built here, field by field: the only thing sent is a list of column names.
+      const body: IgnoreHeadersRequest = { headers: headers.map(String) };
+      await request('POST', `/api/sources/${encodeURIComponent(sourceId)}/ignored-headers`, body);
     },
   };
 }
