@@ -69,7 +69,7 @@ async function matchFile(args: MatchFileArgs): Promise<MatchFileOutput> {
 }
 
 /**
- * What each conversion needs that the file does not have (SPEC 8.15, 21 v12): a required column, or a column the rules use though it is
+ * What each conversion needs that the file does not have (SPEC 8.15, 21 v11 items 4-7): a required column, or a column the rules use though it is
  * optional. From the file's headers as matching read them, with the engine's own header mapping - nothing is parsed again.
  */
 async function columnGaps(args: ColumnGapsArgs): Promise<ColumnGapsOutput> {
@@ -131,7 +131,7 @@ async function convertWithDecisions(args: ConvertRunArgs): Promise<Transfer<Conv
   if (!result.ok) return { ok: false, error: result.error };
 
   const fileType = result.sheet.file?.type ?? 'xlsx';
-  // SPEC 21 v12: a used column whose values mostly failed to parse is "same name, different meaning" - counts only, from the flags.
+  // SPEC 21 v11 items 4-7: a used column whose values mostly failed to parse is "same name, different meaning" - counts only, from the flags.
   const unlike = unlikeColumns(rules, result.flags, result.summary.rowsIn);
   const base = { ok: true as const, flags: result.flags, summary: result.summary, fileType, ...(unlike.length > 0 ? { unlike } : {}) };
 

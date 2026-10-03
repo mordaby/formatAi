@@ -82,7 +82,7 @@ export const convertEn = {
   'conv.formats.continue': 'Continue',
   'conv.formats.none': 'Choose at least one format.',
 
-  // ----- formats that need a look: a column they use is not in the file, or its values are not like before (SPEC 8.15, 21 v12) -----
+  // ----- formats that need a look: a column they use is not in the file, or its values are not like before (SPEC 8.15, 21 v11 items 4-7) -----
   'conv.attention.title': 'Some formats need a look first',
   'conv.attention.title.none': 'This file needs a look first',
   'conv.attention.lead': 'This file is from {source}. Some of its formats can be made from this file and some need a look. Nothing is changed for you: choose what to do about each one.',
@@ -337,7 +337,7 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'conv.formats.continue': 'המשך',
   'conv.formats.none': 'בחרו לפחות פורמט אחד.',
 
-  // ----- formats that need a look: a column they use is not in the file, or its values are not like before (SPEC 8.15, 21 v12) -----
+  // ----- formats that need a look: a column they use is not in the file, or its values are not like before (SPEC 8.15, 21 v11 items 4-7) -----
   'conv.attention.title': 'כמה פורמטים דורשים מבט קודם',
   'conv.attention.title.none': 'הקובץ הזה דורש מבט קודם',
   'conv.attention.lead': 'הקובץ הזה הוא של {source}. אפשר להכין ממנו חלק מהפורמטים, וחלקם דורשים מבט. שום דבר לא משתנה בשבילכם: בחרו מה לעשות עם כל אחד.',

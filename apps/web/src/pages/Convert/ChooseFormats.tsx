@@ -2,7 +2,7 @@
 // them to make - all are pre-checked, with an "All" toggle. Each chosen format is then converted on its own, with its own review
 // of flagged rows before its file is written.
 //
-// When this file cannot be made into some of the formats as it is (a column they use is not in it, SPEC 21 v12), those are listed under
+// When this file cannot be made into some of the formats as it is (a column they use is not in it, SPEC 21 v11 items 4-7), those are listed under
 // "Needs attention" with why, and the user decides each one: open its editor, skip it this time, or - when it can still run - make it
 // anyway. The formats that work are never held back by the others.
 import type { SourceConversionRef, SignatureEntry } from '@formatai/shared';

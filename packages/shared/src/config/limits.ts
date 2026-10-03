@@ -216,7 +216,7 @@ export const limits = {
     /** Minimum header similarity (0..1) for a file column to be offered as a renamed column. */
     minRenamedSimilarity: 0.4,
     /**
-     * "Same name, different meaning" (SPEC 8.15, 21 v12): when at least this share of a used column's values failed to parse as the
+     * "Same name, different meaning" (SPEC 8.15, 21 v11 items 4-7): when at least this share of a used column's values failed to parse as the
      * saved type, the format needs the user's attention before its file is made. DECISION: 0.9 - a column that is nearly all
      * unreadable is almost surely a different thing under the same name, while a smaller share is ordinary dirty data, which the
      * flagged-rows review handles one row at a time. The share is of the run's rows in (the run does not count one column's

@@ -870,7 +870,7 @@ describe('a structural change is detected ONCE per source', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Formats that need attention (SPEC 8.15, 21 v12): what the file lacks is settled per format
+// Formats that need attention (SPEC 8.15, 21 v11 items 4-7): what the file lacks is settled per format
 // ---------------------------------------------------------------------------------------------------------------------
 
 describe('formats that need attention', () => {

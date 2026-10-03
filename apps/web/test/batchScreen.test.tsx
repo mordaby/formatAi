@@ -136,7 +136,7 @@ describe('a batch, file by file', () => {
     expect(row('b.csv').textContent).toContain('2 flagged rows');
     expect(row('c.csv').textContent).toContain("Didn't match");
     expect(row('c.csv').textContent).toContain('More than one source fits');
-    // d.csv lacks "Qty", which this format requires: the format needs attention, and says which column (SPEC 21 v12).
+    // d.csv lacks "Qty", which this format requires: the format needs attention, and says which column (SPEC 21 v11 items 4-7).
     expect(row('d.csv').getAttribute('data-status')).toBe('needsAttention');
     expect(row('d.csv').textContent).toContain('Needs attention');
     expect(row('d.csv').textContent?.replace(/[⁦-⁩]/g, '')).toContain("Load file uses 'Qty', which is not in this file.");
@@ -359,7 +359,7 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
   });
 });
 
-describe('formats that need attention, file by file (SPEC 21 v12)', () => {
+describe('formats that need attention, file by file (SPEC 21 v11 items 4-7)', () => {
   /** A format that also reads "Supplier SKU" (optional: it had empty cells in the example) and needs only "Item Code". */
   const REPORT_RULES = {
     ...RULES,

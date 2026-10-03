@@ -1,4 +1,4 @@
-// The formats that "need attention" (SPEC 8.15, 21 v12): a column a format uses is not in this file, or most of its values are not like
+// The formats that "need attention" (SPEC 8.15, 21 v11 items 4-7): a column a format uses is not in this file, or most of its values are not like
 // before. A list with one row per format - why, in plain words, and what the user can do about it (the actions are the caller's: before
 // a run it is "Open in editor", "Skip this time" and "Run anyway", after one only the first and last). Nothing is changed for them.
 import type { ReactNode } from 'react';

@@ -146,7 +146,7 @@ describe('a confirmed rename is keyed by the source\'s header', () => {
   });
 });
 
-describe('formats that need attention (SPEC 21 v12)', () => {
+describe('formats that need attention (SPEC 21 v11 items 4-7)', () => {
   it('what a file lacks becomes an attention note, with the required columns kept apart (no note when nothing is missing)', () => {
     expect(attentionOfGaps([])).toBeNull();
     expect(attentionOfGaps([{ header: 'Price', required: false }])).toEqual({ kind: 'missing', columns: ['Price'], required: [] });

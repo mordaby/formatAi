@@ -6,7 +6,7 @@
 //
 //   idle -> matching -> (choose a source) -> (mapping)                      the rename step, ONCE per source
 //                                          -> (missing)                     no format can run: the columns it lacks
-//                                          -> (formats)                     several formats, or some need attention (SPEC 21 v12)
+//                                          -> (formats)                     several formats, or some need attention (SPEC 21 v11 items 4-7)
 //                                          -> running -> review -> writing  once per chosen conversion, one after another,
 //                                             running -> done                each with its OWN review before writing
 //   after the last one: done (exactly one file) or results (several, or some not made: a download each, and a zip)
@@ -78,7 +78,7 @@ export interface RunResult {
 
 /**
  * Why one of several conversions made no file (the others went on). `attention` is a format that was not made because this file
- * needs the user's decision first (SPEC 21 v12); `skipped` says the user chose "Skip this time".
+ * needs the user's decision first (SPEC 21 v11 items 4-7); `skipped` says the user chose "Skip this time".
  */
 export type RunFailure = ConvertError | { kind: 'missing'; columns: string[] };
 export type FormatFailure = RunFailure | { kind: 'attention'; attention: Attention; skipped?: boolean };
@@ -153,7 +153,7 @@ export type Phase =
   /** No format can be made from this file: each lacks a column it requires and nothing can stand in. Stop, and say exactly which (and which formats it affects). */
   | { kind: 'missing'; source: SignatureEntry; missing: string[] }
   /**
-   * Which formats of the source to make (all pre-checked): the source feeds several, or some need attention (SPEC 21 v12) - those are
+   * Which formats of the source to make (all pre-checked): the source feeds several, or some need attention (SPEC 21 v11 items 4-7) - those are
    * listed apart, with what to do. `mapping` is any rename already confirmed.
    */
   | { kind: 'formats'; source: SignatureEntry; mapping: Record<string, string>; ready: SourceConversionRef[]; attention: AttentionFormat[]; notice: NewColumnsNotice | null }
@@ -278,7 +278,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   const abortRef = useRef<AbortController | null>(null);
   const fileRef = useRef<File | null>(null);
   const rankedRef = useRef<ConversionMatch[]>([]);
-  /** The file's own headers, as matching read them: what each format is checked against (SPEC 21 v12). */
+  /** The file's own headers, as matching read them: what each format is checked against (SPEC 21 v11 items 4-7). */
   const headersRef = useRef<string[]>([]);
   /** The conversions fetched for this file (rules included), kept for the runs: the formats are checked before they are run. */
   const detailsRef = useRef(new Map<string, ConversionDetail>());
@@ -408,7 +408,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         );
         if (runId !== runRef.current) return 'stale';
         if (!out.ok) return failedHere(runFailure(out.error));
-        // DECISION (SPEC 21 v12, "same name, different meaning"): when most of a used column's values did not parse as the type it was saved
+        // DECISION (SPEC 21 v11 items 4-7, "same name, different meaning"): when most of a used column's values did not parse as the type it was saved
         // with, the format is not made (and no review of every row is shown): it goes under "Needs attention" with "Open in editor" and
         // "Run anyway". A smaller share is ordinary dirty data and is the row review's business, as before. Counts only.
         const unlike = attentionOfUnlike(out.unlike);
@@ -458,7 +458,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   const startJob = drive;
 
   /**
-   * The source is known and the rename step is behind us: every format of it is checked against THIS file (SPEC 8.15, 21 v12) before any
+   * The source is known and the rename step is behind us: every format of it is checked against THIS file (SPEC 8.15, 21 v11 items 4-7) before any
    * runs. A format whose rules need none of the columns the file lacks is ready; one that needs a missing column - required, or used
    * though optional - needs attention, with the columns named. Then: one ready format runs at once; several formats (or some needing
    * attention) ask which to make; and when no format can run at all it is the missing-columns stop.
@@ -527,7 +527,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
    * is missing while the file has columns nothing claimed is first offered as a rename; what is still missing after that is settled
    * PER FORMAT (`settle`).
    *
-   * DECISION (SPEC 21 v12): the rename step stays first and is the source's, not a format's: a source's required columns are those any
+   * DECISION (SPEC 21 v11 items 4-7): the rename step stays first and is the source's, not a format's: a source's required columns are those any
    * of its conversions requires, so the user is asked once, the answer is saved once on the source and holds for every format, and the
    * step can name every format it touches. It no longer stops everything, though: after it (or when nothing can stand in for a missing
    * column) each format is checked on its own, so a format that needs none of the missing columns is made while the ones that do are
@@ -765,7 +765,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     if (!f) return;
     const { conversionId, formatId } = format;
     if (phaseRef.current.kind === 'formats') {
-      // DECISION (SPEC 21 v12): nothing has run yet, so only the file waits; coming back checks it against the edited rules from the
+      // DECISION (SPEC 21 v11 items 4-7): nothing has run yet, so only the file waits; coming back checks it against the edited rules from the
       // start (the format may no longer need the missing column), with every format still to be chosen.
       convertSession.save({ file: f, conversionId, formatId, again: true });
       return;

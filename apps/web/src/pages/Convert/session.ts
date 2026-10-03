@@ -14,7 +14,7 @@ export interface ConvertSession {
    */
   job?: Job;
   /**
-   * The user left from a format that needs attention before anything had run (SPEC 21 v12): the file is checked again from the start,
+   * The user left from a format that needs attention before anything had run (SPEC 21 v11 items 4-7): the file is checked again from the start,
    * against the format as edited, with every format still to be chosen.
    */
   again?: boolean;

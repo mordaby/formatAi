@@ -1,6 +1,6 @@
 // The batch result (SPEC 5 D, 8.15, 16.1 screen 6): grouped by format, a status for every file (converted, converted with flags,
 // needs attention, didn't match, with the reason) - a file whose source feeds several formats appears under each of them - and the two
-// downloads: the zip of every converted file and the summary sheet of flags. A format that needs attention (SPEC 21 v12) is listed apart,
+// downloads: the zip of every converted file and the summary sheet of flags. A format that needs attention (SPEC 21 v11 items 4-7) is listed apart,
 // with why, while the file's other formats are converted.
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
@@ -28,7 +28,7 @@ export function StatusBadge({ status }: { status: BatchStatus }) {
 export interface BatchGroup {
   /** The format's name; `null` for the files that need attention or didn't match. */
   format: string | null;
-  /** The group of formats that need attention (SPEC 21 v12), as opposed to the files that didn't match. */
+  /** The group of formats that need attention (SPEC 21 v11 items 4-7), as opposed to the files that didn't match. */
   attention?: true;
   items: BatchItem[];
 }

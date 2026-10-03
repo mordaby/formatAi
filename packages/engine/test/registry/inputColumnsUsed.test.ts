@@ -1,5 +1,5 @@
 // Which input columns a rules file USES, which of them a new file lacks, and the "same name, different meaning" check
-// (SPEC 8.15, 21 v12). Synthetic, domain-neutral rules; headers, ids and counts only.
+// (SPEC 8.15, 21 v11 items 4-7). Synthetic, domain-neutral rules; headers, ids and counts only.
 import type { Expr, LearnResult } from '@formatai/shared';
 import { limits } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';

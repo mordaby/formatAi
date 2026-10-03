@@ -1,4 +1,4 @@
-// Which input columns a conversion's rules actually USE, and what a new file does to them (SPEC 8.15, 21 v12). A column counts as
+// Which input columns a conversion's rules actually USE, and what a new file does to them (SPEC 8.15, 21 v11 items 4-7). A column counts as
 // `required` only when the example had no empty cell in it, so a column a format reads but that had empty cells in the example
 // is declared optional: when it disappears from a later file the engine still runs and leaves what it feeds empty. The browser
 // uses these pure functions (through the worker) to tell the user BEFORE that happens, per format. None of them changes how a

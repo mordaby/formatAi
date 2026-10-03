@@ -146,7 +146,7 @@ export function baseName(fileName: string): string {
   return (dot > 0 ? stem.slice(0, dot) : stem) || 'output';
 }
 
-// ---------- formats that need the user's attention (SPEC 8.15, 21 v12) ----------
+// ---------- formats that need the user's attention (SPEC 8.15, 21 v11 items 4-7) ----------
 
 /**
  * Why a format cannot simply be made from this file, and what that leaves to the user. Nothing is changed for them: they open the

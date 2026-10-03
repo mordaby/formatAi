@@ -8,7 +8,7 @@
 // has no per-file dialogue). So the list holds one BatchItem per (file, conversion): results stay grouped by format, the zip has
 // a folder per format and the summary workbook a row per (file, format). `fileId` ties the items of one file together.
 //
-// DECISION (SPEC 21 v12): what a file lacks is settled per format, like in the single-file flow: a format whose rules need a column
+// DECISION (SPEC 21 v11 items 4-7): what a file lacks is settled per format, like in the single-file flow: a format whose rules need a column
 // the file does not have (required, or used though optional), or whose used column's values mostly did not parse as before, is not made
 // and its item is "needs attention" with the reason - in the file's result and in the summary - while the file's other formats are
 // converted. A batch asks nothing, so there is no "Run anyway" here: that file can be run on its own on this screen.
@@ -36,7 +36,7 @@ export type NoMatchReason =
   | { kind: 'noSource' }
   | { kind: 'unsure' }
   | { kind: 'missing'; columns: string[] }
-  /** SPEC 21 v12: the format was not made because of what this file lacks (or how its values look); the others of the file were. */
+  /** SPEC 21 v11 items 4-7: the format was not made because of what this file lacks (or how its values look); the others of the file were. */
   | { kind: 'attention'; format: string; attention: Attention }
   | { kind: 'rules'; source: string }
   | { kind: 'gone' }
@@ -201,7 +201,7 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
 
   /**
    * One file's conversion to one format: fetch its rules (once per batch), check the format against the file's headers, convert, and
-   * check how the values read. A format that needs attention is not made (SPEC 21 v12); the others of the file still are.
+   * check how the values read. A format that needs attention is not made (SPEC 21 v11 items 4-7); the others of the file still are.
    */
   const convertTo = useCallback(
     async (item: BatchItem, source: SignatureEntry, conv: SourceConversionRef, headers: readonly string[], signal: AbortSignal): Promise<ConversionResult> => {
@@ -262,7 +262,7 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
       const matched = await engine.matchFile({ file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, signatures: entries.map(signatureOf) }, { signal });
       if (!matched.ok) return noMatch({ kind: matched.reason });
       // Only a clear winner is used: never a guess (DECISION 10), and no per-file mapping in a batch. What the file lacks (a missing
-      // required column, or one that is used) is settled per format below (SPEC 21 v12), not by stopping the whole file.
+      // required column, or one that is used) is settled per format below (SPEC 21 v11 items 4-7), not by stopping the whole file.
       if (matched.pick.kind !== 'auto') return noMatch({ kind: matched.pick.options.length === 0 ? 'noSource' : 'unsure' });
       const match = matched.pick.match;
       const source = entries.find((e) => e.sourceId === match.id);

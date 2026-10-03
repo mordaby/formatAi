@@ -1,4 +1,4 @@
-// What a format that "needs attention" says (SPEC 8.15, 21 v12), in plain words: why it cannot simply be made from this file, and the
+// What a format that "needs attention" says (SPEC 8.15, 21 v11 items 4-7), in plain words: why it cannot simply be made from this file, and the
 // label of the one action that depends on it ("Run anyway (leave 'X' empty)"). Shared by the formats step, the results screen and the
 // batch's result and summary, so a format is described the same way wherever it shows up. Pure: no React.
 import type { I18n } from '../../i18n';

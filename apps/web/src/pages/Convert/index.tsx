@@ -1,6 +1,6 @@
 // The Run screen (SPEC 5 C and D, 8.15, 16.1 screen 6, 21 v11): the saved formats applied to the user's files, one screen for every plan.
 // One file is flow C: we find which saved source it is, run its conversion(s) in the worker (a source that feeds several formats
-// asks which; a format that needs a column the file lacks, or whose values changed meaning, is listed with what to do - SPEC 21 v12),
+// asks which; a format that needs a column the file lacks, or whose values changed meaning, is listed with what to do - SPEC 21 v11 items 4-7),
 // let the user decide about flagged rows BEFORE each file is written (SPEC 21 v5 item 5), then download it (or all of them in a zip). Several files are flow D (`BatchTool`): each is matched on its own, with a zip and a summary at the end. How many
 // files fit comes from the plan (`tiers[tier].filesPerRun`). No LLM call, no upload.
 import { tiers, type Tier } from '@formatai/shared';
@@ -103,7 +103,7 @@ function ConvertTool({ tier }: { tier: Tier }) {
     flow.holdForEditing(phase.target);
     openEditor(phase.target);
   };
-  // A format that needs attention, or the new-column notice (SPEC 8.15, 21 v12): the same trip, from the formats step or the results.
+  // A format that needs attention, or the new-column notice (SPEC 8.15, 21 v11 items 4-7): the same trip, from the formats step or the results.
   const editFormat = (format: { formatId: string; conversionId: string }): void => {
     flow.editFormat(format);
     openEditor(format);

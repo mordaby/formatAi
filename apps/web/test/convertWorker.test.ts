@@ -126,7 +126,7 @@ describe('convertWithDecisions', () => {
     expect(out).toMatchObject({ ok: false, error: { code: 'missingRequiredColumns', missing: ['Qty'] } });
   });
 
-  // "Same name, different meaning" (SPEC 21 v12): the share of rows whose used column did not parse, against limits.matching.parseFailShare.
+  // "Same name, different meaning" (SPEC 21 v11 items 4-7): the share of rows whose used column did not parse, against limits.matching.parseFailShare.
   it('reports a used column whose values mostly did not parse (counts only), and says nothing below the share', async () => {
     const qtyCsv = (rows: number, bad: number): string =>
       `Item Code,Qty,Price\n${Array.from({ length: rows }, (_, i) => `${String(i + 1).padStart(5, '0')},${i < bad ? 'abc' : '5'},1`).join('\n')}\n`;

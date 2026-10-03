@@ -1,5 +1,5 @@
 // The result of a file that fed several formats (SPEC 5 C, 8.15): one line per format (rows in and out, flagged rows, an
-// individual download), the formats that need attention (SPEC 21 v12: why, and "Open in editor" / "Run anyway"), the ones that could
+// individual download), the formats that need attention (SPEC 21 v11 items 4-7: why, and "Open in editor" / "Run anyway"), the ones that could
 // not be made and why, and "Download all (zip)" - a folder per format plus a small summary sheet. Exactly one result and nothing else
 // is not shown here: that is `RunDone`, as before. Nothing here leaves the browser.
 import { Link } from 'react-router-dom';

@@ -44,7 +44,7 @@ export type MatchFileOutput =
     }
   | { ok: false; reason: 'unreadable' | 'noTable' };
 
-// ---------- which columns a conversion needs that a file lacks (SPEC 8.15, 21 v12) ----------
+// ---------- which columns a conversion needs that a file lacks (SPEC 8.15, 21 v11 items 4-7) ----------
 
 /** Headers of a file (as matching read them) and the rules of the conversions it may run: no file, no value, so nothing is parsed again. */
 export interface ColumnGapsArgs {
@@ -88,7 +88,7 @@ interface ConvertRunBase {
   summary: RunSummary;
   fileType: 'xlsx' | 'csv' | 'txt';
   /**
-   * "Same name, different meaning" (SPEC 8.15, 21 v12): the used columns whose values mostly failed to parse as the saved type
+   * "Same name, different meaning" (SPEC 8.15, 21 v11 items 4-7): the used columns whose values mostly failed to parse as the saved type
    * (`limits.matching.parseFailShare`). Counts only; absent when there are none.
    */
   unlike?: UnlikeColumn[];
