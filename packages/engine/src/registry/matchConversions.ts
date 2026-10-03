@@ -163,8 +163,9 @@ function matchOne(fileHeaders: readonly string[], sig: ConversionSignatureInput)
   for (const s of src) if (s >= 0) claimed.add(s);
   const extra = fileHeaders.filter((h, i) => !claimed.has(i) && h.trim() !== '');
   // DECISION: a header the source already knew (it sat in the example next to the columns the rules read, or the user dismissed it as a "new
-  // column") is not a renamed column: "City" beside "Phone" in the example is not a renamed "Phone". It stays in `extra` - the score and
-  // the ranking are unchanged - but is not offered as a rename, neither as a suggestion nor among the others (`unknownExtra`).
+  // column") is not a renamed column: "City" beside "Phone" in the example is not a renamed "Phone". It stays in `extra`, but is not
+  // offered as a rename, neither as a suggestion nor among the others (`unknownExtra`), and it costs no extra-column penalty: the source
+  // knows it, so a file that has it is no less this source's file.
   const known = new Set((sig.ignoredHeaders ?? []).map(knownKey));
   const unknownExtra = extra.filter((h) => !known.has(knownKey(h)));
 
@@ -172,7 +173,7 @@ function matchOne(fileHeaders: readonly string[], sig: ConversionSignatureInput)
   const scoring = requiredIdx.length > 0 ? requiredIdx : sig.columns.map((_, i) => i);
   const found = scoring.filter((i) => src[i]! >= 0).length;
   const base = scoring.length === 0 ? 0 : found / scoring.length;
-  const penalty = Math.min(extra.length * limits.matching.extraColumnPenalty, limits.matching.maxExtraPenalty);
+  const penalty = Math.min(unknownExtra.length * limits.matching.extraColumnPenalty, limits.matching.maxExtraPenalty);
 
   const missing = requiredIdx.filter((i) => src[i]! < 0).map((i) => sig.columns[i]!);
   return {

@@ -177,11 +177,12 @@ describe('matchConversions: renamed columns', () => {
     expect(m!.unknownExtra).toEqual(['Mobile']);
   });
 
-  it('does not change the score: an ignored header is still an extra column for it', () => {
+  it('costs no extra-column penalty: the source knows an ignored header, though it is still an extra column', () => {
     const plain: ConversionSignatureInput = { id: 's', name: 's', columns: [c('Name'), c('Phone')] };
     const [without] = matchConversions(['Name', 'Phone', 'City'], [plain]);
     const [withIgnored] = matchConversions(['Name', 'Phone', 'City'], [{ ...plain, ignoredHeaders: ['City'] }]);
-    expect(withIgnored!.score).toBe(without!.score);
+    expect(without!.score).toBeLessThan(1);
+    expect(withIgnored!.score).toBe(1);
     expect(withIgnored!.extra).toEqual(['City']);
     expect(withIgnored!.unknownExtra).toEqual([]);
   });
