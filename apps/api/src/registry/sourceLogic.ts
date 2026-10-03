@@ -204,8 +204,8 @@ export function mergeFromEdit(source: SourceStructure, after: LearnResult | Rule
     columns[at] = next;
   });
 
-  // The checks of the source on columns this conversion doesn't declare stay (renamed with their column, if another edit renamed it);
-  // the conversion's own, named as the source now names the columns, take the place of the rest.
+  // The checks of the source on columns this conversion doesn't declare stay; the conversion's own, named as the source now names
+  // the columns, take the place of the rest.
   const sourceHeaders = new Set(source.inputSignature.columns.map((c) => c.header));
   const kept = source.inputValidations.filter((v) => sourceHeaders.has(v.column) && !declared.has(v.column));
   const mine = own.inputValidations.map((v) => ({ ...v, column: finalHeader.get(v.column) ?? v.column }) as Validation);

@@ -271,6 +271,9 @@ describe('checkSourceLock', () => {
     expect(checkSourceLock(makeRules({ validations: [computed] }), source).map((p) => p.path)).toEqual(['validations']);
     expect(checkSourceLock(makeRules(), sourceOf(makeRules({ validations: [computed] }))).map((p) => p.path)).toEqual(['validations']);
     expect(checkSourceLock(makeRules({ validations: [computed] }), sourceOf(makeRules({ validations: [computed] })))).toEqual([]);
+    // a check on a column of either side is tied to it: a column the source lacks is reported once, not again as a loose check
+    const noQty: SourceStructure = { ...source, inputSignature: { columns: source.inputSignature.columns.filter((c) => c.header !== 'Qty') }, inputValidations: [{ column: 'Qty', rule: 'required', severity: 'flag' }] };
+    expect(checkSourceLock(makeRules({ validations: [{ column: 'qty', rule: 'required', severity: 'flag' }] }), noQty).map((p) => p.message)).toEqual(['column "Qty" is not in the source']);
   });
 
   it('compareInputChecks says what a source gains: flag checks on shared columns it lacks, and every check on a column only the conversion reads', () => {

@@ -77,8 +77,8 @@ export interface InputCheckComparison {
  *  - on a column BOTH have, a check only one side has is a mismatch when it is `block` (it leaves rows out, so it would change the
  *    other conversion's output) and fine when it is `flag` (it only marks rows, never changes an output): a source takes the union
  *    (`additions`), the way `required` accumulates;
- *  - a check on no column of the file (a computed column's, kept by id as written, see `sourceOf`) is tied to no source column, so
- *    those keep the whole-set comparison.
+ *  - a check on no column of either side (a computed column's, kept by id as written, see `sourceOf`) is tied to no column of the
+ *    file, so those keep the whole-set comparison.
  */
 export function compareInputChecks(own: SourceStructure, source: SourceStructure): InputCheckComparison {
   const ownColumns = new Set(own.inputSignature.columns.map((c) => c.header));
@@ -103,8 +103,9 @@ export function compareInputChecks(own: SourceStructure, source: SourceStructure
     if (v.severity === 'block' && !ownKeys.has(validationKey(v))) mismatch(`the source's "${v.rule}" check on "${v.column}" leaves rows out, and the conversion does not have it`);
   }
 
-  const a = own.inputValidations.filter((v) => !ownColumns.has(v.column)).map(validationKey).sort();
-  const b = source.inputValidations.filter((v) => !sourceColumns.has(v.column)).map(validationKey).sort();
+  const loose = (v: Validation): boolean => !ownColumns.has(v.column) && !sourceColumns.has(v.column);
+  const a = own.inputValidations.filter(loose).map(validationKey).sort();
+  const b = source.inputValidations.filter(loose).map(validationKey).sort();
   if (JSON.stringify(a) !== JSON.stringify(b)) mismatch("input validations that are on no column of the file must equal the source's");
   return { problems, additions: [...additions.values()] };
 }
