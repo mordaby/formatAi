@@ -14,8 +14,8 @@ import type { ObjectId } from 'mongodb';
 import type { AppDb } from '../db.js';
 import type { SourceDoc } from '../models.js';
 import { nameKey, type SourceChoiceFields } from './bodies.js';
-import { applySource, mergeForReuse, pickReusableSource, structureOfDoc } from './sourceLogic.js';
-import { freeSourceName, isDuplicateKey, newSourceDoc, propagateSource, syncRequired, writeSourceVersion } from './sourceStore.js';
+import { applySource, mergeForReuse, pickReusableSource, structureOfDoc, unusedExampleHeaders } from './sourceLogic.js';
+import { addIgnoredHeaders, freeSourceName, isDuplicateKey, newSourceDoc, propagateSource, syncRequired, writeSourceVersion } from './sourceStore.js';
 
 export type SourcePlan =
   | { kind: 'new'; name: string; structure: SourceStructure }
@@ -141,13 +141,21 @@ export async function commitSource(
   return { ok: true, source: { id: current._id!, name: current.name, reused: true, created: false } };
 }
 
-/** After the conversion is stored: bring every conversion of a reused source up to its aliases, and derive `required`. */
-export async function settleSource(d: AppDb, ownerId: ObjectId, sourceId: ObjectId, plan: SourcePlan, now: Date): Promise<void> {
+/**
+ * After the conversion is stored: bring every conversion of a reused source up to its aliases, derive `required`, and remember the
+ * example input's columns that nothing reads (`exampleHeaders`: names only) as headers to ignore - what the source was learned from is
+ * not "new" in the first real file (SPEC 8.15).
+ */
+export async function settleSource(d: AppDb, ownerId: ObjectId, sourceId: ObjectId, plan: SourcePlan, now: Date, exampleHeaders: readonly string[] = []): Promise<void> {
   if (plan.kind === 'reuse' && plan.changed) {
     const doc = await d.sources.findOne({ _id: sourceId, ownerId });
     if (doc) await propagateSource(d, ownerId, sourceId, structureOfDoc(doc), new Map(), now, { aliasesOnly: true });
   }
   await syncRequired(d, ownerId, sourceId);
+  if (exampleHeaders.length > 0) {
+    const doc = await d.sources.findOne({ _id: sourceId, ownerId }, { projection: { inputSignature: 1 } });
+    if (doc) await addIgnoredHeaders(d, ownerId, sourceId, unusedExampleHeaders(doc.inputSignature, exampleHeaders));
+  }
 }
 
 /** The source lock as an API refusal, or null when `rules` honours it. */

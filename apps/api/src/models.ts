@@ -139,6 +139,14 @@ export interface SourceDoc {
   inputSignature: SourceInputSignature;
   inputReading: SourceInputReading;
   inputValidations: Validation[];
+  /**
+   * Header names of this kind of file that need no "new column" notice (SPEC 8.15): the example's columns no rule reads (remembered when
+   * the source is saved) and the ones the user dismissed. Structure only - names, never a value. Not part of the structure that is
+   * versioned and written to conversions: it is about files, not about how a format reads one. Absent until there is one.
+   * DECISION: a conversion's `input.columns` lists only the columns a rule reads, so "the columns of the file the source was learned
+   * from" is held here, as the headers of the example that nothing reads (the save already sends them as `inputHeaders`).
+   */
+  ignoredHeaders?: string[];
   /** Starts at 1; every edit of the structure (SPEC 8.15 "Editing a source") makes the next one. */
   version: number;
   versions: SourceVersionDoc[];

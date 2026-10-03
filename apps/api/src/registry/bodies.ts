@@ -157,6 +157,23 @@ export function parseRun(body: Record<string, unknown>): { rows: number; flagged
   return rows === null || flagged === null ? null : { rows, flagged };
 }
 
+/**
+ * POST /api/sources/:id/ignored-headers: the headers to ignore (SPEC 8.15). A header that is empty or longer than an alias may be is left out
+ * rather than failing the request (the notice it came from must be dismissable); anything that is not a list of strings, or has nothing
+ * left, is not this route's body.
+ */
+export function parseIgnoredHeaders(body: Record<string, unknown>): string[] | null {
+  const headers = body.headers;
+  if (!Array.isArray(headers) || headers.length === 0 || headers.length > limits.registry.maxInputHeaders) return null;
+  const out: string[] = [];
+  for (const h of headers) {
+    if (typeof h !== 'string') return null;
+    const header = h.trim();
+    if (header.length > 0 && header.length <= limits.registry.maxAliasChars) out.push(header);
+  }
+  return out.length > 0 ? out : null;
+}
+
 export function parseAlias(body: Record<string, unknown>): { header: string; alias: string } | null {
   const header = body.header;
   if (typeof header !== 'string' || header.length === 0 || header.length > limits.registry.maxAliasChars) return null;

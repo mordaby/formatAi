@@ -297,3 +297,33 @@ export function withDerivedRequired(
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Headers a source needs no "new column" notice for (SPEC 8.15)
+// ---------------------------------------------------------------------------
+
+/**
+ * The headers of `add` a source does not ignore yet, in order: trimmed, never empty, one per normalized header (`sourceHeaderKey`,
+ * the way the engine compares a file's headers), and not one `existing` already holds. Names only.
+ */
+export function newIgnoredHeaders(existing: readonly string[], add: readonly string[]): string[] {
+  const seen = new Set(existing.map(sourceHeaderKey));
+  const out: string[] = [];
+  for (const raw of add) {
+    const header = raw.trim();
+    const key = sourceHeaderKey(header);
+    if (key === '' || seen.has(key)) continue;
+    seen.add(key);
+    out.push(header);
+  }
+  return out;
+}
+
+/**
+ * The headers of the EXAMPLE input that this kind of file already has no use for (SPEC 8.15 "Saving"): the ones no column of the
+ * source's signature (header or alias, found the way the engine reads a file) stands for. Remembered when a source is saved, so the
+ * columns the example always had are not announced as new on the first real file.
+ */
+export function unusedExampleHeaders(source: Pick<SourceStructure['inputSignature'], 'columns'>, exampleHeaders: readonly string[]): string[] {
+  return exampleHeaders.filter((h) => h.trim() !== '' && findSourceColumn(source.columns, h) < 0);
+}

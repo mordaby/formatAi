@@ -210,7 +210,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       await refund();
       throw err;
     }
-    await settleSource(d, caller.ownerId, source.id, planned.plan, now);
+    await settleSource(d, caller.ownerId, source.id, planned.plan, now, choice.inputHeaders);
 
     const response: CreateFormatResponse = {
       format: formatSummary(formatDoc, aggregateSources([conversionDoc])),
@@ -367,7 +367,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       if (source.created) await d.sources.deleteOne({ _id: source.id, ownerId: caller.ownerId }).catch(() => undefined);
       throw err;
     }
-    await settleSource(d, caller.ownerId, source.id, planned.plan, now);
+    await settleSource(d, caller.ownerId, source.id, planned.plan, now, choice.inputHeaders);
 
     const response: AttachSourceResponse = {
       conversion: conversionSummary(doc, sourceName),

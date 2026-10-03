@@ -6,7 +6,7 @@ import { ObjectId } from 'mongodb';
 import { describe, expect, it } from 'vitest';
 import type { SourceDoc } from '../../src/models.js';
 import { checkRulesFile, withMeta } from '../../src/registry/rules.js';
-import { applySource, mergeForReuse, mergeFromEdit, pickReusableSource, withDerivedRequired, withSourceAliases } from '../../src/registry/sourceLogic.js';
+import { applySource, mergeForReuse, mergeFromEdit, newIgnoredHeaders, pickReusableSource, unusedExampleHeaders, withDerivedRequired, withSourceAliases } from '../../src/registry/sourceLogic.js';
 import { edited, sourceOne, sourceTwo } from './helpers.js';
 
 function asRules(learn: LearnResult): Rules {
@@ -246,5 +246,19 @@ describe('pickReusableSource (the same matching and threshold as flow C)', () =>
     const big = sourceDoc('Big', wide); // 10 required + Amount
     const headers = wide.input.columns.map((c) => c.header).filter((h) => h !== 'C8'); // 1 of 10 required missing -> 0.9
     expect(pickReusableSource([big], headers)).toBeNull();
+  });
+});
+
+describe('headers a source needs no "new column" notice for', () => {
+  it('newIgnoredHeaders: trimmed, never empty, one per normalized header, and none the source already ignores', () => {
+    expect(newIgnoredHeaders([], ['  Notes ', 'notes', '', '   ', 'Created by'])).toEqual(['Notes', 'Created by']);
+    expect(newIgnoredHeaders(['Notes'], ['NOTES', 'Remark', 'remark'])).toEqual(['Remark']);
+    expect(newIgnoredHeaders(['Notes'], [])).toEqual([]);
+  });
+
+  it("unusedExampleHeaders: the example's columns no source column stands for (header, alias or normalized), blanks left out", () => {
+    const columns = sourceOf(edited(one(), (r) => { r.input.columns[0]!.aliases = ['Identifier']; })).inputSignature.columns;
+    expect(unusedExampleHeaders({ columns }, ['Identifier', 'id ', 'Amount', 'Notes', '', 'Created by'])).toEqual(['Notes', 'Created by']);
+    expect(unusedExampleHeaders({ columns }, [])).toEqual([]);
   });
 });
