@@ -336,7 +336,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           onSignIn={() => setPopupOpen(true)}
           onDownload={() => {
             const file = session.input;
-            if (!me.user) signIn.open('save'); // (a visitor keeps the preview; the file itself is for signed-in users)
+            if (!me.user) signIn.open('download'); // (a visitor keeps the preview; the file itself is for signed-in users)
             else if (file) downloadFile(file, kept.store.getState().rules);
           }}
           downloading={download === 'busy'}
@@ -406,12 +406,12 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
             : t(partial ? (incomplete ? 'partial.note' : 'flow.path.local') : completed || result.path !== 'local' ? 'flow.path.llm' : 'flow.path.local')
         }
         previewLimit={tierLimits.previewRows}
-        onSignIn={() => signIn.open('save')}
+        onSignIn={() => signIn.open('download')}
         actions={actions}
         banners={banners}
         footer={
           <>
-            <TryAnotherFile getRules={() => kept.store.getState().rules} tier={me.tier} onSignIn={() => signIn.open('save')} />
+            <TryAnotherFile getRules={() => kept.store.getState().rules} tier={me.tier} onSignIn={() => signIn.open('download')} />
             {source && (
               <>
                 <Versions conversionId={source.conversionId} refreshKey={saver.savedVersion} onRestored={() => void reload(source)} />

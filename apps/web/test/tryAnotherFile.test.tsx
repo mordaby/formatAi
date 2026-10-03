@@ -168,7 +168,8 @@ describe('the download', () => {
     await panel().findByTestId('run-summary');
     expect(panel().getByText(`Sign in to download the file. Here you see its first ${tiers.anonymous.previewRows} rows.`)).toBeTruthy();
     fireEvent.click(panel().getByRole('button', { name: 'Download the file' }));
-    expect(await screen.findByRole('dialog', { name: 'Sign in' })).toBeTruthy();
+    const dialog = await screen.findByRole('dialog', { name: 'Sign in' });
+    expect(dialog.textContent).toContain('Sign in free to download the full file.');
     expect(downloaded).not.toHaveBeenCalled();
   });
 });

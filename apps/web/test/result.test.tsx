@@ -261,7 +261,7 @@ describe('the free tier', () => {
     const more = screen.getByRole('button', { name: 'Sign in to see and download all 45 rows' });
     fireEvent.click(more);
     const dialog = await screen.findByRole('dialog', { name: 'Sign in' });
-    expect(dialog.textContent).toContain("Sign in to save this format and reuse it on next month's file.");
+    expect(dialog.textContent).toContain('Sign in free to download the full file.');
     expect(await within(dialog).findByText('Continue with Google')).toBeTruthy();
     expect(within(dialog).getByText('Continue with Microsoft')).toBeTruthy();
   });

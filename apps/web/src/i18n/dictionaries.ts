@@ -94,6 +94,7 @@ export const en = {
   // SPEC 5 E: the sign-in wall
   'signIn.title': 'Sign in',
   'signIn.save': "Sign in to save this format and reuse it on next month's file.",
+  'signIn.download': 'Sign in free to download the full file.',
   'signIn.keepGoing': 'Sign in to keep going.',
   'signIn.kept': 'What you have learned survives signing in, so nothing has to be redone.',
   'signIn.google': 'Continue with Google',
@@ -265,6 +266,7 @@ export const he: Record<MessageKey, string> = {
 
   'signIn.title': 'התחברות',
   'signIn.save': 'התחברו כדי לשמור את הפורמט הזה ולהשתמש בו בקובץ של החודש הבא.',
+  'signIn.download': 'התחברו בחינם כדי להוריד את הקובץ המלא.',
   'signIn.keepGoing': 'התחברו כדי להמשיך.',
   'signIn.kept': 'מה שכבר נלמד נשמר גם אחרי ההתחברות, כך שלא צריך לעשות שוב כלום.',
   'signIn.google': 'המשך עם Google',
