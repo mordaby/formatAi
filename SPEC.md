@@ -64,7 +64,7 @@ How it works:
 - A rules map with an editor, where users fix or add rules and see a live count of matching rows.
 - A preview with a diff against the example, and flagged rows.
 - Google and Microsoft sign-in.
-- Saved formats and sources, re-running, and batch conversion for paid accounts (mixed sources allowed).
+- Saved formats and sources, re-running, and batch conversion (mixed sources allowed; the files per run depend on the tier, 11).
 - Tier limits.
 - Usage events and an admin dashboard.
 - A business page with a lead form, plus privacy and terms pages, all in Hebrew and English.
@@ -151,6 +151,7 @@ Where each step runs:
 7. Show the rules map with its editor (8.11), the preview and the flagged rows.
    - Anonymous users see 20 rows.
    - Downloading the full file or saving the format requires sign-in.
+   - **Try it on another file** (everyone, signed in or not): the user drops one more input file and the CURRENT rules (unsaved edits included) run on it in the browser. It shows the same run result as flow C (rows in and out, flagged rows with the row review before the file is written, missing required columns), one file at a time, with no network call and nothing saved. It is the first taste of using a format; signed-in users use it to check the rules before saving. Anonymous users see the result on screen (20 rows) and sign in to download it.
 8. **Saving** creates two things: a **format** (the output side: columns, layout, file type and output checks) and its first **conversion** (this source → that format). See 8.12.
 
 ### A2. Add a source to an existing format (MVP)
@@ -171,7 +172,7 @@ There are two variants:
 Keep this in mind in the schema (`meta.source`, `meta.status`), but don't build it yet.
 
 ### C. Convert a file
-The user drops a file on **Convert a file** (on Home, or on a format's page). They don't have to say which source it is:
+The user drops a file on **Run a format** (in the header and on Home, or on a format's page). They don't have to say which source it is:
 - code matches the file's headers against every saved **source** (8.15), and either picks the source or asks the user to choose among the top matches. If the source feeds one format, its conversion runs; if it feeds several, the user picks the format(s), or "all";
 - missing required columns stop the run with a clear message;
 - extra columns are ignored;
@@ -180,10 +181,12 @@ The user drops a file on **Convert a file** (on Home, or on a format's page). Th
 The result is a download plus flagged rows. No LLM call.
 
 ### D. Batch
-Same as flow C with many files, processed one at a time in the worker. A batch may mix sources: each file is matched on its own, and results are grouped by format. Each file gets a status: converted, converted with flags, or didn't match. The user downloads a zip plus a summary sheet of flags per file. No LLM call. Batch is a paid feature; the number of files is limited by tier.
+Same as flow C with many files, processed one at a time in the worker. A batch may mix sources: each file is matched on its own, and results are grouped by format. Each file gets a status: converted, converted with flags, or didn't match. The user downloads a zip plus a summary sheet of flags per file. No LLM call. Batch is not paid-only: it is limited by tier (11), up to 5 files per run for registered accounts and up to 50 for paid ones. More files than the plan allows are cut to the first N, with a message (a registered user is also told that paid plans run up to 50).
+
+Flows C and D are one **Run screen** (`/convert`, opened from **Run a format**; `/batch` redirects to it): one dropped file is flow C, several are flow D. `?format=<id>` limits both to that format's conversions. The drop zone takes up to the plan's files per run.
 
 ### E. Sign-in wall
-Shown when an anonymous user tries to download the full output, save a format, run another file, or goes over an anonymous limit.
+Shown when an anonymous user tries to download the full output, save a format, run a saved format (the Run screen), or goes over an anonymous limit.
 - Copy: "Sign in to save this format and reuse it on next month's file."
 - Buttons: **Continue with Google** first, then **Continue with Microsoft**.
 - The learned rules survive sign-in, so nothing has to be redone.
@@ -802,7 +805,7 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
 | What it's for | try it on one small file | a person's own recurring formats | a company's work |
 | Max rows per file | 300 | 5,000 | 100,000 |
 | Max columns | 20 | 50 | 150 |
-| Files per run | 1 | 1 | batch, up to 50 |
+| Files per run | 1 (the rules just learned, nothing saved) | up to 5 | up to 50 |
 | Converted output | first 20 rows on screen; sign in to download | full download | full download |
 | Saved formats | none | up to 3 | up to 50 new per month (DECISION 9) |
 | Sources per format | none | 3 | unlimited |
@@ -940,7 +943,7 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
    - The flagged rows.
    - A status badge: Verified, "N columns need your input", or "N differences accepted".
    - Primary button: "Save format and download".
-5. **My formats.** Each format with its sources underneath ("Priority catalog load ← 4 sources"). Actions: Convert a file (flow C), Add a source (flow A2), Run a batch, Edit rules, Rename, Delete. For a signed-in user who has formats, Home's first action becomes "Convert a file", with "Teach a new format" next to it.
+5. **My formats.** Each format with its sources underneath ("Priority catalog load ← 4 sources"). Actions: Run this format (the Run screen, flows C and D), Add a source (flow A2), Edit rules, Rename, Delete. For a signed-in user who has formats, Home's first action becomes "Run a format", with "Teach a new format" next to it.
 6. **Run result.** Download (file or zip), a summary (rows in, rows out, rows filtered, duplicates removed or flagged), and the flags with accept/reject.
 7. **For business (`/business`).**
    - The problem: files arrive from suppliers, insurers, clients and other systems in their own layout; someone rebuilds them by hand into the company's format, or the file its system loads, every month, and errors slip through.
@@ -1091,7 +1094,7 @@ M0–M4 is roughly 1.5–2 weeks of focused work. Bilingual UI, two sign-in prov
    - Storing them contradicts "your files never leave your computer".
    - Large files don't fit in MongoDB documents (16 MB limit).
    - If this is added later: make it opt-in, use encrypted object storage, delete files automatically, and update the privacy statement.
-3. **Batch for registered users.** Settled: **none.** Batch is paid.
+3. **Batch for registered users.** Changed in v11 (was: settled **none**, batch is paid): registered users run up to **5** files at once; paid up to 50 (11, 21 v11).
 4. **Tier numbers.** Default: **placeholders**, to be tuned from `limit_hit` data.
 5. **Server repair rounds.** Default: **1**. Set it to 0 for exactly one LLM call per learn.
 6. **Product name and domain.** Currently a working name.
@@ -1207,3 +1210,12 @@ One new expression node, `window`, with eleven functions (8.3): `runningSum`, `g
 - **Blocked rows still count.** A row later left out by a `block` validation is counted in window results (validations run after, and may read them); the run summary says "N blocked rows are included in calculated totals", a count only.
 - **Hints for the AI.** Detection and the `rel: "window"` hint shape (`{ out, rel: "window", fn, in?, by?, order?: "file" | "output" | keys, ties?, alt? (max 3), coverage, failsOn? }`) are behind `limits.learn.window.hintsEnabled`, ON since learn-v7 (v10 note), which documents window functions in the system prompt. With the switch off a column the free engine knows is a group total or count gets no hint (not the misleading value map), and every other column is hinted as before.
 - **Arguments are plain column ids** (a helper computed column for anything calculated). **Editor:** one friendly option, "Running total" (8.11); everything else through Advanced. `crossRowCalculation` (8.10) now means only what windows cannot say.
+
+### v11 changes: one Run screen (owner decisions, 2026-10-03)
+
+The product is for using saved formats, so as soon as a user has one rules file they can run files with it, fast, from one place. What changed:
+1. **Files per run by tier** (11): free 1, registered **up to 5** (was 1), paid up to 50. The number lives in `tiers[tier].filesPerRun`; 50 stays because every converted file is held in memory until the zip is made. This replaces "batch is paid only" (v3 item 3) and the settled decision "Batch for registered users: none" (20.3).
+2. **One Run screen** (5 C and D): `/convert`, entered from **Run a format** (header, account menu, Home). The drop zone takes up to the plan's files per run (`multiple` only when that is more than 1). One dropped file is flow C exactly as before; several files are flow D (a list, a status per file, a zip and a summary sheet). `/batch` redirects to `/convert`, keeping the query string. `?format=<id>` scopes both. More files than the plan allows: the first N are taken and the over-limit message shows; registered users also see a one-line hint that paid plans run up to 50 (the existing Upgrade panel, no payment code). The paid-only prompt is gone.
+3. **Try it on another file** (5 A step 7): on the Result screen, for everyone, the current rules (unsaved edits included) run on one more input file in the browser: the same run result as flow C (report, row review, missing required columns), one file at a time, no network call, nothing saved. Anonymous users see the first 20 rows and sign in to download; signed-in users download it. It is how a free user first uses a format without an account (5 E no longer lists "run another file" as a reason to sign in; running saved formats on the Run screen still needs an account).
+
+**Code amendments** (no change to the rules schema, the engine's run-time behaviour, the API, `LEARN_PROMPT.md` or the prompt): `tiers.ts` (`registered.filesPerRun: 5`); web: the Run screen (`pages/Convert`) owns the sources and hands them to the batch flow (`useBatchFlow({ tier, entries })`), `BatchTool` replaces the batch page and its drop zone, `DropZone` has an optional multi-file mode; the Result screen's `TryAnotherFile` / `useTryFile` use the worker's `convertWithDecisions` and the Convert screen's `RunReport`, `ReviewRows` and `MissingColumns` (extracted or made independent of a saved source); copy in Hebrew and English.
