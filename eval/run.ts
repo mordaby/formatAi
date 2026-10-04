@@ -5,16 +5,18 @@
 //
 //   pnpm eval --models <a>,<b> --masking on,off --runs 3 [--provider anthropic|openai|claude-cli|fake]
 //             [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]
+//             [--prompt learn-v7|learn-v8]
 //
 // Defaults: provider from env (LLM_PROVIDER / .env, see apps/api/src/env.ts), models =
 // the provider's configured firstTry model, masking on and off, runs 1, mode full.
 // --mode complete runs the local partial result first (no LLM) and then the AI step on what is missing only, the local rules kept as
 // a fixed part (LEARN_PROMPT "Completing a partial rules file"); --mode both runs both and the report puts them side by side.
+// --prompt sends another prompt version than the current one (with the wire schema it was written for), to compare two on the same code.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnv } from '@formatai/api/env';
-import { models as modelConfig } from '@formatai/shared';
+import { models as modelConfig, promptVersion } from '@formatai/shared';
 import { parseArgs, EvalArgsError } from './lib/args.js';
 import { loadCases } from './lib/caseLoader.js';
 import { rulesByRecord, runMatrix } from './lib/runner.js';
@@ -40,7 +42,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   const modeNote = args.modes.length === 1 && args.modes[0] === 'full' ? '' : ` x mode ${args.modes.join('+')}`;
-  console.log(`Running ${cases.length} case(s) x ${models.length} model(s) x ${maskingModes.length} masking mode(s) x ${args.runs} run(s)${modeNote}, provider=${provider}.`);
+  console.log(`Running ${cases.length} case(s) x ${models.length} model(s) x ${maskingModes.length} masking mode(s) x ${args.runs} run(s)${modeNote}, provider=${provider}, prompt=${args.prompt ?? promptVersion}.`);
 
   const startedAt = new Date();
   const records = await runMatrix({
@@ -51,6 +53,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     provider,
     noEscalation: args.noEscalation,
     modes: args.modes,
+    ...(args.prompt ? { prompt: args.prompt } : {}),
     onProgress: (line) => console.log(`  ${line}`),
   });
 

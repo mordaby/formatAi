@@ -114,3 +114,12 @@ describe('--cases: a substring, or a comma-separated list of them', () => {
     expect(names(' crm , ,orders-dedupe')).toEqual(['crm-rename-reorder', 'orders-dedupe']);
   });
 });
+
+describe('parseArgs: --prompt (learn-v8: compare two prompt versions on the same code)', () => {
+  it('takes learn-v7 or learn-v8, and nothing else; absent means the current version', () => {
+    expect(parseArgs(['--prompt', 'learn-v7']).prompt).toBe('learn-v7');
+    expect(parseArgs(['--prompt=learn-v8']).prompt).toBe('learn-v8');
+    expect(parseArgs([]).prompt).toBeUndefined();
+    expect(() => parseArgs(['--prompt', 'learn-v6'])).toThrow(EvalArgsError);
+  });
+});
