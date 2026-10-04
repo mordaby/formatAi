@@ -1389,6 +1389,82 @@
               "severity"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "on": {
+                "type": "string",
+                "enum": [
+                  "input",
+                  "output"
+                ]
+              },
+              "column": {
+                "type": "string"
+              },
+              "rule": {
+                "type": "string",
+                "const": "cutoffRange"
+              },
+              "low": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  }
+                ]
+              },
+              "high": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  }
+                ]
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  }
+                ]
+              },
+              "includes": {
+                "type": "string",
+                "enum": [
+                  "high",
+                  "low"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "flag",
+                  "block"
+                ]
+              }
+            },
+            "required": [
+              "column",
+              "rule",
+              "low",
+              "high",
+              "value",
+              "includes",
+              "severity"
+            ],
+            "additionalProperties": false
           }
         ]
       }

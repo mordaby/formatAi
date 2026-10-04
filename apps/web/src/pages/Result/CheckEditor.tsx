@@ -7,9 +7,11 @@ import { ChoiceGroup, NumberField, ProblemList, SelectField, SourceField, useEdi
 import { RemoveButton } from './RowEditors';
 
 type Rule = Validation['rule'];
-const RULES: readonly Rule[] = ['required', 'range', 'lengthEquals', 'oneOf', 'unique', 'dateRange', 'israeliIdChecksum'];
+/** The rules a user can start a check with. A cut-off check (`cutoffRange`, SPEC 8.8) is only ever written by code, from the example. */
+type StarterRule = Exclude<Rule, 'cutoffRange'>;
+const RULES: readonly StarterRule[] = ['required', 'range', 'lengthEquals', 'oneOf', 'unique', 'dateRange', 'israeliIdChecksum'];
 
-function starter(rule: Rule, base: { on?: 'input' | 'output'; column: string; severity: 'flag' | 'block' }): Validation {
+function starter(rule: StarterRule, base: { on?: 'input' | 'output'; column: string; severity: 'flag' | 'block' }): Validation {
   const year = new Date().getFullYear();
   switch (rule) {
     case 'range':
@@ -64,11 +66,12 @@ export function CheckEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index: 
       <SelectField
         label={t('editor.check.rule')}
         value={v.rule}
-        options={RULES.map((r): Option<Rule> => ({ value: r, label: t(`editor.check.rule.${r}` as MessageKey) }))}
+        options={[...RULES, ...(v.rule === 'cutoffRange' ? (['cutoffRange'] as const) : [])].map((r): Option<Rule> => ({ value: r, label: t(`editor.check.rule.${r}` as MessageKey) }))}
         onChange={(rule) => {
-          if (rule !== v.rule) set(starter(rule, base));
+          if (rule !== v.rule && rule !== 'cutoffRange') set(starter(rule, base));
         }}
       />
+      {v.rule === 'cutoffRange' && <CutoffFields check={v} onChange={(next, field) => set(next, field)} />}
       {v.rule === 'range' && (
         <div className="row row--end">
           <NumberField
@@ -127,6 +130,37 @@ export function CheckEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index: 
       <ProblemList problems={edit.problems} />
       <RemoveButton label={t('editor.check.remove')} onClick={() => edit.run({ type: 'removeValidation', index }) && onRemoved()} />
     </div>
+  );
+}
+
+/**
+ * A cut-off the example did not settle (SPEC 8.8): the sentence that says what code found, and the two edges, editable (numbers, or dates
+ * on a date column). A value strictly between them is flagged at run time. The value the rule uses is said, not edited here: it is the
+ * rule's own constant (the formula of its column).
+ */
+function CutoffFields({ check, onChange }: { check: Extract<Validation, { rule: 'cutoffRange' }>; onChange(next: Validation, field: string): void }) {
+  const { t } = useI18n();
+  const shown = (x: number | string): string => (typeof x === 'string' ? x.split('-').reverse().join('/') : String(x));
+  const dates = typeof check.low === 'string';
+  return (
+    <>
+      <p className="field__hint">
+        {t(check.includes === 'high' ? 'editor.check.cutoff.high' : 'editor.check.cutoff.low', { low: shown(check.low), high: shown(check.high), value: shown(check.value) })}
+      </p>
+      <div className="row row--end">
+        {dates ? (
+          <>
+            <DateField label={t('editor.check.cutoff.lowEdge')} value={String(check.low)} onChange={(low) => onChange({ ...check, low }, 'low')} />
+            <DateField label={t('editor.check.cutoff.highEdge')} value={String(check.high)} onChange={(high) => onChange({ ...check, high }, 'high')} />
+          </>
+        ) : (
+          <>
+            <NumberField className="row__grow" label={t('editor.check.cutoff.lowEdge')} value={check.low as number} onChange={(low) => low !== undefined && onChange({ ...check, low }, 'low')} />
+            <NumberField className="row__grow" label={t('editor.check.cutoff.highEdge')} value={check.high as number} onChange={(high) => high !== undefined && onChange({ ...check, high }, 'high')} />
+          </>
+        )}
+      </div>
+    </>
   );
 }
 

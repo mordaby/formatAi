@@ -88,6 +88,25 @@ function makeCheck(val: Exclude<Validation, { rule: 'unique' }>): Check {
         return PASS;
       };
     }
+
+    // A cut-off the example did not settle (SPEC 8.8): a value strictly between the two edges is flagged - the example did not say
+    // which side of the cut-off it is on. The edges themselves are settled (each is a row of the example). Numbers compare as numbers,
+    // dates as dates; anything else passes (the type check covers it).
+    case 'cutoffRange': {
+      const failure: Failure = { params: { low: val.low, high: val.high, value: val.value } };
+      if (typeof val.low === 'string' || typeof val.high === 'string') {
+        const low = typeof val.low === 'string' ? parseConstDate(val.low) : null;
+        const high = typeof val.high === 'string' ? parseConstDate(val.high) : null;
+        if (low === null || high === null) return () => PASS;
+        return (v) => (v instanceof DateVal && v.serial > low.serial && v.serial < high.serial ? failure : PASS);
+      }
+      const low = new Decimal(val.low);
+      const high = new Decimal(val.high);
+      return (v) => {
+        const n = v instanceof Decimal ? v : typeof v === 'string' ? parseNumber(v) : null;
+        return n !== null && n.gt(low) && n.lt(high) ? failure : PASS;
+      };
+    }
   }
 }
 

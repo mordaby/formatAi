@@ -451,6 +451,18 @@ describe('checks', () => {
     );
   });
 
+  it('says what a cut-off check found in the example (SPEC 8.8), in both directions and for dates', () => {
+    expect(v({ column: 'c_amount', rule: 'cutoffRange', low: 4435, high: 5299, value: 5000, includes: 'high', severity: 'flag' })).toBe(
+      'Check: your example shows the cut-off for Amount is above 4435 and at most 5299; we used 5000. A value in between: flag',
+    );
+    expect(v({ column: 'c_amount', rule: 'cutoffRange', low: 10, high: 20, value: 10, includes: 'low', severity: 'flag' })).toBe(
+      'Check: your example shows the cut-off for Amount is at least 10 and below 20; we used 10. A value in between: flag',
+    );
+    expect(v({ column: 'c_date', rule: 'cutoffRange', low: '2024-03-01', high: '2024-03-31', value: '2024-03-15', includes: 'high', severity: 'flag' })).toBe(
+      'Check: your example shows the cut-off for Date is above 01/03/2024 and at most 31/03/2024; we used 15/03/2024. A value in between: flag',
+    );
+  });
+
   it('names an output check by its output header', () => {
     expect(v({ on: 'output', column: 'Item Code', rule: 'required', severity: 'flag' })).toBe('Check: Item Code is not empty (flag)');
   });

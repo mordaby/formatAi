@@ -287,8 +287,14 @@ function describeValidation(v: Validation, ctx: Ctx): Part[] {
     case 'dateRange':
       rule = t('check.dateRange', { col, from: val(isoToDisplay(v.from)), to: val(isoToDisplay(v.to)) });
       break;
+    case 'cutoffRange': {
+      // A cut-off the example did not settle (SPEC 8.8): the two edges code found and the value the rule uses.
+      const shown = (x: number | string): Part => val(typeof x === 'string' ? isoToDisplay(x) : String(x));
+      rule = t(v.includes === 'high' ? 'check.cutoff.high' : 'check.cutoff.low', { col, low: shown(v.low), high: shown(v.high), value: shown(v.value) });
+      break;
+    }
   }
-  return t('check.line', { rule, severity: t(v.severity === 'flag' ? 'check.severity.flag' : 'check.severity.block') });
+  return t(v.rule === 'cutoffRange' ? 'check.cutoff.line' : 'check.line', { rule, severity: t(v.severity === 'flag' ? 'check.severity.flag' : 'check.severity.block') });
 }
 
 // ---------------------------------------------------------------------------

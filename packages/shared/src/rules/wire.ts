@@ -60,7 +60,7 @@ import {
   StopAtSchema,
   SummaryAggSchema,
   buildUnsupportedSchema,
-  ValidationSchema,
+  AiValidationSchema,
   type Expand,
   type Expr,
   type Group,
@@ -168,7 +168,7 @@ const WireLearnResultSchema = z.strictObject({
   input: WireRulesInputSchema,
   transform: WireRulesTransformSchema,
   output: WireRulesOutputSchema,
-  validations: z.array(ValidationSchema),
+  validations: z.array(AiValidationSchema),
   unsupported: z.array(WireUnsupportedSchema),
   assumptions: z.array(AssumptionSchema),
 });

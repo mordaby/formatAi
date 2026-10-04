@@ -80,6 +80,15 @@ export function sourceOf(rules: LearnResult | Rules): SourceStructure {
   return {
     inputSignature: { columns },
     inputReading: reading,
-    inputValidations: rules.validations.filter((v) => (v.on ?? 'input') !== 'output').map((v) => normalizeValidation(v, idToHeader)),
+    inputValidations: rules.validations.filter(isSourceCheck).map((v) => normalizeValidation(v, idToHeader)),
   };
+}
+
+/**
+ * Whether a validation belongs to the source (SPEC 8.15): an input check, except a cut-off check (`cutoffRange`, SPEC 8.8).
+ * DECISION: a cut-off check is about a constant of THIS conversion's rules (where its comparison draws the line), like a row filter, not
+ * about the file: it stays in the conversion and never travels to the source or to another format that reads the same column.
+ */
+export function isSourceCheck(v: Validation): boolean {
+  return (v.on ?? 'input') !== 'output' && v.rule !== 'cutoffRange';
 }

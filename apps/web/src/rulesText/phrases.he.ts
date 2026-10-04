@@ -218,6 +218,9 @@ export const he: Record<PhraseKey, string> = {
   'check.oneOf': 'הערך בעמודה {col} הוא אחד מ-{values}',
   'check.unique': 'אין ערכים כפולים בעמודה {col}',
   'check.dateRange': 'הערך בעמודה {col} הוא תאריך בין {from} לבין {to}',
+  'check.cutoff.high': 'לפי הדוגמה שלך, הסף בעמודה {col} גבוה מ-{low} ולכל היותר {high}; השתמשנו ב-{value}',
+  'check.cutoff.low': 'לפי הדוגמה שלך, הסף בעמודה {col} הוא לפחות {low} ונמוך מ-{high}; השתמשנו ב-{value}',
+  'check.cutoff.line': 'בדיקה: {rule}. ערך שביניהם: {severity}',
 
   'table.line': 'טבלה {name}: {count}, חיפוש לפי {key} להחזרת {cols}',
   'table.single': 'טבלה {name}: {count} של {key}',

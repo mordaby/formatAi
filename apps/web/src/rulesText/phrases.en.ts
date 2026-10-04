@@ -226,6 +226,9 @@ export const en = {
   'check.oneOf': '{col} is one of {values}',
   'check.unique': '{col} has no repeated values',
   'check.dateRange': '{col} is a date from {from} to {to}',
+  'check.cutoff.high': 'your example shows the cut-off for {col} is above {low} and at most {high}; we used {value}',
+  'check.cutoff.low': 'your example shows the cut-off for {col} is at least {low} and below {high}; we used {value}',
+  'check.cutoff.line': 'Check: {rule}. A value in between: {severity}',
 
   // Functions and tables
   'table.line': 'Table {name}: {count}, look up by {key} to get {cols}',

@@ -90,6 +90,7 @@ export const FLAG_MESSAGE_KEYS = [
   'flag.validation.oneOf',
   'flag.validation.unique', // params: { firstRow }
   'flag.validation.dateRange', // params: { from, to }
+  'flag.validation.cutoffRange', // params: { low, high, value } (numbers, or ISO dates)
 ] as const;
 
 export type FlagMessageKey = (typeof FLAG_MESSAGE_KEYS)[number];

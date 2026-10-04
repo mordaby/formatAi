@@ -52,6 +52,9 @@ export function validationProblems(rules: EditableRules, v: Validation): EditPro
       return NUMERIC.has(type) ? [] : bad(`range applies to a numeric column; "${v.column}" is ${type}`);
     case 'dateRange':
       return type === 'date' ? [] : bad(`dateRange applies to a date column; "${v.column}" is ${type}`);
+    case 'cutoffRange':
+      if (typeof v.low === 'string') return type === 'date' ? [] : bad(`cutoffRange with dates applies to a date column; "${v.column}" is ${type}`);
+      return NUMERIC.has(type) ? [] : bad(`cutoffRange with numbers applies to a numeric column; "${v.column}" is ${type}`);
     case 'lengthEquals':
       return type === 'text' || type === 'idLike' ? [] : bad(`lengthEquals applies to a text column; "${v.column}" is ${type}`);
     case 'israeliIdChecksum':

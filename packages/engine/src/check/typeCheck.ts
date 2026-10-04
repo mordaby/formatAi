@@ -508,6 +508,14 @@ function checkValidationParam(
         problems.push({ kind: 'type', path, message: `dateRange applies to a date column; "${v.column}" is ${colType}` });
       }
       return;
+    case 'cutoffRange': {
+      // A number range on a numeric column, a date range (ISO dates) on a date column.
+      const dates = typeof v.low === 'string';
+      if (dates ? colType !== 'date' : !NUMERIC_ONLY.has(colType)) {
+        problems.push({ kind: 'type', path, message: `cutoffRange with ${dates ? 'dates' : 'numbers'} applies to a ${dates ? 'date' : 'numeric'} column; "${v.column}" is ${colType}` });
+      }
+      return;
+    }
     case 'lengthEquals':
       if (!fits(colType, 'text')) {
         problems.push({ kind: 'type', path, message: `lengthEquals applies to a text column; "${v.column}" is ${colType}` });

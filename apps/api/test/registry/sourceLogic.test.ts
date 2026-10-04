@@ -233,6 +233,17 @@ describe('applySource (a source edit reaches a conversion)', () => {
     expect(applied.needsReview).toBe(false);
   });
 
+  it("DECISION: a cut-off check (cutoffRange) is the conversion's own: never in the source, kept as it is when the source is written back", () => {
+    const cutoff = { column: 'amount', rule: 'cutoffRange', low: 100, high: 200, value: 150, includes: 'high', severity: 'flag' } as const;
+    const target = edited(one(), (r) => { r.validations = [...r.validations, cutoff]; });
+    const source = sourceOf(target);
+    expect(source.inputValidations.some((v) => v.rule === 'cutoffRange')).toBe(false);
+    const applied = applySource(target, source);
+    expect(applied.rules.validations).toContainEqual(cutoff);
+    expect(applied.needsReview).toBe(false);
+    expect(checkSourceLock(applied.rules, source)).toEqual([]);
+  });
+
   it("a check on no column of the source (a computed column's) is written as it is", () => {
     const check = { column: 'total', rule: 'range', min: 0, severity: 'flag' } as const;
     const source: SourceStructure = { ...sourceOf(one()), inputValidations: [check] };

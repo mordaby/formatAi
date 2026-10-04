@@ -10,6 +10,7 @@ import {
   columnDifferences,
   compareInputChecks,
   findSourceColumn,
+  isSourceCheck,
   matchConversions,
   pickConversion,
   readingDifferences,
@@ -275,7 +276,10 @@ export function applySource(target: Rules, source: SourceStructure, renames: Rea
   const inputValidations = source.inputValidations
     .filter((v) => idOfHeader.has(v.column) || !sourceHeaders.has(v.column))
     .map((v) => ({ ...v, column: idOfHeader.get(v.column) ?? v.column }) as Validation);
-  const validations = [...inputValidations, ...target.validations.filter((v) => (v.on ?? 'input') === 'output')];
+  // A cut-off check (SPEC 8.8) is the conversion's own, not the source's (`isSourceCheck`): it stays as it is (a column it names that
+  // the rebuilt input no longer has fails `checkRules` below, like any other reference: `needsReview`).
+  const ownChecks = target.validations.filter((v) => !isSourceCheck(v) && (v.on ?? 'input') !== 'output');
+  const validations = [...inputValidations, ...ownChecks, ...target.validations.filter((v) => (v.on ?? 'input') === 'output')];
 
   const rules: Rules = { ...target, input, validations };
   const problems: ApiProblem[] = [];
