@@ -16,8 +16,8 @@
 // header-row filtering; since fixtures here always set `z` explicitly per cell
 // and never declare column-level formats, every row is written as kind 'data'
 // uniformly - the distinction plays no role in what bytes come out.
-import type { OutCell, OutputFileSpec, OutputSheet } from '@formatai/engine';
-import { writeOutput, ymdToSerial } from '@formatai/engine';
+import type { CellRange, OutCell, OutputFileSpec, OutputSheet } from '@formatai/engine';
+import { readZip, writeOutput, writeZip, ymdToSerial } from '@formatai/engine';
 
 /** One cell's contents. A bare primitive becomes `{ v: primitive }`; the object
  * form adds a number format (`z`), marks a date (`isDate`, `v` must then be an
@@ -43,6 +43,10 @@ export interface SheetSpec {
   /** Absent -> xlsx (SPEC 8.13's own default). */
   file?: OutputFileSpec;
   rows: RowSpec[];
+  /** Merged ranges (0-based, inclusive), e.g. a title line across the columns. xlsx only. */
+  merges?: CellRange[];
+  /** 0-based indices of columns the sheet hides (they stay in the file, the way Excel's "Hide" leaves them). xlsx only. */
+  hiddenCols?: number[];
 }
 
 function toOutCell(c: Cell): OutCell {
@@ -69,14 +73,35 @@ export function buildOutputSheet(spec: SheetSpec): OutputSheet {
       cells: r.cells.map(toOutCell),
       ...(r.bold === true ? { bold: true } : {}),
     })),
-    merges: [],
+    merges: spec.merges ?? [],
   };
+}
+
+/**
+ * DECISION: the engine's xlsx writer has no "hidden column" (a conversion's output never hides one), so a fixture that needs one
+ * (a messy file a person received: `messy-layout-he`) gets a `<cols>` element spliced into the sheet XML after writing. The sheet
+ * XML the writer produces has no `<cols>` of its own for a fixture (a fixture declares no column widths), and the schema puts `<cols>`
+ * right before `<sheetData>`. The zip is re-packed by the engine's own deterministic `writeZip` (fixed date, same order).
+ */
+async function hideColumns(xlsx: Uint8Array, cols: readonly number[]): Promise<Uint8Array> {
+  const entries = await readZip(xlsx);
+  const sheet = entries.find((e) => e.path === 'xl/worksheets/sheet1.xml');
+  if (sheet === undefined) throw new Error('hideColumns: no xl/worksheets/sheet1.xml in the fixture');
+  const xml = new TextDecoder().decode(sheet.bytes as Uint8Array);
+  if (xml.includes('<cols>') || !xml.includes('<sheetData')) throw new Error('hideColumns: unexpected sheet XML');
+  const spliced = [...cols]
+    .sort((a, b) => a - b)
+    .map((c) => `<col min="${c + 1}" max="${c + 1}" width="9" hidden="1" customWidth="1"/>`)
+    .join('');
+  const patched = xml.replace('<sheetData', `<cols>${spliced}</cols><sheetData`);
+  return writeZip(entries.map((e) => (e === sheet ? { path: e.path, bytes: new TextEncoder().encode(patched) } : e)));
 }
 
 /** Renders a `SheetSpec` to file bytes via the engine's own writer (xlsx/csv/txt,
  * dispatched by `spec.file`, exactly like a real conversion's output - SPEC 8.13). */
 export async function writeFixture(spec: SheetSpec): Promise<Uint8Array> {
-  return writeOutput(buildOutputSheet(spec));
+  const bytes = await writeOutput(buildOutputSheet(spec));
+  return spec.hiddenCols !== undefined && spec.hiddenCols.length > 0 ? hideColumns(bytes, spec.hiddenCols) : bytes;
 }
 
 /** A native Excel date cell: `serial` + a date-shaped number format, so

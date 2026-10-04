@@ -18,7 +18,8 @@ export function casesRoot(): string {
   return path.join(LIB_DIR, '..');
 }
 
-export type Difficulty = 'easy' | 'medium' | 'hard';
+/** `stress`: a case built to find where the whole process can break (broken values, a value computed across rows, a messy sheet ...), not to sit on one difficulty rung. */
+export type Difficulty = 'easy' | 'medium' | 'hard' | 'stress';
 
 /** SPEC 10's case-format `expect` field: a single classification, or - for the
  * one case that demonstrates SPEC 7.2's masking accuracy gap - a per-masking-mode
