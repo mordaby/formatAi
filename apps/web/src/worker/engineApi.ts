@@ -9,6 +9,7 @@ import type {
   Flag,
   LearnCallResult,
   LearnFromExamplesResult,
+  LoopRound,
   OutputSheet,
   RunError,
   RunSummary,
@@ -72,9 +73,19 @@ export interface LearnArgs {
 export type LearnProgress =
   | { phase: 'reading' }
   | { phase: 'checking'; stage: AnalysisStage; fraction: number }
-  /** `unexplained`: headers of the output columns code could not find in the input file (SPEC 6.4, informational: the AI step tries them); first try only. */
-  | { phase: 'learning'; attempt: 'learn' | 'repair'; unexplained?: string[] }
+  /**
+   * `unexplained`: headers of the output columns code could not find in the input file (SPEC 6.4, informational: the AI step tries them); first try only.
+   * `round` (a repair): which round of the learning loop it is, of how many at most, and how many rows the rules got wrong it sends.
+   */
+  | { phase: 'learning'; attempt: 'learn' | 'repair'; unexplained?: string[]; round?: LoopRoundInfo }
   | { phase: 'verifying' };
+
+/** A round of the learning loop, as the progress screens say it ("round 2 of 3, sending 5 rows the rules got wrong"). */
+export interface LoopRoundInfo {
+  n: number;
+  of: number;
+  rows: number;
+}
 
 /**
  * `exampleId`: set when the worker kept the example (the rules editor's live check reads it, SPEC 8.11).
@@ -83,10 +94,10 @@ export type LearnProgress =
  */
 export type LearnOutput = LearnFromExamplesResult & { exampleId?: string; exampleInput?: ExampleInputColumn[]; exampleOutputColumns?: number };
 
-/** What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). */
+/** What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). `round`: the loop round of a repair (its rows go with it). */
 export interface LearnHost {
   callLearn(payload: LearnPayload): Promise<LearnCallResult>;
-  callRepair(payload: LearnPayload, previousRules: LearnResult, problems: RepairProblem[]): Promise<LearnCallResult>;
+  callRepair(payload: LearnPayload, previousRules: LearnResult, problems: RepairProblem[], round: LoopRound): Promise<LearnCallResult>;
 }
 
 // ---------- convert ----------

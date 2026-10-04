@@ -14,6 +14,7 @@ import { SendPanel } from '../../app/SendPanel';
 import { Cell } from '../../components/Cell';
 import { localize, useI18n } from '../../i18n';
 import { Button, Icon, Spinner } from '../../ui';
+import { roundText } from '../learningSteps';
 import type { UseCompletion } from './useCompletion';
 
 /** An output field with no rule yet. */
@@ -232,6 +233,11 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
             <Spinner size={14} /> {t('deep.running')}
           </p>
           {completion.columnsAsked > 0 ? <p className="muted">{t(completion.columnsAsked === 1 ? 'deep.running.fields.one' : 'deep.running.fields.other', { n: completion.columnsAsked })}</p> : null}
+          {completion.round ? (
+            <p className="muted" data-testid="completion-round">
+              {roundText(t, completion.round)}
+            </p>
+          ) : null}
           <p className="deep__note">{t('deep.running.note')}</p>
         </div>
       ) : null}

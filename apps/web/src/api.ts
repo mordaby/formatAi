@@ -5,7 +5,7 @@
 //
 // SPEC 2/15: the only bodies ever sent are JSON (the learn payload, rules, problems).
 // There is deliberately no method that takes a File or a Blob.
-import type { LearnPayload, LearnRequest, LearnResponse, LearnResult, RepairProblem, RepairRequest, RepairResponse, SessionResponse } from '@formatai/shared';
+import type { LearnPayload, LearnRequest, LearnResponse, LearnResult, RepairProblem, RepairRequest, RepairResponse, Sample, SessionResponse } from '@formatai/shared';
 import { createAuthApi, type AuthApi } from './api/auth';
 import { createHttp, type CreateHttpOptions } from './api/http';
 import { createRegistryApi, type RegistryApi } from './api/registry';
@@ -17,13 +17,13 @@ export interface Api {
   session(signal?: AbortSignal): Promise<SessionResponse>;
   /** POST /api/learn. `turnstileToken` is required for anonymous visitors when Turnstile is configured. */
   learn(payload: LearnPayload, opts?: { turnstileToken?: string | undefined; noCache?: boolean; signal?: AbortSignal }): Promise<LearnResponse>;
-  /** POST /api/learn/repair: at most one per `learnId`. */
+  /** POST /api/learn/repair: one round of the learning loop, at most `limits.llm.browserRepairCalls` per `learnId`. `rows`: every row the loop sent so far, masked. */
   repair(
     learnId: string,
     payload: LearnPayload,
     previousRules: LearnResult,
     problems: RepairProblem[],
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; rows?: Sample[] | undefined },
   ): Promise<RepairResponse>;
   /** Sign-in: providers, who is signed in, sign out, the saved language, linking, the AI quota. */
   auth: AuthApi;
@@ -49,7 +49,7 @@ export function createApi(options: CreateApiOptions = {}): Api {
       return request<LearnResponse>('POST', '/api/learn', req, opts.signal);
     },
     repair: (learnId, payload, previousRules, problems, opts = {}) => {
-      const req: RepairRequest = { payload, previousRules, problems, learnId };
+      const req: RepairRequest = { payload, previousRules, problems, learnId, ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}) };
       return request<RepairResponse>('POST', '/api/learn/repair', req, opts.signal);
     },
     auth: createAuthApi(request),

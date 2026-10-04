@@ -86,6 +86,46 @@ describe('LearningProgress', () => {
     expect(screen.getByText('This is exactly what was sent.')).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Data sent (JSON)' }).textContent).toContain('"masking": true');
   });
+
+  it('says which round of the learning loop it is and how many rows it sends, in English and Hebrew', () => {
+    const steps: StepKey[] = ['reading', 'checking', 'learning', 'verifying', 'learningRepair'];
+    show({ status: 'learning', attempt: 'repair', round: { n: 2, of: 3, rows: 5 }, sent: [] }, steps);
+    expect(screen.getByText('Fixing what did not match')).toBeTruthy();
+    expect(screen.getByTestId('loop-round').textContent).toBe('Checking every row of your example: sending 5 rows the rules got wrong (round 2 of 3).');
+    cleanup();
+    show({ status: 'learning', attempt: 'repair', round: { n: 1, of: 3, rows: 1 }, sent: [] }, steps);
+    expect(screen.getByTestId('loop-round').textContent).toBe('Checking every row of your example: sending 1 row the rules got wrong (round 1 of 3).');
+    cleanup();
+    show({ status: 'learning', attempt: 'repair', round: { n: 3, of: 3, rows: 0 }, sent: [] }, steps);
+    expect(screen.getByTestId('loop-round').textContent).toBe('Checking every row of your example: sending what still did not match (round 3 of 3).');
+    cleanup();
+    show({ status: 'learning', attempt: 'repair', round: { n: 2, of: 3, rows: 5 }, sent: [] }, steps, 'he');
+    expect(screen.getByTestId('loop-round').textContent).toBe('בודקים כל שורה בדוגמה שלכם: שולחים 5 שורות שהכללים טעו בהן (סבב 2 מתוך 3).');
+    cleanup();
+    show({ status: 'learning', attempt: 'learn', sent: [] }, ['reading', 'checking', 'learning']);
+    expect(screen.queryByTestId('loop-round')).toBeNull();
+  });
+
+  it('"See what we send" lists every round, with the rows it carries, and says before anything is sent that rounds may follow', () => {
+    const payload = { masking: true, samples: [] };
+    const rows = [{ in: ['x'], out: ['y'] }, { in: ['z'], out: ['w'] }];
+    const sent = [
+      { kind: 'learn', bytes: 2048, payload },
+      { kind: 'repair', bytes: 2100, payload, previousRules: {}, problems: [], round: { n: 1, of: 3 }, rows: rows.slice(0, 1) },
+      { kind: 'repair', bytes: 2150, payload, previousRules: {}, problems: [], round: { n: 2, of: 3 }, rows },
+    ] as never;
+    show({ status: 'verifying', sent }, ['reading', 'checking', 'learning', 'verifying']);
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    const records = screen.getAllByTestId('send-record');
+    expect(records.map((r) => r.querySelector('.send-record__head')!.textContent)).toEqual(['Learn request · 2.0 KB', 'Fix request, round 1 of 3 · 2.1 KB', 'Fix request, round 2 of 3 · 2.1 KB']);
+    expect(records[1]!.textContent).toContain('It carries 1 row of your example the rules got wrong (every row sent so far).');
+    expect(records[2]!.textContent).toContain('It carries 2 rows of your example the rules got wrong (every row sent so far).');
+    expect(records[2]!.textContent).toContain('"rows"');
+    cleanup();
+    show(checking(0.5), ['reading', 'checking']);
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    expect(screen.getByText('If the rules then get rows of your example wrong: up to 3 more requests, each with some of those rows (at most 40 rows in all), sent like the sample rows.')).toBeTruthy();
+  });
 });
 
 describe('step tracking', () => {

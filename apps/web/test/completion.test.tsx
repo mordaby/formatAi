@@ -174,6 +174,39 @@ describe('"Finish with AI" completes only what is missing', () => {
     await screen.findByTestId('completion-done');
   });
 
+  it('runs the learning loop: while a round runs the panel says which one and how many rows it sends, each round goes out with its rows under the learn\'s id, and the answer applies', async () => {
+    const api = fakeApi({ user: USER, repair: vi.fn(async () => ({ rules: null, verified: true, problems: [], counted: true })) });
+    const fake = fakeEngine();
+    let release!: () => void;
+    const rows = [{ in: ['A-1', 2], out: ['A-1', 'x'] }, { in: ['A-2', 3], out: ['A-2', 'y'] }];
+    type Host = { callLearn(p: unknown): Promise<unknown>; callRepair(p: unknown, r: unknown, problems: unknown[], round: unknown): Promise<unknown> };
+    type Opts = { onProgress?: (p: unknown) => void };
+    fake.learn.mockImplementation((async (args: CompletionArgs, host: Host, opts: Opts) => {
+      if (!args.complete) return partialOutput();
+      const payload = { masking: false, output: { columns: [] }, samples: [], complete: { fixed: {}, columns: args.complete.columns, parts: args.complete.parts } };
+      await host.callLearn(payload);
+      opts.onProgress?.({ phase: 'verifying' });
+      opts.onProgress?.({ phase: 'learning', attempt: 'repair', round: { n: 1, of: 3, rows: 1 } });
+      await host.callRepair(payload, {}, [], { round: 1, maxRounds: 3, rows: rows.slice(0, 1), newRows: 1 });
+      opts.onProgress?.({ phase: 'learning', attempt: 'repair', round: { n: 2, of: 3, rows: 1 } });
+      await new Promise<void>((resolve) => (release = resolve));
+      await host.callRepair(payload, {}, [], { round: 2, maxRounds: 3, rows, newRows: 1 });
+      return completionOutput(args, { loop: { rounds: 2, rowsSent: 2, end: 'verified' } });
+    }) as never);
+    await start(fake.engine, api);
+    fireEvent.click(finishButton());
+    expect((await screen.findByTestId('completion-round')).textContent).toBe('Checking every row of your example: sending 1 row the rules got wrong (round 2 of 3).');
+    await act(async () => release());
+    await screen.findByTestId('completion-done');
+    expect(screen.queryByTestId('completion-round')).toBeNull();
+    expect(api.repair).toHaveBeenCalledTimes(2);
+    expect((api.repair as ReturnType<typeof vi.fn>).mock.calls.map((c) => [c[0], (c[4] as { rows: unknown[] }).rows.length])).toEqual([['L1', 1], ['L1', 2]]);
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    expect(await screen.findByText('Fix request, round 2 of 3', { exact: false })).toBeTruthy();
+    expect(screen.getByText('It carries 2 rows of your example the rules got wrong (every row sent so far).')).toBeTruthy();
+    await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
+  });
+
   it('"See what we send" shows the completion payload: the rules to keep and what is missing (and only after a call was made)', async () => {
     const api = fakeApi({ user: USER });
     const { engine } = engineWith(async (args, host) => {

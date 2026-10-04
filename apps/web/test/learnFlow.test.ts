@@ -19,6 +19,12 @@ const PAYLOAD_SKIP = {
   skipColumns: [1],
 } as unknown as LearnPayload;
 
+/** A round of the learning loop, as the engine hands it to the host: its number, the most there may be, every row sent so far. */
+const ROW_A = { in: ['a1', 10], out: ['a1', 'X'] };
+const ROW_B = { in: ['b1', 20], out: ['b1', 'Y'] };
+const ROUND1 = { round: 1, maxRounds: 3, rows: [ROW_A], newRows: 1 };
+const ROUND2 = { round: 2, maxRounds: 3, rows: [ROW_A, ROW_B], newRows: 1 };
+
 const OK_PREFLIGHT = { status: 'ok', issues: [], skipColumns: [] };
 const VERIFIED = { verified: true, matched: 3, total: 3, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] };
 
@@ -132,20 +138,20 @@ describe('LearnFlow', () => {
     const problems = [{ kind: 'layout' as const, message: 'x' }];
     const { engine } = fakeEngine(async (_a, host) => {
       await host.callLearn(PAYLOAD);
-      const r = await host.callRepair(PAYLOAD, PREV_RULES, problems);
+      const r = await host.callRepair(PAYLOAD, PREV_RULES, problems, ROUND1);
       return result({ path: 'llm', rules: r.rules });
     });
     const api = fakeApi();
     const { flow, start } = makeFlow(engine, api);
     await start();
-    expect(api.repair).toHaveBeenCalledWith('L1', PAYLOAD, PREV_RULES, problems, expect.anything());
+    expect(api.repair).toHaveBeenCalledWith('L1', PAYLOAD, PREV_RULES, problems, expect.objectContaining({ rows: ROUND1.rows }));
     expect(state(flow).sent.map((r) => r.kind)).toEqual(['learn', 'repair']);
   });
 
   it('repair of a cached result (no learnId): learns afresh, uncached', async () => {
     const { engine } = fakeEngine(async (_a, host) => {
       await host.callLearn(PAYLOAD);
-      await host.callRepair(PAYLOAD, PREV_RULES, []);
+      await host.callRepair(PAYLOAD, PREV_RULES, [], ROUND1);
       return result({ path: 'llm' });
     });
     const api = fakeApi({ learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], cached: true })) as unknown as Api['learn'] });
@@ -155,6 +161,86 @@ describe('LearnFlow', () => {
     expect(api.learn).toHaveBeenCalledTimes(2);
     expect((api.learn as ReturnType<typeof vi.fn>).mock.calls[1]![1]).toMatchObject({ noCache: true });
     expect(state(flow).sent[1]).toMatchObject({ kind: 'repair', fresh: true });
+  });
+
+  describe('the learning loop (SPEC 9.3): rounds of repairs, each with every row sent so far', () => {
+    const NOT_VERIFIED = { ...VERIFIED, verified: false, matched: 2 };
+    const outcomeApi = () => ({
+      learnOutcome: vi.fn(async (_id: string, outcome: string) => ({ counted: outcome === 'verified', quota: { remaining: 2, period: 'month' }, failedAttempts: outcome === 'verified' ? 0 : 1, exhausted: false })),
+    });
+
+    it('a learn that verifies in round 2: two rounds under the learn\'s id, the progress says which round, every round is in "see what we send", reported verified once', async () => {
+      const rounds: unknown[] = [];
+      const { engine } = fakeEngine(async (_a, host, opts) => {
+        opts.onProgress?.({ phase: 'learning', attempt: 'learn' });
+        await host.callLearn(PAYLOAD);
+        opts.onProgress?.({ phase: 'verifying' });
+        opts.onProgress?.({ phase: 'learning', attempt: 'repair', round: { n: 1, of: 3, rows: 1 } });
+        await host.callRepair(PAYLOAD, PREV_RULES, [{ kind: 'layout', message: 'r1' }], ROUND1);
+        opts.onProgress?.({ phase: 'verifying' });
+        opts.onProgress?.({ phase: 'learning', attempt: 'repair', round: { n: 2, of: 3, rows: 1 } });
+        const r = await host.callRepair(PAYLOAD, PREV_RULES, [{ kind: 'layout', message: 'r2' }], ROUND2);
+        opts.onProgress?.({ phase: 'verifying' });
+        return result({ path: 'llm', rules: r.rules, loop: { rounds: 2, rowsSent: 2, end: 'verified' } });
+      });
+      const registry = outcomeApi();
+      const api = fakeApi({ registry: registry as unknown as Api['registry'] });
+      const { flow, start } = makeFlow(engine, api);
+      flow.subscribe(() => {
+        const s = state(flow);
+        if (s.status === 'learning' && s.round && rounds.at(-1) !== s.round) rounds.push(s.round);
+      });
+      await start();
+      await vi.waitFor(() => expect(registry.learnOutcome).toHaveBeenCalled());
+
+      expect(api.repair).toHaveBeenCalledTimes(2);
+      expect(api.repair.mock.calls.map((c) => c[0])).toEqual(['L1', 'L1']);
+      expect(api.repair.mock.calls[0]![4]).toMatchObject({ rows: [ROW_A] });
+      expect(api.repair.mock.calls[1]![4]).toMatchObject({ rows: [ROW_A, ROW_B] });
+      expect(rounds).toEqual([{ n: 1, of: 3, rows: 1 }, { n: 2, of: 3, rows: 1 }]);
+      const sent = state(flow).sent;
+      expect(sent.map((r) => [r.kind, r.round?.n, r.rows?.length])).toEqual([['learn', undefined, undefined], ['repair', 1, 1], ['repair', 2, 2]]);
+      expect(sent[2]!.bytes).toBeGreaterThan(sent[0]!.bytes); // the rows count with the payload
+      expect(registry.learnOutcome).toHaveBeenCalledTimes(1);
+      expect(registry.learnOutcome).toHaveBeenCalledWith('L1', 'verified');
+    });
+
+    it('a loop that stops on no progress: the best answer is shown, and the learn is reported failed (it counts nothing)', async () => {
+      const { engine } = fakeEngine(async (_a, host) => {
+        await host.callLearn(PAYLOAD);
+        await host.callRepair(PAYLOAD, PREV_RULES, [], ROUND1);
+        return result({ path: 'llm', rules: PREV_RULES, verification: NOT_VERIFIED, loop: { rounds: 1, rowsSent: 1, end: 'noProgress' } });
+      });
+      const registry = outcomeApi();
+      const api = fakeApi({ registry: registry as unknown as Api['registry'] });
+      const { flow, start } = makeFlow(engine, api);
+      await start();
+      await vi.waitFor(() => expect(registry.learnOutcome).toHaveBeenCalled());
+      const s = state(flow);
+      expect(s.status === 'done' && s.result.rules).toBe(PREV_RULES);
+      expect(s.status === 'done' && s.result.loop).toEqual({ rounds: 1, rowsSent: 1, end: 'noProgress' });
+      expect(registry.learnOutcome).toHaveBeenCalledWith('L1', 'failed');
+    });
+
+    it('after a cached result, the fresh learn carries no rows and the next round repairs it under its own id, with only the rows sent since', async () => {
+      const { engine } = fakeEngine(async (_a, host) => {
+        await host.callLearn(PAYLOAD);
+        await host.callRepair(PAYLOAD, PREV_RULES, [], ROUND1);
+        await host.callRepair(PAYLOAD, PREV_RULES, [], ROUND2);
+        return result({ path: 'llm' });
+      });
+      const learn = vi.fn(async (_p: LearnPayload, opts?: { noCache?: boolean }) =>
+        opts?.noCache ? { rules: RULES, verified: false, problems: [], learnId: 'L2', cached: false } : { rules: RULES, verified: true, problems: [], cached: true },
+      );
+      const api = fakeApi({ learn: learn as unknown as Api['learn'] });
+      const { flow, start } = makeFlow(engine, api);
+      await start();
+      expect(learn).toHaveBeenCalledTimes(2);
+      expect(api.repair).toHaveBeenCalledTimes(1);
+      expect(api.repair.mock.calls[0]![0]).toBe('L2');
+      expect(api.repair.mock.calls[0]![4]).toMatchObject({ rows: [ROW_B] });
+      expect(state(flow).sent.map((r) => [r.kind, r.fresh === true, r.rows?.length])).toEqual([['learn', false, undefined], ['repair', true, undefined], ['repair', false, 1]]);
+    });
   });
 
   describe('warnings (SPEC 6.4)', () => {
