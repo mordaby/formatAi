@@ -126,7 +126,9 @@ interface KeepOffer {
 
 function RowCard({ target, row, cells, choice, fixing, onFix, onCloseFix, onChoice, onChangeRule, keep }: RowCardProps) {
   const { t, code } = useI18n();
-  const decidedKey = choice ? (`conv.review.decided.${choice.action === 'override' ? 'fix' : choice.action}` as const) : null;
+  // A fix the user also keeps as a rule says so in its own words (it is not "in this file only").
+  const keptAsRule = choice?.action === 'override' && choice.every !== undefined && choice.every.length > 0;
+  const decidedKey = choice ? (keptAsRule ? 'conv.keep.decided' : (`conv.review.decided.${choice.action === 'override' ? 'fix' : choice.action}` as const)) : null;
   return (
     <li className="rv" data-row={row.rowNumber} data-choice={choice?.action} data-testid="review-row">
       <div className="rv__head">
@@ -135,11 +137,6 @@ function RowCard({ target, row, cells, choice, fixing, onFix, onCloseFix, onChoi
         {choice && decidedKey ? (
           <span className="rv__decided">
             <Badge tone={choice.action === 'skip' ? 'neutral' : 'verified'}>{t(decidedKey)}</Badge>
-            {choice.action === 'override' && choice.every && choice.every.length > 0 ? (
-              <span className="muted" data-testid="keep-pending">
-                {t('conv.keep.pending')}
-              </span>
-            ) : null}
             <Button variant="link" onClick={() => onChoice(null)}>
               {t('conv.review.undo')}
             </Button>
@@ -232,20 +229,19 @@ function FixEditor({ row, cells, rules, keep, onApply, onCancel }: FixEditorProp
   const [every, setEvery] = useState<Record<string, boolean>>({});
   const suggestionFor = (columnId: string): Flag['suggestion'] => row.flags.find((f) => f.column === columnId && f.suggestion !== undefined)?.suggestion;
   const offerFor = (c: RowInputCell): ReadAsOffer | null => (keep ? readAsOffer(rules, c, values[c.columnId] ?? '', keep.rowInputs, keep.taken) : null);
+  /** The columns whose fix the user said "every time" to, as it stands now (a tick on a field that no longer offers it, or clashes, counts for nothing). */
+  const kept = cells.filter((c) => every[c.columnId] === true && offerFor(c)?.clash === false).map((c) => c.columnId);
   return (
     <form
       className="rv__fix"
       aria-label={t('conv.review.fix.title', { row: row.rowNumber })}
       onSubmit={(e) => {
         e.preventDefault();
-        onApply(
-          values,
-          cells.filter((c) => every[c.columnId] === true && offerFor(c)?.clash === false).map((c) => c.columnId),
-        );
+        onApply(values, kept);
       }}
     >
       <p className="rv__fix-title">{t('conv.review.fix.title', { row: row.rowNumber })}</p>
-      <p className="field__hint">{t('conv.review.fix.hint')}</p>
+      <p className="field__hint">{t(kept.length > 0 ? 'conv.keep.hint' : 'conv.review.fix.hint')}</p>
       <div className="rv__fields">
         {cells.map((c) => {
           const suggestion = suggestionFor(c.columnId);

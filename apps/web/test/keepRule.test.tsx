@@ -106,6 +106,14 @@ describe('the offer', () => {
     expect((within(offer).getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
     expect(plain(within(offer).getByTestId('keep-line'))).toBe("Every 'N/A' in Qty will be read as empty. It covers all 2 rows in this list that have it.");
 
+    // The hint above the fields tells the truth about the tick: the rule stays as it is - until yes, which saves it when the file is created.
+    expect(rowCard(3).textContent).toContain('The rule stays as it is. Only this file changes.');
+    fireEvent.click(within(offer).getByRole('checkbox'));
+    expect(rowCard(3).textContent).toContain('Only this file changes now. The rule is saved when you create the file.');
+    expect(rowCard(3).textContent).not.toContain('The rule stays as it is');
+    fireEvent.click(within(offer).getByRole('checkbox'));
+    expect(rowCard(3).textContent).toContain('The rule stays as it is. Only this file changes.');
+
     // A typed value says what it is read as; the same text with nothing changed offers nothing.
     fireEvent.change(within(rowCard(3)).getByLabelText('Qty'), { target: { value: '0' } });
     expect(plain(within(offer).getByTestId('keep-line'))).toContain("Every 'N/A' in Qty will be read as '0'.");
@@ -132,7 +140,7 @@ describe('the offer', () => {
     fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'Skip this row' }));
     fireEvent.click(within(rowCard(4)).getByRole('button', { name: 'Keep as is' }));
     expect(screen.queryByTestId('keep-offer')).toBeNull();
-    expect(screen.queryByTestId('keep-pending')).toBeNull();
+    expect(screen.queryByText(/saved as a rule when you create the file/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
     await screen.findByText('Your file is ready');
     // Nothing was kept, so nothing was saved: not even a read of the rules again.
@@ -186,8 +194,8 @@ describe('saying yes', () => {
     await screen.findByText(REVIEW);
 
     fix(3, 'Qty', '', { every: true });
-    expect(rowCard(3).textContent).toContain('Will be fixed in this file only');
-    expect(within(rowCard(3)).getByTestId('keep-pending').textContent).toBe('Will also be saved as a rule when you create the file.');
+    expect(rowCard(3).textContent).toContain('Will be fixed, and saved as a rule when you create the file');
+    expect(rowCard(3).textContent).not.toContain('in this file only');
     // Nothing is saved until the file is created: the user can still undo it.
     expect(api.saveRules).not.toHaveBeenCalled();
 
@@ -241,7 +249,7 @@ describe('saying yes', () => {
     await drop();
     await screen.findByText(REVIEW);
     fix(3, 'Qty', '');
-    expect(within(rowCard(3)).queryByTestId('keep-pending')).toBeNull();
+    expect(rowCard(3).textContent).not.toContain('saved as a rule when you create the file');
     fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
     await screen.findByText('Your file is ready');
     expect(api.saveRules).not.toHaveBeenCalled();
@@ -256,7 +264,7 @@ describe('saying yes', () => {
     await screen.findByText(REVIEW);
     fix(3, 'Qty', '', { every: true });
     fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'Undo' }));
-    expect(within(rowCard(3)).queryByTestId('keep-pending')).toBeNull();
+    expect(rowCard(3).textContent).not.toContain('saved as a rule when you create the file');
     fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
     await screen.findByText('Your file is ready');
     expect(api.saveRules).not.toHaveBeenCalled();
@@ -397,7 +405,7 @@ describe('Hebrew', () => {
     expect(plain(within(offer).getByTestId('keep-line'))).toBe("כל 'N/A' בעמודה Qty ייקרא כריק. זה חל על כל 2 השורות ברשימה הזו שיש בהן את הטקסט הזה. השינוי הזה משנה את המקור עבור 2 פורמטים.");
     fireEvent.click(within(offer).getByRole('checkbox'));
     fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'להשתמש בערך הזה' }));
-    expect(plain(within(rowCard(3)).getByTestId('keep-pending'))).toBe('יישמר גם ככלל כשתיצרו את הקובץ.');
+    expect(rowCard(3).textContent).toContain('תתוקן, ותישמר ככלל כשתיצרו את הקובץ');
     fireEvent.click(screen.getByRole('button', { name: 'ליצור את הקובץ' }));
     await waitFor(() => expect(screen.getByTestId('review-step').textContent).toContain('2'));
     fireEvent.click(within(rowCard(5)).getByRole('button', { name: 'להשאיר כמו שהיא' }));
