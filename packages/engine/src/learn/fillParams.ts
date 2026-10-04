@@ -280,12 +280,15 @@ function constOf(v: Val): FilterScalar | undefined {
 }
 
 function fillRowChoices(rules: LearnResult, f: Filler): LearnResult {
+  const dedupe = rules.transform.dedupe;
+  const tryDedupe = dedupe !== undefined && !f.isFixed(dedupe, (x) => x.transform.dedupe);
+  const tryFilters = (rules.input.rowFilters ?? []).some((x) => !('expr' in x) && (x.op === 'ne' || x.op === 'notOneOf'));
+  if (!tryDedupe && !tryFilters) return rules;
   let wrong = wrongOf(rules, f.analysis);
   if (wrong === 0) return rules;
 
   // Which duplicate is kept: the other choice, when it makes fewer rows wrong.
-  const dedupe = rules.transform.dedupe;
-  if (dedupe && !f.isFixed(dedupe, (x) => x.transform.dedupe)) {
+  if (dedupe && tryDedupe) {
     const other: LearnResult = { ...rules, transform: { ...rules.transform, dedupe: { ...dedupe, keep: dedupe.keep === 'first' ? 'last' : 'first' } } };
     const w = wrongOf(other, f.analysis);
     if (w < wrong) {
@@ -770,53 +773,78 @@ function fillConditions(rules: LearnResult, f: Filler): LearnResult {
     const id = rules.transform.computed[ci]!.id;
     const outs = outputsOf(rules, id);
     if (outs.length === 0) continue;
-    const count = sitesOf(rules, rules.transform.computed[ci]!.expr).length;
+    const sitesNow = (): Site[] => sitesOf(rules, rules.transform.computed[ci]!.expr);
+    const count = sitesNow().length;
     // Bands: a column compared with constants in more than one place of the same formula.
-    const cuts = sitesOf(rules, rules.transform.computed[ci]!.expr).filter((s): s is CutSite => s.kind === 'cut');
+    const cuts = sitesNow().filter((s): s is CutSite => s.kind === 'cut');
+    // One run of the rules as they are, with every site's value probed, shared by the sites until one of them changes the rules.
+    let now: Run | null | undefined;
     for (let s = 0; s < count && budget > 0; s++) {
       // Sites are found again on the current rules: a fill changes constants and lists, never how many sites there are or their order.
-      const site = sitesOf(rules, rules.transform.computed[ci]!.expr)[s]!;
+      const sites = sitesNow();
+      const site = sites[s]!;
       budget--;
-      const next = site.kind === 'list' ? fillList(rules, ci, site, outs, f) : fillCut(rules, ci, site, outs, f, cuts.filter((c) => c.column === site.column).length > 1);
-      if (next) rules = next;
+      if (now === undefined) now = runOn(rules, f.analysis, sites.map((x) => probeOf(rules, ci, x)));
+      if (now === null) break;
+      const ctx: SiteCtx = { ci, outs, now, at: now.at[s]!, probes: sites.map((x) => probeOf(rules, ci, x)) };
+      const next = site.kind === 'list' ? fillList(rules, site, ctx, f) : fillCut(rules, site, ctx, f, cuts.filter((c) => c.column === site.column).length > 1);
+      if (next) {
+        rules = next;
+        now = undefined;
+      }
     }
   }
   return rules;
 }
 
-/** The rules with node `target` of computed column `ci` forced to a constant, plus probes. */
-function forced(rules: LearnResult, ci: number, target: ExprNode, value: boolean): LearnResult {
-  return withComputedExpr(rules, ci, replaceNode(rules.transform.computed[ci]!.expr, target, { const: value }));
+/** What one site is filled with: its computed column, the output columns it reaches, the run of the rules as they are (`at`: the site's probe). */
+interface SiteCtx {
+  ci: number;
+  outs: readonly number[];
+  now: Run;
+  at: number;
+  probes: Probe[];
+}
+
+/** The value a site is about, read on every row: a list's expression (as text), a cut-off's column (as a number or a date). */
+function probeOf(rules: LearnResult, ci: number, site: Site): Probe {
+  const after = rules.transform.computed[ci]!.id;
+  return site.kind === 'list' ? { after, expr: site.arg, type: 'text' } : { after, expr: { col: site.column }, type: site.isDate ? 'date' : 'decimal' };
+}
+
+/** The rules with node `target` of computed column `ci` replaced. */
+function replacedIn(rules: LearnResult, ci: number, target: ExprNode, by: Expr): LearnResult {
+  return withComputedExpr(rules, ci, replaceNode(rules.transform.computed[ci]!.expr, target, by));
 }
 
 /**
  * A value list (`oneOf`, an or-chain of `=`, one `=`): a value of its column is added when EVERY row holding it is right with the
  * condition true, and some are wrong now (the rest of the formula does not already explain them). Conservative by construction: a row that
- * does not agree keeps its value out.
+ * does not agree keeps its value out. No run is made unless some row with a value not in the list is wrong now.
  */
-function fillList(rules: LearnResult, ci: number, site: ListSite, outs: readonly number[], f: Filler): LearnResult | null {
+function fillList(rules: LearnResult, site: ListSite, ctx: SiteCtx, f: Filler): LearnResult | null {
   const analysis = f.analysis;
-  const c = rules.transform.computed[ci]!;
-  const probe: Probe = { after: c.id, expr: site.arg, type: 'text' };
-  const [whenTrue, now] = [runOn(forced(rules, ci, site.node, true), analysis, [probe]), runOn(rules, analysis, [probe])];
-  if (!whenTrue || !now) return null;
+  const { now, outs } = ctx;
   const numbers = site.values.every((v) => typeof v === 'number');
   const listed = new Set(site.values.map((v) => normText(String(v))));
-  const groups = new Map<string, { text: string; allTrue: boolean; someWrong: boolean }>();
+  const groups = new Map<string, { text: string; rows: number[]; someWrong: boolean }>();
   now.rows.forEach((row, k) => {
-    const text = keyText(row?.cells[now.at[0]!]);
+    const text = keyText(row?.cells[ctx.at]);
     if (text === null) return;
     const key = normText(text);
     if (listed.has(key)) return;
-    const g = groups.get(key) ?? { text, allTrue: true, someWrong: false };
+    const g = groups.get(key) ?? { text, rows: [], someWrong: false };
     groups.set(key, g);
-    if (!rowOk(analysis, whenTrue, k, outs)) g.allTrue = false;
+    g.rows.push(k);
     if (!rowOk(analysis, now, k, outs)) g.someWrong = true;
   });
+  const candidates = [...groups.values()].filter((g) => g.someWrong && (!numbers || /^-?\d+(\.\d+)?$/.test(g.text)));
+  if (candidates.length === 0) return null;
+  const whenTrue = runOn(replacedIn(rules, ctx.ci, site.node, { const: true }), analysis, ctx.probes);
+  if (!whenTrue) return null;
   const added: ExprConstValue[] = [];
-  for (const g of groups.values()) {
-    if (!g.allTrue || !g.someWrong) continue;
-    if (numbers && !/^-?\d+(\.\d+)?$/.test(g.text)) continue;
+  for (const g of candidates) {
+    if (!g.rows.every((k) => rowOk(analysis, whenTrue, k, outs))) continue;
     added.push(numbers ? Number(g.text) : g.text);
   }
   if (added.length === 0) return null;
@@ -825,32 +853,36 @@ function fillList(rules: LearnResult, ci: number, site: ListSite, outs: readonly
   if (site.node.op === 'oneOf') node = { ...site.node, values };
   else node = { op: 'or', args: values.map((v) => ({ op: 'eq', args: [site.arg, { const: v }] }) as Expr) };
   f.count('valueList', added.length);
-  return withComputedExpr(rules, ci, replaceNode(c.expr, site.node, node));
+  return replacedIn(rules, ctx.ci, site.node, node);
 }
 
+const FLIPPED = { gt: 'lte', gte: 'lt', lt: 'gte', lte: 'gt' } as const;
+
 /**
- * A cut-off (the column compared with one constant): with the comparison forced true, then false, every row's outcome is known for every
- * place the line could be drawn, so each gap between neighbouring values of the column is scored exactly (DECISION: no candidate needs a
- * run of its own, so no sampling: two runs per cut-off, whatever the number of values). Only the rows whose outcome the comparison decides
- * (right one way, wrong the other) take part. The range is the run of best-scoring gaps holding the AI's value, else the best run nearest
- * to it; an open-ended range (the example has rows on one side only) is left as the AI wrote it.
+ * A cut-off (the column compared with one constant): from the rules as they are and one run with the comparison turned around (`>=` as
+ * `<`: its opposite on every row with a value), every row's outcome is known both ways, so each gap between neighbouring values of the column
+ * is scored exactly for every place the line could be drawn (DECISION: no candidate needs a run of its own, so no sampling, whatever the
+ * number of values). Only the rows whose outcome the comparison decides (right one way, wrong the other) take part. The range is the run of
+ * best-scoring gaps holding the AI's value, else the best run nearest to it; an open-ended range (the example has rows on one side only) is
+ * left as the AI wrote it.
  */
-function fillCut(rules: LearnResult, ci: number, site: CutSite, outs: readonly number[], f: Filler, band: boolean): LearnResult | null {
+function fillCut(rules: LearnResult, site: CutSite, ctx: SiteCtx, f: Filler, band: boolean): LearnResult | null {
   const analysis = f.analysis;
+  const { now, outs, ci } = ctx;
   const c = rules.transform.computed[ci]!;
-  const probe: Probe = { after: c.id, expr: { col: site.column }, type: site.isDate ? 'date' : 'decimal' };
-  const [whenTrue, whenFalse] = [runOn(forced(rules, ci, site.node, true), analysis, [probe]), runOn(forced(rules, ci, site.node, false), analysis, [probe])];
-  if (!whenTrue || !whenFalse) return null;
+  const flipped = runOn(replacedIn(rules, ci, site.node, { ...site.node, op: FLIPPED[site.node.op as keyof typeof FLIPPED] } as CutNode), analysis, ctx.probes);
+  if (!flipped) return null;
+  const holds = (x: number): boolean => (site.op === 'gte' ? x >= site.k : site.op === 'gt' ? x > site.k : site.op === 'lt' ? x < site.k : x <= site.k);
 
   // The rows the comparison decides, with their value of the column and which outcome is right.
   const decided: { x: number; trueOk: boolean }[] = [];
   let decimals = 0;
-  whenTrue.rows.forEach((row, k) => {
-    const v = cellValue(row?.cells[whenTrue.at[0]!]);
+  now.rows.forEach((row, k) => {
+    const v = cellValue(row?.cells[ctx.at]);
     if (typeof v !== 'number') return;
-    const [t, fl] = [rowOk(analysis, whenTrue, k, outs), rowOk(analysis, whenFalse, k, outs)];
-    if (t === fl) return;
-    decided.push({ x: v, trueOk: t });
+    const [asIs, other] = [rowOk(analysis, now, k, outs), rowOk(analysis, flipped, k, outs)];
+    if (asIs === other) return;
+    decided.push({ x: v, trueOk: holds(v) ? asIs : other });
     decimals = Math.max(decimals, decimalsOf(v));
   });
   if (decided.length === 0) return null;

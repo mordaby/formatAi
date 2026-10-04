@@ -379,7 +379,8 @@ describe('direction (SPEC 16.2)', () => {
 
 describe('every string the screen builds from a code exists in both languages', () => {
   const families: Record<string, string[]> = {
-    'editor.check.rule.': ['required', 'range', 'lengthEquals', 'oneOf', 'unique', 'dateRange', 'israeliIdChecksum'],
+    'editor.check.rule.': ['required', 'range', 'lengthEquals', 'oneOf', 'unique', 'dateRange', 'israeliIdChecksum', 'cutoffRange'],
+    'editor.check.cutoff.': ['high', 'low', 'lowEdge', 'highEdge'],
     'editor.file.encoding.': ['utf8bom', 'utf8', 'windows1255'],
     'editor.file.quote.': ['minimal', 'all', 'none'],
     'editor.file.type.': ['xlsx', 'csv', 'txt'],
