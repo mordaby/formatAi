@@ -17,7 +17,7 @@ import { loadEnv } from '@formatai/api/env';
 import { models as modelConfig } from '@formatai/shared';
 import { parseArgs, EvalArgsError } from './lib/args.js';
 import { loadCases } from './lib/caseLoader.js';
-import { runMatrix } from './lib/runner.js';
+import { rulesByRecord, runMatrix } from './lib/runner.js';
 import { buildCsvReport, buildMarkdownReport, printSummary } from './lib/report.js';
 
 const EVAL_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -58,6 +58,13 @@ export async function main(argv: readonly string[]): Promise<void> {
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'report.md'), buildMarkdownReport(records, new Date().toISOString()));
   fs.writeFileSync(path.join(outDir, 'results.csv'), buildCsvReport(records));
+  // The rules each AI learn kept (the AI's logic, with what code filled in): `rules/<case>.<mode>.masking-<on|off>.run<n>.json`.
+  for (const r of records) {
+    const rules = r.path === 'llm' ? rulesByRecord.get(r) : undefined;
+    if (!rules) continue;
+    fs.mkdirSync(path.join(outDir, 'rules'), { recursive: true });
+    fs.writeFileSync(path.join(outDir, 'rules', `${r.case}.${r.mode ?? 'full'}.masking-${r.masking ? 'on' : 'off'}.run${r.run}.json`), `${JSON.stringify(rules, null, 2)}\n`);
+  }
 
   printSummary(records);
   console.log(`\nReport written to ${outDir}`);

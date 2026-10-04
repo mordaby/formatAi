@@ -96,6 +96,10 @@ export interface RunRecord {
  * `RunRecord[]` a single `runMatrix` call returns. */
 export const formulaErrorMessagesByRecord = new WeakMap<RunRecord, readonly string[]>();
 
+/** The rules each learn kept (the AI's answer as code filled it), for `run.ts` to write next to the report: what the AI step wrote for a
+ * column, and what code filled in, can only be read in the rules themselves. Eval cases are synthetic; the files stay in the report folder. */
+export const rulesByRecord = new WeakMap<RunRecord, LearnResult>();
+
 function buildEnv(provider: LlmProviderName): Env {
   return { ...loadEnv(), LLM_PROVIDER: provider };
 }
@@ -330,6 +334,7 @@ async function toRunRecord(
       : {}),
   };
   if (formulaErrorMessages.length > 0) formulaErrorMessagesByRecord.set(record, formulaErrorMessages);
+  if (result.rules) rulesByRecord.set(record, result.rules);
   return record;
 }
 
