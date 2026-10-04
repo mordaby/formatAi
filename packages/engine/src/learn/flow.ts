@@ -451,7 +451,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     const step = decided.step;
     stages.browserRepairUsed = true;
     const previous = answers[loop.best]!;
-    const repaired = await opts.callRepair(payload, previous.masked, step.problems, { round: step.round, maxRounds: caps.maxRounds, rows: loop.sent.map((r) => r.sample), newRows: step.rows.length });
+    const repaired = await opts.callRepair(payload, previous.masked, step.problems, { round: step.round, maxRounds: caps.maxRounds, rows: loop.sent.map((r) => r.sample), newRows: step.rows.length + step.namedOnly.length });
     calls.push(...repaired.calls);
     const judged = repaired.rules ? judge(repaired.rules) : null;
     answers.push(judged);
@@ -470,7 +470,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // (The wrong rows were the loop's to choose from; they hold real values and stay here.)
   const { wrongRows: _wrongRows, ...verification } = kept.verification;
   stages.verifiedAfterRepair = kept.passes;
-  const loopSummary: LoopSummary = { rounds: loop.rounds, rowsSent: loop.sent.length, end: decided.step.kind === 'stop' ? decided.step.reason : 'verified' };
+  const loopSummary: LoopSummary = { rounds: loop.rounds, rowsSent: loop.sent.length + loop.named.length, end: decided.step.kind === 'stop' ? decided.step.reason : 'verified' };
 
   // learn-v7: the notes leave the rules here (SPEC 15): the answer the caller works with has none, and they travel beside it.
   const aiNotes = aiNotesOf(rules);

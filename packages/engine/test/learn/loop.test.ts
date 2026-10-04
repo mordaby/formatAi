@@ -124,17 +124,43 @@ describe('loopStep: when the loop ends', () => {
     expect(r3.step).toEqual({ kind: 'stop', reason: 'rowCap' });
   });
 
-  it('payload cap: the payload with every row sent added stays under the byte cap; when no row fits, the loop stops', () => {
-    const { ctx, answer, start, built } = setup();
+  it('payload cap: it limits only the new rows the request carries - the rest are still named in the problems', () => {
+    const { pair, ctx, answer, start, built } = setup();
     const bytes = payloadBytes(built.payload);
     const tight = { ...CAPS, maxBytes: bytes + 300 }; // room for a few rows, not eight
     const r1 = loopStep(start(), answer(9400), { ...ctx, caps: tight });
     if (r1.step.kind !== 'next') throw new Error('expected a round');
     expect(r1.step.rows.length).toBeGreaterThan(0);
     expect(r1.step.rows.length).toBeLessThan(8);
+    expect(r1.step.rows.length + r1.step.namedOnly.length).toBe(8);
     expect(payloadBytes(withRows(built.payload, r1.state.sent.map((r) => r.sample)))).toBeLessThanOrEqual(tight.maxBytes);
-    const none = loopStep(start(), answer(9400), { ...ctx, caps: { ...CAPS, maxBytes: bytes } });
-    expect(none.step).toEqual({ kind: 'stop', reason: 'payloadCap' });
+    // every picked row has its diff, carried or not
+    const named = new Set(r1.step.problems.flatMap((p) => (p.kind === 'diff' && p.row ? [String(p.row.in[0])] : [])));
+    for (const inRow of [...r1.step.rows.map((r) => r.inRow), ...r1.step.namedOnly]) expect(named.has(String(pair.input[inRow + 1]![0]))).toBe(true);
+  });
+
+  it('a payload already at the byte cap still gets a round with the problems alone (as the one repair did); payloadCap only when even that does not fit', () => {
+    const { pair, ctx, answer, start, built } = setup();
+    const bytes = payloadBytes(built.payload);
+    const atCap = { ...CAPS, maxBytes: bytes }; // not one more byte for a row
+    const base = built.payload.samples.length + (built.payload.dropped?.length ?? 0);
+    const r1 = loopStep(start(), answer(9400), { ...ctx, caps: atCap });
+    if (r1.step.kind !== 'next') throw new Error('expected a problems-only round');
+    expect(r1.step.rows).toEqual([]);
+    expect(r1.step.namedOnly).toHaveLength(8);
+    const named = new Set(r1.step.problems.flatMap((p) => (p.kind === 'diff' && p.row ? [String(p.row.in[0])] : [])));
+    for (const inRow of r1.step.namedOnly) expect(named.has(String(pair.input[inRow + 1]![0]))).toBe(true);
+    expect(r1.state.sent).toEqual([]);
+    expect(r1.state.named).toEqual(r1.step.namedOnly);
+    // the rows it named count as sent: never picked again, and towards the 40
+    const r2 = loopStep(r1.state, answer(8000), { ...ctx, caps: atCap });
+    if (r2.step.kind !== 'next') throw new Error('expected a second round');
+    const first = new Set(r1.step.namedOnly);
+    expect(r2.step.namedOnly.some((r) => first.has(r))).toBe(false);
+    expect(loopStep(r1.state, answer(8000), { ...ctx, caps: { ...atCap, maxRowsTotal: base + 8 } }).step).toEqual({ kind: 'stop', reason: 'rowCap' });
+    // not even the payload fits: payloadCap
+    const over = loopStep(start(), answer(9400), { ...ctx, caps: { ...CAPS, maxBytes: bytes - 1 } });
+    expect(over.step).toEqual({ kind: 'stop', reason: 'payloadCap' });
   });
 
   it('nothing to send: not good, yet no row and no other problem to name', () => {

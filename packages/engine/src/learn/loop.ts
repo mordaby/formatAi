@@ -6,9 +6,13 @@
 //   answer -> full verification -> loopStep: done | stop (why) | next round (which rows, which problems) -> repair call -> answer ...
 //
 // Stop rules, in this order: every row matches -> done; the answer is not better than the best one so far (fewer wrong rows) -> stop
-// `noProgress`; `maxRounds` rounds made -> `roundCap`; no row left under `maxRowsTotal` -> `rowCap`; no row fits under the payload byte
-// cap -> `payloadCap`; nothing to tell the AI step at all -> `nothingToSend`. The answer kept is the best one: the fewest wrong rows,
-// ties keeping the earliest (like the API's `bestOf`).
+// `noProgress`; `maxRounds` rounds made -> `roundCap`; no row left under `maxRowsTotal` -> `rowCap`; not even a round with no new row fits
+// under the payload byte cap -> `payloadCap`; nothing to tell the AI step at all -> `nothingToSend`. The answer kept is the best one: the
+// fewest wrong rows, ties keeping the earliest (like the API's `bestOf`).
+//
+// The byte cap limits only the NEW rows a request carries (`rows`, which the server keeps checking): the payload with every row carried must
+// fit it. A row that does not fit is still named in the round's problems (a `diff` with its row, as the one browser repair always named
+// rows), and counts towards `maxRowsTotal`; so a payload already near the cap still gets its rounds, with the problems alone.
 //
 // Which rows (the counterexamples): the wrong rows are grouped by what went wrong - (output column, the example's value, the value the
 // rules made); one row from each group, biggest groups first, then a second row from each, and so on until the round is full. A row the
@@ -50,8 +54,10 @@ export interface CounterexampleRow {
 export interface LoopState {
   /** Loop rounds made so far (browser-triggered repair calls). */
   rounds: number;
-  /** Every counterexample row sent so far, in the order sent. */
+  /** Every counterexample row the requests carry so far (their `rows`), in the order sent. */
   sent: CounterexampleRow[];
+  /** Input rows sent only in a round's problems, because they did not fit the byte cap (see the file header). */
+  named: number[];
   /** Input rows the payload itself already sends (its samples and dropped rows): never sent again. */
   inPayload: number[];
   /** Answers judged so far. */
@@ -63,7 +69,7 @@ export interface LoopState {
 
 /** The loop before the first answer. `inPayload`: the input rows of the payload's samples and dropped rows (`BuildPayloadResult`). */
 export function startLoop(inPayload: readonly number[]): LoopState {
-  return { rounds: 0, sent: [], inPayload: [...inPayload], answers: 0, best: -1, bestWrong: Number.POSITIVE_INFINITY };
+  return { rounds: 0, sent: [], named: [], inPayload: [...inPayload], answers: 0, best: -1, bestWrong: Number.POSITIVE_INFINITY };
 }
 
 /** The latest answer, as the browser judged it on every row of the example. */
@@ -95,14 +101,14 @@ export interface LoopRound {
   maxRounds: number;
   /** Every row the loop sent so far, this round's included, masked: the repair request's `rows` (the server checks the answer on them). */
   rows: Sample[];
-  /** How many of `rows` are this round's. */
+  /** How many rows of the example this round sends for the first time: the new ones in `rows`, and those over the byte cap that only its problems name. */
   newRows: number;
 }
 
 /** How a learn's loop went (`LearnFromExamplesResult.loop`): rounds made, rows sent by them, and how it ended. */
 export interface LoopSummary {
   rounds: number;
-  /** Counterexample rows sent (the first payload's samples and dropped rows not included). */
+  /** Counterexample rows sent, in `rows` or only in a round's problems (the first payload's samples and dropped rows not included). */
   rowsSent: number;
   end: 'verified' | LoopStopReason;
 }
@@ -110,8 +116,11 @@ export interface LoopSummary {
 export type LoopStep =
   | { kind: 'done' }
   | { kind: 'stop'; reason: LoopStopReason }
-  /** Another round: `rows` are this round's new rows, `problems` what the repair call says (LEARN_PROMPT §4). */
-  | { kind: 'next'; round: number; rows: CounterexampleRow[]; problems: RepairProblem[] };
+  /**
+   * Another round: `rows` are this round's new rows for the request's `rows`, `namedOnly` the new rows over the byte cap that only its problems
+   * name, `problems` what the repair call says (LEARN_PROMPT §4).
+   */
+  | { kind: 'next'; round: number; rows: CounterexampleRow[]; namedOnly: number[]; problems: RepairProblem[] };
 
 /**
  * How wrong an answer is: the output rows that differ (`total - matched`, each counted once however many of its cells differ), the rows the
@@ -271,22 +280,30 @@ export function loopStep(state: LoopState, latest: LoopAnswer, ctx: LoopContext)
   if (!better) return stop('noProgress');
   if (state.rounds >= caps.maxRounds) return stop('roundCap');
 
-  const sentRows = new Set([...state.inPayload, ...state.sent.map((r) => r.inRow)]);
-  const budget = Math.min(caps.rowsPerRound, caps.maxRowsTotal - payloadRowCount(ctx.payload) - state.sent.length);
+  const sentRows = new Set([...state.inPayload, ...state.sent.map((r) => r.inRow), ...state.named]);
+  const budget = Math.min(caps.rowsPerRound, caps.maxRowsTotal - payloadRowCount(ctx.payload) - state.sent.length - state.named.length);
   const anyNew = pickCounterexamples(latest.wrongRows, sentRows, 1).length > 0;
   if (anyNew && budget <= 0) return stop('rowCap');
 
-  const picked = pickWithGroups(latest.wrongRows, sentRows, budget);
-  const rows: CounterexampleRow[] = picked.map((p) => ({ inRow: p.row.inRow, sample: counterexampleSample(ctx.analysis, p.row.inRow, ctx.masker) }));
+  // The byte cap limits only the new rows the request carries (see the file header): a round with no new row - the problems alone - fits
+  // whenever the payload with the rows carried so far does, so `payloadCap` is for when even that does not fit.
   const sentSamples = state.sent.map((r) => r.sample);
-  while (rows.length > 0 && payloadBytes(withRows(ctx.payload, [...sentSamples, ...rows.map((r) => r.sample)])) > caps.maxBytes) rows.pop();
-  if (anyNew && rows.length === 0) return stop('payloadCap');
-  const chosen = picked.slice(0, rows.length);
+  if (payloadBytes(withRows(ctx.payload, sentSamples)) > caps.maxBytes) return stop('payloadCap');
+  const picked = pickWithGroups(latest.wrongRows, sentRows, budget);
+  const rows: CounterexampleRow[] = [];
+  for (const p of picked) {
+    const row: CounterexampleRow = { inRow: p.row.inRow, sample: counterexampleSample(ctx.analysis, p.row.inRow, ctx.masker) };
+    if (payloadBytes(withRows(ctx.payload, [...sentSamples, ...rows.map((r) => r.sample), row.sample])) > caps.maxBytes) break;
+    rows.push(row);
+  }
+  // DECISION: the picked rows over the byte cap are still named in the problems (one diff each comes first, so every one of them is), and are
+  // sent rows for `maxRowsTotal` and for "never sent twice"; the server just does not keep checking them in later rounds.
+  const namedOnly = picked.slice(rows.length).map((p) => p.row.inRow);
 
   const stillWrong = latest.wrongRows.filter((r) => sentRows.has(r.inRow));
-  const problems = orderProblems(roundDiffs(chosen, stillWrong, ctx), latest.otherProblems);
+  const problems = orderProblems(roundDiffs(picked, stillWrong, ctx), latest.otherProblems);
   if (problems.length === 0) return stop('nothingToSend');
 
   const round = state.rounds + 1;
-  return { state: { ...next, rounds: round, sent: [...state.sent, ...rows] }, step: { kind: 'next', round, rows, problems } };
+  return { state: { ...next, rounds: round, sent: [...state.sent, ...rows], named: [...state.named, ...namedOnly] }, step: { kind: 'next', round, rows, namedOnly, problems } };
 }
