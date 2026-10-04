@@ -862,7 +862,7 @@ All numbers are placeholders in `packages/shared/config/tiers.ts`.
 
   Rules contain only real constants (after unmasking) such as labels and value-map entries. They never contain data rows.
 - **`events`:** ts, anonId, userId?, type, props. Props hold counts, ids and codes only, never cell values or file names.
-- **`llm_calls`:** ts, userId?, anonId?, learnId, purpose (learn | repair | escalation), model, promptVersion, masking, tokensIn, tokensOut, tokensCached, costUsd, latencyMs, outcome, cacheHit.
+- **`llm_calls`:** ts, userId?, anonId?, learnId, purpose (learn | repair | escalation), model, promptVersion, masking, tokensIn, tokensOut, tokensCached, costUsd, estimate (our own token count priced with the published prices - inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, costUsd or null; numbers only), latencyMs, outcome, cacheHit.
 - **`usage_counters`:**
   - keys look like `user:<id>:<yyyy-mm>`, `anon:<id>:<yyyy-mm-dd>`, `ip:<hash>:<yyyy-mm-dd>` (HMAC of the IP; IPv6 by /64) or `repair:<learnId>` (one browser repair per learn);
   - updates use atomic `$inc`, and anon/ip keys expire through a TTL index.
