@@ -65,7 +65,7 @@ export interface DayMonthAmbiguity {
   format: string;
   other: string;
 }
-export type Ambiguity = DayMonthAmbiguity;
+export type FillAmbiguity = DayMonthAmbiguity;
 
 /** What code filled in an answer: kinds and counts only, no value (the learn result's `filled`, the eval report's "filled by code"). */
 export interface FillSummary {
@@ -78,7 +78,7 @@ export interface FillSummary {
 export interface FillResult extends FillSummary {
   /** The answer with its data parameters filled (the answer itself when nothing was, or when filling made it worse). */
   rules: LearnResult;
-  ambiguities: Ambiguity[];
+  ambiguities: FillAmbiguity[];
 }
 
 export interface FillOptions {
@@ -216,7 +216,7 @@ function hasWindow(rules: LearnResult): boolean {
 class Filler {
   readonly counts = new Map<FillKind, number>();
   checks = 0;
-  readonly ambiguities: Ambiguity[] = [];
+  readonly ambiguities: FillAmbiguity[] = [];
 
   constructor(
     readonly analysis: PairAnalysis,

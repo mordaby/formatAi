@@ -11,7 +11,7 @@
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
 import { aiNotesOf, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier, type Validation } from '@formatai/shared';
 import { deepEqual } from '../registry/deepEqual';
-import { fillParams, type Ambiguity, type FillSummary } from './fillParams';
+import { fillParams, type FillAmbiguity, type FillSummary } from './fillParams';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
@@ -209,7 +209,7 @@ export interface LearnFromExamplesResult<Call = unknown> {
    * `{ kind: 'dayMonthOrder', column, format, other }` - every date text of the input column `column` reads both ways, so the rules keep
    * the AI's `format`; answering "the other way" is `swapDayMonth(rules, ambiguity)`. Absent when there is none.
    */
-  ambiguities?: Ambiguity[];
+  ambiguities?: FillAmbiguity[];
 }
 
 /** Like the diff problems (LEARN_PROMPT §4: "At most 10 diff problems are sent"), a repair call needs enough fixed-lock findings to fix the pattern, not all of them. */
@@ -419,7 +419,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     wrongRows: WrongRow[];
     wrong: number;
     /** What code filled in it (kinds and counts) and what the example could not settle. */
-    fill: { summary: FillSummary; ambiguities: Ambiguity[] };
+    fill: { summary: FillSummary; ambiguities: FillAmbiguity[] };
   }
   const judge = (answer: LearnResult): Judged => {
     let masked = answer;
