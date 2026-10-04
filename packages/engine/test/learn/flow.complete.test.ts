@@ -201,7 +201,7 @@ describe('learnFromExamples with complete', () => {
     expect((r.rules!.input.rowFilters![0] as { value: string }).value).toBe('Zzqx'); // unmasked again
   });
 
-  it('with masking: the fixed lock\'s findings are asked of the answer as the AI wrote it (masked) - the repair call carries no real word', async () => {
+  it('with masking: a dropped fixed filter is put back by code (no repair asked for it), and no call carries the real word', async () => {
     const { rules } = await localPartial(mixedPair());
     const withFilter: LearnResult = {
       ...rules,
@@ -222,10 +222,11 @@ describe('learnFromExamples with complete', () => {
       callLearn: s.callLearn,
       callRepair: s.callRepair,
     });
-    expect(r.completion!.fixedProblems.map((p) => p.path)).toEqual(['input.rowFilters']); // the UI's own check, on the real answer
-    expect(s.repairs).toHaveLength(1);
-    expect(s.repairs[0]!.problems.filter((p) => p.kind === 'fixedMismatch').map((p) => (p as { path: string }).path)).toEqual(['input.rowFilters']);
-    expect(JSON.stringify([s.payloads[0], s.repairs[0]!.problems])).not.toContain('Zzqx');
+    // v12: the learning loop puts back what an answer changed of the fixed rules (restoreFixed) before the checks decide
+    expect(r.completion!.fixedProblems).toEqual([]);
+    expect((r.rules!.input.rowFilters![0] as { value: string }).value).toBe('Zzqx'); // the user's filter, real again
+    expect(s.repairs.flatMap((rq) => rq.problems).filter((p) => p.kind === 'fixedMismatch')).toEqual([]);
+    expect(JSON.stringify([s.payloads, s.repairs.map((rq) => rq.problems)])).not.toContain('Zzqx');
   });
 
   it('what is asked for does not depend on the readiness gate: only external columns left still goes to the AI step', async () => {
