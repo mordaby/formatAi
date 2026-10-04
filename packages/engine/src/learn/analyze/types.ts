@@ -410,6 +410,13 @@ export interface ColumnAnalysis {
    */
   derived: Derivation | null;
   /**
+   * Every row holds the same value and the input can write that value too: a column that holds it (a copy), the month or year
+   * of a date column, a fixed part of a text (relations.ts `constantSources`). Those columns' indices are listed. The example
+   * cannot tell a fixed label from a value of the data, so no `constant` relation is reported for it, the column is never built
+   * locally (the AI step or the user decides), and an otherwise unknown column gets a `dependsOn` derivation on these columns.
+   */
+  derivableConstant?: number[];
+  /**
    * Across-row (window) patterns this column follows, best first: a built one (see `Relation` `window`) and/or hint-only ones. Only
    * set when found; the free engine builds the order-independent ones from `relations`, never from here.
    */

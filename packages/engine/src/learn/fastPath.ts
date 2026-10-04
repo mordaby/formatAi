@@ -911,6 +911,12 @@ function ambiguityBucket(r: Relation): string {
  */
 export function chooseColumnRelation(analysis: PairAnalysis, ca: ColumnAnalysis): Relation | FastPathFailure {
   let c1 = ca.relations.filter((r) => r.coverage === 1);
+  // DECISION: one value on every row that the input can write too (a copy of a column, the month or year of a date column,
+  // a fixed part of a text: relations.ts `constantSources`) is a label or a value of the data - the example cannot say which,
+  // and a label built as a constant is wrong next month. Whatever else fits the column (a copy, a date format, ...) fits just
+  // as well: nothing is built, the AI step or the user decides. Only an across-row relation (a group's total, a count per group)
+  // that holds on every row still outranks it, as it outranks any lookalike below.
+  if (ca.derivableConstant !== undefined && !c1.some((r) => r.rel === 'window')) return fail('ambiguousColumn', { column: ca.out });
   if (c1.length === 0) return fail('columnNotFullyExplained', { column: ca.out });
   // An across-row relation (a group's total, a count per group) ranks above the lookalikes the same cells also fit (a value map of the
   // group key, a constant): only the across-row readings compete with each other.
