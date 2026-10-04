@@ -9,8 +9,9 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import { aiNotesOf, isCodeCheck, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
+import { aiNotesOf, isCodeCheck, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnAlternative, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
 import { deepEqual } from '../registry/deepEqual';
+import { columnVerifier, resolveAlternatives, type AlternativeResult } from './alternatives';
 import { fillParams, type FillAmbiguity, type FillSummary } from './fillParams';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
@@ -19,7 +20,7 @@ import { analyzePair } from './analyze';
 import { checkFixedLock, type FixedProblem } from '../registry/checkFixedLock';
 import { restoreFixed } from '../registry/restoreFixed';
 import { columnsWithRule, completionProduced, isCompletable, learnResultOf, type CompleteOptions } from './complete';
-import { fastPath } from './fastPath';
+import { ambiguousColumns, fastPath } from './fastPath';
 import { loopCaps, loopStep, startLoop, wrongCount, type LoopRound, type LoopSummary } from './loop';
 import { createMasker, maskRules, unmaskRules, type Masker } from './mask';
 import { partialRules, type PartialRulesResult } from './partial';
@@ -37,6 +38,8 @@ export interface LearnCallResult<Call = unknown> {
   /** Wire-decoded but NOT unmasked: exactly what the LLM produced (fake vocabulary
    * when masking is on). `learnFromExamples` unmasks it itself before verifying. */
   rules: LearnResult | null;
+  /** learn-v8: a second rule for some columns (`LearnResponse.alternatives`), in the same vocabulary as `rules`; tested on every row in `judge`. */
+  alternatives?: LearnAlternative[];
   problems: RepairProblem[];
   calls: Call[];
 }
@@ -204,6 +207,13 @@ export interface LearnFromExamplesResult<Call = unknown> {
    * counts only, never a value: for the UI's note ("we completed the branch table from your example: 48 entries") and the eval report.
    */
   filled?: FillSummary;
+  /**
+   * Path 'llm' with rules, learn-v8: what code found for each alternative the kept answer gave (`learn/alternatives.ts`) - per column,
+   * both rules fit every row (`bothPass`: the user is asked; `question` is the ambiguity question, and `rules` carry its check until they
+   * answer), only the answer's (`answerOnly`), only the alternative's (`alternativeOnly`: it is the rule now), or neither (`bothFail`).
+   * Absent when the answer gave none.
+   */
+  alternatives?: AlternativeResult[];
   /**
    * Path 'llm' with rules: what the example could not settle, for the ambiguity question (proposal 7.2). Today one kind:
    * `{ kind: 'dayMonthOrder', column, format, other }` - every date text of the input column `column` reads both ways, so the rules keep
@@ -421,8 +431,14 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     wrong: number;
     /** What code filled in it (kinds and counts) and what the example could not settle. */
     fill: { summary: FillSummary; ambiguities: FillAmbiguity[] };
+    /** learn-v8: what each of its alternatives turned out to be on every row. */
+    alternatives: AlternativeResult[];
   }
-  const judge = (answer: LearnResult): Judged => {
+  // The columns the free engine already asks about (a constant the input could write too): an alternative adds no second question there.
+  let codeAsked: Set<string> | undefined;
+  const askedByCode = (): Set<string> => (codeAsked ??= new Set(ambiguousColumns(analysis).map((q) => q.header)));
+  const verifyColumn = columnVerifier(analysis, masker);
+  const judge = (answer: LearnResult, alternatives: readonly LearnAlternative[] = []): Judged => {
     let masked = answer;
     let rules: LearnResult = masker ? unmaskRules(masked, masker) : masked;
     let fixedProblems = fixedLock(rules);
@@ -441,10 +457,19 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     rules = filled.rules;
     fixedProblems = fixedLock(rules);
     const fill = { summary: { filled: filled.filled, checks: filled.checks }, ambiguities: filled.ambiguities };
+    let verification = verifyAnswer(rules);
+    // learn-v8: each alternative the answer gave is tested on every row - one more run of the rules, only its column compared - and the
+    // outcome applied (`learn/alternatives.ts`): a question when both fit, the alternative as the rule when only it fits. No alternative:
+    // nothing here runs.
+    let results: AlternativeResult[] = [];
+    if (alternatives.length > 0) {
+      const resolved = resolveAlternatives({ rules, masked, verification, alternatives, masker, verifyColumn, asked: askedByCode() });
+      ({ rules, masked, verification, results } = resolved);
+      fixedProblems = fixedLock(rules);
+    }
     const sendFixed = fixedProblems.length > 0 && masker && asked && maskedFixed ? checkFixedLock(masked, maskedFixed, asked) : fixedProblems;
-    const verification = verifyAnswer(rules);
     const b = blamed(verification, rules);
-    return { masked, rules, verification, fixedProblems, sendFixed, passes: passes(verification, rules, fixedProblems), wrongRows: b.rows, wrong: wrongCount(b.rows, b.layout) + fixedProblems.length, fill };
+    return { masked, rules, verification, fixedProblems, sendFixed, passes: passes(verification, rules, fixedProblems), wrongRows: b.rows, wrong: wrongCount(b.rows, b.layout) + fixedProblems.length, fill, alternatives: results };
   };
   /**
    * What a round tells the AI step besides the rows: the fixed lock's findings, then the row count and layout rows (not the diffs: the loop
@@ -453,7 +478,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
    */
   const otherProblems = (j: Judged): RepairProblem[] => [...j.sendFixed.slice(0, MAX_FIXED_PROBLEMS), ...j.verification.repairProblems.filter((p) => p.kind !== 'diff')];
 
-  const first = judge(learned.rules);
+  const first = judge(learned.rules, learned.alternatives);
   // DECISION (an honest unsupported is not a mismatch, with one exception): a column the answer gives up on although the pair analysis found how
   // it is built (the payload carries a hint for it) is a problem for the first round - one call to write the rule. It is that round's trigger
   // and no more: a model that stands by "unsupported" after it is accepted (the column stays "needs your input"). (Asked of the answer as it
@@ -481,7 +506,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     const previous = answers[loop.best]!;
     const repaired = await opts.callRepair(payload, previous.masked, step.problems, { round: step.round, maxRounds: caps.maxRounds, rows: loop.sent.map((r) => r.sample), newRows: step.rows.length + step.namedOnly.length });
     calls.push(...repaired.calls);
-    const judged = repaired.rules ? judge(repaired.rules) : null;
+    const judged = repaired.rules ? judge(repaired.rules, repaired.alternatives) : null;
     answers.push(judged);
     decided = loopStep(
       loop,
@@ -520,6 +545,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     loop: loopSummary,
     filled: kept.fill.summary,
     ...(kept.fill.ambiguities.length > 0 ? { ambiguities: kept.fill.ambiguities } : {}),
+    ...(kept.alternatives.length > 0 ? { alternatives: kept.alternatives } : {}),
     ...(aiNotes.length > 0 ? { aiNotes } : {}),
     ...(complete ? { completion: { columns: [...complete.columns], parts: [...complete.parts], fixedProblems, matches: matchesExample(kept.verification, rules), produced: completionProduced(rules, complete.fixedRules, complete) } } : {}),
   };
