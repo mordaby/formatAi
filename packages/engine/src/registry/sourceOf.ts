@@ -2,7 +2,8 @@
 // the incoming file the rules read - exactly as `formatOf(rules)` extracts the format side (formatOf.ts):
 //
 //   * `inputSignature.columns`: every input column the rules DECLARE (`input.columns`): header, aliases, type, `required`,
-//     and the shapes `padLeft` and `inputFormats`. A rules file declares only the columns some rule reads, so this is a
+//     and the shapes `padLeft`, `inputFormats` and `readAs` (SPEC 8.4a: the user's own "this text is read as that", typed on the Run
+//     screen - a rule parameter like an input check's bounds, not a value code read from the data). A rules file declares only the columns some rule reads, so this is a
 //     subset of the source's columns (the source holds the union over its conversions, SPEC 8.15);
 //   * `inputReading`: `input.sheet`, `input.headerRow`, `input.stopAt`;
 //   * `inputValidations`: `validations` whose `on` is not "output" (the output ones belong to the format, SPEC 8.8).
@@ -68,6 +69,7 @@ export function sourceOf(rules: LearnResult | Rules): SourceStructure {
     };
     if (c.padLeft !== undefined) col.padLeft = c.padLeft;
     if (c.inputFormats !== undefined && c.inputFormats.length > 0) col.inputFormats = [...c.inputFormats];
+    if (c.readAs !== undefined && Object.keys(c.readAs).length > 0) col.readAs = { ...c.readAs };
     return col;
   });
 

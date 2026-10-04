@@ -201,6 +201,14 @@ describe('checkLimits: function/table counts, table rows, duplicate keys, cycles
     expect(checkLimits(rules, 'paid').some((p) => p.path === 'transform.tables[0]')).toBe(true);
   });
 
+  it('reports an input column that reads too many cell texts another way (readAs, SPEC 8.4a)', () => {
+    const readAs = (n: number): Record<string, string> => Object.fromEntries(Array.from({ length: n }, (_, i) => [`t${i}`, '']));
+    const input = (n: number): LearnResult['input'] => ({ sheet: { pick: 'first' }, headerRow: 'auto', columns: [{ id: 'a', header: 'A', type: 'decimal', readAs: readAs(n) }] });
+    expect(checkLimits(baseRules({ input: input(100) }), 'paid')).toEqual([]);
+    const problems = checkLimits(baseRules({ input: input(101) }), 'paid');
+    expect(problems.map((p) => p.path)).toEqual(['input.columns[0].readAs']);
+  });
+
   it('reports a duplicate table key', () => {
     const rules = baseRules({
       transform: { computed: [], valueMaps: [], sort: [], tables: [{ name: 't', columns: ['k', 'v'], rows: [['A', 1], ['A', 2]] }] },

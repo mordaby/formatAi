@@ -183,6 +183,45 @@ describe('toWire / fromWire round trip', () => {
   });
 });
 
+describe('readAs (SPEC 8.4a) is the user\'s own text and is not on the wire', () => {
+  const withReadAs = (): LearnResult => {
+    const r = richLearnResult();
+    r.input.columns[2] = { ...r.input.columns[2]!, readAs: { 'N/A': '', none: '0' } };
+    return r;
+  };
+
+  it('the rules schema takes it (and refuses an empty text as a key or a non-text value)', () => {
+    expect(LearnResultSchema.safeParse(withReadAs()).success).toBe(true);
+    const empty = withReadAs();
+    empty.input.columns[2]!.readAs = { '': 'x' };
+    expect(LearnResultSchema.safeParse(empty).success).toBe(false);
+    const number = withReadAs();
+    (number.input.columns[2] as { readAs: unknown }).readAs = { 'N/A': 0 };
+    expect(LearnResultSchema.safeParse(number).success).toBe(false);
+  });
+
+  it('toWire leaves it out (the AI is never shown what the user typed), and never mutates the rules', () => {
+    const rules = withReadAs();
+    const before = JSON.stringify(rules);
+    const wire = toWire(rules);
+    expect(wire.input.columns.some((c) => 'readAs' in c)).toBe(false);
+    expect(JSON.stringify(rules)).toBe(before);
+    expect(wire.input.columns).toHaveLength(rules.input.columns.length);
+  });
+
+  it('fromWire drops one an answer carries anyway: the AI never writes it', () => {
+    const answer = JSON.parse(JSON.stringify(toWire(richLearnResult()))) as { input: { columns: Record<string, unknown>[] } };
+    answer.input.columns[2]!.readAs = { x: '' };
+    const back = fromWire(answer) as LearnResult;
+    expect(back.input.columns.some((c) => 'readAs' in c)).toBe(false);
+    expect(LearnResultSchema.safeParse(back).success).toBe(true);
+  });
+
+  it('the schema sent to the provider has no readAs, and is the same one it was without the field', () => {
+    expect(JSON.stringify(learnResultWireJsonSchema())).not.toContain('readAs');
+  });
+});
+
 describe('learnResultWireJsonSchema', () => {
   const schema = learnResultWireJsonSchema();
 

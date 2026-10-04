@@ -89,7 +89,7 @@ describe('sourceOf', () => {
     const s = sourceOf(makeRules({ validations: [{ column: 'qty', rule: 'range', min: 1, max: 9, severity: 'flag' }] }));
     expect(Object.keys(s).sort()).toEqual(['inputReading', 'inputSignature', 'inputValidations']);
     for (const c of s.inputSignature.columns) {
-      expect(Object.keys(c).every((k) => ['header', 'aliases', 'type', 'required', 'padLeft', 'inputFormats'].includes(k))).toBe(true);
+      expect(Object.keys(c).every((k) => ['header', 'aliases', 'type', 'required', 'padLeft', 'inputFormats', 'readAs'].includes(k))).toBe(true);
     }
   });
 });
@@ -183,6 +183,29 @@ describe('checkSourceLock', () => {
     expect(checkSourceLock(rules, source).map((p) => p.path)).toEqual(['input.columns[0].inputFormats']);
     const none = makeRules({ input: { columns: [{ id: 'd', header: 'Day', type: 'date' }] } });
     expect(checkSourceLock(none, source).map((p) => p.path)).toEqual(['input.columns[0].inputFormats']);
+  });
+
+  it('DECISION (SPEC 8.4a): what a column reads another way (readAs) is part of the lock, compared as a dictionary', () => {
+    const withMap = makeRules({ input: { columns: [{ id: 'q', header: 'Qty', type: 'integer', readAs: { 'N/A': '', none: '0' } }] } });
+    const sourceWith = sourceOf(withMap);
+    expect(sourceWith.inputSignature.columns[0]).toEqual({ header: 'Qty', aliases: [], type: 'integer', required: false, readAs: { 'N/A': '', none: '0' } });
+    expect(checkSourceLock(withMap, sourceWith)).toEqual([]);
+    // key order changes nothing
+    const reordered = makeRules({ input: { columns: [{ id: 'q', header: 'Qty', type: 'integer', readAs: { none: '0', 'N/A': '' } }] } });
+    expect(checkSourceLock(reordered, sourceWith)).toEqual([]);
+    // a conversion that lacks it, has another text or another value reads another file
+    const lacks = makeRules({ input: { columns: [{ id: 'q', header: 'Qty', type: 'integer' }] } });
+    expect(checkSourceLock(lacks, sourceWith).map((p) => p.path)).toEqual(['input.columns[0].readAs']);
+    const other = makeRules({ input: { columns: [{ id: 'q', header: 'Qty', type: 'integer', readAs: { 'N/A': '0', none: '0' } }] } });
+    expect(checkSourceLock(other, sourceWith).map((p) => p.path)).toEqual(['input.columns[0].readAs']);
+    // and the other way round: the source has none
+    expect(checkSourceLock(withMap, source).map((p) => p.path)).toEqual(['input.columns[0].readAs']);
+  });
+
+  it('an empty readAs is no readAs', () => {
+    const empty = makeRules({ input: { columns: [{ id: 'q', header: 'Qty', type: 'integer', readAs: {} }] } });
+    expect(sourceOf(empty).inputSignature.columns[0]).toEqual({ header: 'Qty', aliases: [], type: 'integer', required: false });
+    expect(checkSourceLock(empty, source)).toEqual([]);
   });
 
   it('reports every field that differs, each with its own path', () => {

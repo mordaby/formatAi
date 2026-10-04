@@ -685,6 +685,108 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
     });
   });
 
+  // ---------------------------------------------------------------- readAs (8.4a), saved from the Run screen's "Do this every time?"
+
+  describe('what a column reads another way (readAs) is an edit of the source', () => {
+    const withReadAs = (rules: Rules, map: Record<string, string>): Rules => edited(rules, (r) => void (r.input.columns[1]!.readAs = map));
+
+    it('a save of the editor path writes it to the source and to every other format it feeds, as a new version of each', async () => {
+      const { a, b, sourceId } = await oneSourceTwoFormats();
+      // "1.5" and "a.b" are texts with a dot: stored and read back like any other key
+      const res = await saveRules(a.conversion.id, withReadAs(await rulesOf(a.conversion.id), { 'N/A': '', 'a.b': '1.5' }));
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ formatChanged: false, sourceChanged: true, affectedConversions: 1, needsReview: [] });
+      expect(res.body.conversion.version).toBe(2);
+
+      const s = await source(sourceId);
+      expect(s.version).toBe(2);
+      expect(s.inputSignature.columns[1].readAs).toEqual({ 'N/A': '', 'a.b': '1.5' });
+      const sibling = await detail(b.conversion.id);
+      expect(sibling.version).toBe(2);
+      expect(sibling.status).toBe('verified');
+      expect(sibling.rules.input.columns[1].readAs).toEqual({ 'N/A': '', 'a.b': '1.5' });
+      expect(checkSourceLock(sibling.rules, s)).toEqual([]);
+      expect(checkSourceLock(await rulesOf(a.conversion.id), s)).toEqual([]);
+    });
+
+    it('a second mapping on the same column adds to it (the editor path replaces the column with what the save carries)', async () => {
+      const { a, b, sourceId } = await oneSourceTwoFormats();
+      await saveRules(a.conversion.id, withReadAs(await rulesOf(a.conversion.id), { 'N/A': '' }));
+      // saved from the OTHER format's conversion, which the first save brought to the source (its version moved on): nothing is lost
+      const res = await saveRules(b.conversion.id, withReadAs(await rulesOf(b.conversion.id), { 'N/A': '', none: '0' }));
+      expect(res.status).toBe(200);
+      expect((await source(sourceId)).inputSignature.columns[1].readAs).toEqual({ 'N/A': '', none: '0' });
+      expect((await rulesOf(a.conversion.id)).input.columns[1]!.readAs).toEqual({ 'N/A': '', none: '0' });
+    });
+
+    it('an editor that has not seen the mapping is refused by the version check, not allowed to take it away', async () => {
+      const { a, b } = await oneSourceTwoFormats();
+      const stale = await rulesOf(b.conversion.id); // version 1, no mapping
+      await saveRules(a.conversion.id, withReadAs(await rulesOf(a.conversion.id), { 'N/A': '' }));
+      const res = await saveRules(b.conversion.id, edited(stale, (r) => void (r.output.columns[1]!.format = '0.0')), { baseVersion: 1 });
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'versionConflict' });
+    });
+
+    it('a new format saved into the source after the mapping takes the source\'s reading', async () => {
+      const { a, sourceId } = await oneSourceTwoFormats();
+      await saveRules(a.conversion.id, withReadAs(await rulesOf(a.conversion.id), { 'N/A': '' }));
+      const third = await create(
+        edited(sourceOne(), (r) => {
+          r.output.columns = [{ header: 'Amount', from: 'amount' }];
+          r.transform.computed = [];
+        }),
+        { name: 'Only amounts', inputHeaders: ['ID', 'Amount'] },
+      );
+      expect(third.status).toBe(201);
+      expect(third.body.source.id).toBe(sourceId);
+      const rules = await rulesOf(third.body.conversion.id);
+      expect(rules.input.columns.find((c) => c.header === 'Amount')!.readAs).toEqual({ 'N/A': '' });
+      expect(checkSourceLock(rules, await source(sourceId))).toEqual([]);
+    });
+
+    it('restoring the version before it undoes it: the source and the other formats read the column as before', async () => {
+      const { a, b, sourceId } = await oneSourceTwoFormats();
+      const id = a.conversion.id as string;
+      await saveRules(id, withReadAs(await rulesOf(id), { 'N/A': '' })); // version 2 of a (and of b); the source is at version 2
+      const restored = await call('POST', `/api/conversions/${id}/restore/1`, {}, paid);
+      expect(restored.status).toBe(200);
+      expect(restored.body.conversion.version).toBe(3);
+      expect('readAs' in (await rulesOf(id)).input.columns[1]!).toBe(false);
+      const s = await source(sourceId);
+      expect(s.version).toBe(3);
+      expect('readAs' in s.inputSignature.columns[1]).toBe(false);
+      const sibling = await detail(b.conversion.id);
+      expect(sibling.version).toBe(3);
+      expect('readAs' in sibling.rules.input.columns[1]).toBe(false);
+      expect(checkSourceLock(sibling.rules, s)).toEqual([]);
+      // and the other way: restoring the version WITH it brings it back to everyone
+      const again = await call('POST', `/api/conversions/${id}/restore/2`, {}, paid);
+      expect(again.status).toBe(200);
+      expect((await rulesOf(b.conversion.id)).input.columns[1]!.readAs).toEqual({ 'N/A': '' });
+    });
+
+    it('restore still refuses a version that differs in anything else the source lock holds', async () => {
+      const { a, sourceId } = await oneSourceTwoFormats();
+      const id = a.conversion.id as string;
+      await saveRules(id, withReadAs(await rulesOf(id), { 'N/A': '' })); // version 2
+      const cols = (await source(sourceId)).inputSignature.columns;
+      await patchSource(sourceId, { inputSignature: { columns: cols }, inputReading: { sheet: { pick: 'first' }, headerRow: 4 } });
+      const refused = await call('POST', `/api/conversions/${id}/restore/1`, {}, paid);
+      expect(refused.status).toBe(422);
+      expect(refused.body.problems.map((p: any) => p.path)).toContain('input.headerRow');
+    });
+
+    it('rules whose readAs is malformed are refused as invalid rules (an empty key, a non-text value)', async () => {
+      const { a } = await oneSourceTwoFormats();
+      const rules = await rulesOf(a.conversion.id);
+      expect((await saveRules(a.conversion.id, withReadAs(rules, { '': 'x' }))).status).toBe(422);
+      expect((await saveRules(a.conversion.id, withReadAs(rules, { x: 1 as unknown as string }))).status).toBe(422);
+      const tooMany = Object.fromEntries(Array.from({ length: limits.rules.maxReadAsPerColumn + 1 }, (_, i) => [`t${i}`, '']));
+      expect((await saveRules(a.conversion.id, withReadAs(rules, tooMany))).status).toBe(422);
+    });
+  });
+
   // ---------------------------------------------------------------- sourceId is required
 
   describe('a conversion always has a source (sourceId is required)', () => {

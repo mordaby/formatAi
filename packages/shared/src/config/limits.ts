@@ -94,6 +94,8 @@ export const limits = {
     /** Across-row (window) functions per rules file, and columns in one `by:` / `order:` (docs/proposals/window-operations.md). Each window node also counts as one rule. */
     maxWindowOps: 8,
     maxWindowKeys: 3,
+    /** SPEC 8.4a: how many exact cell texts one input column may read another way (`input.columns[].readAs`, "Do this every time?" on the Run screen). */
+    maxReadAsPerColumn: 100,
   },
   /**
    * SPEC 6.5: the local fast path.

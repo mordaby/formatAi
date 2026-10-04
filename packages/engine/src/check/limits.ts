@@ -350,6 +350,18 @@ export function checkLimits(rules: LearnResult | Rules, tier: Tier): LimitProble
     }
   });
 
+  // ----- what one input column reads another way (SPEC 8.4a `readAs`): a cap per column, so a rules file stays small -----
+  rules.input.columns.forEach((col, i) => {
+    const n = col.readAs === undefined ? 0 : Object.keys(col.readAs).length;
+    if (n > limits.rules.maxReadAsPerColumn) {
+      problems.push({
+        kind: 'limit',
+        path: `input.columns[${i}].readAs`,
+        message: `column "${col.header}" reads ${n} cell texts another way, exceeding the maximum of ${limits.rules.maxReadAsPerColumn}`,
+      });
+    }
+  });
+
   // ----- acyclic call graph (defensive; SPEC 8.14 already makes it acyclic by
   // construction via "a function may call only functions defined above it", enforced
   // by checkRules) -----
