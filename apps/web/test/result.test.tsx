@@ -53,7 +53,7 @@ describe('the rules map', () => {
   it('the badge says how many columns need your input, and the header has the one primary button', async () => {
     await openResult();
     expect(badge()).toBe('1 column needs your input');
-    const save = screen.getByRole('button', { name: 'Save format and download' });
+    const save = screen.getByRole('button', { name: 'Save format' });
     expect(save.classList.contains('btn--primary')).toBe(true);
     expect(document.querySelectorAll('.btn--primary')).toHaveLength(1);
     expect(screen.getByText('Solved on your computer')).toBeTruthy();
@@ -250,7 +250,9 @@ describe('the live check strip', () => {
     await waitFor(() => expect(badge()).toBe('1 problem to fix'));
     expect(screen.getByText('Fix these before you save:')).toBeTruthy();
     expect(screen.getByText('Sort uses a column ("ghost") that does not exist.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Save format and download' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Save format' }) as HTMLButtonElement).disabled).toBe(true);
+    // (no file is made from rules that cannot run, either)
+    expect((screen.getByRole('button', { name: 'Download the file' }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -266,12 +268,12 @@ describe('the free tier', () => {
     expect(within(dialog).getByText('Continue with Microsoft')).toBeTruthy();
   });
 
-  it('"Save format and download" opens the sign-in wall and keeps the learned rules (and edits) meanwhile', async () => {
+  it('"Save format" opens the sign-in wall and keeps the learned rules (and edits) meanwhile', async () => {
     await openResult();
     openLine('col:Total');
     fireEvent.change(screen.getByLabelText('Column name'), { target: { value: 'Grand total' } });
     await waitFor(() => line('col:Grand total'));
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
     const dialog = await screen.findByRole('dialog', { name: 'Sign in' });
     expect(dialog.textContent).toContain('What you have learned survives signing in');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
@@ -361,7 +363,7 @@ describe('direction (SPEC 16.2)', () => {
     await openResult({ lang: 'he' });
     expect(screen.getByTestId('app').getAttribute('dir')).toBe('rtl');
     expect(document.documentElement.dir).toBe('rtl');
-    expect(screen.getByRole('button', { name: 'שמירת הפורמט והורדה' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'שמירת הפורמט' })).toBeTruthy();
     expect(badge()).toBe('עמודה אחת דורשת מידע מכם');
     expect([...document.querySelectorAll('.map-section__title')].map((h) => h.textContent)).toEqual(['שורות', 'עמודות', 'פריסה', 'בדיקות']);
     expect(strip()).toBe('תואם ל-30 מתוך 30 שורות בדוגמה שלכם');

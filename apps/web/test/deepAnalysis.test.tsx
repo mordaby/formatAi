@@ -207,10 +207,13 @@ describe('Home: "Deep analysis with AI if needed"', () => {
     expect((await screen.findByTestId('completion-running')).textContent).toContain('Running deep analysis…');
     for (const header of ['Total', 'Shipped', 'Remarks']) expect(line(`col:${header}`).getAttribute('data-ai-running')).toBe('true');
     expect(line('col:Item').getAttribute('data-status')).toBe('matches');
+    // Neither saving nor making the file while the AI step works on the rules.
+    expect((screen.getByRole('button', { name: 'Save format' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Download the file' }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => release());
     await screen.findByTestId('completion-done');
     expect(line('col:Total').getAttribute('data-ai-step')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
     expect(learn).toHaveBeenCalledTimes(2); // once per result
   });
 
@@ -436,7 +439,7 @@ describe('fields that still have no rule: the best we can do for now - said hone
     expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Download with these fields empty' })).toBeTruthy();
     expect(screen.getByText(/fill them in yourself on the map, or save the format/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
   });
 
   it('says it in Hebrew', async () => {
@@ -484,7 +487,7 @@ describe('fields that still have no rule: the best we can do for now - said hone
     expect(runButton().className).toContain('btn--primary');
     // ... but it can be delivered right away, too: nobody has to run the AI step to get a file.
     expect(screen.getByRole('button', { name: 'Download with these fields empty' })).toBeTruthy();
-    const save = screen.getByRole('button', { name: 'Save format and download' });
+    const save = screen.getByRole('button', { name: 'Save format' });
     expect(save.className).not.toContain('btn--primary');
   });
 
@@ -516,7 +519,7 @@ describe('fields that still have no rule: the best we can do for now - said hone
     expect(fullConversions(engine)[0]!.rules.output.columns.filter((c) => c.from === null)).toHaveLength(3);
   });
 
-  it('(c) saves the format with those fields marked "needs your input" (userConfirmed), and downloads the file with them empty', async () => {
+  it('(c) saves the format with those fields marked "needs your input" (userConfirmed), without downloading the file', async () => {
     const created = createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1' }) });
     const createFormat = vi.fn(async () => created);
     const api = fakeApi({ user: USER, registry: { createFormat } });
@@ -524,7 +527,7 @@ describe('fields that still have no rule: the best we can do for now - said hone
     await toResult(engine, api);
     fireEvent.click(runButton());
     await screen.findByTestId('completion-done');
-    const save = (await screen.findByRole('button', { name: 'Save format and download' })) as HTMLButtonElement;
+    const save = (await screen.findByRole('button', { name: 'Save format' })) as HTMLButtonElement;
     await waitFor(() => expect(save.disabled).toBe(false)); // (the check of the new rules has finished)
     fireEvent.click(save);
     await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
@@ -532,7 +535,10 @@ describe('fields that still have no rule: the best we can do for now - said hone
     expect(body.status).toBe('userConfirmed');
     expect(body.learnPath).toBe('llm');
     expect(body.rules.output.columns.filter((c) => c.from === null).map((c) => c.header)).toEqual(['Shipped', 'Remarks']);
-    await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(1));
+    // The format is saved; the file is not made (that is the Download button).
+    expect(await screen.findByText(/^Saved. "/)).toBeTruthy();
+    expect(downloaded).not.toHaveBeenCalled();
+    expect(fullConversions(engine)).toHaveLength(0);
   });
 
   it('(b) a field can be filled in on the map, and then it is no longer listed', async () => {

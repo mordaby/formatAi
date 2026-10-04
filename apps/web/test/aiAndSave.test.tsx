@@ -1,6 +1,7 @@
 // The AI quota and saving (SPEC 11, 21 v5 items 2-3, 5 A step 8): what the limits say and offer, the learn outcome the browser
-// reports after its own full verification (verified / failed / accepted), and "Save format and download" - what is POSTed, that
-// the FULL file is then made in the worker and downloaded, and how each refusal is told.
+// reports after its own full verification (verified / failed / accepted), "Save format" - what is POSTed, that saving does not
+// download the file, and how each refusal is told - and "Download the file" beside it: the FULL file made in the worker, for a signed-in
+// user; a visitor is asked to sign in.
 import { limits, promptVersion, type LearnResponse } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -152,7 +153,7 @@ describe('the outcome the browser reports (SPEC 21 v5 item 3)', () => {
   });
 });
 
-describe('Save format and download (signed in)', () => {
+describe('Save format (signed in)', () => {
   async function openLocal(api: FakeApi, extra: Parameters<typeof fakeEngine>[2] = {}, result: Record<string, unknown> = {}) {
     const convert = vi.fn(async () => converted());
     const { engine } = fakeEngine(async () => learnResult({ path: 'local', ...result }), undefined, { convert, ...extra });
@@ -170,11 +171,11 @@ describe('Save format and download (signed in)', () => {
 
   const created = createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1' }) });
 
-  it('POSTs the name, the rules, the status and how it was learned; then makes the FULL file in the worker and downloads it', async () => {
+  it('POSTs the name, the rules, the status and how it was learned - and does not make or download the file', async () => {
     const createFormat = vi.fn(async () => created);
     const api = fakeApi({ user: USER, registry: { createFormat } });
     const { convert } = await openLocal(api);
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
 
     await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
     const body = (createFormat.mock.calls[0] as unknown as [Record<string, unknown>])[0];
@@ -184,14 +185,12 @@ describe('Save format and download (signed in)', () => {
     expect(body).not.toHaveProperty('promptVersion');
     expect(body).not.toHaveProperty('model');
 
-    // The whole example input is converted (no preview cut-off) and the result is saved through the browser.
-    await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(1));
-    const lastRun = convert.mock.calls.filter((c) => (c as unknown as [{ previewRows: number }])[0].previewRows === 0);
-    expect(lastRun).toHaveLength(1);
-    expect(downloaded.mock.calls[0]![0]).toBe('orders (converted).xlsx');
-    expect(await screen.findByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
+    // The user already has the output: the format is saved, the file is not made (the whole example input is never converted) or downloaded.
+    expect(await screen.findByText('Saved. "Orders report" is in My formats.')).toBeTruthy();
+    expect(convert.mock.calls.filter((c) => (c as unknown as [{ previewRows: number }])[0].previewRows === 0)).toHaveLength(0);
+    expect(downloaded).not.toHaveBeenCalled();
     // Saved: the header now saves changes (nothing to save yet) and downloads; the way to My formats is in the message. No second first save.
-    expect(screen.queryByRole('button', { name: 'Save format and download' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save format' })).toBeNull();
     expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole('button', { name: 'Download' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Open My formats' })).toBeTruthy();
@@ -207,7 +206,7 @@ describe('Save format and download (signed in)', () => {
     it('sends the example input\'s headers (structure only) so the server can reuse a source it matches, and forces no source', async () => {
       const createFormat = vi.fn(async () => created);
       await openLocal(fakeApi({ user: USER, registry: { createFormat } }), {}, { exampleInput: INPUT });
-      fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
       await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
       const body = (createFormat.mock.calls[0] as unknown as [Record<string, unknown>])[0];
       // The example's headers - all of them, not only the ones the rules use - and nothing read from a cell.
@@ -218,7 +217,7 @@ describe('Save format and download (signed in)', () => {
       // A new source is named after the example input file ("orders.csv"): a default the server makes unique, never a name the user chose.
       expect(body.suggestedSourceName).toBe('orders');
       // A source that was created is not mentioned: there is no source UI in the MVP (SPEC 8.15).
-      expect(await screen.findByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
+      expect(await screen.findByText('Saved. "Orders report" is in My formats.')).toBeTruthy();
       expect(screen.queryByTestId('source-reused')).toBeNull();
       expect(document.body.textContent).not.toMatch(/saved as (the )?source|recogni[sz]ed|reused/i);
     });
@@ -232,9 +231,9 @@ describe('Save format and download (signed in)', () => {
       });
       const createFormat = vi.fn(async () => reused);
       await openLocal(fakeApi({ user: USER, registry: { createFormat } }), {}, { exampleInput: INPUT });
-      fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
       // the message for the save itself is all there is; the source's name (the server's word) is nowhere on the screen
-      expect(await screen.findByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
+      expect(await screen.findByText('Saved. "Orders report" is in My formats.')).toBeTruthy();
       expect(screen.queryByTestId('source-reused')).toBeNull();
       expect(document.body.textContent).not.toContain('Acme prices');
       expect(document.body.textContent).not.toMatch(/saved as (the )?source|recogni[sz]ed|reused/i);
@@ -243,7 +242,7 @@ describe('Save format and download (signed in)', () => {
     it('leaves inputHeaders out when the learn kept no example input', async () => {
       const createFormat = vi.fn(async () => created);
       await openLocal(fakeApi({ user: USER, registry: { createFormat } }));
-      fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
       await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
       expect((createFormat.mock.calls[0] as unknown as [Record<string, unknown>])[0]).not.toHaveProperty('inputHeaders');
     });
@@ -261,8 +260,10 @@ describe('Save format and download (signed in)', () => {
         fireEvent.click(screen.getByRole('button', { name: /ללמוד את הפורמט/ }));
       });
       await screen.findByTestId('rules-map');
-      await waitFor(() => expect((screen.getByRole('button', { name: 'שמירת הפורמט והורדה' }) as HTMLButtonElement).disabled).toBe(false));
-      fireEvent.click(screen.getByRole('button', { name: 'שמירת הפורמט והורדה' }));
+      await waitFor(() => expect((screen.getByRole('button', { name: 'שמירת הפורמט' }) as HTMLButtonElement).disabled).toBe(false));
+      // (the file is its own button, in the same register)
+      expect(screen.getByRole('button', { name: 'הורדת הקובץ' })).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'שמירת הפורמט' }));
       await screen.findByText(/^נשמר\. "/);
       expect(screen.queryByTestId('source-reused')).toBeNull();
       expect(document.body.textContent).not.toContain('Acme prices');
@@ -278,7 +279,7 @@ describe('Save format and download (signed in)', () => {
     const field = screen.getByLabelText('Format name');
     fireEvent.change(field, { target: { value: 'Monthly orders' } });
     fireEvent.keyDown(field, { key: 'Enter' });
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
     await waitFor(() => expect(createFormat).toHaveBeenCalled());
     expect((createFormat.mock.calls[0] as unknown as [{ name: string }])[0].name).toBe('Monthly orders');
   });
@@ -304,7 +305,7 @@ describe('Save format and download (signed in)', () => {
       fireEvent.click(screen.getByRole('button', { name: /Learn the format/ }));
     });
     await screen.findByTestId('rules-map');
-    const save = await screen.findByRole('button', { name: 'Save with 3 differences and download' });
+    const save = await screen.findByRole('button', { name: 'Save with 3 differences' });
     // (the failed report came first)
     await waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', 'failed'));
     fireEvent.click(save);
@@ -316,10 +317,21 @@ describe('Save format and download (signed in)', () => {
   it('a visitor is asked to sign in instead, and nothing is saved', async () => {
     const api = fakeApi();
     await openLocal(api);
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
     expect(await screen.findByRole('dialog', { name: 'Sign in' })).toBeTruthy();
     expect(api.registry.createFormat).not.toHaveBeenCalled();
     expect(downloaded).not.toHaveBeenCalled();
+  });
+
+  it('a visitor who asks for the file is asked to sign in (the download reason), and nothing is converted or downloaded', async () => {
+    const api = fakeApi();
+    const { convert } = await openLocal(api);
+    fireEvent.click(screen.getByRole('button', { name: 'Download the file' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Sign in' });
+    expect(dialog.textContent).toContain('Sign in free to download the full file.');
+    expect(convert.mock.calls.filter((c) => (c as unknown as [{ previewRows: number }])[0].previewRows === 0)).toHaveLength(0);
+    expect(downloaded).not.toHaveBeenCalled();
+    expect(api.registry.createFormat).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -329,20 +341,20 @@ describe('Save format and download (signed in)', () => {
   ] as const)('the %s limit is said in words, with Upgrade', async (limit, status, text) => {
     const createFormat = vi.fn(async () => Promise.reject(new ApiError('limitHit', status, { limit })));
     await openLocal(fakeApi({ user: USER, registry: { createFormat } }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
     expect(await screen.findByText(text)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Upgrade' })).toBeTruthy();
     // (the header has the link too: the message adds a second one to free a slot)
     if (limit === 'savedFormats') expect(screen.getAllByRole('link', { name: 'My formats' }).length).toBeGreaterThan(1);
     expect(downloaded).not.toHaveBeenCalled();
     // The rules stay: the user can try again after making room.
-    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
   });
 
   it('rules the server refuses are listed, with what is wrong', async () => {
     const createFormat = vi.fn(async () => Promise.reject(new ApiError('invalidRules', 422, { problems: [{ kind: 'reference', message: 'unknown column id "ghost"' }] })));
     await openLocal(fakeApi({ user: USER, registry: { createFormat } }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
     expect(await screen.findByText("These rules can't be saved yet. Fix the marked problems and try again.")).toBeTruthy();
     expect(screen.getByText('unknown column id "ghost"')).toBeTruthy();
   });
@@ -350,29 +362,49 @@ describe('Save format and download (signed in)', () => {
   it('a session that ended while saving asks to sign in', async () => {
     const createFormat = vi.fn(async () => Promise.reject(new ApiError('signInRequired', 401)));
     await openLocal(fakeApi({ user: USER, registry: { createFormat } }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
     expect(await screen.findByText("Sign in to save this format and reuse it on next month's file.")).toBeTruthy();
   });
 
-  it('a file that cannot be made after saving says the format is saved anyway', async () => {
+  it('"Download the file" converts the example input with the rules on screen and downloads it - without saving the format', async () => {
+    const createFormat = vi.fn(async () => created);
+    const api = fakeApi({ user: USER, registry: { createFormat } });
+    const { convert } = await openLocal(api);
+    fireEvent.click(screen.getByRole('button', { name: 'Download the file' }));
+    await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(1));
+    // The whole example input is converted (no preview cut-off) and the result is saved through the browser.
+    const full = convert.mock.calls.filter((c) => (c as unknown as [{ previewRows: number }])[0].previewRows === 0);
+    expect(full).toHaveLength(1);
+    expect((full[0] as unknown as [{ rules: unknown }])[0].rules).toEqual(RULES);
+    expect(downloaded.mock.calls[0]![0]).toBe('orders (converted).xlsx');
+    // Nothing is saved, and the format can still be (the primary button is still there).
+    expect(createFormat).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a file that cannot be made says so, and the format can still be saved', async () => {
     const createFormat = vi.fn(async () => created);
     const convert = vi.fn(async (args: { previewRows: number }) => (args.previewRows === 0 ? { ok: false, error: { code: 'noTable' } } : converted()));
     await openLocal(fakeApi({ user: USER, registry: { createFormat } }), { convert });
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
-    expect(await screen.findByText(/The format was saved, but we couldn't prepare the file/)).toBeTruthy();
-    expect(createFormat).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Download the file' }));
+    expect(await screen.findByText("We couldn't prepare the file. Try again.")).toBeTruthy();
     expect(downloaded).not.toHaveBeenCalled();
+    expect(createFormat).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
+    expect(await screen.findByText('Saved. "Orders report" is in My formats.')).toBeTruthy();
+    expect(createFormat).toHaveBeenCalledTimes(1);
   });
 
   it('cannot be double-clicked into two formats', async () => {
     let release: () => void = () => undefined;
     const createFormat = vi.fn(() => new Promise<typeof created>((resolve) => (release = () => resolve(created))));
     await openLocal(fakeApi({ user: USER, registry: { createFormat } }));
-    const button = screen.getByRole('button', { name: 'Save format and download' });
+    const button = screen.getByRole('button', { name: 'Save format' });
     fireEvent.click(button);
     fireEvent.click(button);
     await act(async () => release());
-    await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Saved. "Orders report" is in My formats.')).toBeTruthy();
     expect(createFormat).toHaveBeenCalledTimes(1);
   });
 });

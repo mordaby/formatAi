@@ -33,6 +33,7 @@ import { TextField } from '../Result/fields';
 import { compareOutput, fileTypeOfName, type OutputMismatch, type OutputFileType } from '../Result/matchFormat';
 import { SaveFailureMessage } from '../Result/SaveMessages';
 import { defaultFormatName } from '../Result/session';
+import { useDownload } from '../Result/useDownload';
 import { useSave } from '../Result/useSave';
 import { Workbench, type WorkbenchInfo } from '../Result/Workbench';
 import type { LearnOutput } from '../../worker/engineApi';
@@ -416,7 +417,6 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
         }
         void me.refreshFormats();
       },
-      download: { file: input, rules: info.rules },
     });
   };
 
@@ -424,19 +424,34 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
   const problemsTitle =
     failure?.kind !== 'api' ? undefined : failure.code === 'formatMismatch' ? t('add.saveMismatch.title') : failure.code === 'sourceMismatch' ? t('add.saveSourceMismatch.title') : undefined;
 
+  // "Download the file": the example input converted with the rules as they are on screen, before or after saving. Saving never does it.
+  const download = useDownload();
+  const downloadButton = (info: WorkbenchInfo) =>
+    input ? (
+      <Button variant="secondary" loading={download.status === 'busy'} disabled={info.status.kind === 'blocked'} onClick={() => download.run(input, info.rules)}>
+        {t('conv.done.download')}
+      </Button>
+    ) : null;
+
   const actions = (info: WorkbenchInfo) => {
     if (save.state.status === 'saved') {
       return (
-        <Button variant="primary" onClick={() => navigate(`/formats/${format.id}`)}>
-          {t('save.viewFormats')}
-        </Button>
+        <div className="result-head__buttons">
+          <Button variant="primary" onClick={() => navigate(`/formats/${format.id}`)}>
+            {t('save.viewFormats')}
+          </Button>
+          {downloadButton(info)}
+        </div>
       );
     }
     const label = info.differences && info.differences > 0 ? t(info.differences === 1 ? 'save.differences.one' : 'save.differences.other', { n: info.differences }) : t('add.save');
     return (
-      <Button variant="primary" loading={save.state.status === 'saving'} disabled={info.metaStatus === null} onClick={() => doSave(info)}>
-        {label}
-      </Button>
+      <div className="result-head__buttons">
+        <Button variant="primary" loading={save.state.status === 'saving'} disabled={info.metaStatus === null} onClick={() => doSave(info)}>
+          {label}
+        </Button>
+        {downloadButton(info)}
+      </div>
     );
   };
 
@@ -454,6 +469,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
         </InlineMessage>
       )}
       {failure && <SaveFailureMessage failure={failure} onSignIn={() => undefined} {...(problemsTitle ? { problemsTitle } : {})} />}
+      {download.status === 'failed' && <InlineMessage tone="warn">{t('result.downloadFailed')}</InlineMessage>}
     </>
   );
 

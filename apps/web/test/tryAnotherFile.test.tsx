@@ -108,7 +108,7 @@ describe('running the current rules on one more file', () => {
     expect(callCounts(api)).toEqual(before);
     expect(fetchSpy).not.toHaveBeenCalled();
     // Nothing was saved: still the unsaved learn.
-    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
   });
 
   it('shows what the Convert screen shows: rows in and out, no flags, the first rows of the file', async () => {

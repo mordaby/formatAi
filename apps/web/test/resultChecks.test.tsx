@@ -328,9 +328,9 @@ describe('unsaved changes', () => {
     await rename();
     await waitFor(() => expect(flag()).toBe('Unsaved changes'));
     expect(document.querySelectorAll('.btn--primary')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Save format and download' }).classList.contains('btn--primary')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Save format' }).classList.contains('btn--primary')).toBe(true);
     // Next to the button: in the same header, before it.
-    const save = screen.getByRole('button', { name: 'Save format and download' });
+    const save = screen.getByRole('button', { name: 'Save format' });
     expect(screen.getByTestId('unsaved-changes').parentElement).toBe(save.closest('.result-head__actions'));
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(flag()).toBe(''));
@@ -338,15 +338,16 @@ describe('unsaved changes', () => {
 
   it('clears once the format is saved', async () => {
     const createFormat = vi.fn(async () => created);
-    const { convert } = await openResult({ api: fakeApi({ user: USER, registry: { createFormat } }), convert: converted });
+    await openResult({ api: fakeApi({ user: USER, registry: { createFormat } }), convert: converted });
     await rename();
     await waitFor(() => expect(flag()).toBe('Unsaved changes'));
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Save format and download' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save format' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
     await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
     expect(await screen.findByText(/^Saved\. "Orders report" is in My formats/)).toBeTruthy();
     expect(flag()).toBe('');
-    expect(convert).toHaveBeenCalled();
+    // (saving the format does not download the file)
+    expect(downloaded).not.toHaveBeenCalled();
     // Nothing is asked when the tab closes any more.
     expect(closeTab()).toBe(false);
   });

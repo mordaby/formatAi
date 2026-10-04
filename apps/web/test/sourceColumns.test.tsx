@@ -227,7 +227,7 @@ describe('a result whose only open columns need your input', () => {
     expect(liveCheck.mock.calls.at(-1)![2]!.onlyColumns).toEqual([0, 1, 2, 3, 4]);
     expect(screen.getByTestId('status-badge').textContent).toBe('1 column needs your input');
     expect(screen.queryByText(/differences/)).toBeNull();
-    const save = await screen.findByRole('button', { name: 'Save format and download' });
+    const save = await screen.findByRole('button', { name: 'Save format' });
     expect((save as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(save);

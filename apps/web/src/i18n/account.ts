@@ -131,13 +131,12 @@ export const accountEn = {
   'ai.attempt': "The AI step got this far, but not every row matches your example (try {n} of {max}). Fix the rest in the map, or start again with corrected files.",
 
   // ----- saving (SPEC 5 A step 8, 8.11 "Saving") -----
-  'save.differences.one': 'Save with 1 difference and download',
-  'save.differences.other': 'Save with {n} differences and download',
+  'save.differences.one': 'Save with 1 difference',
+  'save.differences.other': 'Save with {n} differences',
   'save.saving': 'Saving…',
-  'save.done': 'Saved. "{name}" is in My formats, and your file is downloading.',
+  'save.done': 'Saved. "{name}" is in My formats.',
   'save.viewFormats': 'Open My formats',
   'save.failed': "We couldn't save the format. Try again in a moment.",
-  'save.downloadFailed': "The format was saved, but we couldn't prepare the file. Open it from My formats and convert the file there.",
   'save.problems': 'What stopped the save:',
   'save.signInToSave': 'Sign in to save',
 
@@ -265,13 +264,12 @@ export const accountHe: Record<keyof typeof accountEn, string> = {
   'aiLeft.note': 'פורמטים עם AI שנותרו: {n}',
   'ai.attempt': 'שלב ה-AI התקדם עד כאן, אבל לא כל שורה תואמת לדוגמה שלכם (ניסיון {n} מתוך {max}). תקנו את השאר במפה, או התחילו מחדש עם קבצים מתוקנים.',
 
-  'save.differences.one': 'שמירה עם הבדל אחד והורדה',
-  'save.differences.other': 'שמירה עם {n} הבדלים והורדה',
+  'save.differences.one': 'שמירה עם הבדל אחד',
+  'save.differences.other': 'שמירה עם {n} הבדלים',
   'save.saving': 'שומרים…',
-  'save.done': 'נשמר. "{name}" נמצא עכשיו ברשימת הפורמטים שלכם, והקובץ שלכם יורד.',
+  'save.done': 'נשמר. "{name}" נמצא עכשיו ברשימת הפורמטים שלכם.',
   'save.viewFormats': 'פתיחת הפורמטים שלי',
   'save.failed': 'לא הצלחנו לשמור את הפורמט. נסו שוב בעוד רגע.',
-  'save.downloadFailed': 'הפורמט נשמר, אבל לא הצלחנו להכין את הקובץ. פתחו אותו מהפורמטים שלי והמירו את הקובץ שם.',
   'save.problems': 'מה עצר את השמירה:',
   'save.signInToSave': 'התחברו כדי לשמור',
 
