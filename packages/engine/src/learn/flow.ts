@@ -15,9 +15,9 @@ import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
 import { analyzePair } from './analyze';
 import { checkFixedLock, type FixedProblem } from '../registry/checkFixedLock';
-import { columnsWithRule, completionProduced, isCompletable, type CompleteOptions } from './complete';
+import { columnsWithRule, completionProduced, isCompletable, learnResultOf, type CompleteOptions } from './complete';
 import { fastPath } from './fastPath';
-import { createMasker, unmaskRules, type Masker } from './mask';
+import { createMasker, maskRules, unmaskRules, type Masker } from './mask';
 import { partialRules, type PartialRulesResult } from './partial';
 import { preflight, type PreflightResult } from './preflight';
 import { aiReadiness, type AiReadiness } from './readiness';
@@ -350,7 +350,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   let verification = verifyAnswer(rules);
   // Completion mode: the answer must also still contain the user's rules, unchanged (the API checked this on the masked
   // copies; this is the same check on the real ones, before anything replaces what the user has).
-  const fixedLock = (r: LearnResult): FixedProblem[] => (opts.complete ? checkFixedLock(r, opts.complete.fixedRules, { columns: opts.complete.columns, parts: opts.complete.parts }) : []);
+  const asked = opts.complete ? { columns: opts.complete.columns, parts: opts.complete.parts } : null;
+  const fixedLock = (r: LearnResult): FixedProblem[] => (opts.complete && asked ? checkFixedLock(r, opts.complete.fixedRules, asked) : []);
   let fixedProblems = fixedLock(rules);
   // What "the answer is good" means: a plain learn - the full verification; completion - that too, but a column with no rule does not count.
   // DECISION: in completion mode "matches the example" is relative to the user's own rules - the AI step answers for the columns it produced
@@ -374,14 +375,18 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   const passes = (v: VerifyResult, r: LearnResult, lock: readonly FixedProblem[]): boolean => lock.length === 0 && matchesExample(v, r);
   // DECISION (an honest unsupported is not a mismatch, with one exception): a column the answer gives up on although the pair analysis found how
   // it is built (the payload carries a hint for it) is a problem for the repair round - one call to write the rule. It is the repair's trigger
-  // and no more: a model that stands by "unsupported" after that round is accepted (the column stays "needs your input").
-  const evidence = unsupportedDespiteEvidence(rules, payload);
+  // and no more: a model that stands by "unsupported" after that round is accepted (the column stays "needs your input"). (Asked of the
+  // answer as it wrote it: the messages name its columns in the payload's own vocabulary.)
+  const evidence = unsupportedDespiteEvidence(maskedRules, payload);
   stages.verifiedFirstCall = passes(verification, rules, fixedProblems) && evidence.length === 0;
 
   // ---- SPEC 5 A step 6 / 9.3: at most one browser-triggered repair ----
   // (Nothing to say to the AI step when there is no problem to name: an answer that produced no column at all is no verified learn, but
   // there is nothing in the example it differs from - the API's own checks already asked for more.)
-  const problems: RepairProblem[] = [...fixedProblems.slice(0, MAX_FIXED_PROBLEMS), ...verification.repairProblems, ...evidence];
+  // SPEC 7.2: every value in what is sent is masked like the samples - the layout and diff problems by the verification's masker, the fixed
+  // lock's findings from the lock run on the answer's own (masked) vocabulary, so a message never quotes an unmasked word.
+  const sendFixed = fixedProblems.length > 0 && masker && opts.complete && asked ? checkFixedLock(maskedRules, maskRules(learnResultOf(opts.complete.fixedRules), masker), asked) : fixedProblems;
+  const problems: RepairProblem[] = [...sendFixed.slice(0, MAX_FIXED_PROBLEMS), ...verification.repairProblems, ...evidence];
   if (!stages.verifiedFirstCall && opts.callRepair && problems.length > 0) {
     stages.browserRepairUsed = true;
     const repaired = await opts.callRepair(payload, maskedRules, problems);

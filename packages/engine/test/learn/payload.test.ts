@@ -300,6 +300,31 @@ describe('buildPayload: masking', () => {
     const title = payload.output.layout.titleRows.find((t) => t.text !== undefined);
     expect(title?.text).toBe('Monthly Report');
   });
+
+  it('judges a label word on EVERY data row (SPEC 7.2), not only the rows the payload samples: a title word that sits in an unsampled row is masked', () => {
+    const inHeaders = ['Id', 'Name'];
+    const build = (word: string | null, at: number): { a: PairAnalysis; inRows: V[][] } => {
+      const inRows: V[][] = [];
+      for (let i = 0; i < 300; i++) inRows.push([i, i === at && word ? word : `person-${i}`]);
+      const a = analyzePair(xlsx([inHeaders, ...inRows]), xlsx([[bold('Zebulon Report')], ['Id', 'Name'], ...inRows.map((r) => [...r])]));
+      if (!a.ok) throw new Error('analysis failed');
+      return { a, inRows };
+    };
+    // a row the payload does not sample (the samples are a handful of the 300)
+    const probe = build(null, -1);
+    const sampled = new Set(buildPayload(probe.a, preflight(probe.a, 'registered')).sampleRows.map((s) => s.in));
+    const at = [150, 151, 152, 153, 154].find((i) => !sampled.has(i));
+    expect(at).toBeDefined();
+    const { a } = build('Zebulon', at!);
+    const pf = preflight(a, 'registered');
+    const masker = createMasker(key('label-every-row'));
+    const built = buildPayload(a, pf, { masker });
+    expect(built.sampleRows.some((s) => s.in === at)).toBe(false); // the row with the word is not among the samples
+    const { payload } = built;
+    const title = payload.output.layout.titleRows.find((t) => t.text !== undefined);
+    expect(title?.text).not.toContain('Zebulon'); // ... yet its word is a data word: masked in the title
+    expect(title?.text).toContain('Report'); // a label word stays real
+  });
 });
 
 // ---------------------------------------------------------------------------
