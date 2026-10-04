@@ -1,6 +1,6 @@
 # Proposal: the learning loop (the AI writes the logic, code checks it on every row)
 
-Status: **draft for review** (2026-10-04). Nothing here is built yet. Spec sections it would change: SPEC 7.3 (samples), 9.2-9.4 (checks, repair, escalation), 8.11 (notes), 11 (quota), 21.
+Status: **draft, partly decided** (2026-10-04). Nothing here is built yet. Owner decisions: (1) loop caps 3 rounds, 8 rows per round, 40 rows in total; (2) cut-off ranges become a visible check the user approves, shown and editable in the rules editor. Spec sections it would change: SPEC 7.3 (samples), 9.2-9.4 (checks, repair, escalation), 8.11 (notes), 11 (quota), 21.
 
 **In one paragraph.** Today the AI sees at most 12 masked rows, writes the rules, and gets one repair if the browser's check on the full example finds wrong rows. 12 rows can't show a rare case, an exact cut-off or a lookup with 50 values, so the AI guesses, and one repair is often not enough. Instead: (1) the browser keeps sending the rows the AI got wrong, round after round, while the number of wrong rows keeps going down; (2) code does the data part of a rule on ALL rows (it fills lookup tables and finds the range a cut-off can be in), so the AI only has to get the logic right; (3) what the example cannot settle is said, and flagged on next month's rows, never guessed silently. When the loop can't finish, the user sees the rows that still don't fit and decides.
 
@@ -71,6 +71,10 @@ The rows that still don't fit are shown in the browser (real values, nothing sen
 
 Next month (later, not in this step): a flagged row the user corrects in the row review can become one more example row for the loop: "teach from this row".
 
+### 3.7 One AI button
+
+With the loop, "Re-run all with AI" has no job left. What the free engine built is verified on every row, so the AI never needs to redo it; and when the free result can't be completed (too few columns solved, rows that change shape, a summary output), the button already runs the whole learn by itself. So one button, "Finish with AI": code picks completion or the whole learn, the user can still untick fields, "Start over" drops the user's edits, and what the loop can't finish goes to the user (3.5) instead of to a second, harder AI run.
+
 ### 3.6 Guards
 
 - **Overfitting.** More rounds tempt the AI to write row-specific rules (`if order = "ORD-1037"`). An answer that uses an ID-like value of a counterexample row as a constant is rejected as overfitting; those rows go to the user (3.5). The existing lint keeps running. The next-month hold-out in the eval measures it.
@@ -85,12 +89,12 @@ The per-round estimate is: the system prompt (about 10k tokens, cached after the
 **How we measure.** The eval harness already records every call (`llm_calls`: tokens in, cached, out, latency, outcome). We add per learn: rounds, rows sent, cost in USD, and the result (verified on the example; passes next month's file).
 
 - **Data:** the 17 eval cases, the catalogue's AI chunk, and new synthetic hard cases: a rare category, a cut-off, a lookup with 50 values, two-column conditions, an example with 3 rows edited by hand.
-- **Before and after**, the same model, through the **API** (an API key). The dev CLI's numbers include Claude Code's own overhead and thinking tokens (about 15k output tokens per call), so they are not usable for cost.
+- **Before and after**, the same model. No API key needed (owner decision): the dev CLI's own token numbers include Claude Code's overhead and thinking tokens (about 15k output tokens per call), so we count our own instead - the system prompt, the payload and the previous rules we send (input; the system prompt counted at the cache-read rate after the first call), and the answer we get back (output) - and price them with the providers' published per-token prices (Anthropic and OpenAI, read from their pricing pages when the measurement is built, never from memory). The numbers are estimates; their purpose is the comparison before and after each step.
 - **Report:** a table per step in `eval/RESULTS.md`: success rate, calls per learn, tokens per learn (in / cached / out), cost per learn, time per learn, overfitting cases.
 
 ## 5. Order of work (each step measured before the next)
 
-1. **Baseline** with the API key on today's code (needs the key in `.env` from the owner, never pasted in chat).
+1. **Baseline** on today's code, with the token counting of section 4.
 2. **The loop** (3.2), with its small fixes.
 3. **The better first sample** (3.1).
 4. **Code-filled lookup tables** (3.3).
@@ -99,7 +103,8 @@ The per-round estimate is: the system prompt (about 10k tokens, cached after the
 
 ## 6. Open questions for the owner
 
-1. Loop caps: 3 rounds, 8 rows per round, 40 rows in total. OK as a start?
-2. Cut-off ranges as a visible, deletable check (3.4), or only the note?
+1. ~~Loop caps~~ - decided: 3 rounds, 8 rows per round, 40 rows in total.
+2. ~~Cut-off ranges~~ - decided: a visible check the user approves, shown and editable in the rules editor.
 3. "Keep these rows as they are" (3.5): bring exceptions back in this narrow form?
 4. A per-learn token cap: what is the most one learn may cost (decided after the baseline)?
+5. One AI button instead of two ("Run deep analysis with AI" and "Re-run all with AI"): proposed in the reply of 2026-10-04, see 3.7.
