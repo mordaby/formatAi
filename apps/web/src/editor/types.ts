@@ -23,7 +23,7 @@ export type EditableRules = LearnResult | Rules;
 
 /**
  * A line of the rules map (SPEC 8.11). These ids are the contract with the rules map:
- * `col:<output header>`, `filter:<i>`, `dedupe`, `expand`, `sort`, `group`, `summary:end:<i>`,
+ * `col:<output header>`, `readAs:<input id>:<text>`, `filter:<i>`, `dedupe`, `expand`, `sort`, `group`, `summary:end:<i>`,
  * `summary:group:<i>`, `title:<i>`, `check:<i>`, `fn:<name>`, `table:<name>`.
  */
 export type LineId = string;
@@ -148,6 +148,8 @@ export type EditAction =
   | { type: 'addFilter'; filter: FilterInput; at?: number }
   | { type: 'updateFilter'; index: number; filter: FilterInput }
   | { type: 'removeFilter'; index: number }
+  /** Drops one text an input column reads as another value (`readAs`, SPEC 8.4a): the column by input id, the text exactly as written. */
+  | { type: 'removeReadAs'; column: string; from: string }
   | { type: 'setDedupe'; enabled: boolean; keys?: 'all' | string[]; keep?: Dedupe['keep']; action?: Dedupe['action'] }
   | { type: 'setExpand'; expand: ExpandInput | null }
   // Layout

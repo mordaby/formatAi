@@ -4,8 +4,10 @@ import { printFormula } from '@formatai/engine/formula';
 import { useState } from 'react';
 import { sourceOptions, type ExpandInput, type FilterInput } from '../../editor';
 import { useI18n, type MessageKey } from '../../i18n';
+import type { Line } from '../../rulesText';
 import { Button, InlineMessage, Switch } from '../../ui';
 import { CheckField, ChoiceGroup, FormSection, ProblemList, SelectField, SourceField, useEdit, type EditorCtx, type Option } from './fields';
+import { Sentence } from './Sentence';
 
 // ---------- filters ----------
 
@@ -106,6 +108,29 @@ export function RemoveButton({ label, onClick }: { label: string; onClick(): voi
       <Button variant="ghost" size="sm" icon="trash" onClick={onClick}>
         {label}
       </Button>
+    </div>
+  );
+}
+
+// ---------- a text read as another value (SPEC 8.4a) ----------
+
+/**
+ * One text an input column reads as another value (the row review's "Do this every time?"): its sentence, what it means for the formats of the
+ * source, and removing it. It has nothing to change but its being there - the text and the value are what the user chose when they fixed the cell.
+ */
+export function ReadAsEditor({ ctx, line, columnId, from, onRemoved }: { ctx: EditorCtx; line: Line | undefined; columnId: string; from: string; onRemoved(): void }) {
+  const { t } = useI18n();
+  const edit = useEdit(ctx);
+  return (
+    <div className="editor-form">
+      {line && (
+        <p className="readonly-line">
+          <Sentence parts={line.parts} />
+        </p>
+      )}
+      <p className="muted">{t('editor.readAs.note')}</p>
+      <ProblemList problems={edit.problems} />
+      <RemoveButton label={t('editor.readAs.remove')} onClick={() => edit.run({ type: 'removeReadAs', column: columnId, from }) && onRemoved()} />
     </div>
   );
 }

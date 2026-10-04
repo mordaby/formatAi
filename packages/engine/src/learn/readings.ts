@@ -16,9 +16,20 @@
 
 import type { Computed, InputColumn, PayloadCell, Validation, ValueMap } from '@formatai/shared';
 
+/**
+ * How a reading of a text date column changes the format the rules read it with (the day/month order, SPEC 21 v12 item 16): every place the
+ * rules read the input column `column` (a header, as in the file) with `from` - the column's `inputFormats`, and each `toDate` of a computed
+ * column that reads it - reads it with `to` instead. In place and idempotent: rules that already read `to` are left as they are.
+ */
+export interface DateFormatChange {
+  column: string;
+  from: string;
+  to: string;
+}
+
 /** What one reading adds to a rules file. The ids are local to the fragment; the header ties each input column to the rules' own. */
 export interface RuleFragment {
-  /** What the output column reads once the fragment is applied: a declared input column's id (a copy) or a computed column's id. */
+  /** What the output column reads once the fragment is applied: a declared input column's id (a copy) or a computed column's id (one the rules already have, when the fragment adds none). */
   from: string;
   /** The input columns the fragment reads, declared as the free engine declares them (type, padding, date formats). */
   inputColumns: InputColumn[];
@@ -26,6 +37,8 @@ export interface RuleFragment {
   computed: Computed[];
   /** Value maps the fragment adds (none of today's kinds uses one). */
   valueMaps: ValueMap[];
+  /** The day/month order: the formats the rules' own date columns are read with, changed in place (a fragment that adds nothing else). */
+  dateFormats?: DateFormatChange[];
 }
 
 export interface ColumnReading {
@@ -49,7 +62,8 @@ export interface AmbiguousColumn {
   /**
    * The check that goes with an unanswered question: it flags a run-time row where the readings differ. A validation as the rules
    * carry it (an output check), so it is visible and deletable in the rules editor; null when no check can say it.
-   * An answer removes it (it is the question's marker: present = not answered).
+   * An answer removes it (it is the question's marker: present = not answered). A question with `check: null` has no marker: it is open
+   * while the rules still read the default reading (the day/month order: no kind of check says "this date reads both ways").
    */
   check: Validation | null;
   /** The value every row of the example holds (the constant reading's value; a check may name it). */

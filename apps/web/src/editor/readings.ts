@@ -3,8 +3,10 @@
 // reading to the rules (merging the fragment: its input columns are matched to the rules' own by header, its computed columns get fresh
 // ids), and keeps the question's marker: the check that goes with an UNANSWERED question (it flags a run-time row where the readings
 // differ). The marker IS the state: present = the question is open, and the user can delete the check in the rules editor to close it.
+// The day/month order of a text date (SPEC 21 v12 item 16) is the same shape without a check: its readings only say which format the rules read
+// the date column with (`fragment.dateFormats`, written in place), and the question is open while the rules read the default one.
 // Pure; no engine code (types only: the main thread never loads the engine, see boundaries.test.ts).
-import type { AmbiguousColumn, RuleFragment } from '@formatai/engine';
+import type { AmbiguousColumn, DateFormatChange, RuleFragment } from '@formatai/engine';
 import type { Computed, Expr, InputColumn, Validation } from '@formatai/shared';
 import { allIds, normalizeHeader, pruneComputed } from './rulesUtil';
 import type { EditableRules } from './types';
@@ -20,9 +22,21 @@ export function isReadingCheck(v: Validation, column: Pick<AmbiguousColumn, 'che
   return column.check !== null && sortedJson(v) === sortedJson(column.check);
 }
 
-/** The question is open: its column has a rule and the check that marks it as unanswered is in the rules. */
+/**
+ * The question is open: its column has a rule and the check that marks it as unanswered is in the rules. A question without a check (the day/month
+ * order: no kind of check says it, SPEC 21 v12 item 16) has no marker, so it is open while the rules still read the default reading AND the other
+ * readings would change this column's rule (a column the user has since made independent of the question has nothing left to ask).
+ */
 export function questionOpen(rules: EditableRules, column: AmbiguousColumn): boolean {
-  return rules.validations.some((v) => isReadingCheck(v, column)) && rules.output.columns.some((c) => c.header === column.header && c.from !== null);
+  const shown = rules.output.columns.some((c) => c.header === column.header && c.from !== null);
+  if (column.check !== null) return shown && rules.validations.some((v) => isReadingCheck(v, column));
+  if (!shown) return false;
+  const keys = column.readings.map((_, i) => {
+    const applied = applyReading(rules, column, i, false);
+    return applied === null ? undefined : ruleKey(applied, column.header);
+  });
+  const here = ruleKey(rules, column.header);
+  return keys[column.defaultReading] === here && keys.some((k, i) => i !== column.defaultReading && k !== undefined && k !== here);
 }
 
 // ---------- merging a fragment ----------
@@ -58,6 +72,46 @@ function renameCols(expr: Expr, rename: ReadonlyMap<string, string>): Expr {
   return walk(expr) as Expr;
 }
 
+/**
+ * The rules with the formats a reading of a date column changes (`DateFormatChange`) written in place: the column's `inputFormats` and every
+ * `toDate` of a computed column that reads it (anywhere in the expression). The same places the engine's `swapDayMonth` changes, in the direction
+ * the reading says; an expression or column that has nothing to change is returned as it was.
+ */
+function withDateFormats<R extends EditableRules>(rules: R, changes: readonly DateFormatChange[]): R {
+  let next = rules;
+  for (const { column, from, to } of changes) {
+    const ids = new Set(next.input.columns.filter((c) => c.header === column).map((c) => c.id));
+    const reads = (v: unknown): boolean => {
+      if (Array.isArray(v)) return v.some(reads);
+      if (typeof v !== 'object' || v === null) return false;
+      return Object.entries(v).some(([k, x]) => (k === 'col' && typeof x === 'string' ? ids.has(x) : reads(x)));
+    };
+    const walk = (v: unknown): unknown => {
+      if (Array.isArray(v)) {
+        const mapped = v.map(walk);
+        return mapped.some((x, i) => x !== v[i]) ? mapped : v;
+      }
+      if (typeof v !== 'object' || v === null) return v;
+      const o = v as Record<string, unknown>;
+      let changed = false;
+      const entries = Object.entries(o).map(([k, x]) => {
+        const y = walk(x);
+        if (y !== x) changed = true;
+        return [k, y] as const;
+      });
+      const copy = changed ? Object.fromEntries(entries) : o;
+      return o.op === 'toDate' && o.format === from && reads(o.arg) ? { ...copy, format: to } : copy;
+    };
+    const columns = next.input.columns.map((c) => (c.header === column && c.inputFormats?.includes(from) ? { ...c, inputFormats: c.inputFormats.map((x) => (x === from ? to : x)) } : c));
+    const computed = next.transform.computed.map((c) => {
+      const expr = walk(c.expr) as Expr;
+      return expr === c.expr ? c : { ...c, expr };
+    });
+    next = { ...next, input: { ...next.input, columns }, transform: { ...next.transform, computed } } as R;
+  }
+  return next;
+}
+
 function mergeFragment<R extends EditableRules>(rules: R, f: RuleFragment): { rules: R; from: string } | null {
   const used = allIds(rules);
   const rename = new Map<string, string>();
@@ -87,7 +141,12 @@ function mergeFragment<R extends EditableRules>(rules: R, f: RuleFragment): { ru
     input: { ...rules.input, columns: inputs },
     transform: { ...rules.transform, computed, valueMaps },
   } as R;
-  return { rules: merged, from: rename.get(f.from) ?? f.from };
+  return { rules: f.dateFormats && f.dateFormats.length > 0 ? withDateFormats(merged, f.dateFormats) : merged, from: rename.get(f.from) ?? f.from };
+}
+
+/** A fragment that only changes the formats the rules read dates with: the output column keeps the source it has (the user may have changed it since). */
+function formatsOnly(f: RuleFragment): boolean {
+  return f.dateFormats !== undefined && f.dateFormats.length > 0 && f.inputColumns.length === 0 && f.computed.length === 0 && f.valueMaps.length === 0;
 }
 
 // ---------- comparing what a column does ----------
@@ -153,9 +212,10 @@ export function applyReading<R extends EditableRules>(rules: R, column: Ambiguou
   const merged = mergeFragment(rules, reading.fragment);
   if (merged === null) return null;
   const old = rules.output.columns[at]!.from;
+  const from = formatsOnly(reading.fragment) ? old : merged.from;
   let next = {
     ...merged.rules,
-    output: { ...merged.rules.output, columns: merged.rules.output.columns.map((c, i) => (i === at ? { ...c, from: merged.from } : c)) },
+    output: { ...merged.rules.output, columns: merged.rules.output.columns.map((c, i) => (i === at ? { ...c, from } : c)) },
     validations: withMarker,
     unsupported,
   } as R;
@@ -163,14 +223,16 @@ export function applyReading<R extends EditableRules>(rules: R, column: Ambiguou
     // Same rule: keep the rules as they were (no new ids, no churn), with the marker as asked.
     return { ...rules, validations: withMarker, unsupported } as R;
   }
-  if (old !== null && old !== merged.from) next = pruneComputed(next, [old]);
+  if (old !== null && old !== from) next = pruneComputed(next, [old]);
   return next;
 }
 
 /**
  * The default state of a question (what the free engine builds): the default reading, with the check that marks the question as open.
  * For an AI step's answer, which wrote the column its own way: the same example fits both, and the user decides.
+ * A question without a check has no marker to put in, and its default is what the rules already say (the day/month order the answer used:
+ * code only asks about what the rules read), so the rules are returned as they are.
  */
 export function withOpenQuestion<R extends EditableRules>(rules: R, column: AmbiguousColumn): R | null {
-  return applyReading(rules, column, column.defaultReading, true);
+  return column.check === null ? rules : applyReading(rules, column, column.defaultReading, true);
 }

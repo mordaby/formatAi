@@ -4,7 +4,7 @@
 // the values a filter drops - and completion mode, where the user's own parts are never changed.
 import type { Expr, LearnResult, Validation } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
-import { fillParams, roundestNumber, swapDayMonth, swapDayMonthFormat } from '../../src/learn/fillParams';
+import { dayMonthQuestions, fillParams, roundestNumber, swapDayMonth, swapDayMonthFormat } from '../../src/learn/fillParams';
 import { verifyAgainstExample } from '../../src/learn/verify';
 import { runRules } from '../../src/pipeline/runRules';
 import type { PairAnalysis } from '../../src/learn/analyze';
@@ -336,6 +336,77 @@ describe('fillParams: the day/month order of text dates', () => {
     expect(swapDayMonthFormat('YYYY-MM-DD')).toBe('YYYY-DD-MM');
     expect(swapDayMonthFormat('D בMMMM YYYY')).toBeNull();
     expect(swapDayMonthFormat('MM/YYYY')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5b. The day/month order as the ambiguity question's shape
+// ---------------------------------------------------------------------------
+
+describe('dayMonthQuestions: the ambiguity question for a day/month order no value settles', () => {
+  const texts = ['05/03/2026', '01/04/2026', '02/01/2026'];
+  const input: V[][] = [['Id', 'When'], ...texts.map((t, i): V[] => [`R${i}`, t])];
+  const monthOutput: V[][] = [['Id', 'Month'], ...texts.map((t, i): V[] => [`R${i}`, Number(t.split('/')[1])])];
+  const monthRules = (format: string): LearnResult =>
+    rulesOf({
+      inputs: [['Id', 'text'], ['When', 'text']],
+      computed: [{ id: 'month', type: 'integer', expr: { op: 'datePart', arg: { op: 'toDate', arg: col('when'), format }, part: 'month' } }],
+      out: [['Id', 'id'], ['Month', 'month']],
+    });
+
+  it('a toDate in a computed column: asked on the output column that shows it, two readings, the format used first and the default', () => {
+    const r = fillParams(monthRules('DD/MM/YYYY'), analysisOf(input, monthOutput));
+    const questions = dayMonthQuestions(r.rules, r.ambiguities);
+    expect(questions).toEqual([
+      {
+        out: 1,
+        header: 'Month',
+        defaultReading: 0,
+        check: null,
+        readings: [
+          { kind: 'dayMonthOrder', columns: ['When'], fragment: { from: 'month', inputColumns: [], computed: [], valueMaps: [], dateFormats: [{ column: 'When', from: 'MM/DD/YYYY', to: 'DD/MM/YYYY' }] } },
+          { kind: 'dayMonthOrder', columns: ['When'], fragment: { from: 'month', inputColumns: [], computed: [], valueMaps: [], dateFormats: [{ column: 'When', from: 'DD/MM/YYYY', to: 'MM/DD/YYYY' }] } },
+        ],
+      },
+    ]);
+  });
+
+  it('input formats: asked on the output column that copies the date column', () => {
+    const output: V[][] = [['Id', 'Shown'], ['R0', date(2026, 3, 5)], ['R1', date(2026, 4, 1)], ['R2', date(2026, 1, 2)]];
+    const answer = rulesOf({ inputs: [['Id', 'text'], ['When', 'date']], inputFormats: { When: ['DD/MM/YYYY'] }, out: [['Id', 'id'], ['Shown', 'when']] });
+    const r = fillParams(answer, analysisOf(input, output));
+    expect(r.ambiguities).toHaveLength(1);
+    const [q] = dayMonthQuestions(r.rules, r.ambiguities);
+    expect([q!.header, q!.out, q!.readings.map((x) => x.fragment.from)]).toEqual(['Shown', 1, ['when', 'when']]);
+  });
+
+  it('a date column no output column reads (only a filter does) is not asked; two sites of one format are one question', () => {
+    const filtered = rulesOf({
+      inputs: [['Id', 'text'], ['When', 'date']],
+      inputFormats: { When: ['DD/MM/YYYY'] },
+      rowFilters: [{ column: 'when', op: 'notEmpty' }],
+      out: [['Id', 'id']],
+    });
+    const ambiguity = { kind: 'dayMonthOrder' as const, column: 'When', format: 'DD/MM/YYYY', other: 'MM/DD/YYYY' };
+    expect(dayMonthQuestions(filtered, [ambiguity])).toEqual([]);
+    const two = monthRules('DD/MM/YYYY');
+    two.transform.computed.push({ id: 'day', type: 'integer', expr: { op: 'datePart', arg: { op: 'toDate', arg: col('when'), format: 'DD/MM/YYYY' }, part: 'day' } });
+    two.output.columns.push({ header: 'Day', from: 'day' });
+    expect(dayMonthQuestions(two, [ambiguity, ambiguity]).map((q) => q.header)).toEqual(['Month']);
+    // ... but another format of the same column is another question, on the next column that reads it
+    const other = { ...ambiguity, format: 'MM/DD/YYYY', other: 'DD/MM/YYYY' };
+    two.transform.computed[1]!.expr = { op: 'datePart', arg: { op: 'toDate', arg: col('when'), format: 'MM/DD/YYYY' }, part: 'day' };
+    expect(dayMonthQuestions(two, [ambiguity, other]).map((q) => q.header)).toEqual(['Month', 'Day']);
+  });
+
+  it('applying a reading with swapDayMonth\'s own direction gives the same rules as swapDayMonth', () => {
+    const r = fillParams(monthRules('DD/MM/YYYY'), analysisOf(input, monthOutput));
+    const swapped = swapDayMonth(r.rules, r.ambiguities[0]!);
+    expect(JSON.stringify(swapped)).toContain('"format":"MM/DD/YYYY"');
+    expect(JSON.stringify(swapped)).not.toContain('"format":"DD/MM/YYYY"');
+    // the question's two readings are the two directions
+    const [q] = dayMonthQuestions(r.rules, r.ambiguities);
+    expect(q!.readings[1]!.fragment.dateFormats).toEqual([{ column: 'When', from: r.ambiguities[0]!.format, to: r.ambiguities[0]!.other }]);
   });
 });
 

@@ -9,6 +9,7 @@ import {
   canRedo,
   canUndo,
   createEditorState,
+  editedLines,
   formatFingerprint,
   inputSideChanged,
   lineIdsOf,
@@ -610,6 +611,31 @@ describe('filters', () => {
     expect(none.rules.input.rowFilters).toBeUndefined();
     expect(refused(start(), { type: 'removeFilter', index: 5 })[0]!.code).toBe('noSuchItem');
     expect(refused(start(), { type: 'updateFilter', index: 5, filter: { column: 'qty', op: 'isEmpty' } })[0]!.code).toBe('noSuchItem');
+  });
+
+  it('removes one text a column reads as another value (readAs, SPEC 8.4a); the last one takes the field away', () => {
+    const rules = ordersRules();
+    rules.input.columns[2]!.readAs = { 'N/A': '', '-': '0' };
+    const s = start(rules);
+    expect(lineIdsOf(s.rules)).toContain('readAs:qty:N/A');
+    const one = roundTrip(s, { type: 'removeReadAs', column: 'qty', from: 'N/A' });
+    expect(one.rules.input.columns[2]!.readAs).toEqual({ '-': '0' });
+    expect([...one.edited]).toEqual([]); // the text left is unchanged
+    const none = roundTrip(one, { type: 'removeReadAs', column: 'qty', from: '-' });
+    expect('readAs' in none.rules.input.columns[2]!).toBe(false);
+    expect(refused(s, { type: 'removeReadAs', column: 'qty', from: 'zzz' })[0]!.code).toBe('noSuchItem');
+    expect(refused(s, { type: 'removeReadAs', column: 'ghost', from: 'N/A' })[0]!.code).toBe('unknownColumn');
+    expect(refused(s, { type: 'removeReadAs', column: 'supplier', from: 'N/A' })[0]!.code).toBe('noSuchItem');
+    // it is an edit of the input side (SPEC 8.15): a conversion whose source feeds formats says so, and undo takes it back
+    const inSource = start(rules, { source: { formats: 2 } });
+    expect(ok(inSource, { type: 'removeReadAs', column: 'qty', from: 'N/A' }).sourceChange).toBe(true);
+  });
+
+  it('a text a column newly reads another way is an edited line', () => {
+    const base = ordersRules();
+    const after = ordersRules();
+    after.input.columns[2]!.readAs = { 'N/A': '' };
+    expect([...editedLines(base, after)]).toEqual(['readAs:qty:N/A']);
   });
 });
 

@@ -36,6 +36,7 @@ import { compileDateParser, serialToYmd, ymdToSerial } from '../values/dates';
 import { isoOfSerial } from './analyze/cells';
 import type { PairAnalysis } from './analyze';
 import { wrongCount } from './loop';
+import type { AmbiguousColumn, ColumnReading } from './readings';
 import { alignedActualRows, cellMatchesExample, exampleCellAt, exampleTable, verifyAgainstExample } from './verify';
 
 // ---------------------------------------------------------------------------
@@ -493,6 +494,49 @@ export function swapDayMonth(rules: LearnResult, a: DayMonthAmbiguity): LearnRes
     input: { ...rules.input, columns: rules.input.columns.map((c) => (c.header === a.column && c.inputFormats ? { ...c, inputFormats: c.inputFormats.map((x) => (x === a.format ? a.other : x)) } : c)) },
     transform: { ...rules.transform, computed: rules.transform.computed.map((c) => ({ ...c, expr: swap(c.expr) })) },
   };
+}
+
+/**
+ * The day/month ambiguities as the ambiguity question's own shape (`AmbiguousColumn`, `readings.ts`; SPEC 21 v12 item 16): one question per
+ * (date column, format), asked on the first output column whose rule the other order would change (the question needs a column's line to
+ * stand on: an order that only a filter or a sort reads is not asked). Two readings, `kind: 'dayMonthOrder'`: the format the rules read the
+ * column with (the default: the rules as they are) and `other` (what `swapDayMonth` makes of them). Each says the formats it reads the column
+ * with (`fragment.dateFormats`), so either can be applied to rules in any state. No check goes with it (`check: null`): no kind of check says
+ * "this date reads both ways". Pure; the learn flow never calls it.
+ */
+export function dayMonthQuestions(rules: LearnResult, ambiguities: readonly FillAmbiguity[]): AmbiguousColumn[] {
+  const out: AmbiguousColumn[] = [];
+  const definition = (r: LearnResult, id: string): string => JSON.stringify(r.input.columns.find((c) => c.id === id) ?? r.transform.computed.find((c) => c.id === id) ?? null);
+  /** Every id a column's value is made from (its own, and what the computed columns it reads read). */
+  const closure = (from: string): Set<string> => {
+    const seen = new Set<string>();
+    const walk = (id: string): void => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      const c = rules.transform.computed.find((x) => x.id === id);
+      if (c) for (const read of idsRead(c.expr)) walk(read);
+    };
+    walk(from);
+    return seen;
+  };
+  const asked = new Set<string>();
+  for (const a of ambiguities) {
+    if (a.kind !== 'dayMonthOrder' || asked.has(`${a.column}\u0000${a.format}`)) continue;
+    asked.add(`${a.column}\u0000${a.format}`);
+    const swapped = swapDayMonth(rules, a);
+    const at = rules.output.columns.findIndex(
+      (c) => c.from !== null && !out.some((q) => q.header === c.header) && [...closure(c.from)].some((id) => definition(rules, id) !== definition(swapped, id)),
+    );
+    const column = rules.output.columns[at];
+    if (!column || column.from === null) continue;
+    const reading = (to: string, from: string): ColumnReading => ({
+      kind: 'dayMonthOrder',
+      columns: [a.column],
+      fragment: { from: column.from!, inputColumns: [], computed: [], valueMaps: [], dateFormats: [{ column: a.column, from, to }] },
+    });
+    out.push({ out: at, header: column.header, readings: [reading(a.format, a.other), reading(a.other, a.format)], defaultReading: 0, check: null });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

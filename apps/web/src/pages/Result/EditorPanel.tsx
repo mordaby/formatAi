@@ -11,7 +11,7 @@ import { CheckEditor } from './CheckEditor';
 import { ColumnEditor } from './ColumnEditor';
 import { ProblemList, useEdit, type EditorCtx } from './fields';
 import { FileEditor, GroupEditor, SortEditor, SummaryRowEditor, TitleEditor } from './LayoutEditors';
-import { DedupeEditor, ExpandEditor, FilterEditor } from './RowEditors';
+import { DedupeEditor, ExpandEditor, FilterEditor, ReadAsEditor } from './RowEditors';
 import { Sentence } from './Sentence';
 
 export interface EditorPanelProps {
@@ -48,6 +48,8 @@ function titleOf(t: ReturnType<typeof useI18n>['t'], target: LineTarget): string
   switch (target.kind) {
     case 'column':
       return target.header ?? '';
+    case 'readAs':
+      return t('editor.title.readAs');
     case 'filter':
       return t('editor.title.filter', { n });
     case 'dedupe':
@@ -132,6 +134,12 @@ export function EditorPanel({ ctx, model, selectedId, advanced, live, formatChan
     case 'filter':
       body = <FilterEditor key={`filter:${index}`} ctx={ctx} index={index} onRemoved={closeAfter} />;
       break;
+    case 'readAs': {
+      const column = ctx.rules.input.columns[index];
+      if (!column || target.name === undefined) return null;
+      body = <ReadAsEditor key={line?.id} ctx={ctx} line={line} columnId={column.id} from={target.name} onRemoved={closeAfter} />;
+      break;
+    }
     case 'dedupe':
       body = <DedupeEditor ctx={ctx} />;
       break;

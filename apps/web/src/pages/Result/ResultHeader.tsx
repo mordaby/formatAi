@@ -81,6 +81,8 @@ export interface ResultHeaderProps {
   badge: ReactNode;
   /** How the format was learned: on this computer, or with the server's help (the privacy line under the title). */
   learnedNote: string;
+  /** What code filled in an AI answer from the example (one quiet line under `learnedNote`); nothing when it filled nothing. */
+  filledNote?: string | undefined;
   canUndo: boolean;
   canRedo: boolean;
   onUndo(): void;
@@ -91,7 +93,7 @@ export interface ResultHeaderProps {
   actions: ReactNode;
 }
 
-export function ResultHeader({ name, onRename, badge, learnedNote, canUndo, canRedo, onUndo, onRedo, unsaved, actions }: ResultHeaderProps) {
+export function ResultHeader({ name, onRename, badge, learnedNote, filledNote, canUndo, canRedo, onUndo, onRedo, unsaved, actions }: ResultHeaderProps) {
   const { t } = useI18n();
   return (
     <header className="result-head">
@@ -101,6 +103,11 @@ export function ResultHeader({ name, onRename, badge, learnedNote, canUndo, canR
           {badge}
         </div>
         <p className="muted">{learnedNote}</p>
+        {filledNote ? (
+          <p className="muted" data-testid="filled-note">
+            {filledNote}
+          </p>
+        ) : null}
       </div>
       <div className="result-head__actions">
         <div className="result-head__history" role="group" aria-label={t('result.history')}>

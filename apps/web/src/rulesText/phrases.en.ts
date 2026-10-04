@@ -27,6 +27,8 @@ export const en = {
   'input.sheetIndex': 'Read sheet number {n}',
   'input.headerRow': 'The header is on row {n}',
   'input.stopAt': 'Stop reading at the first row that starts with {values}',
+  'input.readAs.empty': 'In {col}, {from} is read as empty',
+  'input.readAs.value': 'In {col}, {from} is read as {to}',
 
   // Rows
   'filter.keep': 'Keep rows where {cond}',

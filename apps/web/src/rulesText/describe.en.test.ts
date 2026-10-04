@@ -1,7 +1,7 @@
 import type { Expr, LearnResult } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { describeRules } from './describe';
-import { col, lineTexts, num, rules, str, withColumn, type Patch } from './fixtures';
+import { col, INPUT_COLUMNS, lineTexts, num, rules, str, withColumn, type Patch } from './fixtures';
 import type { RulesMapModel } from './types';
 
 const en = (r: LearnResult): RulesMapModel => describeRules(r, { lang: 'en' });
@@ -315,6 +315,18 @@ describe('rows', () => {
     expect(line(model, 'input:headerRow')).toBe('The header is on row 3');
     expect(line(model, 'input:stopAt')).toBe("Stop reading at the first row that starts with 'Total' or 'Sum'");
     expect(line(en(rules({ input: { sheet: { pick: 'index', index: 1 } } })), 'input:sheet')).toBe('Read sheet number 2');
+  });
+
+  it('says what a column reads as another value (readAs, SPEC 8.4a), one line per text, before the filters', () => {
+    const columns = INPUT_COLUMNS.map((c) => (c.id === 'c_amount' ? { ...c, readAs: { 'N/A': '', '-': '0' } } : c));
+    const model = en(rules({ input: { columns, stopAt: { when: 'firstCellMatches', values: ['Total'] }, rowFilters: [{ column: 'c_status', op: 'isEmpty' }] } }));
+    expect(line(model, 'readAs:c_amount:N/A')).toBe("In Amount, 'N/A' is read as empty");
+    expect(line(model, 'readAs:c_amount:-')).toBe("In Amount, '-' is read as '0'");
+    const rows = model.sections[0]!.lines.map((l) => l.id);
+    expect(rows).toEqual(['input:stopAt', 'readAs:c_amount:N/A', 'readAs:c_amount:-', 'filter:0']);
+    expect(model.sections[0]!.lines[1]!.target).toEqual({ kind: 'readAs', index: INPUT_COLUMNS.findIndex((c) => c.id === 'c_amount'), name: 'N/A' });
+    // a rules file without readAs has none of these lines
+    expect(lineTexts(en(rules())).some(([id]) => id.startsWith('readAs:'))).toBe(false);
   });
 });
 

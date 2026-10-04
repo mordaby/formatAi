@@ -93,6 +93,8 @@ export interface WorkbenchProps {
   name: string;
   onRename?: ((name: string) => void) | undefined;
   learnedNote: string;
+  /** After an AI learn: what code filled in the answer from the example, in one quiet line under `learnedNote` (SPEC 21 v12 item 16). */
+  filledNote?: string | undefined;
   /** Rows shown on screen (the free tier's 20); `null` = all. */
   previewLimit: number | null;
   onSignIn(): void;
@@ -256,13 +258,18 @@ export function Workbench(props: WorkbenchProps) {
   };
   // The ambiguity question (SPEC 21 v12 item 11): the check that marks it as unanswered is in the rules while it is open, so deleting that check
   // in the editor closes it too. An answer applies the reading and takes the check out, in one undoable edit. "Not sure yet" only folds the question.
+  // A question without a check (the day/month order, SPEC 21 v12 item 16) is open while the rules read its default reading; answering with the reading
+  // they already have changes nothing, so that answer closes it here (`settled`: this screen only - an undo of an answer that changed the rules opens it again).
   const [unsure, setUnsure] = useState<ReadonlySet<string>>(new Set());
+  const [settled, setSettled] = useState<ReadonlySet<string>>(new Set());
   const ask = useMemo(() => {
-    const open = (props.ambiguous ?? []).filter((c) => questionOpen(rules, c));
+    const open = (props.ambiguous ?? []).filter((c) => questionOpen(rules, c) && !(c.check === null && settled.has(c.header)));
     if (open.length === 0) return undefined;
     const answer = (column: AmbiguousColumn, index: number): void => {
       const next = applyReading(editor.store.getState().rules, column, index, false);
-      if (next) editor.apply({ type: 'replaceRules', rules: next });
+      if (!next) return;
+      editor.apply({ type: 'replaceRules', rules: next });
+      if (column.check === null && questionOpen(next, column)) setSettled((prev) => new Set(prev).add(column.header));
     };
     const fold = (header: string, folded: boolean): void =>
       setUnsure((prev) => {
@@ -286,7 +293,7 @@ export function Workbench(props: WorkbenchProps) {
         />
       );
     };
-  }, [props.ambiguous, rules, unsure, lock, editor]);
+  }, [props.ambiguous, rules, unsure, settled, lock, editor]);
   const keep = (line: Line): void => {
     // From the last to the first, so the indexes still mean what they meant.
     for (const index of assumptionIndexes(rules, line).reverse()) editor.apply({ type: 'dismissAssumption', index });
@@ -367,6 +374,7 @@ export function Workbench(props: WorkbenchProps) {
             onRename={props.onRename}
             badge={<StatusBadge tone={badge.tone} text={badge.text} {...(badge.busy ? { busy: true } : {})} />}
             learnedNote={props.learnedNote}
+            filledNote={props.filledNote}
             canUndo={editor.canUndo && !lock}
             canRedo={editor.canRedo && !lock}
             onUndo={editor.undo}
