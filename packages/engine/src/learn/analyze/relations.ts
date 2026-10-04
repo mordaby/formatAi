@@ -222,8 +222,10 @@ const GUARD_DATE_RENDERINGS = ['MM', 'M', 'MMM', 'YY'];
  * DECISION (owner: light detection, refuse on ambiguity, the UI never claims what it can't know): a column that holds
  * the SAME value on every row is accepted as a `constant` only when the input cannot also write that value. In a March file
  * a `Period` of "03/2026" on every row is the month of the data as likely as a fixed label, and a fixed label is wrong next month.
- * The example cannot tell the two apart, so the constant is not built and the column goes to the AI step (with the input
- * column that can write it named, a `dependsOn` hint, or the relation that does). The value is derivable when, on EVERY row:
+ * The example cannot tell the two apart, so the constant is not guessed: the user is asked (readings.ts, fastPath.ts `ambiguityOf`; owner
+ * decision 2026-10-04, SPEC 21 v12 item 11), the data reading being built until they answer. Where no data reading can be written as a rule
+ * (a date column that mixes formats) the column goes to the AI step, with the input column that can write it named (a `dependsOn`
+ * hint, or the relation that does). The value is derivable when, on EVERY row:
  *  (a) an input column holds the same value (a copy is as possible as a constant);
  *  (b) a date input column, formatted with an output date format the free engine writes (the month, the year, ...), gives it
  *      - each cell is read on its own, so a column mixing date formats counts (dateReadings.ts);
@@ -275,6 +277,8 @@ function constantSources(env: RelationEnv, out: ColumnData, value: string): numb
 interface ConstantGuard {
   /** The columns that can write a constant column's value (see `constantSources`); undefined = no such column, or no constant. */
   sources?: number[];
+  /** The value every row holds, when `sources` is set (the constant reading of the question the result screen asks, readings.ts). */
+  value?: PayloadCell;
 }
 
 // ---------- stage 1: constant, copy, normalize ----------
@@ -294,8 +298,10 @@ function stage1(env: RelationEnv, out: ColumnData, guard: ConstantGuard): Cand[]
     const value: PayloadCell = payloadCell(out, firstRow.get(top)!);
     // The guard looks only at a constant that is exact (every row holds it): one with exceptions is a hint for the AI step anyway.
     const sources = counts.get(top) === out.n ? constantSources(env, out, top) : [];
-    if (sources.length > 0) guard.sources = sources;
-    else cands.push({ body: { rel: 'constant', in: [], value }, rank: RANK.constant, test: (k) => (out.text[k] === top ? 1 : 0) });
+    if (sources.length > 0) {
+      guard.sources = sources;
+      guard.value = value;
+    } else cands.push({ body: { rel: 'constant', in: [], value }, rank: RANK.constant, test: (k) => (out.text[k] === top ? 1 : 0) });
   }
   const outText = kindShare(out, TEXT) > 0;
   const nb = outText ? norms(out) : null;
@@ -1281,9 +1287,12 @@ export interface GuardedRelations {
   /**
    * Set when every row holds the same value and the input can write that value too (`constantSources`: a copy, the month
    * or year of a date column, a fixed part of a text): no `constant` relation is reported for it, and the columns that can
-   * write it are listed here. A column with this is never built locally (fastPath.ts `chooseColumnRelation`).
+   * write it are listed here. Such a column is never built as a constant: it is a question for the user (fastPath.ts `ambiguityOf`),
+   * or, with no data reading to build, left to the AI step (`chooseColumnRelation`).
    */
   derivableConstant?: number[];
+  /** With `derivableConstant`: the value every row holds (the constant the user may mean, readings.ts). */
+  derivableValue?: PayloadCell;
 }
 
 /** `findRelations`, and what its constant guard found (see `GuardedRelations`). */
@@ -1343,7 +1352,10 @@ export function findRelationsGuarded(env: RelationEnv, out: ColumnData, outIndex
     return !all.slice(0, i).some((q) => q.rel === 'concat' && q.in.join(',') === r.in.join(',') && q.separator === r.separator);
   });
   const result: GuardedRelations = { relations: out1.slice(0, MAX_RELATIONS) };
-  if (guard.sources !== undefined) result.derivableConstant = guard.sources;
+  if (guard.sources !== undefined) {
+    result.derivableConstant = guard.sources;
+    if (guard.value !== undefined) result.derivableValue = guard.value;
+  }
   return result;
 }
 
