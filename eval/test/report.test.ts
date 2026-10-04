@@ -25,6 +25,11 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     costUsd: 0,
     latencyMs: 0,
     llmCalls: 0,
+    estInTokens: 0,
+    estCachedTokens: 0,
+    estCacheWriteTokens: 0,
+    estOutTokens: 0,
+    estCostUsd: 0,
     formulaErrorCount: 0,
     firstCallFormulaErrors: 0,
     formulaFixedByRepair: false,
@@ -245,5 +250,86 @@ describe('reports with modes (completion mode)', () => {
     printSummary([full(), complete()], (l) => lines.push(l));
     expect(lines.join('\n')).toContain('masking=off mode=full');
     expect(lines.join('\n')).toContain('masking=off mode=complete');
+  });
+});
+
+describe('token usage and cost (our own estimate)', () => {
+  /** A learn that made LLM calls: priced, with a cache write on the first call and a read on the repair. */
+  const aiLearn = (over: Partial<RunRecord> = {}) =>
+    record({
+      path: 'llm',
+      fastPath: false,
+      classification: 'verified',
+      llmCalls: 2,
+      latencyMs: 12_000,
+      estInTokens: 3000,
+      estCachedTokens: 10_000,
+      estCacheWriteTokens: 10_000,
+      estOutTokens: 1500,
+      estCostUsd: 0.04,
+      ...over,
+    });
+
+  it('has a section with the totals and the average per learn, over the learns that made an LLM call only', () => {
+    const records = [aiLearn({ case: 'a', holdOut: 'pass' }), aiLearn({ case: 'b', classification: 'notVerified', holdOut: 'fail', estCostUsd: 0.06, llmCalls: 3, estOutTokens: 2500 }), record({ case: 'free' })];
+    const md = buildMarkdownReport(records, '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('## Token usage and cost (our own estimate)');
+    // 2 AI learns (the free-engine learn costs nothing and is not counted): totals, then the average per learn
+    expect(md).toContain('| haiku | off | total | 2 | 5 | 6000 | 20000 | 20000 | 4000 | 0.1000 | 24.0 | 1 of 2 | 1 of 2 |');
+    expect(md).toContain('| haiku | off | average per learn |  | 2.50 | 3000 | 10000 | 10000 | 2000 | 0.0500 | 12.0 | 50% | 50% |');
+  });
+
+  it('lists every AI learn with its calls, tokens, cost, latency, verification and hold-out', () => {
+    const md = buildMarkdownReport([aiLearn({ case: 'orders-priority', holdOut: 'fail', classification: 'notVerified' }), record({ case: 'free' })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('### Per learn');
+    expect(md).toContain('| orders-priority | haiku | off | 1 | 2 | 3000 | 10000 | 10000 | 1500 | 0.0400 | 12.0 | no | fail |');
+    expect(md).not.toContain('| free | haiku | off | 1 |');
+  });
+
+  it('shows n/a, never a guess, for a model with no price', () => {
+    const md = buildMarkdownReport([aiLearn({ estCostUsd: null })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| n/a |');
+    expect(md).not.toContain('0.0400');
+  });
+
+  it('says so when no call was made', () => {
+    expect(buildMarkdownReport([record()], '2025-01-01T00:00:00.000Z')).toContain('(no LLM call in this run)');
+  });
+
+  it('puts the estimate in the CSV, after the call count', () => {
+    const csv = buildCsvReport([aiLearn({ estCostUsd: null })]);
+    const [head, row] = csv.trim().split('\n');
+    const cols = head!.split(',');
+    expect(cols.slice(cols.indexOf('llmCalls'), cols.indexOf('llmCalls') + 6)).toEqual(['llmCalls', 'estInTokens', 'estCachedTokens', 'estCacheWriteTokens', 'estOutTokens', 'estCostUsd']);
+    const values = row!.split(',');
+    expect(values[cols.indexOf('estCacheWriteTokens')]).toBe('10000');
+    expect(values[cols.indexOf('estCostUsd')]).toBe('');
+  });
+
+  it('the stdout summary prints the totals and the per-learn numbers, with the cost, latency, verification and hold-out', () => {
+    const lines: string[] = [];
+    printSummary([aiLearn({ holdOut: 'pass' }), aiLearn({ holdOut: 'pass' })], (l) => lines.push(l));
+    const text = lines.join('\n');
+    expect(text).toContain('over 2 AI learn(s), 4 call(s): in 6000 / cached 20000 / cache write 20000 / out 3000, est. cost $0.0800, 24.0 s');
+    expect(text).toContain('per learn: in 3000 / cached 10000 / cache write 10000 / out 1500, est. cost $0.0400, 12.0 s');
+    expect(text).toContain('verified on example 2 of 2, hold-out 2 of 2');
+  });
+
+  it('prints no usage line for a run without LLM calls', () => {
+    const lines: string[] = [];
+    printSummary([record()], (l) => lines.push(l));
+    expect(lines.join('\n')).not.toContain('est. tokens');
+  });
+});
+
+describe('expected outcomes in words', () => {
+  it('prints a case note next to the case, without scoring it', () => {
+    const md = buildMarkdownReport([record({ case: 'discount-hand-edited', expectNote: 'the rule for the rest, the 3 rows reported', expectationMet: false })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('## Expected outcomes in words');
+    expect(md).toContain('| discount-hand-edited | the rule for the rest, the 3 rows reported |');
+  });
+
+  it('has no such section when no case has a note', () => {
+    expect(buildMarkdownReport([record()], '2025-01-01T00:00:00.000Z')).not.toContain('Expected outcomes in words');
   });
 });

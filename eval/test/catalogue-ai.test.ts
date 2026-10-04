@@ -287,6 +287,22 @@ describe('measureAi (fake provider, canned answers)', () => {
     expect(aiStatusOf(a)).toBe('learned');
   }, 60_000);
 
+  it('the record carries our own token estimate: counts and a price, never text (an unpriced model has no cost)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: toWire(assembleWire(nth) as unknown as LearnResult) });
+    const a = await measureAi(await prepare(nth, 1), { ...CONFIG, env, complete: (req) => fake.complete(req) });
+    expect(Object.keys(a.estimate!).sort()).toEqual(['cacheWriteTokens', 'cachedInputTokens', 'costUsd', 'inputTokens', 'outputTokens']);
+    expect(a.estimate).toMatchObject({ cachedInputTokens: 0, costUsd: null });
+    expect(a.estimate!.cacheWriteTokens).toBeGreaterThan(1000); // the system prompt and the schema, written once
+    expect(a.estimate!.inputTokens).toBeGreaterThan(0);
+    expect(a.estimate!.outputTokens).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('a free-engine record (no call) estimates nothing and costs nothing', async () => {
+    const free = await measureAi(await prepare(type('extraction.left-n'), 1), { ...CONFIG, env, complete: referenceAnswerFake(type('extraction.left-n')) });
+    expect(free).toMatchObject({ path: 'local', llmCalls: 0, estimate: { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: 0 } });
+  }, 60_000);
+
   it('an answer with an unsupported column: the codes, the function NAME and the explanation FLAG are recorded, nothing else', async () => {
     const fake = createFakeProvider();
     fake.enqueue({ json: unsupportedAnswer(nth), usage: { tokensIn: 900, tokensOut: 150 } });
@@ -473,7 +489,7 @@ describe('report with AI results', () => {
     const md = renderMarkdown(s);
     expect(md).toContain('## AI step: what the AI learns that the free engine does not');
     expect(md).toContain('### By topic');
-    expect(md).toMatch(/\| Text cleanup \| 1 \| 1 \| 0 \| 0 \| 1 \| 0% \| 3 \| 3\.0k \/ 300 \(0\) \| 2\.0 s \| 2 \| externalData ×2 \| lookupSomething ×1 \| 1 \|/);
+    expect(md).toMatch(/\| Text cleanup \| 1 \| 1 \| 0 \| 0 \| 1 \| 0% \| 3 \| 3\.0k \/ 300 \(0\) \| — \| — \| 2\.0 s \| 2 \| externalData ×2 \| lookupSomething ×1 \| 1 \|/);
     expect(md).toContain('| `lookupSomething` | `cleanup.proper-case`, `acrossRows.running-total` |');
     expect(md).toContain('| **All** | 3 | 3 | 1 | 0 | 2 | 33% |');
     expect(md).toContain('fake / full / masking off / escalation on');
@@ -482,6 +498,29 @@ describe('report with AI results', () => {
     const e = summarize(errored).ai!;
     expect(e.total).toMatchObject({ errors: 1, run: 2, learned: 1, failed: 1 });
     expect(renderMarkdown(summarize(errored))).toContain('Measurement errors');
+  }, 120_000);
+
+  it('shows our own token estimate per topic, per type and in total, and in the CSV; n/a for an unpriced model, nothing for an old record', async () => {
+    const est = (inputTokens: number, costUsd: number | null) => ({ inputTokens, cachedInputTokens: 10_000, cacheWriteTokens: 10_000, outputTokens: 2000, costUsd });
+    let rs = await records();
+    rs = attach(rs, 'extraction.nth-word', ai({ estimate: est(2000, 0.03) }));
+    rs = attach(rs, 'cleanup.proper-case', ai({ estimate: est(4000, 0.05) }));
+    rs = attach(rs, 'acrossRows.running-total', ai({})); // measured before the estimate existed
+    const s = summarize(rs);
+    expect(s.ai!.est).toMatchObject({ records: 2, inTokens: 6000, cachedTokens: 20_000, cacheWriteTokens: 20_000, outTokens: 4000 });
+    expect(s.ai!.est.costUsd).toBeCloseTo(0.08, 10);
+    const md = renderMarkdown(s);
+    expect(md).toContain('| Estimated tokens in / cached / cache write / out, all measurements (our own count) | 6.0k / 20.0k / 20.0k / 4.0k |');
+    expect(md).toContain('| Estimated cost at the published prices, all measurements | $0.0800 |');
+    expect(md).toContain('| 2.0k / 10.0k / 10.0k / 2.0k | $0.0300 |'); // the mean per record of the one type of its topic
+    const unpriced = renderMarkdown(summarize(attach(rs, 'cleanup.proper-case', ai({ estimate: est(4000, null) }))));
+    expect(unpriced).toContain('| Estimated cost at the published prices, all measurements | n/a |');
+    const csv = renderCsv(rs).split('\n');
+    const header = csv[0]!.split(',');
+    const row = csv.find((l) => l.startsWith('extraction.nth-word,'))!.split(',');
+    expect(row).toHaveLength(header.length);
+    expect(row[header.indexOf('ai_estCacheWriteTokens')]).toBe('10000');
+    expect(row[header.indexOf('ai_estCostUsd')]).toBe('0.03');
   }, 120_000);
 
   it('the CSV gains the AI columns only when there is AI data', async () => {

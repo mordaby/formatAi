@@ -6,7 +6,7 @@ import { completionPlan, formatOf, learnFromExamples, type LearnFromExamplesResu
 import { learn, repairFromBrowser, type CompleteFn, type LearnOptions, type LearnOutcome, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
-import type { Format, LearnResult, LlmProviderName, Rules, Tier } from '@formatai/shared';
+import { sumEstimates, type Format, type LearnResult, type LlmProviderName, type Rules, type Tier } from '@formatai/shared';
 import type { CaseDef } from './caseLoader.js';
 import type { EvalMode } from './args.js';
 import { checkHoldOut } from './holdout.js';
@@ -29,6 +29,8 @@ export interface RunRecord {
   path: LearnFromExamplesResult['path'];
   classification: string;
   expectationMet: boolean;
+  /** The case's `meta.expectNote`, when it has one (what the expected outcome means in words; the report prints it). */
+  expectNote?: string;
   holdOut: 'pass' | 'fail' | 'n/a';
   fastPath: boolean;
   /** DECISION: no per-call layer-1 signal is threaded out of `learn()` today (only
@@ -45,6 +47,14 @@ export interface RunRecord {
   costUsd: number;
   latencyMs: number;
   llmCalls: number;
+  /** OUR OWN token count over this run's LLM calls (the learning-loop proposal, section 4; `LlmCallRecord.estimate`, priced with
+   * `config/pricing.ts`) - the numbers to compare runs by, since the dev CLI's `tokens*` above include Claude Code's own overhead and
+   * thinking tokens. `estCostUsd` is null when a model of the run has no price. */
+  estInTokens: number;
+  estCachedTokens: number;
+  estCacheWriteTokens: number;
+  estOutTokens: number;
+  estCostUsd: number | null;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
    * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
    * run's LLM calls produced, across the learn call and every repair/escalation call. */
@@ -87,7 +97,9 @@ function formulaStats(calls: readonly LlmCallRecord[]): Pick<RunRecord, 'formula
   return { formulaErrorCount, firstCallFormulaErrors, formulaFixedByRepair };
 }
 
-function sumCalls(calls: readonly LlmCallRecord[]): Pick<RunRecord, 'tokensIn' | 'tokensOut' | 'tokensCached' | 'costUsd' | 'latencyMs' | 'llmCalls'> {
+type CallTotals = Pick<RunRecord, 'tokensIn' | 'tokensOut' | 'tokensCached' | 'costUsd' | 'latencyMs' | 'llmCalls' | 'estInTokens' | 'estCachedTokens' | 'estCacheWriteTokens' | 'estOutTokens' | 'estCostUsd'>;
+
+function sumCalls(calls: readonly LlmCallRecord[]): CallTotals {
   let tokensIn = 0;
   let tokensOut = 0;
   let tokensCached = 0;
@@ -100,11 +112,24 @@ function sumCalls(calls: readonly LlmCallRecord[]): Pick<RunRecord, 'tokensIn' |
     costUsd += c.costUsd;
     latencyMs += c.latencyMs;
   }
-  return { tokensIn, tokensOut, tokensCached, costUsd, latencyMs, llmCalls: calls.length };
+  const est = sumEstimates(calls.map((c) => c.estimate));
+  return {
+    tokensIn,
+    tokensOut,
+    tokensCached,
+    costUsd,
+    latencyMs,
+    llmCalls: calls.length,
+    estInTokens: est.inputTokens,
+    estCachedTokens: est.cachedInputTokens,
+    estCacheWriteTokens: est.cacheWriteTokens,
+    estOutTokens: est.outputTokens,
+    estCostUsd: est.costUsd,
+  };
 }
 
-function emptyTotals(): Pick<RunRecord, 'tokensIn' | 'tokensOut' | 'tokensCached' | 'costUsd' | 'latencyMs' | 'llmCalls'> {
-  return { tokensIn: 0, tokensOut: 0, tokensCached: 0, costUsd: 0, latencyMs: 0, llmCalls: 0 };
+function emptyTotals(): CallTotals {
+  return { tokensIn: 0, tokensOut: 0, tokensCached: 0, costUsd: 0, latencyMs: 0, llmCalls: 0, estInTokens: 0, estCachedTokens: 0, estCacheWriteTokens: 0, estOutTokens: 0, estCostUsd: 0 };
 }
 
 /** A deterministic (not cryptographically random) masking key, so `--runs > 1` and
@@ -263,6 +288,7 @@ async function toRunRecord(
     path: result.path,
     classification: classificationLabel(classification),
     expectationMet: expectationMet(caseDef.meta, masking, result, classification),
+    ...(caseDef.meta.expectNote ? { expectNote: caseDef.meta.expectNote } : {}),
     holdOut,
     fastPath: result.path === 'local',
     schemaValid: result.path !== 'llm' || result.rules !== null,

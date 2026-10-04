@@ -33,7 +33,8 @@ function scripted(answers: unknown[]): { complete: CompleteFn; requests: { conte
   const requests: { content: { text: string }[] }[] = [];
   const complete: CompleteFn = async (req) => {
     requests.push(req as never);
-    return { json: answers.shift(), model: 'fake', usage: { tokensIn: 1, tokensOut: 1, tokensCachedRead: 0, tokensCachedWrite: 0 }, costUsd: 0, latencyMs: 0 } as never;
+    const json = answers.shift();
+    return { json, raw: JSON.stringify(json), model: 'fake', usage: { tokensIn: 1, tokensOut: 1, tokensCachedRead: 0, tokensCachedWrite: 0 }, costUsd: 0, latencyMs: 0 } as never;
   };
   return { complete, requests };
 }
