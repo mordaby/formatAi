@@ -2,11 +2,12 @@
 // twice), and when the loop ends - done, no progress, the round cap, the row cap, the payload cap, nothing to send - keeping the best answer.
 import { payloadBytes, withRows, type LearnPayload, type RepairProblem } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
-import { buildPayload } from '../../src/learn/payload';
+import { buildPayload, counterexampleSample } from '../../src/learn/payload';
 import { createMasker } from '../../src/learn/mask';
 import { loopStep, pickCounterexamples, startLoop, wrongCount, type LoopAnswer, type LoopCaps, type LoopContext, type LoopState } from '../../src/learn/loop';
 import { verifyAgainstExample, type WrongRow } from '../../src/learn/verify';
-import { analyzeWithPreflight } from './v5fixtures';
+import { analyzeOk, xlsx, type V } from './analyze/helpers';
+import { analyzeWithPreflight, columnsToRowsPair } from './v5fixtures';
 import { priorityPair, priorityRules, wrongWithCutoff } from './loopFixtures';
 
 const CAPS: LoopCaps = { maxRounds: 3, rowsPerRound: 8, maxRowsTotal: 40, maxBytes: 49_152 };
@@ -222,6 +223,28 @@ describe('verifyAgainstExample: the wrong rows and masked repair problems', () =
     expect(diff).toBeDefined();
     expect(JSON.stringify(v.repairProblems)).not.toMatch(/Dana Levi|Yossi Cohen|Noa Peretz/);
     expect(v.mismatches[0]!.expected).toBe('Dana Levi'); // the UI's copy stays real
+  });
+});
+
+describe('counterexampleSample: a row of the example as a sample, built like the payload\'s', () => {
+  it('a family when rows expand (the input row and all its output rows), a pair otherwise, no output rows for a row the example dropped', () => {
+    const fam = analyzeWithPreflight(columnsToRowsPair()).a;
+    const famIn = fam.alignment.rows[0]!.in;
+    const famSample = counterexampleSample(fam, famIn);
+    expect(Array.isArray(famSample.out[0])).toBe(true);
+    expect((famSample.out as unknown[][]).length).toBe(fam.alignment.rows.filter((r) => r.in === famIn).length);
+
+    const input: V[][] = [['Ref', 'Name', 'Status']];
+    const output: V[][] = [['Ref', 'Name']];
+    for (let i = 0; i < 12; i++) {
+      const status = i === 5 ? 'void' : 'ok';
+      input.push([`R-${100 + i}`, `Name ${i}`, status]);
+      if (status === 'ok') output.push([`R-${100 + i}`, `Name ${i}`]);
+    }
+    const a = analyzeOk(xlsx(input), xlsx(output));
+    expect(a.alignment.droppedIn).toEqual([5]);
+    expect(counterexampleSample(a, 5)).toEqual({ in: ['R-105', 'Name 5', 'void'], out: [] });
+    expect(counterexampleSample(a, 2)).toEqual({ in: ['R-102', 'Name 2', 'ok'], out: ['R-102', 'Name 2'] });
   });
 });
 

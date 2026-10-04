@@ -358,16 +358,18 @@ function finishSample(sample: Sample, analysis: PairAnalysis, masker: Masker | u
  * all its output rows); a row the example dropped is the input row with no output rows (`out: []`: the rules must make nothing for it).
  */
 export function counterexampleSample(analysis: PairAnalysis, inRow: number, masker?: Masker, maxCellChars: number = limits.payload.maxCellChars): Sample {
-  const isFamilies = analysis.shape.kind === 'families';
-  let sample: Sample | undefined;
-  if (isFamilies) {
-    const family = analysis.shape.kind === 'families' ? analysis.shape.families.find((f) => f.in === inRow) : undefined;
-    if (family) sample = buildFamilySample(analysis, family).sample;
+  const aligned = analysis.alignment.rows.flatMap((r, k) => (r.in === inRow ? [k] : []));
+  const inCells = rowCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904);
+  let sample: Sample;
+  if (aligned.length === 0) {
+    sample = { in: inCells, out: [] as PayloadCell[][] };
+  } else if (analysis.shape.kind === 'families') {
+    const family = analysis.shape.families.find((f) => f.in === inRow);
+    // (every aligned input row is in a family; were one not, its aligned rows are the family)
+    sample = family ? buildFamilySample(analysis, family).sample : { in: inCells, out: aligned.map((k) => outputRowCells(analysis, analysis.alignment.rows[k]!.out)) };
   } else {
-    const k = analysis.alignment.rows.findIndex((r) => r.in === inRow);
-    if (k >= 0) sample = buildPairSample(analysis, k).sample;
+    sample = buildPairSample(analysis, aligned[0]!).sample;
   }
-  sample ??= { in: rowCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904), out: [] as PayloadCell[][] };
   return finishSample(sample, analysis, masker, maxCellChars);
 }
 

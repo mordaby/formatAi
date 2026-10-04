@@ -326,6 +326,15 @@ describe('repairFromBrowser(): one round of the learning loop', () => {
     expect(serverRepair).not.toMatch(/"sample":[2-9]/);
   });
 
+  it('a row the example dropped (no output rows) that the answer still makes a row for is a problem naming that row', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: correctRulesWireJson() });
+    fake.enqueue({ json: correctRulesWireJson() });
+    const outcome = await repairFromBrowser(basicPayload(), wrongRoundingRules(), browserProblems, { tier: 'registered', env, complete: fakeCompleteFn(fake), rows: [{ in: ['VOID', 1], out: [] }] });
+    expect(outcome.verified).toBe(false);
+    expect(outcome.problems).toContainEqual({ kind: 'diff', out: 0, expected: null, actual: 'VOID', row: { in: ['VOID', 1], out: [] } });
+  });
+
   it('sends the first payload as it was (its cached prefix still hits) and the browser\'s problems in the repair block', async () => {
     const fake = createFakeProvider();
     fake.enqueue({ json: correctRulesWireJson() });
