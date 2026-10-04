@@ -5,7 +5,7 @@ lists, bank exports, freight invoices, payroll, sales orders, insurance
 commissions, purchase orders, warehouse stock, a product catalog, budgets,
 expense claims, sales transactions), mixing Hebrew RTL and English LTR, so the
 learn prompt doesn't overfit one domain or language, plus 3 hard English cases for the
-learning-loop measurement (see "The three hard cases"). Built deterministically by
+learning-loop measurement (see "The three hard cases"), plus 6 stress cases built to find where the whole process breaks (see "The six stress cases"). Built deterministically by
 `build.ts`; nothing here is hand-copied from a live run.
 
 ## Layout
@@ -39,7 +39,7 @@ person would, and there is no "learned rules" to hold out against.
 
 | Field | Meaning |
 |---|---|
-| `difficulty` | `"easy"` \| `"medium"` \| `"hard"` - a rough hint for the report's difficulty breakdown (SPEC 10), not a guarantee of which engine path (fast/LLM) handles it. |
+| `difficulty` | `"easy"` \| `"medium"` \| `"hard"` \| `"stress"` - a rough hint for the report's difficulty breakdown (SPEC 10), not a guarantee of which engine path (fast/LLM) handles it. `stress` marks the cases built to find where the process breaks (broken values, a value across rows, a messy sheet ...) rather than a rung of difficulty. |
 | `domain` | Short camelCase tag (e.g. `"freightInvoices"`) so the report can break results down by domain (SPEC 10). |
 | `features` | Tags for the traps/operations this case exercises (e.g. `"leadingZerosLost"`, `"ddmmVsMmdd"`, `"pivot"`), used to group failures by feature (SPEC 10's report). |
 | `expect` | `"verified"` \| `"unsupported:<code>"` \| `"blocked:<reason>"`, or (one case only) `{ masking_on, masking_off }` - see below. Codes match the enums in `packages/shared/src/codes.ts`: `UNSUPPORTED_REASON_CODES` for `unsupported:*`, `PREFLIGHT_BLOCK_REASONS` for `blocked:*`. |
@@ -105,6 +105,12 @@ output at all, so both `input.*` and `output.*` are built directly with
 | 18 | `orders-priority` | hard | salesOrders | verified |
 | 19 | `branch-lookup-50` | hard | salesByBranch | verified |
 | 20 | `discount-hand-edited` | hard | salesOrders | verified (note: the rule for the rest, the 3 edited rows reported) |
+| 21 | `broken-values` | stress | salesOrders | verified (note: broken cells flagged, not guessed) |
+| 22 | `running-balance` | stress | ledger | verified |
+| 23 | `cancel-and-dedupe` | stress | salesOrders | verified |
+| 24 | `messy-layout-he` | stress | salesReport | verified |
+| 25 | `dates-mixed-formats` | stress | payments | verified |
+| 26 | `region-report-subtotals` | stress | salesReport | verified |
 
 Cases 15-17 are three different suppliers' price lists (different headers,
 column orders and number-format quirks - Hebrew, English and Hebrew again)
@@ -128,6 +134,27 @@ Built by `buildHard.ts` (called from `build.ts`), ASCII only, each with a next-m
 | `orders-priority` | 240 orders; Priority = Blocked if Status is On hold, Urgent if Open and Amount >= 5000, Normal if Open, else Done. Next month: 200 fresh rows (Urgent 5000-6500, Normal up to 4800). | Only 5 Urgent rows (the first at exactly 5000), none among the first rows, the 2 rows with an empty Customer, or the min/max Amount and Order Date rows; the largest Amount of the file is a Closed order. The engine's counterexample selection can still put one of them into the sample. |
 | `branch-lookup-50` | 400 sales rows; Branch Name from Branch Code (B01..B50, arbitrary city names). Next month: 300 rows, the same 50 codes in another mix. | Every code appears at least twice, 8 of them only 2-3 times; the name cannot be derived from the code. NOTE: today the free engine solves it (a value map whose every key repeats), so it costs no tokens; it guards that threshold. |
 | `discount-hand-edited` | 150 orders; Discount = 10% of Amount rounded to 2 decimals, except 3 rows whose Discount was typed over by hand (none, 15%, a flat 25). Next month: 120 clean rows. | The rule cannot make the example's output match in those 3 rows. Expected: the rule for the rest and the 3 rows reported (`expectNote`); `expect` stays `verified` until the learning loop can say that, so today the case is expected NOT to verify - its hold-out column says whether the rule itself was found. |
+
+### The six stress cases (where can the whole process break?)
+
+Built by `buildStress.ts` (called from `build.ts`), every one with a next-month pair, `difficulty: "stress"`, `expect: "verified"` (the end state) and an `expectNote` in plain words (what should happen, where it may break; printed by the report, not scored). Each has a `reference.rules.json` that reproduces BOTH outputs byte for byte, so `verify-cases.ts` needs no exception field; where the language is only just enough, the DECISION comments in `buildStress.ts` say how.
+
+| name | what it is | what is broken or hard on purpose |
+|---|---|---|
+| `broken-values` | 120 orders (Order ID, Customer, Amount, Order Date, Status) -> a cleaned list. Next month: 100 rows. | Example: 2 empty Customers, an Amount "N/A", an empty Amount, an Amount as text "1,250.00 ₪", an impossible date "31/02/2026", a date as ISO text "2026-03-05" (the rest are real dates), 3 names with spaces around them, 1 exact duplicate row (it stays). Output: names trimmed, Amount a number (unreadable and empty -> empty), dates dd/mm/yyyy (the impossible one empty). Next month brings NEW kinds: "-" and "1.250,00" as an Amount, "12/13/2026" as a date, a negative Amount (-50), a row with only the Order ID. Wanted: the cleanup learned, the new broken cells flagged for review, not guessed. |
+| `running-balance` | 150 ledger rows over 4 accounts (Account, Date, Description, Debit, Credit), NOT in date order -> the same columns + Balance. Next month: 130 rows, every account from 0 again. | Balance = running sum of (Credit - Debit) per account in DATE order (ties keep file order), rows sorted by Account then Date. The sum depends on other rows, in an order the file does not have. |
+| `cancel-and-dedupe` | 200 order rows (Order ID, Customer, Amount, Status, Updated At) -> the current orders. Next month: 179 rows, a different mix. | 15 are Cancelled (dropped); 10 orders appear twice with different Updated At (only the latest stays); sorted by Order ID. Next month: 22 cancelled, 7 orders twice and one order three times. The file lists the versions of an order oldest first, so "the last row" is "the latest Updated At". |
+| `messy-layout-he` | A Hebrew RTL sales sheet -> a clean table. Next month: the same layout, new rows. | 3 title lines above the header (a title merged across the columns, "תאריך הפקה: ...", a blank line), the header on row 4, a HIDDEN column ("קוד פנימי"), a footer row "סה"כ" with totals, ID numbers (ת.ז., valid Israeli IDs) stored as numbers so a quarter of them lost a leading zero (some two). Output: no title lines and no footer, ת.ז. as 9-digit text, and a new column מע"מ = round(סכום x 0.18, 2). |
+| `dates-mixed-formats` | 60 payments (Reference, Customer, Date, Amount) -> Date as text yyyy-mm-dd, a new Period column "03/2026", Amount a number. Next month: 50 rows in April. | One Date column in four writings: real Excel dates, day/month text "05/03/2026", ISO text "2026-03-07", Hebrew month-name text "12 במרץ 2026"; Amount is text with thousands separators ("1,234.50"). In the example every day/month text is ambiguous (both parts 12 or less); next month's "13/04/2026" proves the order (day/month). |
+| `region-report-subtotals` | 80 flat sales rows (Region, Rep, Amount, Date) -> a report. Next month: 90 rows in April. | A title row "Sales by region - March 2026" (the month from the data's dates), headers renamed (Region, Sales rep, Amount), rows sorted by Region then Amount descending, after each region a summary row (the sum of Amount and the count of rows) and a blank row, a grand total row at the end; the Date column is not in the output. |
+
+Decisions worth knowing (the DECISION comments in `buildStress.ts` have the detail):
+
+- **Unreadable cells are left EMPTY by the reference rules**, as the person who made the example did. A `decimal` / `date` input column KEEPS an unreadable value as text and flags it, so `broken-values` reads Amount and Order Date as text and converts them with `toNumber` / `toDate` (empty plus a flag when they cannot be read; real dates and numbers pass through). The reference rules also flag a missing Customer and a negative Amount at run time.
+- **"Keep the latest by a column" does not exist in the rules language.** `dedupe.keep` is `first` or `last` in FILE order and the sort runs after the dedupe. `cancel-and-dedupe` therefore lists the versions of an order oldest first (a change-log export), where the two are the same; a file NOT in Updated At order has no rule at all, and the case does not test that. The row filter also runs before the dedupe, so no order in the case is both cancelled and repeated.
+- **`running-balance` needs a helper column**: `runningSum` takes a column id, so Credit - Debit is a computed column of its own (an empty side counts as 0).
+- **`dates-mixed-formats` reads the date in a computed column**: the column is read as text (a real date stays a date), ISO text has a "-", Hebrew month-name text has a space, everything else is day/month text; `toDate` lets a real date through. `inputFormats` cannot do it (no month names).
+- **The fixtures can now merge cells and hide columns** (`lib/fixtures.ts`: `merges`, `hiddenCols`; the hidden column is spliced into the sheet XML after the engine writes the file, as the engine's own writer never hides one). Existing cases do not use either, so their files are unchanged.
 
 ## Traps, by case
 
