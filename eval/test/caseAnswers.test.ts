@@ -14,7 +14,7 @@ import type { CompleteFn } from '@formatai/api/learn';
 import { formatOf, formulaRulesToWire } from '@formatai/engine';
 import { toWire, type LearnResult } from '@formatai/shared';
 import { loadCase, type CaseDef } from '../lib/caseLoader';
-import { runLearn } from '../lib/runner';
+import { runLearn, runMatrix } from '../lib/runner';
 
 const env = loadEnv({ ...process.env, LLM_PROVIDER: 'fake' });
 const CASES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'cases');
@@ -88,13 +88,53 @@ describe('registry-supplier-c: giving up on a column the analysis explained is r
     expect(ran.result.verification).toMatchObject({ verified: true });
   });
 
-  it('a model that insists is asked once more by the browser, then accepted: 3 calls, the column stays unsupported', async () => {
+  it('a model that insists is asked once more by the browser (one loop round, with its own server repair), then accepted: the column stays unsupported', async () => {
     const { caseDef, target } = attach();
-    const { complete } = scripted([gaveUp(caseDef), gaveUp(caseDef), gaveUp(caseDef)]);
+    const { complete } = scripted([gaveUp(caseDef), gaveUp(caseDef), gaveUp(caseDef), gaveUp(caseDef)]);
     const ran = await runLearn({ caseDef, masking: false, model: 'fake', run: 1, env, noEscalation: true, target, complete });
 
-    expect(ran.result.calls.map((x) => x.purpose)).toEqual(['learn', 'repair', 'repair']);
-    expect(ran.result.stages).toMatchObject({ verifiedFirstCall: false, browserRepairUsed: true });
+    // the learn and its server repair; the browser's round and ITS server repair (the server's checks still name the column)
+    expect(ran.result.calls.map((x) => x.purpose)).toEqual(['learn', 'repair', 'repair', 'repair']);
+    expect(ran.result.stages).toMatchObject({ verifiedFirstCall: false, browserRepairUsed: true, verifiedAfterRepair: true });
+    expect(ran.result.loop).toMatchObject({ rounds: 1, end: 'verified' });
     expect(ran.result.unsupported).toEqual([{ outputColumn: 'Unit Price', reasonCode: 'externalData' }]);
+  });
+});
+
+describe('the learning loop in the runner: the same rounds the browser makes, recorded per learn', () => {
+  /**
+   * The case's reference rules with "Urgent" narrowed to amounts below 5,100: right on the 12 samples (their one Urgent order is the
+   * 5,000 one), wrong on the four urgent orders the sample does not hold (5,340.50 to 6,455.80).
+   */
+  const narrowUrgent = (c: CaseDef): unknown => {
+    const gte = '{"op":"gte","args":[{"col":"amount"},{"const":5000}]}';
+    const json = JSON.stringify(c.referenceRules);
+    if (!json.includes(gte)) throw new Error('orders-priority: the reference rules changed');
+    return wireOf(JSON.parse(json.replace(gte, `{"op":"and","args":[${gte},{"op":"lt","args":[{"col":"amount"},{"const":5100}]}]}`)));
+  };
+
+  it('orders-priority: the first answer misses rows away from the samples, a round sends them, the next answer verifies', async () => {
+    const c = load('orders-priority');
+    // the learn (wrong, but right on the samples: no server repair); the round (right, checked on the samples plus the rows sent)
+    const { complete, requests } = scripted([narrowUrgent(c), wireOf(c.referenceRules)]);
+    const ran = await runLearn({ caseDef: c, masking: false, model: 'fake', run: 1, env, noEscalation: true, complete });
+
+    expect(ran.result.calls.map((x) => x.purpose)).toEqual(['learn', 'repair']);
+    expect(ran.result.stages).toMatchObject({ verifiedFirstCall: false, browserRepairUsed: true, verifiedAfterRepair: true });
+    expect(ran.result.loop).toEqual({ rounds: 1, rowsSent: 4, end: 'verified' });
+    // the round's repair block names the rows of the example it sends (never a sample index past the payload's)
+    const round = requests[1]!.content[1]!.text;
+    expect(round).toContain('"row":{"in":["ORD-01119"');
+    expect(round).toContain('"expected":"Urgent","actual":"Normal"');
+  });
+
+  it('records rounds, rows sent and how the loop ended next to the token columns', async () => {
+    const c = load('orders-priority');
+    // the round's answer is the same: its server repair (the rows sent are still wrong) is the third call
+    const { complete } = scripted([narrowUrgent(c), narrowUrgent(c), narrowUrgent(c)]);
+    const records = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
+    expect(records).toHaveLength(1);
+    // the round's answer is no better (the same rules): the loop stops on no progress after one round
+    expect(records[0]).toMatchObject({ loopRounds: 1, loopRowsSent: 4, loopEnd: 'noProgress', llmCalls: 3, verifiedAfterRepair: false });
   });
 });

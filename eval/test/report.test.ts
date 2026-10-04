@@ -30,6 +30,9 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     estCacheWriteTokens: 0,
     estOutTokens: 0,
     estCostUsd: 0,
+    loopRounds: 0,
+    loopRowsSent: 0,
+    loopEnd: '',
     formulaErrorCount: 0,
     firstCallFormulaErrors: 0,
     formulaFixedByRepair: false,
@@ -267,22 +270,25 @@ describe('token usage and cost (our own estimate)', () => {
       estCacheWriteTokens: 10_000,
       estOutTokens: 1500,
       estCostUsd: 0.04,
+      loopRounds: 1,
+      loopRowsSent: 8,
+      loopEnd: 'verified',
       ...over,
     });
 
   it('has a section with the totals and the average per learn, over the learns that made an LLM call only', () => {
-    const records = [aiLearn({ case: 'a', holdOut: 'pass' }), aiLearn({ case: 'b', classification: 'notVerified', holdOut: 'fail', estCostUsd: 0.06, llmCalls: 3, estOutTokens: 2500 }), record({ case: 'free' })];
+    const records = [aiLearn({ case: 'a', holdOut: 'pass' }), aiLearn({ case: 'b', classification: 'notVerified', holdOut: 'fail', estCostUsd: 0.06, llmCalls: 3, estOutTokens: 2500, loopRounds: 2, loopRowsSent: 13, loopEnd: 'noProgress' }), record({ case: 'free' })];
     const md = buildMarkdownReport(records, '2025-01-01T00:00:00.000Z');
     expect(md).toContain('## Token usage and cost (our own estimate)');
     // 2 AI learns (the free-engine learn costs nothing and is not counted): totals, then the average per learn
-    expect(md).toContain('| haiku | off | total | 2 | 5 | 6000 | 20000 | 20000 | 4000 | 0.1000 | 24.0 | 1 of 2 | 1 of 2 |');
-    expect(md).toContain('| haiku | off | average per learn |  | 2.50 | 3000 | 10000 | 10000 | 2000 | 0.0500 | 12.0 | 50% | 50% |');
+    expect(md).toContain('| haiku | off | total | 2 | 5 | 3 | 21 | noProgress 1, verified 1 | 6000 | 20000 | 20000 | 4000 | 0.1000 | 24.0 | 1 of 2 | 1 of 2 |');
+    expect(md).toContain('| haiku | off | average per learn |  | 2.50 | 1.50 | 10.5 |  | 3000 | 10000 | 10000 | 2000 | 0.0500 | 12.0 | 50% | 50% |');
   });
 
-  it('lists every AI learn with its calls, tokens, cost, latency, verification and hold-out', () => {
-    const md = buildMarkdownReport([aiLearn({ case: 'orders-priority', holdOut: 'fail', classification: 'notVerified' }), record({ case: 'free' })], '2025-01-01T00:00:00.000Z');
+  it('lists every AI learn with its calls, loop rounds, rows sent and how the loop ended, tokens, cost, latency, verification and hold-out', () => {
+    const md = buildMarkdownReport([aiLearn({ case: 'orders-priority', holdOut: 'fail', classification: 'notVerified', loopRounds: 3, loopRowsSent: 24, loopEnd: 'roundCap' }), record({ case: 'free' })], '2025-01-01T00:00:00.000Z');
     expect(md).toContain('### Per learn');
-    expect(md).toContain('| orders-priority | haiku | off | 1 | 2 | 3000 | 10000 | 10000 | 1500 | 0.0400 | 12.0 | no | fail |');
+    expect(md).toContain('| orders-priority | haiku | off | 1 | 2 | 3 | 24 | roundCap | 3000 | 10000 | 10000 | 1500 | 0.0400 | 12.0 | no | fail |');
     expect(md).not.toContain('| free | haiku | off | 1 |');
   });
 
@@ -304,6 +310,8 @@ describe('token usage and cost (our own estimate)', () => {
     const values = row!.split(',');
     expect(values[cols.indexOf('estCacheWriteTokens')]).toBe('10000');
     expect(values[cols.indexOf('estCostUsd')]).toBe('');
+    expect(cols.slice(cols.indexOf('estCostUsd') + 1, cols.indexOf('estCostUsd') + 4)).toEqual(['loopRounds', 'loopRowsSent', 'loopEnd']);
+    expect([values[cols.indexOf('loopRounds')], values[cols.indexOf('loopRowsSent')], values[cols.indexOf('loopEnd')]]).toEqual(['1', '8', 'verified']);
   });
 
   it('the stdout summary prints the totals and the per-learn numbers, with the cost, latency, verification and hold-out', () => {
@@ -312,7 +320,7 @@ describe('token usage and cost (our own estimate)', () => {
     const text = lines.join('\n');
     expect(text).toContain('over 2 AI learn(s), 4 call(s): in 6000 / cached 20000 / cache write 20000 / out 3000, est. cost $0.0800, 24.0 s');
     expect(text).toContain('per learn: in 3000 / cached 10000 / cache write 10000 / out 1500, est. cost $0.0400, 12.0 s');
-    expect(text).toContain('verified on example 2 of 2, hold-out 2 of 2');
+    expect(text).toContain('loop: 2 round(s), 16 row(s) sent, ends verified 2; verified on example 2 of 2, hold-out 2 of 2');
   });
 
   it('prints no usage line for a run without LLM calls', () => {

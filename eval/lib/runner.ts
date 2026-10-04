@@ -1,7 +1,8 @@
 // Runs the full production pipeline (SPEC 10) for every case x model x masking x run
 // combination: `learnFromExamples` (packages/engine) with `callLearn` = the API's
-// `learn()` and `callRepair` = `repairFromBrowser`, called in-process (no HTTP), plus
-// the hold-out check and scoring. This is the one place that actually spends tokens.
+// `learn()` and `callRepair` = `repairFromBrowser` (one round of the learning loop, with
+// the rows the loop sent), called in-process (no HTTP), plus the hold-out check and
+// scoring. This is the one place that actually spends tokens.
 import { completionPlan, formatOf, learnFromExamples, type LearnFromExamplesResult } from '@formatai/engine';
 import { learn, repairFromBrowser, type CompleteFn, type LearnOptions, type LearnOutcome, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
@@ -55,6 +56,12 @@ export interface RunRecord {
   estCacheWriteTokens: number;
   estOutTokens: number;
   estCostUsd: number | null;
+  /** The learning loop (SPEC 9.3, `result.loop`): the rounds this learn made (browser-triggered repairs), the rows of the example they sent,
+   * and how the loop ended ('verified' or the stop reason: noProgress, roundCap, rowCap, payloadCap, nothingToSend). 0 / 0 / '' when the AI
+   * step was not called or brought back no rules. */
+  loopRounds: number;
+  loopRowsSent: number;
+  loopEnd: string;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
    * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
    * run's LLM calls produced, across the learn call and every repair/escalation call. */
@@ -205,8 +212,10 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     opts.onLearnOutcome?.(outcome);
     return outcome;
   };
-  const callRepair: Parameters<typeof learnFromExamples<LlmCallRecord>>[0]['callRepair'] = async (payload, previousRules, problems) => {
-    const outcome = await repairFromBrowser(payload, previousRules, problems, learnOpts);
+  // A round of the learning loop, exactly as the API's /api/learn/repair runs it: the answer checked on the samples plus every row sent.
+  // (The loop itself - which rows, when to stop - is `learnFromExamples`' own, the same code the browser runs.)
+  const callRepair: Parameters<typeof learnFromExamples<LlmCallRecord>>[0]['callRepair'] = async (payload, previousRules, problems, round) => {
+    const outcome = await repairFromBrowser(payload, previousRules, problems, { ...learnOpts, rows: round.rows });
     opts.onLearnOutcome?.(outcome);
     return outcome;
   };
@@ -295,6 +304,9 @@ async function toRunRecord(
     verifiedFirstCall: result.stages.verifiedFirstCall,
     verifiedAfterRepair: result.stages.verifiedAfterRepair,
     ...totals,
+    loopRounds: result.loop?.rounds ?? 0,
+    loopRowsSent: result.loop?.rowsSent ?? 0,
+    loopEnd: result.loop?.end ?? '',
     ...formula,
     ...(tagMode
       ? {
@@ -332,6 +344,9 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     verifiedFirstCall: false,
     verifiedAfterRepair: false,
     ...emptyTotals(),
+    loopRounds: 0,
+    loopRowsSent: 0,
+    loopEnd: '',
     ...formulaStats([]),
     error,
   };
@@ -348,6 +363,8 @@ export interface RunMatrixOptions {
   /** Which modes to run (default `['full']`); see `EvalMode`. */
   modes?: EvalMode[];
   onProgress?: (line: string) => void;
+  /** Replaces the LLM call (`RunOneOptions.complete`): a test passes a fake provider with canned answers. Default: the real provider. */
+  complete?: CompleteFn;
 }
 
 /**
@@ -379,7 +396,7 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
 
           for (const caseDef of baseCases) {
             opts.onProgress?.(`${label}: ${caseDef.name}`);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode });
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode, ...(opts.complete ? { complete: opts.complete } : {}) });
             baseResults.set(caseDef.name, ran.result);
             records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode));
           }
@@ -399,7 +416,7 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
               continue;
             }
             const target: Format = formatOf(baseRules);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode });
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode, ...(opts.complete ? { complete: opts.complete } : {}) });
             records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode));
           }
         }

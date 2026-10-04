@@ -40,9 +40,21 @@ function sumCost(values: readonly (number | null)[]): number | null {
 const usd = (v: number | null): string => (v === null ? 'n/a' : v.toFixed(4));
 const secondsOf = (ms: number): string => (ms / 1000).toFixed(1);
 
+/** How the learning loops ended, tallied, most common first ("verified 3, noProgress 1"); '-' when none ran. */
+function loopEnds(records: readonly RunRecord[]): string {
+  const counts = new Map<string, number>();
+  for (const r of records) if (r.loopEnd) counts.set(r.loopEnd, (counts.get(r.loopEnd) ?? 0) + 1);
+  const list = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  return list.length === 0 ? '-' : list.map(([end, n]) => `${end} ${n}`).join(', ');
+}
+
 interface UsageTotals {
   learns: number;
   calls: number;
+  /** The learning loop: rounds made and rows they sent, over these learns, and how each loop ended (`loopEnd`, tallied). */
+  rounds: number;
+  rowsSent: number;
+  ends: string;
   inTokens: number;
   cachedTokens: number;
   cacheWriteTokens: number;
@@ -61,6 +73,9 @@ function usageOf(records: readonly RunRecord[]): UsageTotals {
   return {
     learns: rs.length,
     calls: rs.reduce((n, r) => n + r.llmCalls, 0),
+    rounds: rs.reduce((n, r) => n + r.loopRounds, 0),
+    rowsSent: rs.reduce((n, r) => n + r.loopRowsSent, 0),
+    ends: loopEnds(rs),
     inTokens: rs.reduce((n, r) => n + r.estInTokens, 0),
     cachedTokens: rs.reduce((n, r) => n + r.estCachedTokens, 0),
     cacheWriteTokens: rs.reduce((n, r) => n + r.estCacheWriteTokens, 0),
@@ -310,13 +325,17 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
     lines.push('(no LLM call in this run)', '');
     return lines;
   }
-  const head = ['Model', 'Masking', ...(tagged ? ['Mode'] : []), 'Basis', 'AI learns', 'LLM calls', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out pass'];
+  lines.push(
+    'Loop rounds and rows sent are the learning loop\'s (SPEC 9.3): browser-triggered repair rounds after the full verification, each sending rows of the example the rules got wrong; the loop ends verified, or on a stop (noProgress, roundCap, rowCap, payloadCap, nothingToSend).',
+    '',
+  );
+  const head = ['Model', 'Masking', ...(tagged ? ['Mode'] : []), 'Basis', 'AI learns', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop ends', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out pass'];
   const rows: (string | number)[][] = [];
   for (const g of shown) {
     const u = g.usage;
     const lead = [g.model, g.masking ? 'on' : 'off', ...(tagged ? [g.mode ?? 'full'] : [])];
-    rows.push([...lead, 'total', u.learns, u.calls, u.inTokens, u.cachedTokens, u.cacheWriteTokens, u.outTokens, usd(u.costUsd), secondsOf(u.latencyMs), `${u.verified} of ${u.learns}`, `${u.holdOutPass} of ${u.holdOutEligible}`]);
-    rows.push([...lead, 'average per learn', '', (u.calls / u.learns).toFixed(2), (u.inTokens / u.learns).toFixed(0), (u.cachedTokens / u.learns).toFixed(0), (u.cacheWriteTokens / u.learns).toFixed(0), (u.outTokens / u.learns).toFixed(0), usd(u.costUsd === null ? null : u.costUsd / u.learns), secondsOf(u.latencyMs / u.learns), pct(u.verified, u.learns), pct(u.holdOutPass, u.holdOutEligible)]);
+    rows.push([...lead, 'total', u.learns, u.calls, u.rounds, u.rowsSent, u.ends, u.inTokens, u.cachedTokens, u.cacheWriteTokens, u.outTokens, usd(u.costUsd), secondsOf(u.latencyMs), `${u.verified} of ${u.learns}`, `${u.holdOutPass} of ${u.holdOutEligible}`]);
+    rows.push([...lead, 'average per learn', '', (u.calls / u.learns).toFixed(2), (u.rounds / u.learns).toFixed(2), (u.rowsSent / u.learns).toFixed(1), '', (u.inTokens / u.learns).toFixed(0), (u.cachedTokens / u.learns).toFixed(0), (u.cacheWriteTokens / u.learns).toFixed(0), (u.outTokens / u.learns).toFixed(0), usd(u.costUsd === null ? null : u.costUsd / u.learns), secondsOf(u.latencyMs / u.learns), pct(u.verified, u.learns), pct(u.holdOutPass, u.holdOutEligible)]);
   }
   lines.push(markdownTable(head, rows), '');
 
@@ -324,8 +343,8 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
   const learns = aiLearns(records).sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model) || Number(a.masking) - Number(b.masking) || a.run - b.run || (a.mode ?? '').localeCompare(b.mode ?? ''));
   lines.push(
     markdownTable(
-      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out'],
-      learns.map((r) => [r.case, ...(tagged ? [r.mode ?? 'full'] : []), r.model, r.masking ? 'on' : 'off', r.run, r.llmCalls, r.estInTokens, r.estCachedTokens, r.estCacheWriteTokens, r.estOutTokens, usd(r.estCostUsd), secondsOf(r.latencyMs), r.classification === 'verified' ? 'yes' : 'no', r.holdOut === 'n/a' ? '-' : r.holdOut]),
+      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out'],
+      learns.map((r) => [r.case, ...(tagged ? [r.mode ?? 'full'] : []), r.model, r.masking ? 'on' : 'off', r.run, r.llmCalls, r.loopRounds, r.loopRowsSent, r.loopEnd || '-', r.estInTokens, r.estCachedTokens, r.estCacheWriteTokens, r.estOutTokens, usd(r.estCostUsd), secondsOf(r.latencyMs), r.classification === 'verified' ? 'yes' : 'no', r.holdOut === 'n/a' ? '-' : r.holdOut]),
     ),
     '',
   );
@@ -456,6 +475,9 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'estCacheWriteTokens',
   'estOutTokens',
   'estCostUsd',
+  'loopRounds',
+  'loopRowsSent',
+  'loopEnd',
   'formulaErrorCount',
   'firstCallFormulaErrors',
   'formulaFixedByRepair',
@@ -488,6 +510,7 @@ export function printSummary(records: RunRecord[], log: (line: string) => void =
       log(
         `    est. tokens (our own count) over ${u.learns} AI learn(s), ${u.calls} call(s): in ${u.inTokens} / cached ${u.cachedTokens} / cache write ${u.cacheWriteTokens} / out ${u.outTokens}, est. cost ${money(u.costUsd)}, ${secondsOf(u.latencyMs)} s; ` +
           `per learn: in ${per(u.inTokens)} / cached ${per(u.cachedTokens)} / cache write ${per(u.cacheWriteTokens)} / out ${per(u.outTokens)}, est. cost ${money(u.costUsd === null ? null : u.costUsd / u.learns)}, ${secondsOf(u.latencyMs / u.learns)} s; ` +
+          `loop: ${u.rounds} round(s), ${u.rowsSent} row(s) sent, ends ${u.ends}; ` +
           `verified on example ${u.verified} of ${u.learns}, hold-out ${u.holdOutPass} of ${u.holdOutEligible}`,
       );
     }
