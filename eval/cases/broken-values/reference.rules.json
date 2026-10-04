@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "orderId",
+        "header": "Order ID",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "customer",
+        "header": "Customer",
+        "type": "text"
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "text"
+      },
+      {
+        "id": "orderDate",
+        "header": "Order Date",
+        "type": "text"
+      },
+      {
+        "id": "status",
+        "header": "Status",
+        "type": "text"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "customerClean",
+        "type": "text",
+        "expr": {
+          "op": "trim",
+          "arg": {
+            "col": "customer"
+          }
+        }
+      },
+      {
+        "id": "amountNum",
+        "type": "decimal",
+        "expr": {
+          "op": "toNumber",
+          "arg": {
+            "col": "amount"
+          }
+        }
+      },
+      {
+        "id": "orderDateRead",
+        "type": "date",
+        "expr": {
+          "op": "if",
+          "cond": {
+            "op": "contains",
+            "arg": {
+              "col": "orderDate"
+            },
+            "text": "-"
+          },
+          "then": {
+            "op": "toDate",
+            "arg": {
+              "col": "orderDate"
+            },
+            "format": "YYYY-MM-DD"
+          },
+          "else": {
+            "op": "toDate",
+            "arg": {
+              "col": "orderDate"
+            },
+            "format": "D/M/YYYY"
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Orders (cleaned)",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Order",
+        "from": "orderId"
+      },
+      {
+        "header": "Customer",
+        "from": "customerClean"
+      },
+      {
+        "header": "Amount",
+        "from": "amountNum",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Order Date",
+        "from": "orderDateRead",
+        "format": "DD/MM/YYYY"
+      },
+      {
+        "header": "Status",
+        "from": "status"
+      }
+    ]
+  },
+  "validations": [
+    {
+      "column": "customerClean",
+      "rule": "required",
+      "severity": "flag"
+    },
+    {
+      "column": "amountNum",
+      "rule": "range",
+      "min": 0,
+      "severity": "flag"
+    }
+  ],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Orders export -> cleaned orders",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

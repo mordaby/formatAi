@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "stopAt": {
+      "when": "firstCellMatches",
+      "values": [
+        "סה\"כ"
+      ]
+    },
+    "columns": [
+      {
+        "id": "idNumber",
+        "header": "ת.ז.",
+        "type": "idLike",
+        "padLeft": 9,
+        "required": true
+      },
+      {
+        "id": "name",
+        "header": "שם",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "amount",
+        "header": "סכום",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "vat",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "digits": 2,
+          "arg": {
+            "op": "mul",
+            "args": [
+              {
+                "col": "amount"
+              },
+              {
+                "const": 0.18
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "מכירות",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "ת.ז.",
+        "from": "idNumber"
+      },
+      {
+        "header": "שם",
+        "from": "name"
+      },
+      {
+        "header": "סכום",
+        "from": "amount",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "מע\"מ",
+        "from": "vat",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "דוח מכירות -> טבלה נקייה עם מע\"מ",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

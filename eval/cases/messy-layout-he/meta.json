@@ -1,0 +1,18 @@
+{
+  "difficulty": "stress",
+  "domain": "salesReport",
+  "features": [
+    "titleRowsAboveHeader",
+    "mergedTitle",
+    "blankLineBeforeHeader",
+    "hiddenColumn",
+    "footerTotals",
+    "leadingZerosLost",
+    "israeliId",
+    "vatColumn",
+    "rtl",
+    "newRowsNextMonth"
+  ],
+  "expect": "verified",
+  "expectNote": "the table is found under 3 title lines (a merged title, a production-date line, a blank line) with the header on row 4; the hidden column and the footer row (\"סה\"כ\" with totals) are not data; the ID numbers, stored as numbers, get their leading zeros back (9-digit text); a new column מע\"מ = סכום x 0.18 rounded to 2 decimals is added. May break: the header row is not found (a blank line inside the title block reads as the end of a table), the footer total is read as a customer, an 8-digit ID stays 8 digits."
+}

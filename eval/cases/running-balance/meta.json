@@ -1,0 +1,15 @@
+{
+  "difficulty": "stress",
+  "domain": "ledger",
+  "features": [
+    "runningSumPerGroup",
+    "acrossRows",
+    "dateOrderNotFileOrder",
+    "tiesKeepFileOrder",
+    "creditMinusDebit",
+    "sortedOutput",
+    "freshStartNextMonth"
+  ],
+  "expect": "verified",
+  "expectNote": "Balance = the running sum of (Credit - Debit) per account, in DATE order (rows with the same date keep file order), and the rows sorted by Account then Date. Next month every account starts from 0 again. May break: the sum is taken in file order (the file is not in date order), over all accounts together, or the rows are left in file order."
+}

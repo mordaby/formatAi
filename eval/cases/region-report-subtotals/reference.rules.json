@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "region",
+        "header": "Region",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "rep",
+        "header": "Rep",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "date",
+        "header": "Date",
+        "type": "date",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "region",
+        "dir": "asc"
+      },
+      {
+        "column": "amount",
+        "dir": "desc"
+      }
+    ],
+    "group": {
+      "by": "region",
+      "showDetailRows": true,
+      "blankRowsAfter": 1,
+      "summaryRows": [
+        {
+          "label": "Region total",
+          "labelColumn": "Region",
+          "bold": true,
+          "cells": {
+            "Sales rep": "count",
+            "Amount": "sum"
+          }
+        }
+      ]
+    }
+  },
+  "output": {
+    "sheetName": "Sales by region",
+    "direction": "ltr",
+    "language": "en",
+    "headerStyle": {
+      "bold": true
+    },
+    "titleRows": [
+      {
+        "parts": [
+          {
+            "text": "Sales by region - "
+          },
+          {
+            "agg": "max",
+            "column": "date",
+            "format": "MMMM YYYY"
+          }
+        ],
+        "bold": true
+      }
+    ],
+    "columns": [
+      {
+        "header": "Region",
+        "from": "region"
+      },
+      {
+        "header": "Sales rep",
+        "from": "rep"
+      },
+      {
+        "header": "Amount",
+        "from": "amount",
+        "format": "#,##0.00"
+      }
+    ],
+    "summaryRows": [
+      {
+        "label": "Grand total",
+        "labelColumn": "Region",
+        "bold": true,
+        "cells": {
+          "Sales rep": "count",
+          "Amount": "sum"
+        }
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Sales list -> sales by region report",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

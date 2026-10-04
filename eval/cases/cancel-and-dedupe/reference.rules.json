@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "orderId",
+        "header": "Order ID",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "customer",
+        "header": "Customer",
+        "type": "text"
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "status",
+        "header": "Status",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "updatedAt",
+        "header": "Updated At",
+        "type": "date",
+        "required": true
+      }
+    ],
+    "rowFilters": [
+      {
+        "column": "status",
+        "op": "ne",
+        "value": "Cancelled"
+      }
+    ]
+  },
+  "transform": {
+    "dedupe": {
+      "keys": [
+        "orderId"
+      ],
+      "keep": "last",
+      "action": "remove"
+    },
+    "computed": [],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "orderId",
+        "dir": "asc"
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "Open orders",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Order ID",
+        "from": "orderId"
+      },
+      {
+        "header": "Customer",
+        "from": "customer"
+      },
+      {
+        "header": "Amount",
+        "from": "amount",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Status",
+        "from": "status"
+      },
+      {
+        "header": "Updated At",
+        "from": "updatedAt",
+        "format": "DD/MM/YYYY"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Order log -> current orders",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}
