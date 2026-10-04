@@ -135,6 +135,11 @@ const EXTRA_KEY = 'extra';
  * each group in turn. Rows in `skip` (already sent) are never chosen. Pure.
  */
 export function pickCounterexamples(wrongRows: readonly WrongRow[], skip: ReadonlySet<number>, limit: number): WrongRow[] {
+  return pickWithGroups(wrongRows, skip, limit).map((p) => p.row);
+}
+
+/** `pickCounterexamples`, saying for each row the group it was picked for (the mistake its first diff problem is about). */
+function pickWithGroups(wrongRows: readonly WrongRow[], skip: ReadonlySet<number>, limit: number): { row: WrongRow; group: string }[] {
   if (limit <= 0) return [];
   const groups = new Map<string, WrongRow[]>();
   const add = (key: string, row: WrongRow): void => {
@@ -148,19 +153,19 @@ export function pickCounterexamples(wrongRows: readonly WrongRow[], skip: Readon
     if (row.extra.length > 0) add(EXTRA_KEY, row);
   }
   // (A stable sort: equal sizes keep the order the groups were first seen in.)
-  const ordered = [...groups.values()].sort((x, y) => y.length - x.length);
-  const picked: WrongRow[] = [];
+  const ordered = [...groups.entries()].sort((x, y) => y[1].length - x[1].length);
+  const picked: { row: WrongRow; group: string }[] = [];
   const taken = new Set<number>();
   const cursor = ordered.map(() => 0);
   for (let more = true; more && picked.length < limit; ) {
     more = false;
     for (let g = 0; g < ordered.length && picked.length < limit; g++) {
-      const list = ordered[g]!;
+      const [group, list] = ordered[g]!;
       while (cursor[g]! < list.length && taken.has(list[cursor[g]!]!.inRow)) cursor[g]!++;
       if (cursor[g]! >= list.length) continue;
       const row = list[cursor[g]!++]!;
       taken.add(row.inRow);
-      picked.push(row);
+      picked.push({ row, group });
       more = true;
     }
   }
@@ -224,7 +229,7 @@ function extraProblem(row: WrongRow, made: readonly PayloadCell[], ctx: LoopCont
  * their wrong cells, then - while there is room - one for each row sent earlier that the answer still gets wrong (it is sent already: this
  * only names it again).
  */
-function roundDiffs(chosen: readonly WrongRow[], groupOf: ReadonlyMap<number, string>, stillWrong: readonly WrongRow[], ctx: LoopContext): RepairProblem[] {
+function roundDiffs(chosen: readonly { row: WrongRow; group: string }[], stillWrong: readonly WrongRow[], ctx: LoopContext): RepairProblem[] {
   const out: RepairProblem[] = [];
   const used = new Set<string>();
   const push = (key: string, make: () => RepairProblem): void => {
@@ -232,34 +237,17 @@ function roundDiffs(chosen: readonly WrongRow[], groupOf: ReadonlyMap<number, st
     used.add(key);
     out.push(make());
   };
-  const first = (row: WrongRow): void => {
-    const want = groupOf.get(row.inRow);
-    const cell = row.cells.find((c) => cellKey(c) === want) ?? row.cells[0];
-    if (cell && want !== EXTRA_KEY) push(`${row.inRow}:c:${cell.out}:${cell.outRow}`, () => cellProblem(row, cell, ctx));
+  const first = (row: WrongRow, group?: string): void => {
+    const cell = row.cells.find((c) => cellKey(c) === group) ?? row.cells[0];
+    if (cell && group !== EXTRA_KEY) push(`${row.inRow}:c:${cell.out}:${cell.outRow}`, () => cellProblem(row, cell, ctx));
     else if (row.extra[0]) push(`${row.inRow}:x:0`, () => extraProblem(row, row.extra[0]!, ctx));
   };
-  for (const row of chosen) first(row);
-  for (const row of chosen) {
+  for (const { row, group } of chosen) first(row, group);
+  for (const { row } of chosen) {
     for (const cell of row.cells) push(`${row.inRow}:c:${cell.out}:${cell.outRow}`, () => cellProblem(row, cell, ctx));
     row.extra.forEach((made, i) => push(`${row.inRow}:x:${i}`, () => extraProblem(row, made, ctx)));
   }
   for (const row of stillWrong) first(row);
-  return out;
-}
-
-/** The group each chosen row was chosen for: the biggest group it is in (the order `pickCounterexamples` walks them in). */
-function chosenFor(wrongRows: readonly WrongRow[], chosen: readonly WrongRow[]): Map<number, string> {
-  const size = new Map<string, number>();
-  for (const row of wrongRows) {
-    for (const key of new Set(row.cells.map(cellKey))) size.set(key, (size.get(key) ?? 0) + 1);
-    if (row.extra.length > 0) size.set(EXTRA_KEY, (size.get(EXTRA_KEY) ?? 0) + 1);
-  }
-  const out = new Map<number, string>();
-  for (const row of chosen) {
-    const keys = [...new Set(row.cells.map(cellKey)), ...(row.extra.length > 0 ? [EXTRA_KEY] : [])];
-    keys.sort((x, y) => (size.get(y) ?? 0) - (size.get(x) ?? 0));
-    if (keys[0] !== undefined) out.set(row.inRow, keys[0]);
-  }
   return out;
 }
 
@@ -288,15 +276,15 @@ export function loopStep(state: LoopState, latest: LoopAnswer, ctx: LoopContext)
   const anyNew = pickCounterexamples(latest.wrongRows, sentRows, 1).length > 0;
   if (anyNew && budget <= 0) return stop('rowCap');
 
-  let chosen = pickCounterexamples(latest.wrongRows, sentRows, budget);
-  const rows: CounterexampleRow[] = chosen.map((r) => ({ inRow: r.inRow, sample: counterexampleSample(ctx.analysis, r.inRow, ctx.masker) }));
+  const picked = pickWithGroups(latest.wrongRows, sentRows, budget);
+  const rows: CounterexampleRow[] = picked.map((p) => ({ inRow: p.row.inRow, sample: counterexampleSample(ctx.analysis, p.row.inRow, ctx.masker) }));
   const sentSamples = state.sent.map((r) => r.sample);
   while (rows.length > 0 && payloadBytes(withRows(ctx.payload, [...sentSamples, ...rows.map((r) => r.sample)])) > caps.maxBytes) rows.pop();
   if (anyNew && rows.length === 0) return stop('payloadCap');
-  chosen = chosen.slice(0, rows.length);
+  const chosen = picked.slice(0, rows.length);
 
   const stillWrong = latest.wrongRows.filter((r) => sentRows.has(r.inRow));
-  const problems = orderProblems(roundDiffs(chosen, chosenFor(latest.wrongRows, chosen), stillWrong, ctx), latest.otherProblems);
+  const problems = orderProblems(roundDiffs(chosen, stillWrong, ctx), latest.otherProblems);
   if (problems.length === 0) return stop('nothingToSend');
 
   const round = state.rounds + 1;
