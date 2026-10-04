@@ -22,6 +22,7 @@ import type { LearnOutput } from '../../worker/engineApi';
 import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
 import { Versions } from '../Format/Versions';
 import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
+import { filledNote } from './filledNote';
 import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
 import { UnfinishedRows } from './UnfinishedRows';
@@ -439,6 +440,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
             ? t('edit.note', { format: name })
             : t(partial ? (incomplete ? 'partial.note' : 'flow.path.local') : completed || result.path !== 'local' ? 'flow.path.llm' : 'flow.path.local')
         }
+        // What code filled in the AI's answer from the example (SPEC 21 v12 item 16): said under the learn path, until the first save (then the screen is the saved source's editor).
+        filledNote={source ? undefined : (filledNote(completed ? completed.filled : result.path === 'llm' ? result.filled : undefined, t) ?? undefined)}
         previewLimit={tierLimits.previewRows}
         onSignIn={() => signIn.open('download')}
         actions={actions}

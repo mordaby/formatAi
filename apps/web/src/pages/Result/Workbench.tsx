@@ -93,6 +93,8 @@ export interface WorkbenchProps {
   name: string;
   onRename?: ((name: string) => void) | undefined;
   learnedNote: string;
+  /** After an AI learn: what code filled in the answer from the example, in one quiet line under `learnedNote` (SPEC 21 v12 item 16). */
+  filledNote?: string | undefined;
   /** Rows shown on screen (the free tier's 20); `null` = all. */
   previewLimit: number | null;
   onSignIn(): void;
@@ -367,6 +369,7 @@ export function Workbench(props: WorkbenchProps) {
             onRename={props.onRename}
             badge={<StatusBadge tone={badge.tone} text={badge.text} {...(badge.busy ? { busy: true } : {})} />}
             learnedNote={props.learnedNote}
+            filledNote={props.filledNote}
             canUndo={editor.canUndo && !lock}
             canRedo={editor.canRedo && !lock}
             onUndo={editor.undo}
