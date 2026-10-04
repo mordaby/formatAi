@@ -103,6 +103,8 @@ export const API_ERROR_CODES = [
   'invalidPreviousRules',
   'invalidProblems',
   'invalidLearnId',
+  // 400: a loop round's rows (SPEC 9.3) are malformed or larger than the loop allows (rows per round, rows in one learn, the payload byte cap).
+  'invalidRows',
   // 403: Turnstile token missing or rejected (anonymous learns, SPEC 9.5).
   'turnstileFailed',
   // 429: a per-tier limit was hit; `limit` says which one (see LIMIT_CODES).

@@ -21,10 +21,13 @@ export const limits = {
   llm: {
     maxTokens: 4000,
     temperature: 0,
-    /** SPEC 9.3 / 20.5. Default 1; set to 0 for exactly one LLM call per learn. */
+    /** SPEC 9.3 / 20.5. Default 1; set to 0 for exactly one LLM call per learn. Every loop round gets the same (`learn.loop`). */
     serverRepairRounds: 1,
-    /** SPEC 9.3: at most 1 extra browser-triggered repair call after full verification. */
-    browserRepairCalls: 1,
+    /**
+     * SPEC 9.3: the browser-triggered repair calls of one learn - the rounds of the learning loop (`learn.loop`, owner decision
+     * 2026-10-04: 3 rounds; it was 1 before the loop). The server refuses a fourth under the same learnId.
+     */
+    browserRepairCalls: 3,
   },
   /**
    * SPEC 9.5: a daily anonymous budget and a daily overall budget, in USD.
@@ -45,7 +48,7 @@ export const limits = {
     rateLimitWindowMs: 60_000,
     /** Cloudflare Turnstile siteverify call timeout; a timeout counts as a failed check. */
     turnstileTimeoutMs: 5_000,
-    /** SPEC 9.3: how long after its learn a browser-triggered repair (at most one) is accepted. */
+    /** SPEC 9.3: how long after its learn a browser-triggered repair (a loop round, at most `llm.browserRepairCalls`) is accepted. */
     learnIdTtlMinutes: 60,
     /** Daily `anon:` / `ip:` usage counters are kept this long after their UTC day ends, then TTL-expired. */
     dailyCounterGraceHours: 24,
@@ -170,6 +173,18 @@ export const limits = {
     /** The API's `function_requests` collection (SPEC 13): how many distinct (hashed) owners one request remembers; past it `distinctOwners` stops growing. */
     functionRequests: {
       maxOwnerHashes: 1000,
+    },
+    /**
+     * The learning loop (SPEC 9.3, docs/proposals/learning-loop.md 3.2; owner decision 2026-10-04): after the full verification the
+     * browser sends the rows the rules got wrong, round after round, while the number of wrong rows keeps going down. At most `maxRounds`
+     * rounds (one browser-triggered repair call each, `llm.browserRepairCalls`), at most `rowsPerRound` new rows in one round, and at most
+     * `maxRowsTotal` masked rows in one learn, the first payload's samples and dropped rows included. The payload byte cap
+     * (`payload.maxBytes`) holds for the payload with every row sent added to it.
+     */
+    loop: {
+      maxRounds: 3,
+      rowsPerRound: 8,
+      maxRowsTotal: 40,
     },
   },
   /**

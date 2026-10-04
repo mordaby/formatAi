@@ -316,6 +316,42 @@ export interface RepairBlock<Rules = unknown> {
 /** Appended to the repair user content (LEARN_PROMPT §4). */
 export const REPAIR_INSTRUCTION = 'Fix only what the problems require. Keep everything else identical.';
 
+// ---------- The learning loop (SPEC 9.3, docs/proposals/learning-loop.md 3.2) ----------
+//
+// After the full verification the browser sends rows of the example the rules got wrong, masked like every sample, round after round.
+// Each round's request carries EVERY row sent so far (`rows`), so the server can check an answer against the first samples plus all of
+// them - a later round cannot break a row an earlier round fixed. The AI step itself reads them in the problems of the round that sent
+// them (`diff` problems with a `row`, LEARN_PROMPT §4), and in a server repair's problems when an answer gets one of them wrong again.
+
+/**
+ * The payload as the server checks a loop round's answer: the first samples plus every row sent so far, in the order sent. A row the
+ * example dropped (the rules must make nothing for it) is a sample with no output rows (`out: []`), which the sample run already reads
+ * as "expects nothing". The payload the AI step reads is never this one: it stays the first payload, so its cached prefix still hits.
+ */
+export function withRows(payload: LearnPayload, rows: readonly Sample[]): LearnPayload {
+  return rows.length === 0 ? payload : { ...payload, samples: [...payload.samples, ...rows] };
+}
+
+/** The masked rows a payload already carries: its samples and its dropped rows (what `limits.learn.loop.maxRowsTotal` counts from). */
+export function payloadRowCount(payload: Pick<LearnPayload, 'samples' | 'dropped'>): number {
+  return payload.samples.length + (payload.dropped?.length ?? 0);
+}
+
+/** The UTF-8 size of a payload as sent (compact JSON, LEARN_PROMPT §1): what `limits.payload.maxBytes` caps. */
+export function payloadBytes(payload: LearnPayload): number {
+  return new TextEncoder().encode(JSON.stringify(payload)).length;
+}
+
+/**
+ * Whether the rows of a loop round fit the caps, as the server checks them (the browser's loop never sends more): at most
+ * `maxRowsTotal` masked rows in one learn, the payload's own samples and dropped rows included, and the payload with every row added
+ * no larger than the payload byte cap. (The rows one round may add, `rowsPerRound`, are checked against the round's number.)
+ */
+export function loopRowsFit(payload: LearnPayload, rows: readonly Sample[]): boolean {
+  if (payloadRowCount(payload) + rows.length > limits.learn.loop.maxRowsTotal) return false;
+  return payloadBytes(withRows(payload, rows)) <= limits.payload.maxBytes;
+}
+
 // ---------- LearnPayload validation (routes/learn.ts: "validated minimally - shape
 // and size", not a full structural mirror of every Hint variant) ----------
 //
@@ -389,3 +425,6 @@ export const LearnPayloadSchema = z.looseObject({
   hints: z.array(z.unknown()),
   skipColumns: z.array(z.number().int().min(0)).optional(),
 });
+
+/** A loop round's `rows` (`RepairRequest.rows`): sample-shaped rows, never more than a learn may send in total. */
+export const LoopRowsSchema = z.array(SampleSchema).max(limits.learn.loop.maxRowsTotal);

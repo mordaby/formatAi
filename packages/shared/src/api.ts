@@ -2,7 +2,7 @@
 // browser bundle can import them freely. The server's source of truth is `apps/api/src/routes`.
 import type { ApiErrorCode, LimitCode } from './codes';
 import type { AiLearnPeriod, TierLimits } from './config/tiers';
-import type { LearnPayload, RepairProblem } from './payload';
+import type { LearnPayload, RepairProblem, Sample } from './payload';
 import type { LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, Validation } from './rules/schema';
 import type { SourceColumn, SourceInputReading, SourceInputSignature, SourceLockProblem } from './source';
 
@@ -74,12 +74,17 @@ export interface LearnQuotaResponse {
   quota: AiLearnQuotaState;
 }
 
-/** POST /api/learn/repair body: at most one repair per `learnId`. */
+/** POST /api/learn/repair body: one round of the learning loop, at most `limits.llm.browserRepairCalls` per `learnId`. */
 export interface RepairRequest {
   payload: LearnPayload;
   previousRules: LearnResult;
   problems: RepairProblem[];
   learnId: string;
+  /**
+   * The learning loop (SPEC 9.3): every row of the example the browser sent since the learn, this round's included, masked like the
+   * samples (`withRows`). The server checks the answer against the samples plus all of them. Absent: none.
+   */
+  rows?: Sample[];
 }
 
 /** POST /api/learn/repair 200 body. */
