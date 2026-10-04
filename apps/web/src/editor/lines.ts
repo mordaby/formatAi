@@ -9,7 +9,7 @@
 // - `formatFingerprint(rules)` is what SPEC 8.12 calls the format side: output, sort and group by header,
 //   summary rows, output validations. It mirrors the engine's `formatOf` (which the main thread can't load).
 import type { OutputColumnRule, Validation } from '@formatai/shared';
-import { DEFAULT_OUTPUT_FILE } from '@formatai/shared';
+import { DEFAULT_OUTPUT_FILE, isCodeCheck } from '@formatai/shared';
 import { effectiveEndSummaryRows, effectiveGroupSummaryRows, stable, stableOf } from './rulesUtil';
 import type { EditableRules, LineId } from './types';
 
@@ -193,11 +193,12 @@ export function formatFingerprint(rules: EditableRules): string {
 
 const sortedStrings = (list: readonly string[] | undefined): string[] => [...(list ?? [])].sort();
 
-/** The input validations as a source keeps them: by the input column's header, `on: "input"` dropped, as a sorted set. */
+/** The input validations as a source keeps them: by the input column's header, `on: "input"` dropped, as a sorted set. A check only code
+ * writes (a cut-off, an open question's marker: SPEC 8.8) is the conversion's own, never the source's (the engine's `isSourceCheck`). */
 function inputValidationKeys(rules: EditableRules): string[] {
   const idToHeader = new Map(rules.input.columns.map((c) => [c.id, c.header] as const));
   return rules.validations
-    .filter((v) => (v.on ?? 'input') !== 'output')
+    .filter((v) => (v.on ?? 'input') !== 'output' && !isCodeCheck(v))
     .map((v) => {
       const { on: _on, ...rest } = v;
       return stable({ ...rest, column: idToHeader.get(v.column) ?? v.column });

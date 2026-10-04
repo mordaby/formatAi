@@ -9,7 +9,7 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import { aiNotesOf, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier, type Validation } from '@formatai/shared';
+import { aiNotesOf, isCodeCheck, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
 import { deepEqual } from '../registry/deepEqual';
 import { fillParams, type FillAmbiguity, type FillSummary } from './fillParams';
 import { sniffDelimitedText } from '../io/detectFileSpec';
@@ -250,9 +250,10 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     if (opts.ai === 'notAllowed') throw new Error('learnFromExamples: completion mode is the AI step, but the AI step is not allowed');
     if (!isCompletable(opts.complete.fixedRules)) throw new Error('learnFromExamples: complete.fixedRules is not a valid rules file');
   }
-  // Completion mode: a cut-off check in the user's rules (SPEC 8.8) holds two values of their rows, which are never sent (SPEC 7.2). The AI
-  // step gets their rules without it (the payload, the fixed lock, what code puts back) and it is put back on the answer at the end.
-  const userCutoffChecks = opts.complete ? opts.complete.fixedRules.validations.filter(isCodeCheck) : [];
+  // Completion mode: a check only code writes in the user's rules (SPEC 8.8: a cut-off check holds two values of their rows, the marker of an
+  // open question the other rule's constants), which is never sent (SPEC 7.2). The AI step gets their rules without it (the payload, the
+  // fixed lock, what code puts back) and it is put back on the answer at the end.
+  const userCodeChecks = opts.complete ? opts.complete.fixedRules.validations.filter(isCodeCheck) : [];
   const complete: CompleteOptions | undefined = opts.complete ? { ...opts.complete, fixedRules: withoutCodeChecks(opts.complete.fixedRules) } : undefined;
 
   // ---- SPEC 5 A step 1: read both files (sniff delimited output bytes so
@@ -434,7 +435,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     }
     // Code fills the data parameters from every row (`fillParams`, proposal 7.1), on the REAL rules: lookup tables, value maps and lists,
     // cut-offs, the day/month order, the duplicate kept, the values a filter drops. `masked` - what a repair round sends back - stays the
-    // answer as the AI wrote it, so nothing filled is ever sent. DECISION: a cut-off check is code's alone; one the answer wrote is dropped.
+    // answer as the AI wrote it, so nothing filled is ever sent. DECISION: a cut-off check is code's alone; one the answer wrote is dropped
+    // (and so is a `sameAs` one, which the wire schema does not even offer).
     const filled = fillParams(withoutCodeChecks(rules), analysis, complete ? { fixed: learnResultOf(complete.fixedRules) } : {});
     rules = filled.rules;
     fixedProblems = fixedLock(rules);
@@ -501,8 +503,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // learn-v7: the notes leave the rules here (SPEC 15): the answer the caller works with has none, and they travel beside it.
   const aiNotes = aiNotesOf(rules);
   const stripped = stripAiNotes(rules);
-  // Completion mode: the user's own cut-off checks come back (they were never sent).
-  const restored = userCutoffChecks.filter((v) => !stripped.validations.some((w) => deepEqual(v, w)));
+  // Completion mode: the user's own code checks come back (they were never sent).
+  const restored = userCodeChecks.filter((v) => !stripped.validations.some((w) => deepEqual(v, w)));
   const answer = restored.length > 0 ? { ...stripped, validations: [...stripped.validations, ...restored] } : stripped;
 
   return {
@@ -521,11 +523,6 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     ...(aiNotes.length > 0 ? { aiNotes } : {}),
     ...(complete ? { completion: { columns: [...complete.columns], parts: [...complete.parts], fixedProblems, matches: matchesExample(kept.verification, rules), produced: completionProduced(rules, complete.fixedRules, complete) } } : {}),
   };
-}
-
-/** A check only code writes (SPEC 8.8 `cutoffRange`): its edges are values of the user's rows. */
-function isCodeCheck(v: Validation): boolean {
-  return v.rule === 'cutoffRange';
 }
 
 function withoutCodeChecks<R extends LearnResult | Rules>(rules: R): R {

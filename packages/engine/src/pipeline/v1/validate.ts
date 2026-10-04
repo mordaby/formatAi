@@ -19,6 +19,8 @@ import type { RunSummary } from '../../types';
 import { isValidIsraeliId } from '../../values/israeliId';
 import { parseNumber } from '../../values/numbers';
 import { normalizeText, padLeft } from '../../values/text';
+import { compileExpr, newEvalCx, resetCx } from './expr';
+import { coerceTo, newIssue } from './normalize';
 import { flagRow, slotOrThrow, InternalRulesError, type Origin, type Row, type RunCtx } from './rows';
 import { DateVal, canonicalKey, normKey, parseConstDate, toText, type Val } from './values';
 
@@ -33,7 +35,7 @@ const DIGITS_RE = /^\d+$/;
 
 type Check = (v: Val) => Failure | null;
 
-function makeCheck(val: Exclude<Validation, { rule: 'unique' }>): Check {
+function makeCheck(val: Exclude<Validation, { rule: 'unique' } | { rule: 'sameAs' }>): Check {
   switch (val.rule) {
     case 'required':
       return (v) => (v === null ? FAIL : PASS);
@@ -110,7 +112,29 @@ function makeCheck(val: Exclude<Validation, { rule: 'unique' }>): Check {
   }
 }
 
-// DECISION: every validation except `required` passes on an empty value.
+/**
+ * The marker of an open question about a column's rule (SPEC 8.8 `sameAs`, 21 v12 item 17): the other rule the example fits (`expr`, over
+ * the row as it is when input checks run) is worked out on the row and compared with the column's own value, both read as the column's
+ * type. A row where they differ is flagged with what the other rule gives (`other`), so the user sees which reading the row needs.
+ * DECISION: a row where the other rule cannot be worked out (it divides by zero, reads text as a number) passes - there is nothing to compare,
+ * and the problem is not the rules' (they did not use that rule). Two empty values are the same; an empty value and a value differ.
+ */
+function sameAsCheck(ctx: RunCtx, val: Extract<Validation, { rule: 'sameAs' }>, slot: number): (v: Val, origin: Origin, row: Row) => Failure | null {
+  const fn = compileExpr(val.expr, { slotOf: ctx.plan.slotOf, language: ctx.language, functions: ctx.functions, tables: ctx.tables });
+  const type = ctx.plan.types[slot];
+  const cx = newEvalCx();
+  const issue = newIssue();
+  return (v, _origin, row) => {
+    resetCx(cx);
+    const raw = fn(row.v, cx);
+    if (cx.problem !== null) return PASS;
+    const other = type === undefined ? raw : coerceTo(raw, type, issue);
+    if (canonicalKey(v) === canonicalKey(other) && (v === null) === (other === null)) return PASS;
+    return { params: { other: other === null ? '' : toText(other) } };
+  };
+}
+
+// DECISION: every validation except `required` passes on an empty value (and `sameAs`, whose value is compared, empty or not).
 // DECISION: `unique` flags (or blocks) the second and later occurrences of a
 // value, with params {firstRow}; the first occurrence stays. Repeats within one
 // expand family (rows of the same input row) don't count as duplicates.
@@ -135,8 +159,10 @@ function runChecks(
   for (const val of validations) {
     const slot = slotOf(val);
     const messageKey = `flag.validation.${val.rule}`;
-    let check: (v: Val, origin: Origin) => Failure | null;
-    if (val.rule === 'unique') {
+    let check: (v: Val, origin: Origin, row: Row) => Failure | null;
+    if (val.rule === 'sameAs') {
+      check = sameAsCheck(ctx, val, slot);
+    } else if (val.rule === 'unique') {
       const seen = new Map<string, Origin>();
       check = (v, origin) => {
         if (v === null) return PASS;
@@ -158,7 +184,7 @@ function runChecks(
       if (blocked[i] !== null) continue;
       const row = rows[i] as Row;
       const v = row.v[slot] ?? null;
-      const failure = check(v, row.o);
+      const failure = check(v, row.o, row);
       if (failure === null) continue;
       if (val.severity === 'block' && ctx.keepRows?.has(row.o.rowNumber) !== true) {
         blocked[i] = val;

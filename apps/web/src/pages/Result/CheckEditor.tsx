@@ -1,4 +1,5 @@
 // The editor for one check (SPEC 8.8, 8.11 "Checks"): where it looks, which rule, and what happens to a row that fails.
+import { printFormula } from '@formatai/engine/formula';
 import type { Validation } from '@formatai/shared';
 import { useState } from 'react';
 import { sourceOptions } from '../../editor';
@@ -7,8 +8,8 @@ import { ChoiceGroup, NumberField, ProblemList, SelectField, SourceField, useEdi
 import { RemoveButton } from './RowEditors';
 
 type Rule = Validation['rule'];
-/** The rules a user can start a check with. A cut-off check (`cutoffRange`, SPEC 8.8) is only ever written by code, from the example. */
-type StarterRule = Exclude<Rule, 'cutoffRange'>;
+/** The rules a user can start a check with. A cut-off check (`cutoffRange`) and an open question's marker (`sameAs`, SPEC 8.8) are only ever written by code. */
+type StarterRule = Exclude<Rule, 'cutoffRange' | 'sameAs'>;
 const RULES: readonly StarterRule[] = ['required', 'range', 'lengthEquals', 'oneOf', 'unique', 'dateRange', 'israeliIdChecksum'];
 
 function starter(rule: StarterRule, base: { on?: 'input' | 'output'; column: string; severity: 'flag' | 'block' }): Validation {
@@ -37,6 +38,16 @@ export function CheckEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index: 
     setList(cur?.rule === 'oneOf' ? cur.values.join('\n') : '');
   });
   if (!v) return null;
+  // The marker of an open question (SPEC 8.8 `sameAs`, 21 v12 item 17): it says the other rule and can only be deleted - answering the
+  // question on the column's line is what changes the rule (DECISION: its expression is not edited here).
+  if (v.rule === 'sameAs') {
+    return (
+      <div className="editor-form">
+        <p className="field__hint">{t('editor.check.sameAs', { other: printFormula(v.expr) })}</p>
+        <RemoveButton label={t('editor.check.remove')} onClick={() => edit.run({ type: 'removeValidation', index }) && onRemoved()} />
+      </div>
+    );
+  }
 
   const on = v.on ?? 'input';
   const columns: Option[] =
@@ -68,7 +79,7 @@ export function CheckEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index: 
         value={v.rule}
         options={[...RULES, ...(v.rule === 'cutoffRange' ? (['cutoffRange'] as const) : [])].map((r): Option<Rule> => ({ value: r, label: t(`editor.check.rule.${r}` as MessageKey) }))}
         onChange={(rule) => {
-          if (rule !== v.rule && rule !== 'cutoffRange') set(starter(rule, base));
+          if (rule !== v.rule && rule !== 'cutoffRange' && rule !== 'sameAs') set(starter(rule, base));
         }}
       />
       {v.rule === 'cutoffRange' && <CutoffFields check={v} onChange={(next, field) => set(next, field)} />}

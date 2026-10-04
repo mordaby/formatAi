@@ -1475,6 +1475,39 @@
               "severity"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "on": {
+                "type": "string",
+                "const": "input"
+              },
+              "column": {
+                "type": "string"
+              },
+              "rule": {
+                "type": "string",
+                "const": "sameAs"
+              },
+              "expr": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "flag",
+                  "block"
+                ]
+              }
+            },
+            "required": [
+              "column",
+              "rule",
+              "expr",
+              "severity"
+            ],
+            "additionalProperties": false
           }
         ]
       }

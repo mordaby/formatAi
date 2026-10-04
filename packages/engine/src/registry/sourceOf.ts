@@ -24,6 +24,7 @@
 // { values }`): they are the rule's own parameters, written by the user or by the learn step, not values read from the file;
 // and the source lock has to compare them to be able to say "equal". Sources gain no value that the rules file didn't already have.
 import type { LearnResult, Rules, SourceColumn, SourceInputReading, SourceStructure, Validation } from '@formatai/shared';
+import { isCodeCheck } from '@formatai/shared';
 import { normalizeText } from '../values/text';
 
 /**
@@ -87,10 +88,12 @@ export function sourceOf(rules: LearnResult | Rules): SourceStructure {
 }
 
 /**
- * Whether a validation belongs to the source (SPEC 8.15): an input check, except a cut-off check (`cutoffRange`, SPEC 8.8).
+ * Whether a validation belongs to the source (SPEC 8.15): an input check, except the checks only code writes (`cutoffRange`, `sameAs`,
+ * SPEC 8.8).
  * DECISION: a cut-off check is about a constant of THIS conversion's rules (where its comparison draws the line), like a row filter, not
- * about the file: it stays in the conversion and never travels to the source or to another format that reads the same column.
+ * about the file: it stays in the conversion and never travels to the source or to another format that reads the same column. So does the
+ * marker of an open question about one of this conversion's columns (`sameAs`).
  */
 export function isSourceCheck(v: Validation): boolean {
-  return (v.on ?? 'input') !== 'output' && v.rule !== 'cutoffRange';
+  return (v.on ?? 'input') !== 'output' && !isCodeCheck(v);
 }

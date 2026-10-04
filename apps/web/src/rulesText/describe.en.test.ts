@@ -475,6 +475,12 @@ describe('checks', () => {
     );
   });
 
+  it('says the other rule an open question is about (SPEC 8.8 sameAs), as a formula', () => {
+    expect(v({ column: 'c_amount', rule: 'sameAs', expr: { op: 'round', arg: { col: 'c_amount' }, digits: 0 }, severity: 'flag' })).toBe(
+      'Check: your example also fits round(Amount, 0) for Amount. A row where it gives a different value: flag',
+    );
+  });
+
   it('names an output check by its output header', () => {
     expect(v({ on: 'output', column: 'Item Code', rule: 'required', severity: 'flag' })).toBe('Check: Item Code is not empty (flag)');
   });
