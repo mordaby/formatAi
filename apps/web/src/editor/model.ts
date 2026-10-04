@@ -145,6 +145,10 @@ function nextRules(state: EditorState, action: EditAction, available?: readonly 
       const parsed = parseAdvancedJson(action.text, state.rules);
       return isProblems(parsed) ? parsed : { rules: parsed, exceptions: state.exceptions };
     }
+    case 'replaceRules': {
+      const problems = validateEdit(state.rules, action.rules);
+      return problems.length > 0 ? problems : { rules: action.rules, exceptions: state.exceptions };
+    }
     default: {
       let out = stepAndValidate(state.rules, action);
       if (isProblems(out) && available && available.length > 0) out = stepDeclaring(state.rules, action, available, out);

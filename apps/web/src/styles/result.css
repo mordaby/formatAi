@@ -428,6 +428,37 @@
   display: flex;
   gap: var(--s-2);
 }
+/* The ambiguity question (SPEC 21 v12 item 11): quiet - nothing differs yet, so no amber (docs/design-plan.md: amber is for differences). */
+.map-line__ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0 var(--s-2) var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+.map-line:has(.map-line__grip) .map-line__ask {
+  margin-inline-start: calc(28px + var(--s-2));
+}
+.map-line__ask-question {
+  font-weight: 500;
+}
+.map-line__ask-choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+/* A long rule wraps inside its button instead of running out of the map. */
+.map-line__ask-choices .btn {
+  max-inline-size: 100%;
+  white-space: normal;
+  text-align: start;
+}
 .map-line[data-dragging] {
   opacity: 0.45;
 }

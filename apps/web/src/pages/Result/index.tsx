@@ -406,6 +406,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         tier={me.tier}
         partial={partial}
         aiNotes={aiNotes}
+        ambiguous={result.ambiguous}
         analysing={analysing}
         verification={completed ? completed.verification : result.verification}
         name={name}

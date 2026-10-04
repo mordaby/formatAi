@@ -1,3 +1,4 @@
+import { Fragment, type ReactNode } from 'react';
 import { useI18n, type MessageKey } from '../../i18n';
 
 const MARK = '\u0001';
@@ -14,6 +15,20 @@ export function Named({ id, name, param = 'column' }: { id: MessageKey; name: st
       {before}
       <bdi className="sentence__name">{name}</bdi>
       {after}
+    </>
+  );
+}
+
+/** A message with several placeholders, each filled with a piece of the page (a rules-map sentence, a name in its own `<bdi>`): `{rule}` -> `nodes.rule`. */
+export function Marked({ id, nodes }: { id: MessageKey; nodes: Readonly<Record<string, ReactNode>> }) {
+  const { t } = useI18n();
+  const text = t(id, Object.fromEntries(Object.keys(nodes).map((k) => [k, `${MARK}${k}${MARK}`])));
+  return (
+    <>
+      {text.split(MARK).map((piece, i) => (
+        // (the odd pieces are the names of placeholders: the text around them is the even ones)
+        <Fragment key={i}>{i % 2 === 1 ? nodes[piece] : piece}</Fragment>
+      ))}
     </>
   );
 }

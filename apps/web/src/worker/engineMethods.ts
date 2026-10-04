@@ -3,6 +3,7 @@
 // thread sends over HTTP on the worker's behalf via `ctx.host` (the learn payload, which
 // the engine itself builds - masked unless the user turned masking off).
 import {
+  ambiguousColumns,
   analyzePair,
   convertFile,
   detectTable,
@@ -76,9 +77,16 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
   });
   // The rules editor's live check (SPEC 8.11) re-runs rules on this example; it stays in the worker.
   // Its input's columns come with it: the editor offers the ones no rule uses yet (headers only; the file stays here).
-  return analysis && result.rules
-    ? { ...result, exampleId: rememberExample(analysis, args.keepExampleId), exampleInput: exampleInputOf(analysis), exampleOutputColumns: analysis.output.columnCount }
-    : result;
+  if (!analysis || !result.rules) return result;
+  // The columns the example fits more than one rule for are a question for the user, whatever path built the rules (the free engine's, or the AI step's).
+  const ambiguous = ambiguousColumns(analysis);
+  return {
+    ...result,
+    exampleId: rememberExample(analysis, args.keepExampleId),
+    exampleInput: exampleInputOf(analysis),
+    exampleOutputColumns: analysis.output.columnCount,
+    ...(ambiguous.length > 0 ? { ambiguous } : {}),
+  };
 }
 
 async function convert(args: ConvertArgs): Promise<Transfer<ConvertOutput> | ConvertOutput> {

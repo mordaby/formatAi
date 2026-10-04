@@ -115,6 +115,14 @@ export const resultEn = {
   'column.mismatch.other.plain': "{n} rows in your example don't match this rule",
   'rule.fix': 'Fix the rule',
   'rule.fix.label': 'Fix the rule for {column}',
+
+  // ----- the ambiguity question (SPEC 8.11, 21 v12 item 11): the example fits more than one rule for a column -----
+  'ask.question': 'Which one is {column}?',
+  'ask.lead': 'Your example fits each of these, and they differ on other data.',
+  'ask.group': 'The choices for {column}',
+  'ask.unsure': 'Not sure yet',
+  'ask.kept': 'Not sure yet. For now: {rule}. We flag a row where {other} would give a different value.',
+  'ask.reopen': 'Choose',
   'preview.empty': 'No rows to show.',
   'preview.newColumns': "Columns you added aren't in your example, so there is nothing to compare them with.",
   'preview.signIn': 'Sign in to see and download all {n} rows',
@@ -534,6 +542,14 @@ export const resultHe: Record<keyof typeof resultEn, string> = {
   'column.mismatch.other.plain': '{n} שורות בדוגמה שלכם לא תואמות לכלל הזה',
   'rule.fix': 'תיקון הכלל',
   'rule.fix.label': 'תיקון הכלל של {column}',
+
+  // ----- שאלת הדו-משמעות (SPEC 8.11, 21 v12 item 11): הדוגמה מתאימה ליותר מכלל אחד בעמודה -----
+  'ask.question': 'מה נכון בעמודה {column}?',
+  'ask.lead': 'הדוגמה שלכם מתאימה לכל אחד מהם, אבל בנתונים אחרים הם יתנו תוצאות שונות.',
+  'ask.group': 'האפשרויות של {column}',
+  'ask.unsure': 'עוד לא בטוחים',
+  'ask.kept': 'עוד לא בטוחים. בינתיים: {rule}. נסמן שורה שבה {other} היה נותן ערך אחר.',
+  'ask.reopen': 'לבחור',
   'preview.empty': 'אין שורות להצגה.',
   'preview.newColumns': 'עמודות שהוספתם לא קיימות בדוגמה שלכם, ולכן אין למה להשוות אותן.',
   'preview.signIn': 'התחברו כדי לראות ולהוריד את כל {n} השורות',
