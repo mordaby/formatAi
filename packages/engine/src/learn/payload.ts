@@ -109,7 +109,8 @@ function buildFamilySample(analysis: PairAnalysis, family: Family): { sample: Sa
 
 // ---------------------------------------------------------------------------
 // Sample selection: first rows, empty cells, extreme values, must-include
-// failing rows, then filler - up to the cap (SPEC 7.3).
+// failing rows, then filler - up to the cap (SPEC 7.3). A pair that repeats one
+// already chosen (same input AND output values) takes no slot.
 // ---------------------------------------------------------------------------
 
 function hasEmptyCell(analysis: PairAnalysis, alignedRow: number): boolean {
@@ -168,22 +169,40 @@ function extremeValueRows(analysis: PairAnalysis): number[] {
   return [...rows];
 }
 
-function buildPairPriority(analysis: PairAnalysis, mustInclude: ReadonlySet<number>): number[] {
+/**
+ * What an aligned pair holds, compared on the REAL values (before masking and truncation): its input cells and its output cells. Two pairs
+ * with the same key teach the AI step the same thing.
+ */
+function pairContentKey(analysis: PairAnalysis, alignedRow: number): string {
+  const { in: inRow, out: outRow } = analysis.alignment.rows[alignedRow]!;
+  return JSON.stringify([rowCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904), outputRowCells(analysis, outRow)]);
+}
+
+/**
+ * The aligned pairs to send, in priority order, at most `cap` (proposal 3.1 follow-up, owner decision 2026-10-04): a pair whose input cells
+ * AND output cells equal a pair already chosen takes no slot - the AI step would see the same row twice. Pairs with the same input and a
+ * different output (a row number, a "duplicate" flag, a running total) are informative and are kept. A must-include row (a failing row of
+ * a hint) is always sent, even when an earlier row holds the same values. Dropped rows are chosen elsewhere and are unaffected.
+ */
+export function buildPairPriority(analysis: PairAnalysis, mustInclude: ReadonlySet<number>, cap: number): number[] {
   const K = analysis.alignment.rows.length;
   const order: number[] = [];
   const seen = new Set<number>();
-  const push = (k: number): void => {
-    if (k >= 0 && k < K && !seen.has(k)) {
-      seen.add(k);
-      order.push(k);
-    }
+  const contents = new Set<string>();
+  const push = (k: number, always = false): void => {
+    if (order.length >= cap || k < 0 || k >= K || seen.has(k)) return;
+    seen.add(k);
+    const content = pairContentKey(analysis, k);
+    if (!always && contents.has(content)) return;
+    contents.add(content);
+    order.push(k);
   };
-  for (const k of mustInclude) push(k);
-  const firstRowsTarget = mustInclude.size + 3;
+  for (const k of mustInclude) push(k, true);
+  const firstRowsTarget = Math.min(cap, mustInclude.size + 3);
   for (let k = 0; k < K && order.length < firstRowsTarget; k++) push(k);
   for (let k = 0; k < K; k++) if (hasEmptyCell(analysis, k)) push(k);
   for (const k of extremeValueRows(analysis)) push(k);
-  for (let k = 0; k < K; k++) push(k); // filler: everything else, in row order
+  for (let k = 0; k < K && order.length < cap; k++) push(k); // filler: everything else, in row order
   return order;
 }
 
@@ -519,7 +538,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
   const hints = relationsToHints(analysis, preflight);
   const must = mustIncludeRows(hints, families, isFamilies);
 
-  const pairPriority = isFamilies ? [] : buildPairPriority(analysis, must.pairRows).slice(0, caps.maxPairs);
+  const pairPriority = isFamilies ? [] : buildPairPriority(analysis, must.pairRows, caps.maxPairs);
   const familyPriority = isFamilies ? buildFamilyPriority(families, must.familyIdx).slice(0, caps.maxFamilies) : [];
   const droppedPriority = buildDroppedPriority(analysis, must.droppedRows).slice(0, caps.maxDropped);
 
