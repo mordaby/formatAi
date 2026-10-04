@@ -1,6 +1,6 @@
 # Proposal: the learning loop (the AI writes the logic, code checks it on every row)
 
-Status: **draft, partly decided** (2026-10-04). Nothing here is built yet. Owner decisions: (1) loop caps 3 rounds, 8 rows per round, 40 rows in total; (2) cut-off ranges become a visible check the user approves, shown and editable in the rules editor. Spec sections it would change: SPEC 7.3 (samples), 9.2-9.4 (checks, repair, escalation), 8.11 (notes), 11 (quota), 21.
+Status: **partly built** (2026-10-04). Built: step 2, the loop (3.2) with its small fixes - SPEC 21 "v12 changes" (7.3, 9.2-9.4, 11); and the one AI button (3.6) - SPEC 21 v11 item 11. Step 1 (the baseline) is being measured; steps 3-6 are not built. Owner decisions: (1) loop caps 3 rounds, 8 rows per round, 40 rows in total; (2) cut-off ranges become a visible check the user approves, shown and editable in the rules editor; (5) one AI button. Spec sections the rest would change: SPEC 7.3 (samples), 8.11 (notes), 21.
 
 **In one paragraph.** Today the AI sees at most 12 masked rows, writes the rules, and gets one repair if the browser's check on the full example finds wrong rows. 12 rows can't show a rare case, an exact cut-off or a lookup with 50 values, so the AI guesses, and one repair is often not enough. Instead: (1) the browser keeps sending the rows the AI got wrong, round after round, while the number of wrong rows keeps going down; (2) code does the data part of a rule on ALL rows (it fills lookup tables and finds the range a cut-off can be in), so the AI only has to get the logic right; (3) what the example cannot settle is said, and flagged on next month's rows, never guessed silently. When the loop can't finish, the user sees the rows that still don't fit and decides.
 
@@ -49,7 +49,7 @@ The cap stays 12 for the first call; the edges go first, the filler last. With 5
 **Small fixes that come with it:**
 - **Fixed columns are put back by code.** In completion mode the AI may only add what it was asked for. If it changes a column it was told to keep, code restores that column from the fixed rules and checks again, instead of throwing the answer away. The checks still decide.
 - **Every round gets the server's one repair round** for its own check problems (a formula error, a type error), like the first call does today.
-- **"Re-run all with AI" that fails says so**, and keeps the previous rules (today the screen silently shows the previous result).
+- **"Re-run all with AI" that fails says so**, and keeps the previous rules (today the screen silently shows the previous result). *(Gone with the button itself: SPEC 21 v11 item 11, see 3.6.)*
 
 ### 3.3 Code fills the data parts, from all rows
 
@@ -95,7 +95,7 @@ The per-round estimate is: the system prompt (about 10k tokens, cached after the
 ## 5. Order of work (each step measured before the next)
 
 1. **Baseline** on today's code, with the token counting of section 4.
-2. **The loop** (3.2), with its small fixes.
+2. **The loop** (3.2), with its small fixes. *Built (SPEC 21 v12).*
 3. **The better first sample** (3.1).
 4. **Code-filled lookup tables** (3.3).
 5. **Cut-off ranges**, the note and the run-time flag (3.3, 3.4).
@@ -107,4 +107,4 @@ The per-round estimate is: the system prompt (about 10k tokens, cached after the
 2. ~~Cut-off ranges~~ - decided: a visible check the user approves, shown and editable in the rules editor.
 3. "Keep these rows as they are" (3.5): bring exceptions back in this narrow form?
 4. A per-learn token cap: what is the most one learn may cost (decided after the baseline)?
-5. One AI button instead of two ("Run deep analysis with AI" and "Re-run all with AI"): proposed in the reply of 2026-10-04, see 3.6.
+5. ~~One AI button instead of two~~ - decided and built: "Finish with AI" (SPEC 21 v11 item 11; see 3.6).
