@@ -96,8 +96,9 @@ export function buildSampleInputTable(payload: LearnPayload): InputTable {
  * round-trips through `Number` for the engine's `OutCell.v` can drift in the last
  * bit), dates compare as ISO text, everything else compares exactly. */
 function cellsEqual(expected: PayloadCell, actual: OutCell | undefined): boolean {
-  if (actual === undefined) return expected === null;
-  if (expected === null) return actual.v === null;
+  // Empty text and an empty cell look the same in Excel (a formula's "", an export that writes every cell): equal, like the browser's check.
+  if (actual === undefined || actual.v === null || actual.v === '') return expected === null || expected === '';
+  if (expected === null || expected === '') return false;
   if (actual.isDate === true && typeof actual.v === 'number') {
     return typeof expected === 'string' && serialToIso(actual.v) === expected;
   }

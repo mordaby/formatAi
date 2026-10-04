@@ -9,6 +9,11 @@ describe('runOnSamples', () => {
     expect(problems).toEqual([]);
   });
 
+  it('an expected cell holding empty text matches the empty cell the rules write (they look the same in Excel)', () => {
+    const payload = basicPayload({ samples: [{ in: ['', 7], out: ['', 14] }, { in: ['A2', 5], out: ['A2', 10] }] });
+    expect(runOnSamples(correctRules(), payload)).toEqual([]);
+  });
+
   it('reports diff problems for wrong values (wrong multiplier)', () => {
     const problems = runOnSamples(wrongRoundingRules(), basicPayload());
     expect(problems.length).toBeGreaterThan(0);

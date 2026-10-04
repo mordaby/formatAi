@@ -140,6 +140,9 @@ function actualSeen(cell: OutCell | undefined): Seen {
  * `Number` for `OutCell.v` can drift in the last bit); everything else compares exactly. */
 function valuesEqual(expected: PayloadCell, actual: PayloadCell): boolean {
   if (typeof expected === 'number' && typeof actual === 'number') return Math.abs(expected - actual) < 1e-9;
+  // A cell holding empty text and an empty cell look the same in Excel: files often carry "" cells (a formula's =IF(..., "", ...), an
+  // export that writes every cell), and the engine writes nothing for an empty value. Only exact "" - text with spaces is not empty.
+  if ((expected === '' && actual === null) || (expected === null && actual === '')) return true;
   return expected === actual;
 }
 

@@ -294,3 +294,33 @@ describe('verifyAgainstExample: rules that fail to run at all', () => {
     expect(v.repairProblems.some((p) => p.kind === 'reference')).toBe(true);
   });
 });
+
+describe('verifyAgainstExample: empty text cells', () => {
+  it('an example cell holding empty text matches the empty cell the engine writes (they look the same in Excel)', () => {
+    const inHeaders = ['Customer ID', 'Customer Name'];
+    const inRows: V[][] = [
+      [1, 'Dana'],
+      [2, ''],
+      [3, 'Noa'],
+      [4, 'Omer'],
+      [5, 'Maya'],
+    ];
+    const outRows: V[][] = inRows.map((r) => [r[1]!, r[0]!]);
+    const a = analyzeOkResult(inHeaders, inRows, ['Name', 'ID'], outRows);
+    const fp = fastPath(a, preflight(a, 'registered'));
+    if (!('rules' in fp)) throw new Error(`fastPath failed: ${JSON.stringify(fp)}`);
+    const v = verifyAgainstExample(fp.rules, a);
+    expect(v.mismatches).toEqual([]);
+    expect(v.matched).toBe(5);
+  });
+
+  it('a real value still differs from an empty cell', () => {
+    const { a, rules } = simplePair();
+    const blankName: LearnResult = {
+      ...rules,
+      output: { ...rules.output, columns: rules.output.columns.map((c) => (c.header === 'Name' ? { header: 'Name', from: null } : c)) },
+    };
+    const v = verifyAgainstExample(blankName, a);
+    expect(v.mismatches.length).toBe(5);
+  });
+});
