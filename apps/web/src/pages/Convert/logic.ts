@@ -1,7 +1,7 @@
 // The pure parts of "convert a file" (SPEC 5 C, 21 v5 item 5): which rows need a look, what the user chose for each,
 // the RowDecisions those choices become, and the counts a finished run reports. No React, no worker: easy to test.
 import type { ConversionMatch, Flag, RowDecisions, RunSummary } from '@formatai/engine';
-import type { ColumnType, LearnResult, Rules, SignatureEntry, SourceConversionRef } from '@formatai/shared';
+import { limits, type ColumnType, type LearnResult, type Rules, type SignatureEntry, type SourceConversionRef } from '@formatai/shared';
 import type { MessageKey } from '../../i18n';
 import type { RowInputCell, SignatureInput } from '../../worker/convertApi';
 
@@ -51,8 +51,11 @@ export function fixFields(row: ReviewRow, cells: readonly RowInputCell[]): RowIn
 
 // ---------- the user's choices ----------
 
-/** What the user chose for one row. `override` values are the text typed in the fields, keyed by input column id. */
-export type RowChoice = { action: 'skip' } | { action: 'keep' } | { action: 'override'; values: Record<string, string> };
+/**
+ * What the user chose for one row. `override` values are the text typed in the fields, keyed by input column id; `every` names the columns
+ * whose typed fix the user also wants kept as a rule ("Do this every time?", SPEC 5 C): it is saved when the file is created.
+ */
+export type RowChoice = { action: 'skip' } | { action: 'keep' } | { action: 'override'; values: Record<string, string>; every?: string[] };
 export type Choices = Record<number, RowChoice>;
 
 /** The engine's RowDecisions (SPEC 21 v5 item 5). An emptied field is an empty cell. */
@@ -105,6 +108,118 @@ export function tally(rows: readonly ReviewRow[], choices: Choices): Tally {
     else t.fix++;
   }
   return t;
+}
+
+// ---------- "Do this every time?" (SPEC 5 C, 8.4a): a typed fix of one cell becomes `readAs` on its column ----------
+
+/** One fix the user can keep as a rule of the format: this exact text, in this input column, is read as `to` ("" = read as empty). */
+export interface ReadAsFix {
+  columnId: string;
+  /** The column's header in the rules: what the user calls it. */
+  header: string;
+  /** The cell's exact text, as the file has it (not trimmed). */
+  from: string;
+  to: string;
+}
+
+/** What one typed field offers. */
+export interface ReadAsOffer extends ReadAsFix {
+  /** The rows of this review whose cell in the column has exactly this text (this one included): one "yes" covers them all. */
+  rows: number;
+  /** Another row of this review already keeps this text in this column as something else: a text is read one way only. */
+  clash: boolean;
+}
+
+/** What a typed value is as the rule keeps it: nothing typed (or only spaces) means "read as empty", as an emptied field always did. */
+export function typedReading(typed: string): string {
+  return typed.trim() === '' ? '' : typed;
+}
+
+/**
+ * The fix a typed field amounts to, when it can be a rule. DECISION: only a cell that IS text in the file (`RowInputCell.isText`: a number, a
+ * date or an empty cell is never matched by `readAs`, so offering it would promise something next month's file would not do), whose text the
+ * user changed, in a column that does not already read that text another way and has room for one more (`limits.rules.maxReadAsPerColumn`).
+ */
+function fixOf(rules: LearnResult | Rules, cell: RowInputCell | undefined, typed: string | undefined): ReadAsFix | null {
+  if (!cell || typed === undefined || cell.isText !== true || typeof cell.value !== 'string' || cell.value === '') return null;
+  const column = rules.input.columns.find((c) => c.id === cell.columnId);
+  if (!column) return null;
+  const to = typedReading(typed);
+  if (to === cell.value) return null;
+  const known = column.readAs ?? {};
+  if (Object.prototype.hasOwnProperty.call(known, cell.value) || Object.keys(known).length >= limits.rules.maxReadAsPerColumn) return null;
+  return { columnId: cell.columnId, header: column.header, from: cell.value, to };
+}
+
+/** The offer of one field of the fix editor as it is being typed (null: nothing to offer). `others` are the fixes the other rows already keep. */
+export function readAsOffer(rules: LearnResult | Rules, cell: RowInputCell, typed: string, rowInputs: Readonly<Record<number, readonly RowInputCell[]>>, others: readonly ReadAsFix[]): ReadAsOffer | null {
+  const fix = fixOf(rules, cell, typed);
+  if (!fix) return null;
+  const rows = Object.values(rowInputs).filter((cells) => cells.some((c) => c.columnId === fix.columnId && c.isText === true && c.value === fix.from)).length;
+  const clash = others.some((o) => o.columnId === fix.columnId && o.from === fix.from && o.to !== fix.to);
+  return { ...fix, rows: Math.max(rows, 1), clash };
+}
+
+/**
+ * Every fix the user said "yes" to, once per (column, text): two rows that keep the same text as different values cancel each other (a text
+ * is read one way only, and code does not pick for the user). `exceptRow` leaves one row out (what the OTHER rows keep).
+ */
+export function readAsFixes(rules: LearnResult | Rules, rowInputs: Readonly<Record<number, readonly RowInputCell[]>>, choices: Choices, exceptRow?: number): ReadAsFix[] {
+  const found = new Map<string, ReadAsFix | null>();
+  for (const [key, c] of Object.entries(choices)) {
+    const row = Number(key);
+    if (row === exceptRow || c.action !== 'override') continue;
+    for (const columnId of c.every ?? []) {
+      const fix = fixOf(rules, rowInputs[row]?.find((x) => x.columnId === columnId), c.values[columnId]);
+      if (!fix) continue;
+      const id = JSON.stringify([fix.columnId, fix.from]);
+      const had = found.get(id);
+      if (had === undefined) found.set(id, fix);
+      else if (had !== null && had.to !== fix.to) found.set(id, null);
+    }
+  }
+  return [...found.values()].filter((f): f is ReadAsFix => f !== null);
+}
+
+/**
+ * The choices once `saved` fixes are rules: the cells they were typed for are no longer one-off fixes (the rule reads them now, here and next
+ * month), so they leave the row decisions and the run really goes on with the new rule. A row left with no typed value has no decision.
+ */
+export function withoutSaved(choices: Choices, rowInputs: Readonly<Record<number, readonly RowInputCell[]>>, saved: readonly ReadAsFix[]): Choices {
+  const out: Choices = {};
+  for (const [key, c] of Object.entries(choices)) {
+    const row = Number(key);
+    if (c.action !== 'override' || !c.every || c.every.length === 0) {
+      out[row] = c;
+      continue;
+    }
+    const values = { ...c.values };
+    const every: string[] = [];
+    for (const columnId of c.every) {
+      const original = rowInputs[row]?.find((x) => x.columnId === columnId)?.value;
+      const kept = saved.some((s) => s.columnId === columnId && s.from === original && s.to === typedReading(values[columnId] ?? ''));
+      if (kept) delete values[columnId];
+      else every.push(columnId);
+    }
+    if (Object.keys(values).length > 0) out[row] = { action: 'override', values, ...(every.length > 0 ? { every } : {}) };
+  }
+  return out;
+}
+
+/** The rules with each fix added to its column's `readAs` (nothing else touched). */
+export function withReadAs<R extends LearnResult | Rules>(rules: R, fixes: readonly ReadAsFix[]): R {
+  if (fixes.length === 0) return rules;
+  return {
+    ...rules,
+    input: {
+      ...rules.input,
+      columns: rules.input.columns.map((c) => {
+        const mine = fixes.filter((f) => f.columnId === c.id);
+        // Built from entries, never by assignment: a cell whose text is "__proto__" is a key like any other.
+        return mine.length === 0 ? c : { ...c, readAs: Object.fromEntries([...Object.entries(c.readAs ?? {}), ...mine.map((f) => [f.from, f.to] as const)]) };
+      }),
+    },
+  };
 }
 
 // ---------- counts of a finished run ----------
