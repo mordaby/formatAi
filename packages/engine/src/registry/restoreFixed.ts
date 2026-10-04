@@ -5,9 +5,9 @@
 // `fixedMismatch` for a repair round, and an answer whose new parts relied on the part it changed fails its other checks there.
 //
 // What is put back is exactly what the lock holds: every fixed input column, computed column, function and table (by id or name, the
-// fixed version, fixed ones first so every reference they make still comes before its use), every fixed value map, check and
-// `unsupported` entry; `input.sheet` / `headerRow` / `stopAt`; the output file settings, sheet name, direction, language and header
-// style; every output column's header, format, width and agg, and the `from` of every column that was not asked for; and each layout
+// fixed version, fixed ones first so every reference they make still comes before its use), every fixed value map and check;
+// `input.sheet` / `headerRow` / `stopAt`; the output file settings, sheet name, direction, language and header style; every output
+// column's header, format, width and agg, and the `from` and `unsupported` entry of every column that was not asked for; and each layout
 // part that was not asked for (`complete.parts`), whole. A part that was asked for keeps what the answer built, plus whatever fixed
 // element of it the answer dropped.
 //
@@ -133,11 +133,13 @@ export function restoreFixed(answer: LearnResult, fixedRules: LearnResult | Rule
   };
 
   // ---- checks and unsupported ----
+  // (A column that was not asked for is the fixed one, "unsupported" or not: the answer's entries are kept for the asked-for columns only.)
   const validations = [...answer.validations, ...missingFrom(a.validations, f.validations, fixed.validations)];
-  const producedHeaders = new Set([...asked].map((i) => fo.columns[i]?.header).filter((h): h is string => h !== undefined));
+  const askedHeaders = new Set([...asked].map((i) => fo.columns[i]?.header).filter((h): h is string => h !== undefined));
+  const fixedHeaders = new Set(fo.columns.map((c) => c.header));
   const unsupported = [
-    ...answer.unsupported,
-    ...fixed.unsupported.filter((u) => !producedHeaders.has(u.outputColumn) && !answer.unsupported.some((x) => x.outputColumn === u.outputColumn && x.reasonCode === u.reasonCode)),
+    ...answer.unsupported.filter((u) => askedHeaders.has(u.outputColumn) || !fixedHeaders.has(u.outputColumn)),
+    ...fixed.unsupported.filter((u) => !askedHeaders.has(u.outputColumn)),
   ];
 
   return { schemaVersion: answer.schemaVersion, input, transform, output, validations, unsupported, assumptions: answer.assumptions };

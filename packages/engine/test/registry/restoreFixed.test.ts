@@ -85,6 +85,14 @@ describe('restoreFixed', () => {
     expect(r.transform.computed.map((c) => c.id)).toEqual(['gross', 'label']); // fixed ones first: every reference before its use
   });
 
+  it('a column that was not asked for keeps its fixed "unsupported" status: the answer\'s entry for it goes, its entry for an asked-for column stays', () => {
+    const a = goodAnswer();
+    const r = restored({ ...a, output: { ...a.output, columns: a.output.columns.map((c) => (c.header === 'ID' || c.header === 'Label' ? { ...c, from: null } : c)) }, unsupported: [{ outputColumn: 'ID', reasonCode: 'other' }, { outputColumn: 'Label', reasonCode: 'ambiguous' }] });
+    expect(r.unsupported).toEqual([{ outputColumn: 'Label', reasonCode: 'ambiguous' }, { outputColumn: 'Note', reasonCode: 'externalData' }]);
+    expect(r.output.columns.map((c) => c.from)).toEqual(['id', 'gross', null, null]);
+    expect(checkFixedLock(r, fixedRules(), LISTED)).toEqual([]);
+  });
+
   it('a value map the answer wrote on a column a fixed value map maps is replaced by the fixed one', () => {
     const a = goodAnswer();
     const r = restored({ ...a, transform: { ...a.transform, valueMaps: [{ column: 'status', map: { o: 'Changed' }, onMissing: 'flag' }] } });

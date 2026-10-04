@@ -304,6 +304,48 @@ function defineQuotaSuite(kit: StoreKit): void {
       expect(await used(h)).toBe(0);
     });
 
+    // The learning loop (SPEC 9.3): up to 3 rounds, all of them ONE learn.
+    const round = (h: Harness, first: { rules: unknown; problems: unknown; learnId: string }, rules: unknown = first.rules) =>
+      h.post('/api/learn/repair', { payload: basicPayload(), previousRules: rules, problems: first.problems, learnId: first.learnId });
+
+    it('counts a learn once however many rounds it takes: failed, then a round passes, a round fails, a round passes, the browser reports verified', async () => {
+      const wrong = wrongRoundingWireJson();
+      const right = correctRulesWireJson();
+      // the learn (3 calls: try, server repair, escalation), then per round a call (+ its server repair when it fails)
+      const llm = scripted(wrong, wrong, wrong, right, wrong, wrong, right);
+      const h = await setup(llm.fn);
+      const first = (await h.learn({ noCache: true })).json();
+      expect(first).toMatchObject({ verified: false, counted: false, failedAttempts: 1 });
+
+      expect((await round(h, first)).json()).toMatchObject({ verified: true, counted: true, failedAttempts: 0, quota: { remaining: 2 } });
+      expect((await round(h, first)).json()).toMatchObject({ verified: false, counted: true, failedAttempts: 0, quota: { remaining: 2 } });
+      expect((await round(h, first)).json()).toMatchObject({ verified: true, counted: true, failedAttempts: 0, quota: { remaining: 2 } });
+      expect((await outcome(h, first.learnId, 'verified')).json()).toMatchObject({ counted: true, quota: { remaining: 2 }, failedAttempts: 0 });
+      expect(await used(h)).toBe(1);
+    });
+
+    it('counts nothing when the loop ends without verifying: rounds that pass the server checks are given back when the browser reports failed (one failed attempt)', async () => {
+      const wrong = wrongRoundingWireJson();
+      const llm = scripted(wrong, wrong, wrong, correctRulesWireJson());
+      const h = await setup(llm.fn);
+      const first = (await h.learn({ noCache: true })).json();
+      expect((await round(h, first)).json()).toMatchObject({ verified: true, counted: true });
+      expect((await round(h, first)).json()).toMatchObject({ verified: true, counted: true });
+      expect(await used(h)).toBe(1);
+      // the browser's full verification still finds wrong rows when the loop stops: the learn did not work out
+      expect((await outcome(h, first.learnId, 'failed')).json()).toMatchObject({ counted: false, failedAttempts: 1, exhausted: false });
+      expect(await used(h)).toBe(0);
+    });
+
+    it('counts nothing for a loop whose rounds all fail: still one failed attempt', async () => {
+      const wrong = wrongRoundingWireJson();
+      const h = await setup(scripted(wrong).fn);
+      const first = (await h.learn({ noCache: true })).json();
+      for (let i = 0; i < 3; i++) expect((await round(h, first)).json()).toMatchObject({ verified: false, counted: false, failedAttempts: 1 });
+      expect((await outcome(h, first.learnId, 'failed')).json()).toMatchObject({ counted: false, failedAttempts: 1 });
+      expect(await used(h)).toBe(0);
+    });
+
     it('does not count a provider outage, and it is nobody\'s failed attempt', async () => {
       const h = await setup(async () => {
         throw new Error('provider down');

@@ -12,10 +12,13 @@ import {
   promptVersion,
   REPAIR_INSTRUCTION,
   toWire,
+  withRows,
   type LearnPayload,
   type LearnResult,
+  type PayloadCell,
   type RepairBlock,
   type RepairProblem,
+  type Sample,
   type Tier,
   type TokenEstimate,
 } from '@formatai/shared';
@@ -160,12 +163,16 @@ async function callAndCheck(
   payload: LearnPayload,
   tier: Tier,
   prefixCache: PrefixCache,
+  rows: readonly Sample[] = [],
 ): Promise<{ record: LlmCallRecord; attempt: Attempt }> {
   const schema = learnResultWireJsonSchema();
 
   try {
     const result = await completeFn({ system: LEARN_SYSTEM_PROMPT_V7, content, schema, model, purpose }, env);
-    const { problems, rules } = runChecks(result.json, payload, { tier });
+    // The learning loop: checked on the samples plus every row the browser sent (`withRows`); a problem on one of those rows names the row.
+    const checked = runChecks(result.json, withRows(payload, rows), { tier });
+    const problems = rowsNamed(checked.problems, payload, rows);
+    const { rules } = checked;
     // The estimate counts the exact text sent (system prompt, schema, every content block) and received (the raw answer).
     const estimate = estimateCall(
       result.model,
@@ -239,12 +246,80 @@ function repairContentBlock(previous: Attempt, problems: RepairProblem[]): Conte
   return { text: `${JSON.stringify(repairBlock)}\n${REPAIR_INSTRUCTION}` };
 }
 
+/**
+ * The learning loop: a `diff` problem the sample run found on one of the browser's rows points at a sample index the model never saw (its
+ * payload block is the first payload, so the cached prefix still hits). It is told the row itself instead, the way the browser tells it
+ * (LEARN_PROMPT §4: `row`); a row the rules make where none is expected carries the input row and no output row.
+ */
+function rowsNamed(problems: RepairProblem[], payload: LearnPayload, rows: readonly Sample[]): RepairProblem[] {
+  if (rows.length === 0) return problems;
+  const first = payload.samples.length;
+  return problems.map((p) => {
+    if (p.kind !== 'diff' || p.sample === undefined || p.sample < first) return p;
+    const row = rows[p.sample - first];
+    if (!row) return p;
+    const outRows = row.out.length > 0 && !Array.isArray(row.out[0]) ? [row.out as PayloadCell[]] : (row.out as PayloadCell[][]);
+    const { sample: _sample, familyRow, ...rest } = p;
+    return { ...rest, row: { in: row.in, out: outRows[familyRow ?? 0] ?? [] } };
+  });
+}
+
 function bestOf(attempts: Attempt[]): Attempt {
   let best = attempts[0]!;
   for (const a of attempts) {
     if (a.problems.length < best.problems.length) best = a;
   }
   return best;
+}
+
+/** What a call sequence needs to make one more call: the provider, the model and what it was sent, the checks' inputs and the ledger. */
+interface CallContext {
+  completeFn: CompleteFn;
+  env: Env;
+  model: string;
+  block: ContentBlock;
+  payload: LearnPayload;
+  tier: Tier;
+  prefixCache: PrefixCache;
+  /** The learning loop's rows (a browser round): the answers are checked on them too. */
+  rows: readonly Sample[];
+  calls: LlmCallRecord[];
+  attempts: Attempt[];
+  opts: LearnOptions;
+}
+
+/** SPEC 9.3: while `current` has problems, up to `limits.llm.serverRepairRounds` repair calls on the same model, each repairing the one before. */
+async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt> {
+  let current = start;
+  for (let round = 0; round < limits.llm.serverRepairRounds && current.problems.length > 0; round++) {
+    if (ctx.opts.signal?.aborted) break;
+    const repair = await callAndCheck(
+      ctx.completeFn,
+      ctx.env,
+      'repair',
+      ctx.model,
+      [ctx.block, repairContentBlock(current, current.problems)],
+      ctx.payload,
+      ctx.tier,
+      ctx.prefixCache,
+      ctx.rows,
+    );
+    ctx.calls.push(repair.record);
+    ctx.attempts.push(repair.attempt);
+    ctx.opts.onAttempt?.(repair.attempt.problems);
+    current = repair.attempt;
+  }
+  return current;
+}
+
+function outcomeOfAttempts(attempts: Attempt[], calls: LlmCallRecord[]): LearnOutcome {
+  const best = bestOf(attempts);
+  return {
+    rules: best.rules,
+    verified: best.rules !== null && best.problems.length === 0,
+    problems: best.problems,
+    calls,
+  };
 }
 
 /**
@@ -265,91 +340,64 @@ function bestOf(attempts: Attempt[]): Attempt {
 export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<LearnOutcome> {
   const env = opts.env ?? loadEnv();
   const completeFn = opts.complete ?? defaultComplete;
-  const calls: LlmCallRecord[] = [];
-  const attempts: Attempt[] = [];
   const block = payloadBlock(payload);
-  const prefixCache: PrefixCache = new Set();
-
   const firstTryModel = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
-  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier, prefixCache);
-  calls.push(first.record);
-  attempts.push(first.attempt);
+  const ctx: CallContext = { completeFn, env, model: firstTryModel, block, payload, tier: opts.tier, prefixCache: new Set(), rows: [], calls: [], attempts: [], opts };
+
+  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier, ctx.prefixCache);
+  ctx.calls.push(first.record);
+  ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);
 
-  let current = first.attempt;
-  for (let round = 0; round < limits.llm.serverRepairRounds && current.problems.length > 0; round++) {
-    if (opts.signal?.aborted) break;
-    const repair = await callAndCheck(
-      completeFn,
-      env,
-      'repair',
-      firstTryModel,
-      [block, repairContentBlock(current, current.problems)],
-      payload,
-      opts.tier,
-      prefixCache,
-    );
-    calls.push(repair.record);
-    attempts.push(repair.attempt);
-    opts.onAttempt?.(repair.attempt.problems);
-    current = repair.attempt;
-  }
+  const current = await serverRepairs(ctx, first.attempt);
 
   if (current.problems.length > 0 && !opts.signal?.aborted && !opts.noEscalation) {
     const escalationModel = opts.models?.escalation ?? resolveModel(env, 'escalation');
-    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier, prefixCache);
-    calls.push(escalated.record);
-    attempts.push(escalated.attempt);
+    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier, ctx.prefixCache);
+    ctx.calls.push(escalated.record);
+    ctx.attempts.push(escalated.attempt);
     opts.onAttempt?.(escalated.attempt.problems);
   }
 
-  const best = bestOf(attempts);
-  return {
-    rules: best.rules,
-    verified: best.rules !== null && best.problems.length === 0,
-    problems: best.problems,
-    calls,
-  };
+  return outcomeOfAttempts(ctx.attempts, ctx.calls);
+}
+
+/** `repairFromBrowser`'s options: a learn's, plus the learning loop's rows. */
+export interface RepairOptions extends LearnOptions {
+  /** Every row of the example the browser sent so far, this round's included, masked like the samples (`RepairRequest.rows`). */
+  rows?: readonly Sample[];
 }
 
 /**
- * SPEC 5 A step 6, 9.3: the one browser-triggered repair call after the browser's own
- * full verification found a mismatch. Exactly one call - the caller (the route
- * handler / the tier's rate limiting) is responsible for never invoking this more
- * than once per learn (SPEC 9.3: "at most 1 extra call"). `previousRules` is the real
- * (unmasked, record-shaped) rules the browser has - converted to wire form here, same
- * as every other repair call.
+ * SPEC 5 A step 6, 9.3: one round of the learning loop - a browser-triggered repair call after the browser's own full verification
+ * found rows the rules get wrong. The caller (the route, with its round counter per learnId) makes sure there are never more than
+ * `limits.llm.browserRepairCalls` of them per learn. `previousRules` is the rules the browser has, in the answer's own vocabulary
+ * (masked when masking is on) - converted to wire form here, same as every other repair call.
+ *
+ * Like the learn call, the round gets `limits.llm.serverRepairRounds` repair calls of its own for what the server's checks find (a
+ * formula error, a type error, a row still wrong ...), on the same model; no escalation (DECISION: the escalation model is the first
+ * call's fallback, not a round's). Every answer is checked on the samples PLUS every row the browser sent (`opts.rows`), so a later round
+ * cannot break a row an earlier one fixed. Returns the best of the round's attempts (the fewest problems; ties keep the earliest).
  */
 export async function repairFromBrowser(
   payload: LearnPayload,
   previousRules: LearnResult,
   problems: RepairProblem[],
-  opts: LearnOptions,
+  opts: RepairOptions,
 ): Promise<LearnOutcome> {
   const env = opts.env ?? loadEnv();
   const completeFn = opts.complete ?? defaultComplete;
   const block = payloadBlock(payload);
   const previous: Attempt = { raw: null, rules: previousRules, problems };
-
   const model = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
   // DECISION: this call always comes after the learn's own first call on the same model, so the cached prefix is already there.
-  const prefixCache: PrefixCache = new Set([model]);
-  const { record, attempt } = await callAndCheck(
-    completeFn,
-    env,
-    'repair',
-    model,
-    [block, repairContentBlock(previous, problems)],
-    payload,
-    opts.tier,
-    prefixCache,
-  );
-  opts.onAttempt?.(attempt.problems);
+  const ctx: CallContext = { completeFn, env, model, block, payload, tier: opts.tier, prefixCache: new Set([model]), rows: opts.rows ?? [], calls: [], attempts: [], opts };
 
-  return {
-    rules: attempt.rules,
-    verified: attempt.rules !== null && attempt.problems.length === 0,
-    problems: attempt.problems,
-    calls: [record],
-  };
+  const first = await callAndCheck(completeFn, env, 'repair', model, [block, repairContentBlock(previous, problems)], payload, opts.tier, ctx.prefixCache, ctx.rows);
+  ctx.calls.push(first.record);
+  ctx.attempts.push(first.attempt);
+  opts.onAttempt?.(first.attempt.problems);
+
+  await serverRepairs(ctx, first.attempt);
+  return outcomeOfAttempts(ctx.attempts, ctx.calls);
 }

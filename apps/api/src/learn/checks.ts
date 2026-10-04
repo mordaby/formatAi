@@ -9,7 +9,9 @@
 // collected. Layer 6 (the overfitting lint) is never a gate: it always runs and always
 // appends its findings to the returned rules' `assumptions`, regardless of what else
 // failed, since it costs nothing and the caller may still show this attempt to a human.
-import { checkFixedLock, checkFormatLock, checkLimits, completionProduced, formulaRulesFromWire, printFormula, typeCheck } from '@formatai/engine';
+// In completion mode an answer that broke the fixed lock has the fixed parts put back by code
+// first (`restoreFixed`), and every layer runs again on that.
+import { checkFixedLock, checkFormatLock, checkLimits, completionProduced, formulaRulesFromWire, printFormula, restoreFixed, typeCheck } from '@formatai/engine';
 import {
   checkRules,
   fromWire,
@@ -198,7 +200,23 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
     return { problems, rules: null };
   }
 
-  const rules: LearnResult = parsed.data;
+  const first = checkParsed(parsed.data, payload, opts);
+
+  // ----- Completion mode: fixed parts put back by code (docs/proposals/learning-loop.md 3.2) -----
+  // An answer that changed or dropped part of the rules it had to keep (layer 5b's `fixedMismatch`) can never be used as it is: code puts
+  // those parts back from `complete.fixed` (`restoreFixed`) and every layer runs again on the result, which is this attempt from then on.
+  // The checks still decide: what code cannot put back (a new value map on a column a fixed output column reads, a listed column with no
+  // rule) is still a `fixedMismatch` for a repair round, and so is anything the restored rules now fail.
+  if (payload.complete && first.problems.some((p) => p.kind === 'fixedMismatch')) {
+    const fixed = readCompleteFixed(payload.complete);
+    const restored = fixed ? LearnResultSchema.safeParse(restoreFixed(parsed.data, fixed, { columns: payload.complete.columns, parts: payload.complete.parts })) : null;
+    if (restored?.success) return checkParsed(restored.data, payload, opts);
+  }
+  return first;
+}
+
+/** SPEC 9.2 layers 2-7 on an answer that passed layers 0-1 (formula text, structure). */
+function checkParsed(rules: LearnResult, payload: LearnPayload, opts: ChecksOptions): ChecksResult {
   const problems: RepairProblem[] = [];
 
   // ----- Layer 2: references -----

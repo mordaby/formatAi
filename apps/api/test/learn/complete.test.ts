@@ -37,22 +37,39 @@ describe('runChecks: the fixed lock (completion mode)', () => {
     expect(rules).toEqual(correctRules());
   });
 
-  it('a changed fixed element is a fixedMismatch with a path and a message (and nothing else is reported for it)', () => {
+  it('a changed fixed element is put back by code: the answer comes back with the fixed version, and nothing is reported for it', () => {
     const answer = correctRules();
     answer.output.columns = [{ header: 'ID', from: 'id', format: '@' }, answer.output.columns[1]!];
-    const { problems } = runChecks(wire(answer), completePayload(), { tier: 'registered' });
-    expect(problems).toHaveLength(1);
-    expect(problems[0]).toMatchObject({ kind: 'fixedMismatch', path: 'output.columns[0].format' });
+    const { problems, rules } = runChecks(wire(answer), completePayload(), { tier: 'registered' });
+    expect(problems).toEqual([]);
+    expect(rules).toEqual(correctRules());
   });
 
-  it('a missing fixed input column, and a fixed element that is gone', () => {
+  it('a missing fixed input column and a fixed column given up on are put back too, and the checks then pass', () => {
     const answer = correctRules();
     answer.input.columns = [answer.input.columns[1]!];
     answer.output.columns = [{ header: 'ID', from: null }, answer.output.columns[1]!];
     answer.unsupported = [{ outputColumn: 'ID', reasonCode: 'other' }];
+    const { problems, rules } = runChecks(wire(answer), completePayload(), { tier: 'registered' });
+    expect(problems).toEqual([]);
+    expect(rules).toEqual(correctRules());
+  });
+
+  it('what code cannot put back stays a fixedMismatch: a new value map on a column a fixed output column reads', () => {
+    const answer = correctRules();
+    answer.transform.valueMaps = [{ column: 'id', map: { A1: 'Z1' }, onMissing: 'keep' }];
     const { problems } = runChecks(wire(answer), completePayload(), { tier: 'registered' });
-    const fixed = problems.filter((p) => p.kind === 'fixedMismatch').map((p) => (p as { path: string }).path);
-    expect(fixed).toEqual(expect.arrayContaining(['input.columns', 'output.columns[0].from']));
+    expect(problems).toEqual([expect.objectContaining({ kind: 'fixedMismatch', path: 'transform.valueMaps[0]' })]);
+  });
+
+  it('after the restore the checks decide on the restored rules: the answer\'s own new column stays beside the fixed one it replaced', () => {
+    const answer = correctRules();
+    answer.input.columns = [answer.input.columns[0]!, { id: 'amt', header: 'Amount', type: 'decimal' }];
+    answer.transform.computed = [{ id: 'total', type: 'decimal', expr: { op: 'mul', args: [{ col: 'amt' }, { const: 2 }] } }];
+    const { problems, rules } = runChecks(wire(answer), completePayload(), { tier: 'registered' });
+    // the fixed `amount` is back beside the answer's `amt` (both read "Amount"): the checks decide on that, the lock no longer complains
+    expect(rules!.input.columns.map((c) => c.id)).toEqual(['id', 'amount', 'amt']);
+    expect(problems.some((p) => p.kind === 'fixedMismatch')).toBe(false);
   });
 
   it('a listed column with no from and no unsupported entry: the fixed lock says so precisely, and the generic reference problem does not repeat it', () => {
@@ -98,12 +115,16 @@ describe('runChecks: the fixed lock (completion mode)', () => {
     expect(runChecks(wire(answer), payload, { tier: 'registered' }).problems).toEqual([]);
   });
 
-  it('a layout part that was not listed may not be added; a listed one may', () => {
+  it('a layout part that was not listed may not be added (code takes it out again); a listed one may', () => {
     const answer = correctRules();
     answer.transform.sort = [{ column: 'id', dir: 'asc' }];
-    expect(runChecks(wire(answer), completePayload(), { tier: 'registered' }).problems).toEqual([expect.objectContaining({ kind: 'fixedMismatch', path: 'transform.sort' })]);
+    const unlisted = runChecks(wire(answer), completePayload(), { tier: 'registered' });
+    expect(unlisted.problems).toEqual([]);
+    expect(unlisted.rules!.transform.sort).toEqual([]);
     const listed = basicPayload({ complete: completePayloadOf({ fixedRules: fixedRules(), columns: [1], parts: ['sort'] }) });
-    expect(runChecks(wire(answer), listed, { tier: 'registered' }).problems).toEqual([]);
+    const kept = runChecks(wire(answer), listed, { tier: 'registered' });
+    expect(kept.problems).toEqual([]);
+    expect(kept.rules!.transform.sort).toEqual([{ column: 'id', dir: 'asc' }]);
   });
 
   it('a plain learn (no complete) is checked exactly as before', () => {
@@ -129,10 +150,24 @@ describe('readCompleteFixed', () => {
 });
 
 describe('learn() in completion mode', () => {
-  it('a fixedMismatch is repaired like any other problem: the repair block carries it, and the repaired answer verifies', async () => {
+  it('a changed fixed element is put back by code: one call, verified, the fixed version in the answer', async () => {
     const fake = createFakeProvider();
     const broken = correctRules();
     broken.output.columns = [{ header: 'ID', from: 'amount' }, broken.output.columns[1]!];
+    fake.enqueue({ json: wire(broken) });
+    const completeFn: CompleteFn = (req: CompleteRequest) => fake.complete(req);
+
+    const outcome = await learn(completePayload(), { tier: 'registered', env, complete: completeFn });
+
+    expect(outcome.verified).toBe(true);
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn']);
+    expect(outcome.rules).toEqual(correctRules());
+  });
+
+  it('a fixedMismatch code cannot put back is repaired like any other problem: the repair block carries it, and the repaired answer verifies', async () => {
+    const fake = createFakeProvider();
+    const broken = correctRules();
+    broken.transform.valueMaps = [{ column: 'id', map: { A1: 'Z1' }, onMissing: 'keep' }];
     fake.enqueue({ json: wire(broken) });
     fake.enqueue({ json: correctRulesWireJson() });
     const completeFn: CompleteFn = (req: CompleteRequest) => fake.complete(req);
@@ -146,7 +181,7 @@ describe('learn() in completion mode', () => {
     const repairCall = fake.calls[1]!;
     expect(repairCall.content[0]!.text).toContain('"complete"');
     expect(repairCall.content[1]!.text).toContain('"kind":"fixedMismatch"');
-    expect(repairCall.content[1]!.text).toContain('output.columns[0].from');
+    expect(repairCall.content[1]!.text).toContain('transform.valueMaps[0]');
   });
 });
 

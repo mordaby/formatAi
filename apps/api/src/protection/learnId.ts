@@ -1,7 +1,8 @@
 // The `learnId` /api/learn hands back and /api/learn/repair (and /api/learn/:learnId/outcome) require (SPEC 9.3:
-// "at most 1 extra call" per learn, and it belongs to the same learn - not a new one). It is signed and bound to
-// its owner, so a follow-up can only come from the same signed-in user, and it expires; the "only once" part
-// is a `repair:<uuid>` usage counter, and what the learn already counted is a state counter (see `aiLearns.ts`).
+// at most `limits.llm.browserRepairCalls` rounds of the learning loop per learn, and they belong to the same learn - not
+// a new one). It is signed and bound to its owner, so a follow-up can only come from the same signed-in user, and it
+// expires; the round cap is a `repair:<uuid>` usage counter, and what the learn already counted is a state counter
+// (see `aiLearns.ts`).
 //
 // It also carries the learn's `group` - the tag of the example pair it belongs to (owner + structure hash,
 // SPEC 21 v5 item 3) - so the failed-attempt counter of that pair can be found again without trusting the client.
