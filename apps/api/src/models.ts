@@ -6,7 +6,7 @@
  * from one owner's data, so it is owner-scoped and TTL-expired - see `LearnCacheDoc`.
  */
 import type { ObjectId } from 'mongodb';
-import type { RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, Validation, ValueType } from '@formatai/shared';
+import type { RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, TokenEstimate, Validation, ValueType } from '@formatai/shared';
 
 export type AuthProvider = 'google' | 'microsoft';
 
@@ -212,6 +212,8 @@ export interface LlmCallDoc {
   tokensOut: number;
   tokensCached: number;
   costUsd: number;
+  /** Our own token count and price estimate for the call (counts and a price, never text); absent on documents written before it existed. */
+  estimate?: TokenEstimate;
   latencyMs: number;
   outcome: string;
   cacheHit: boolean;

@@ -94,6 +94,9 @@ describe('POST /api/learn', () => {
     });
     expect(doc.learnId).toEqual(expect.any(String));
     expect(doc.ts).toBeInstanceOf(Date);
+    // Our own token estimate: counts and a price only (the fake provider's model has no price, so no cost).
+    expect(doc.estimate).toEqual({ inputTokens: expect.any(Number), cachedInputTokens: 0, cacheWriteTokens: expect.any(Number), outputTokens: expect.any(Number), costUsd: null });
+    expect(doc.estimate!.cacheWriteTokens).toBeGreaterThan(0);
     // SPEC 9.2: the ledger tracks how often models write invalid formulas - counts
     // only, never message text or any other payload/response content.
     expect(doc.problemCounts).toEqual({

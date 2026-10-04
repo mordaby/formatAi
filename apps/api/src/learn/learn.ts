@@ -4,6 +4,8 @@
 // (SPEC 9.6).
 import { formulaRulesToWire } from '@formatai/engine';
 import {
+  emptyEstimate,
+  estimateCall,
   LEARN_SYSTEM_PROMPT_V7,
   learnResultWireJsonSchema,
   limits,
@@ -15,6 +17,7 @@ import {
   type RepairBlock,
   type RepairProblem,
   type Tier,
+  type TokenEstimate,
 } from '@formatai/shared';
 import { loadEnv, type Env } from '../env.js';
 import {
@@ -48,6 +51,10 @@ export interface LlmCallRecord {
    * since both represent cache-related token volume for cost purposes. */
   tokensCached: number;
   costUsd: number;
+  /** OUR OWN token count for this call (the learning-loop proposal, section 4), priced with the providers' published
+   * prices - NOT the provider-reported fields above, which for the dev CLI include Claude Code's own overhead and thinking
+   * tokens. Counts and a price only, never any text. See `@formatai/shared`'s `tokenEstimate`. */
+  estimate: TokenEstimate;
   latencyMs: number;
   /** 'verified' (zero problems), 'needsRepair' (some problems, rules still returned),
    * or 'error:<LlmErrorKind>' (the call itself failed - SPEC 15: never the payload). */
@@ -126,6 +133,10 @@ function payloadBlock(payload: LearnPayload): ContentBlock {
   return { text: JSON.stringify(payload), cache: true };
 }
 
+/** The models whose cached prefix (system prompt + schema) this learn has already written: the first call on a model writes it,
+ * every later call on that model reads it. A different model (the escalation) writes its own. */
+type PrefixCache = Set<string>;
+
 function outcomeOf(problems: RepairProblem[]): string {
   return problems.length === 0 ? 'verified' : 'needsRepair';
 }
@@ -148,12 +159,20 @@ async function callAndCheck(
   content: ContentBlock[],
   payload: LearnPayload,
   tier: Tier,
+  prefixCache: PrefixCache,
 ): Promise<{ record: LlmCallRecord; attempt: Attempt }> {
   const schema = learnResultWireJsonSchema();
 
   try {
     const result = await completeFn({ system: LEARN_SYSTEM_PROMPT_V7, content, schema, model, purpose }, env);
     const { problems, rules } = runChecks(result.json, payload, { tier });
+    // The estimate counts the exact text sent (system prompt, schema, every content block) and received (the raw answer).
+    const estimate = estimateCall(
+      result.model,
+      { prefix: [LEARN_SYSTEM_PROMPT_V7, JSON.stringify(schema)], blocks: content.map((b) => b.text), answer: result.raw },
+      prefixCache.has(model),
+    );
+    prefixCache.add(model);
     const record: LlmCallRecord = {
       purpose,
       model: result.model,
@@ -163,6 +182,7 @@ async function callAndCheck(
       tokensOut: result.usage.tokensOut,
       tokensCached: result.usage.tokensCachedRead + result.usage.tokensCachedWrite,
       costUsd: result.costUsd,
+      estimate,
       latencyMs: result.latencyMs,
       outcome: outcomeOf(problems),
       problemCounts: countProblems(problems),
@@ -185,6 +205,8 @@ async function callAndCheck(
       tokensOut: 0,
       tokensCached: 0,
       costUsd: 0,
+      // DECISION: a failed call counts nothing (like the provider fields above), and does not write the cached prefix.
+      estimate: emptyEstimate(model),
       latencyMs: 0,
       outcome: `error:${kind}`,
       problemCounts: countProblems(attempt.problems),
@@ -246,9 +268,10 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
   const calls: LlmCallRecord[] = [];
   const attempts: Attempt[] = [];
   const block = payloadBlock(payload);
+  const prefixCache: PrefixCache = new Set();
 
   const firstTryModel = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
-  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier);
+  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier, prefixCache);
   calls.push(first.record);
   attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);
@@ -264,6 +287,7 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
       [block, repairContentBlock(current, current.problems)],
       payload,
       opts.tier,
+      prefixCache,
     );
     calls.push(repair.record);
     attempts.push(repair.attempt);
@@ -273,7 +297,7 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
 
   if (current.problems.length > 0 && !opts.signal?.aborted && !opts.noEscalation) {
     const escalationModel = opts.models?.escalation ?? resolveModel(env, 'escalation');
-    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier);
+    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier, prefixCache);
     calls.push(escalated.record);
     attempts.push(escalated.attempt);
     opts.onAttempt?.(escalated.attempt.problems);
@@ -308,6 +332,8 @@ export async function repairFromBrowser(
   const previous: Attempt = { raw: null, rules: previousRules, problems };
 
   const model = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
+  // DECISION: this call always comes after the learn's own first call on the same model, so the cached prefix is already there.
+  const prefixCache: PrefixCache = new Set([model]);
   const { record, attempt } = await callAndCheck(
     completeFn,
     env,
@@ -316,6 +342,7 @@ export async function repairFromBrowser(
     [block, repairContentBlock(previous, problems)],
     payload,
     opts.tier,
+    prefixCache,
   );
   opts.onAttempt?.(attempt.problems);
 
