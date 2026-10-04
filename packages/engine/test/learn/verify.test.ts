@@ -93,6 +93,30 @@ describe('verifyAgainstExample: a wrong constant', () => {
   });
 });
 
+describe('verifyAgainstExample: layout problems for the repair call are masked', () => {
+  it('quotes a title cell masked like the payload\'s titles (a data word masked, a label word real), and keeps the real text for the UI', () => {
+    const inHeaders = ['Customer ID', 'Customer Name'];
+    const inRows: V[][] = [[1, 'Dana'], [2, 'Yossi'], [3, 'Noa'], [4, 'Omer'], [5, 'Maya']];
+    const out: V[][] = [['Report for Dana'], [null], ['Name', 'ID'], ...inRows.map((r) => [r[1]!, r[0]!])];
+    const a = analyzePair(xlsx([inHeaders, ...inRows]), xlsx(out));
+    if (!a.ok) throw new Error('analysis failed');
+    expect(a.layout.titleRows.length).toBeGreaterThan(0);
+    const fp = fastPath(a, preflight(a, 'registered'));
+    if (!('rules' in fp)) throw new Error('fastPath failed');
+    const rules: LearnResult = { ...fp.rules, output: { ...fp.rules.output, titleRows: fp.rules.output.titleRows.map((t) => ('text' in t ? { ...t, text: 'Weekly report' } : t)) } };
+    const masker = createMasker(new TextEncoder().encode('layout-key'));
+    masker.addLabelWords(['Report', 'for', 'Weekly', 'report']); // (as `buildPayload` registers the example's and the rules' label words)
+    const v = verifyAgainstExample(rules, a, { masker });
+    const layout = v.repairProblems.filter((p) => p.kind === 'layout').map((p) => (p as { message: string }).message);
+    expect(layout.some((m) => m.includes('title row'))).toBe(true);
+    expect(layout.join(' ')).not.toContain('Dana');
+    expect(layout.join(' ')).toContain('Report for'); // label words stay real, as in the payload
+    expect(v.layoutProblems.join(' ')).toContain('Report for Dana'); // the UI's copy stays real
+    // without a masker (masking off) the repair problem is the UI's sentence
+    expect(verifyAgainstExample(rules, a).repairProblems.filter((p) => p.kind === 'layout').map((p) => (p as { message: string }).message).join(' ')).toContain('Report for Dana');
+  });
+});
+
 describe('verifyAgainstExample: exceptions (SPEC 8.11 "fixed by hand")', () => {
   it('excludes an excepted row from the count and from mismatches', () => {
     const { a, rules } = simplePair();

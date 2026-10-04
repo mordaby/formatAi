@@ -396,6 +396,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     rules: LearnResult;
     verification: VerifyResult;
     fixedProblems: FixedProblem[];
+    /** The same findings for the repair call: the lock on the answer's own vocabulary, so a message never quotes an unmasked word. */
+    sendFixed: FixedProblem[];
     passes: boolean;
     wrongRows: WrongRow[];
     wrong: number;
@@ -411,18 +413,24 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
       rules = masker ? unmaskRules(masked, masker) : masked;
       fixedProblems = fixedLock(rules);
     }
+    const sendFixed = fixedProblems.length > 0 && masker && asked && maskedFixed ? checkFixedLock(masked, maskedFixed, asked) : fixedProblems;
     const verification = verifyAnswer(rules);
     const b = blamed(verification, rules);
-    return { masked, rules, verification, fixedProblems, passes: passes(verification, rules, fixedProblems), wrongRows: b.rows, wrong: wrongCount(b.rows, b.layout) + fixedProblems.length };
+    return { masked, rules, verification, fixedProblems, sendFixed, passes: passes(verification, rules, fixedProblems), wrongRows: b.rows, wrong: wrongCount(b.rows, b.layout) + fixedProblems.length };
   };
-  /** What a round tells the AI step besides the rows: the fixed lock's findings, then the row count and layout rows (not the diffs: the loop picks those). */
-  const otherProblems = (j: Judged): RepairProblem[] => [...j.fixedProblems.slice(0, MAX_FIXED_PROBLEMS), ...j.verification.repairProblems.filter((p) => p.kind !== 'diff')];
+  /**
+   * What a round tells the AI step besides the rows: the fixed lock's findings, then the row count and layout rows (not the diffs: the loop
+   * picks those). Every value in them is masked like the samples (SPEC 7.2): the layout rows by the verification's masker, the lock on the
+   * masked side.
+   */
+  const otherProblems = (j: Judged): RepairProblem[] => [...j.sendFixed.slice(0, MAX_FIXED_PROBLEMS), ...j.verification.repairProblems.filter((p) => p.kind !== 'diff')];
 
   const first = judge(learned.rules);
   // DECISION (an honest unsupported is not a mismatch, with one exception): a column the answer gives up on although the pair analysis found how
   // it is built (the payload carries a hint for it) is a problem for the first round - one call to write the rule. It is that round's trigger
-  // and no more: a model that stands by "unsupported" after it is accepted (the column stays "needs your input").
-  const evidence = unsupportedDespiteEvidence(first.rules, payload);
+  // and no more: a model that stands by "unsupported" after it is accepted (the column stays "needs your input"). (Asked of the answer as it
+  // wrote it: the messages name its columns in the payload's own vocabulary.)
+  const evidence = unsupportedDespiteEvidence(first.masked, payload);
   stages.verifiedFirstCall = first.passes && evidence.length === 0;
 
   // ---- SPEC 5 A step 6 / 9.3: the learning loop (`learn/loop.ts`) - rounds of browser-triggered repairs, each with the rows still wrong ----
