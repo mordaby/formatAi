@@ -71,11 +71,11 @@ The rows that still don't fit are shown in the browser (real values, nothing sen
 
 Next month (later, not in this step): a flagged row the user corrects in the row review can become one more example row for the loop: "teach from this row".
 
-### 3.7 One AI button
+### 3.6 One AI button
 
 With the loop, "Re-run all with AI" has no job left. What the free engine built is verified on every row, so the AI never needs to redo it; and when the free result can't be completed (too few columns solved, rows that change shape, a summary output), the button already runs the whole learn by itself. So one button, "Finish with AI": code picks completion or the whole learn, the user can still untick fields, "Start over" drops the user's edits, and what the loop can't finish goes to the user (3.5) instead of to a second, harder AI run.
 
-### 3.6 Guards
+### 3.7 Guards
 
 - **Overfitting.** More rounds tempt the AI to write row-specific rules (`if order = "ORD-1037"`). An answer that uses an ID-like value of a counterexample row as a constant is rejected as overfitting; those rows go to the user (3.5). The existing lint keeps running. The next-month hold-out in the eval measures it.
 - **Privacy.** Only masked rows, one masking key per learn session (the same fake value in every round), at most 40 rows in total, and "See what we send" lists every round.
@@ -107,4 +107,4 @@ The per-round estimate is: the system prompt (about 10k tokens, cached after the
 2. ~~Cut-off ranges~~ - decided: a visible check the user approves, shown and editable in the rules editor.
 3. "Keep these rows as they are" (3.5): bring exceptions back in this narrow form?
 4. A per-learn token cap: what is the most one learn may cost (decided after the baseline)?
-5. One AI button instead of two ("Run deep analysis with AI" and "Re-run all with AI"): proposed in the reply of 2026-10-04, see 3.7.
+5. One AI button instead of two ("Run deep analysis with AI" and "Re-run all with AI"): proposed in the reply of 2026-10-04, see 3.6.
