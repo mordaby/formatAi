@@ -83,7 +83,14 @@ async function readExcelWorkbook(bytes: Uint8Array, ext: 'xlsx' | 'xls'): Promis
   if (ext === 'xlsx') {
     // ExcelJS is used only for what SheetJS doesn't expose: the sheet-view RTL
     // flag, bold fonts, hidden rows/cols and drawing/image detection.
-    await overlayWithExceljs(bytes, sheets);
+    // DECISION: best effort. ExcelJS is far stricter than SheetJS and throws on content Excel itself opens
+    // (a shared formula it can't place, some drawings), and the values are already read. A file it can't load is
+    // read without those extras rather than reported as damaged; a file SheetJS can't read still throws above.
+    try {
+      await overlayWithExceljs(bytes, sheets);
+    } catch {
+      // keep what SheetJS read
+    }
   }
 
   return { fileType: ext, sheets, date1904 };
