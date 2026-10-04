@@ -30,6 +30,10 @@ export interface CaseMeta {
   domain: string;
   features: string[];
   expect: Expect;
+  /** What the expected outcome means in words, for a case whose target `expect` cannot say (printed by the eval report, not scored). */
+  expectNote?: string;
+  /** How many data rows of `output.*` a person edited by hand, so that the reference rules differ from it in exactly that many rows (`verify-cases.ts` checks it). */
+  handEditedRows?: number;
   attachTo?: string;
 }
 

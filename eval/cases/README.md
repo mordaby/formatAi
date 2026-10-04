@@ -4,7 +4,8 @@
 lists, bank exports, freight invoices, payroll, sales orders, insurance
 commissions, purchase orders, warehouse stock, a product catalog, budgets,
 expense claims, sales transactions), mixing Hebrew RTL and English LTR, so the
-learn prompt doesn't overfit one domain or language. Built deterministically by
+learn prompt doesn't overfit one domain or language, plus 3 hard English cases for the
+learning-loop measurement (see "The three hard cases"). Built deterministically by
 `build.ts`; nothing here is hand-copied from a live run.
 
 ## Layout
@@ -26,8 +27,8 @@ Each `eval/cases/<name>/` holds:
   for these cases were produced by running the real engine
   (`convertFile`, `packages/engine/src/convert.ts`) with this file, not
   hand-simulated - see "How outputs were produced" below.
-- `meta.json` - `{ difficulty, domain, features[], expect, attachTo? }` (field
-  reference below).
+- `meta.json` - `{ difficulty, domain, features[], expect, expectNote?, handEditedRows?, attachTo? }`
+  (field reference below).
 
 Two cases have no `reference.rules.json` and no `next.*` pair: their expected
 output is something the rules language cannot produce at all (a pivot; a
@@ -42,6 +43,8 @@ person would, and there is no "learned rules" to hold out against.
 | `domain` | Short camelCase tag (e.g. `"freightInvoices"`) so the report can break results down by domain (SPEC 10). |
 | `features` | Tags for the traps/operations this case exercises (e.g. `"leadingZerosLost"`, `"ddmmVsMmdd"`, `"pivot"`), used to group failures by feature (SPEC 10's report). |
 | `expect` | `"verified"` \| `"unsupported:<code>"` \| `"blocked:<reason>"`, or (one case only) `{ masking_on, masking_off }` - see below. Codes match the enums in `packages/shared/src/codes.ts`: `UNSUPPORTED_REASON_CODES` for `unsupported:*`, `PREFLIGHT_BLOCK_REASONS` for `blocked:*`. |
+| `expectNote` | Optional. The expected outcome in plain words, for a case whose target `expect` cannot say. NOT scored: `expect` still decides "expectation met"; the eval report prints the note next to the case ("Expected outcomes in words"). Only `discount-hand-edited` has one. |
+| `handEditedRows` | Optional. How many data rows of `output.*` a person edited by hand: the reference rules differ from `output.*` in exactly that many rows (`verify-cases.ts` checks it instead of the byte-for-byte match). The runner ignores it. |
 | `attachTo` | Only for the registry cases: the case name whose output defines the shared format (SPEC 8.12). |
 
 ### The masking-gap case (`payroll-pension-deposits`)
@@ -99,6 +102,9 @@ output at all, so both `input.*` and `output.*` are built directly with
 | 15 | `registry-supplier-a` | medium | supplierPriceList | verified (registry base) |
 | 16 | `registry-supplier-b` | medium | supplierPriceList | verified (attachTo a) |
 | 17 | `registry-supplier-c` | medium | supplierPriceList | verified (attachTo a) |
+| 18 | `orders-priority` | hard | salesOrders | verified |
+| 19 | `branch-lookup-50` | hard | salesByBranch | verified |
+| 20 | `discount-hand-edited` | hard | salesOrders | verified (note: the rule for the rest, the 3 edited rows reported) |
 
 Cases 15-17 are three different suppliers' price lists (different headers,
 column orders and number-format quirks - Hebrew, English and Hebrew again)
@@ -112,6 +118,16 @@ header, UTF-8 and Windows-1255") is folded into the cases above rather than
 given its own case: case 1 is csv/header/utf8 (no BOM), case 2 is
 txt/no-header/windows1255, case 6 is csv/header/utf8bom (the default). csv,
 txt, both header settings and both encodings are all covered.
+
+### The three hard cases (learning-loop measurement)
+
+Built by `buildHard.ts` (called from `build.ts`), ASCII only, each with a next-month pair. They test what a first sample of 12 rows cannot show; see `docs/proposals/learning-loop.md`, section 4.
+
+| name | what it is | why it is hard |
+|---|---|---|
+| `orders-priority` | 240 orders; Priority = Blocked if Status is On hold, Urgent if Open and Amount >= 5000, Normal if Open, else Done. Next month: 200 fresh rows (Urgent 5000-6500, Normal up to 4800). | Only 5 Urgent rows (the first at exactly 5000), none among the first rows, the 2 rows with an empty Customer, or the min/max Amount and Order Date rows; the largest Amount of the file is a Closed order. The engine's counterexample selection can still put one of them into the sample. |
+| `branch-lookup-50` | 400 sales rows; Branch Name from Branch Code (B01..B50, arbitrary city names). Next month: 300 rows, the same 50 codes in another mix. | Every code appears at least twice, 8 of them only 2-3 times; the name cannot be derived from the code. NOTE: today the free engine solves it (a value map whose every key repeats), so it costs no tokens; it guards that threshold. |
+| `discount-hand-edited` | 150 orders; Discount = 10% of Amount rounded to 2 decimals, except 3 rows whose Discount was typed over by hand (none, 15%, a flat 25). Next month: 120 clean rows. | The rule cannot make the example's output match in those 3 rows. Expected: the rule for the rest and the 3 rows reported (`expectNote`); `expect` stays `verified` until the learning loop can say that, so today the case is expected NOT to verify - its hold-out column says whether the rule itself was found. |
 
 ## Traps, by case
 

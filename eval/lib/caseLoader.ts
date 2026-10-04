@@ -18,6 +18,8 @@ export interface CaseMeta {
    * score it: `expect` still decides "expectation met", and the report prints the note next to the case.
    */
   expectNote?: string;
+  /** Rows of `output.*` edited by hand: the reference rules differ from it in exactly this many (see `cases/README.md`); not used by the runner. */
+  handEditedRows?: number;
   attachTo?: string;
 }
 

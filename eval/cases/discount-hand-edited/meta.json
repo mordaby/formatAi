@@ -1,0 +1,12 @@
+{
+  "difficulty": "hard",
+  "domain": "salesOrders",
+  "features": [
+    "percentRounded",
+    "handEditedRows",
+    "exceptionsToTheRule"
+  ],
+  "expect": "verified",
+  "expectNote": "the rule for the rest (Discount = 10% of Amount, rounded to 2 decimals) and the 3 hand-edited rows reported, not forced into the rule",
+  "handEditedRows": 3
+}

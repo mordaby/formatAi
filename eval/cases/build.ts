@@ -21,6 +21,7 @@
 import type { LearnResult } from '@formatai/shared';
 import type { OutputFileSpec } from '@formatai/engine';
 import { makeValidIsraeliId } from '@formatai/engine';
+import { hardCaseBuilders } from './buildHard';
 import { casesRoot, mkRules, runConvert, writeCase, type CaseSpec, type FileArtifact } from './lib/caseKit';
 import { dateCell, ddmmyyyy, padNum, writeFixture, type Cell, type RowSpec } from './lib/fixtures';
 import { chance, makeRng, pick, randAmount, randInt, shuffle, type Rng } from './lib/prng';
@@ -1585,6 +1586,7 @@ async function main(): Promise<void> {
     buildCase01, buildCase02, buildCase03, buildCase04, buildCase05, buildCase06,
     buildCase07, buildCase08, buildCase09, buildCase10, buildCase11, buildCase12,
     buildCase13, buildCase14, buildRegistryA, buildRegistryB, buildRegistryC,
+    ...hardCaseBuilders,
   ];
   for (const build of builders) {
     const spec = await build();
