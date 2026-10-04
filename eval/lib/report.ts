@@ -64,6 +64,9 @@ interface UsageTotals {
   verified: number;
   holdOutEligible: number;
   holdOutPass: number;
+  /** The prompt audit's plan: output columns given up on despite a hint (`RunRecord.unsupportedDespiteEvidence`), and calls cut off (X2). */
+  gaveUpHinted: number;
+  truncatedCalls: number;
 }
 
 /** Totals over the learns that made an LLM call (an average is the total over `learns`). */
@@ -85,6 +88,8 @@ function usageOf(records: readonly RunRecord[]): UsageTotals {
     verified: rs.filter((r) => r.classification === 'verified').length,
     holdOutEligible: holdOutEligible.length,
     holdOutPass: holdOutEligible.filter((r) => r.holdOut === 'pass').length,
+    gaveUpHinted: rs.reduce((n, r) => n + (r.unsupportedDespiteEvidence ?? 0), 0),
+    truncatedCalls: rs.reduce((n, r) => n + (r.truncatedCalls ?? 0), 0),
   };
 }
 
@@ -329,26 +334,57 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
     'Loop rounds and rows sent are the learning loop\'s (SPEC 9.3): browser-triggered repair rounds after the full verification, each sending rows of the example the rules got wrong; the loop ends verified, or on a stop (noProgress, roundCap, rowCap, payloadCap, nothingToSend).',
     '',
   );
-  const head = ['Model', 'Masking', ...(tagged ? ['Mode'] : []), 'Basis', 'AI learns', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop ends', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out pass'];
+  lines.push(
+    '"Gave up on hinted cols" (the prompt audit\'s plan): output columns an answer reported unsupported although the payload had a hint for them, summed over every call of the learn (each sends the answer back for a repair). "Cut-off calls": answers cut off at the output-token limit (X2).',
+    '',
+  );
+  const head = ['Model', 'Masking', ...(tagged ? ['Mode'] : []), 'Basis', 'AI learns', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop ends', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out pass', 'Gave up on hinted cols', 'Cut-off calls'];
   const rows: (string | number)[][] = [];
   for (const g of shown) {
     const u = g.usage;
     const lead = [g.model, g.masking ? 'on' : 'off', ...(tagged ? [g.mode ?? 'full'] : [])];
-    rows.push([...lead, 'total', u.learns, u.calls, u.rounds, u.rowsSent, u.ends, u.inTokens, u.cachedTokens, u.cacheWriteTokens, u.outTokens, usd(u.costUsd), secondsOf(u.latencyMs), `${u.verified} of ${u.learns}`, `${u.holdOutPass} of ${u.holdOutEligible}`]);
-    rows.push([...lead, 'average per learn', '', (u.calls / u.learns).toFixed(2), (u.rounds / u.learns).toFixed(2), (u.rowsSent / u.learns).toFixed(1), '', (u.inTokens / u.learns).toFixed(0), (u.cachedTokens / u.learns).toFixed(0), (u.cacheWriteTokens / u.learns).toFixed(0), (u.outTokens / u.learns).toFixed(0), usd(u.costUsd === null ? null : u.costUsd / u.learns), secondsOf(u.latencyMs / u.learns), pct(u.verified, u.learns), pct(u.holdOutPass, u.holdOutEligible)]);
+    rows.push([...lead, 'total', u.learns, u.calls, u.rounds, u.rowsSent, u.ends, u.inTokens, u.cachedTokens, u.cacheWriteTokens, u.outTokens, usd(u.costUsd), secondsOf(u.latencyMs), `${u.verified} of ${u.learns}`, `${u.holdOutPass} of ${u.holdOutEligible}`, u.gaveUpHinted, u.truncatedCalls]);
+    rows.push([...lead, 'average per learn', '', (u.calls / u.learns).toFixed(2), (u.rounds / u.learns).toFixed(2), (u.rowsSent / u.learns).toFixed(1), '', (u.inTokens / u.learns).toFixed(0), (u.cachedTokens / u.learns).toFixed(0), (u.cacheWriteTokens / u.learns).toFixed(0), (u.outTokens / u.learns).toFixed(0), usd(u.costUsd === null ? null : u.costUsd / u.learns), secondsOf(u.latencyMs / u.learns), pct(u.verified, u.learns), pct(u.holdOutPass, u.holdOutEligible), (u.gaveUpHinted / u.learns).toFixed(2), (u.truncatedCalls / u.learns).toFixed(2)]);
   }
   lines.push(markdownTable(head, rows), '');
 
   lines.push('### Per learn', '');
   lines.push(
-    '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user). "Alternatives" (learn-v8): the second rules the AI step gave, per column, as code found them on every row (bothPass = asked of the user; answerOnly / alternativeOnly = one fits and is the rule; bothFail), then the ones the API dropped (invalid).',
+    '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user). "Alternatives" (learn-v8): the second rules the AI step gave, per column, as code found them on every row (bothPass = asked of the user; answerOnly / alternativeOnly = one fits and is the rule; bothFail), then the ones the API dropped (invalid). ' +
+      'The prompt audit\'s columns: "Gave up on hinted" (columns given up on despite a hint, over every call), "Unsupported" (the reason codes of the kept answer\'s unsupported columns), "Problems" (every problem kind the calls produced, counted), "Cut off / failed" (calls cut off at the output-token limit - X2 - or failed, by outcome), "Overfit" (the kept answer\'s overfitSuspected assumptions).',
     '',
   );
   const learns = aiLearns(records).sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model) || Number(a.masking) - Number(b.masking) || a.run - b.run || (a.mode ?? '').localeCompare(b.mode ?? ''));
   lines.push(
     markdownTable(
-      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out'],
-      learns.map((r) => [r.case, ...(tagged ? [r.mode ?? 'full'] : []), r.model, r.masking ? 'on' : 'off', r.run, r.llmCalls, r.loopRounds, r.loopRowsSent, r.loopEnd || '-', r.filledByCode || '-', r.ambiguities || '-', r.alternatives || '-', r.estInTokens, r.estCachedTokens, r.estCacheWriteTokens, r.estOutTokens, usd(r.estCostUsd), secondsOf(r.latencyMs), r.classification === 'verified' ? 'yes' : 'no', r.holdOut === 'n/a' ? '-' : r.holdOut]),
+      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit'],
+      learns.map((r) => [
+        r.case,
+        ...(tagged ? [r.mode ?? 'full'] : []),
+        r.model,
+        r.masking ? 'on' : 'off',
+        r.run,
+        r.llmCalls,
+        r.loopRounds,
+        r.loopRowsSent,
+        r.loopEnd || '-',
+        r.filledByCode || '-',
+        r.ambiguities || '-',
+        r.alternatives || '-',
+        r.estInTokens,
+        r.estCachedTokens,
+        r.estCacheWriteTokens,
+        r.estOutTokens,
+        usd(r.estCostUsd),
+        secondsOf(r.latencyMs),
+        r.classification === 'verified' ? 'yes' : 'no',
+        r.holdOut === 'n/a' ? '-' : r.holdOut,
+        r.unsupportedDespiteEvidence ?? 0,
+        r.unsupportedReasons || '-',
+        r.problemsByKind || '-',
+        r.callFailures || '-',
+        r.overfitSuspected ?? 0,
+      ]),
     ),
     '',
   );
@@ -488,6 +524,12 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'prompt',
   'alternativesProposed',
   'alternatives',
+  'unsupportedDespiteEvidence',
+  'unsupportedReasons',
+  'problemsByKind',
+  'truncatedCalls',
+  'callFailures',
+  'overfitSuspected',
   'formulaErrorCount',
   'firstCallFormulaErrors',
   'formulaFixedByRepair',
@@ -521,7 +563,8 @@ export function printSummary(records: RunRecord[], log: (line: string) => void =
         `    est. tokens (our own count) over ${u.learns} AI learn(s), ${u.calls} call(s): in ${u.inTokens} / cached ${u.cachedTokens} / cache write ${u.cacheWriteTokens} / out ${u.outTokens}, est. cost ${money(u.costUsd)}, ${secondsOf(u.latencyMs)} s; ` +
           `per learn: in ${per(u.inTokens)} / cached ${per(u.cachedTokens)} / cache write ${per(u.cacheWriteTokens)} / out ${per(u.outTokens)}, est. cost ${money(u.costUsd === null ? null : u.costUsd / u.learns)}, ${secondsOf(u.latencyMs / u.learns)} s; ` +
           `loop: ${u.rounds} round(s), ${u.rowsSent} row(s) sent, ends ${u.ends}; ` +
-          `verified on example ${u.verified} of ${u.learns}, hold-out ${u.holdOutPass} of ${u.holdOutEligible}`,
+          `verified on example ${u.verified} of ${u.learns}, hold-out ${u.holdOutPass} of ${u.holdOutEligible}; ` +
+          `gave up on ${u.gaveUpHinted} hinted column(s), ${u.truncatedCalls} cut-off call(s)`,
       );
       const proposed = aiLearns(records).filter((r) => r.model === g.model && r.masking === g.masking && (r.mode ?? 'full') === (g.mode ?? 'full'));
       const alternatives = proposed.reduce((n, r) => n + (r.alternativesProposed ?? 0), 0);

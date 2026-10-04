@@ -77,6 +77,22 @@ export interface RunRecord {
   /** What they turned out to be, per column, then the dropped ones: "Total bothPass, Tag alternativeOnly, invalid 2" ('' when none). The
    * outcomes: bothPass (asked of the user), answerOnly / alternativeOnly (one fits: it is the rule), bothFail, invalid (dropped by the API). */
   alternatives: string;
+  /**
+   * The prompt audit's measurement plan (docs/proposals/prompt-audit-learn-v7.md section 5): the output columns this learn's answers gave up
+   * on although the payload had a hint for them - the sum of every call's `problemCounts.unsupportedDespiteEvidence`. Each one is a repair:
+   * an answer that has one is sent back (a server repair, the escalation, or the loop's first round). 0 when no call was made.
+   */
+  unsupportedDespiteEvidence: number;
+  /** The reason codes of the kept answer's `unsupported` entries, counted: "externalData 1, hiddenByMasking 2" ('' when none, or no AI answer). */
+  unsupportedReasons: string;
+  /** Every problem kind this learn's calls produced, summed over the calls (`problemCounts`, counts only): "diff 6, reference 1" ('' when none). */
+  problemsByKind: string;
+  /** Prompt audit X2: the calls whose answer was cut off at the output-token limit (`outcome: "truncated"`). */
+  truncatedCalls: number;
+  /** The calls that were cut off or failed, by outcome: "truncated 1, error:timeout 1" ('' when every call came back whole). */
+  callFailures: string;
+  /** The kept answer's `overfitSuspected` assumptions (the API's overfitting lint, SPEC 9.2 layer 6). */
+  overfitSuspected: number;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
    * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
    * run's LLM calls produced, across the learn call and every repair/escalation call. */
@@ -334,6 +350,7 @@ async function toRunRecord(
     ambiguities: (result.ambiguities ?? []).map((a) => a.kind).join(' '),
     prompt,
     ...alternativesOf(result),
+    ...callsOf(result),
     ...formula,
     ...(tagMode
       ? {
@@ -380,8 +397,51 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     prompt: promptVersion,
     alternativesProposed: 0,
     alternatives: '',
+    unsupportedDespiteEvidence: 0,
+    unsupportedReasons: '',
+    problemsByKind: '',
+    truncatedCalls: 0,
+    callFailures: '',
+    overfitSuspected: 0,
     ...formulaStats([]),
     error,
+  };
+}
+
+/** "a 2, b 1": counts, most common first (ties by name); '' when none. */
+function tallyLabel(counts: ReadonlyMap<string, number>): string {
+  return [...counts.entries()]
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k, n]) => `${k} ${n}`)
+    .join(', ');
+}
+
+/**
+ * The prompt audit's measurement columns (docs/proposals/prompt-audit-learn-v7.md section 5) - counts only, from the call records
+ * (`problemCounts`, `outcome`) and the kept answer's own `unsupported` and `assumptions`: the columns given up on despite a hint, the problem
+ * kinds, the calls cut off or failed (X2), the reasons given for unsupported columns, and the overfitting lint's findings.
+ */
+export function callsOf(
+  result: Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'calls' | 'rules'>,
+): Pick<RunRecord, 'unsupportedDespiteEvidence' | 'unsupportedReasons' | 'problemsByKind' | 'truncatedCalls' | 'callFailures' | 'overfitSuspected'> {
+  const calls = result.path === 'llm' ? result.calls : [];
+  const kinds = new Map<string, number>();
+  const failures = new Map<string, number>();
+  for (const c of calls) {
+    for (const [kind, n] of Object.entries(c.problemCounts)) if (kind !== 'invalidAlternative') kinds.set(kind, (kinds.get(kind) ?? 0) + n);
+    if (c.outcome === 'truncated' || c.outcome.startsWith('error:')) failures.set(c.outcome, (failures.get(c.outcome) ?? 0) + 1);
+  }
+  const rules = result.path === 'llm' ? result.rules : null;
+  const reasons = new Map<string, number>();
+  for (const u of rules?.unsupported ?? []) reasons.set(u.reasonCode, (reasons.get(u.reasonCode) ?? 0) + 1);
+  return {
+    unsupportedDespiteEvidence: kinds.get('unsupportedDespiteEvidence') ?? 0,
+    unsupportedReasons: tallyLabel(reasons),
+    problemsByKind: tallyLabel(kinds),
+    truncatedCalls: failures.get('truncated') ?? 0,
+    callFailures: tallyLabel(failures),
+    overfitSuspected: (rules?.assumptions ?? []).filter((a) => a.reasonCode === 'overfitSuspected').length,
   };
 }
 

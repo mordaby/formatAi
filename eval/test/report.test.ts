@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { formulaErrorMessagesByRecord, type RunRecord } from '../lib/runner.js';
+import { callsOf, formulaErrorMessagesByRecord, type RunRecord } from '../lib/runner.js';
 import { buildCsvReport, buildMarkdownReport, printSummary } from '../lib/report.js';
 
 function record(overrides: Partial<RunRecord> = {}): RunRecord {
@@ -38,6 +38,12 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     prompt: 'learn-v8',
     alternativesProposed: 0,
     alternatives: '',
+    unsupportedDespiteEvidence: 0,
+    unsupportedReasons: '',
+    problemsByKind: '',
+    truncatedCalls: 0,
+    callFailures: '',
+    overfitSuspected: 0,
     formulaErrorCount: 0,
     firstCallFormulaErrors: 0,
     formulaFixedByRepair: false,
@@ -305,6 +311,38 @@ describe('token usage and cost (our own estimate)', () => {
     const cols = head!.split(',');
     expect(cols.slice(cols.indexOf('loopEnd') + 1, cols.indexOf('loopEnd') + 3)).toEqual(['filledByCode', 'ambiguities']);
     expect(row).toContain('"lookup 47, cutoff 1, 1 check",dayMonthOrder');
+  });
+
+  it('the prompt audit\'s columns (section 5): hinted columns given up on, unsupported reasons, problem kinds, cut-off or failed calls, overfit - per learn, in the totals and in the CSV', () => {
+    const learn = aiLearn({ case: 'orders-priority', unsupportedDespiteEvidence: 2, unsupportedReasons: 'ambiguous 1', problemsByKind: 'diff 4, unsupportedDespiteEvidence 2', truncatedCalls: 1, callFailures: 'truncated 1', overfitSuspected: 1 });
+    const md = buildMarkdownReport([learn, aiLearn({ case: 'b' })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| yes | pass | 2 | ambiguous 1 | diff 4, unsupportedDespiteEvidence 2 | truncated 1 | 1 |');
+    expect(md).toContain('| yes | pass | 0 | - | - | - | 0 |');
+    expect(md).toContain('| 2 of 2 | 2 of 2 | 2 | 1 |');
+    expect(md).toContain('| 100% | 100% | 1.00 | 0.50 |');
+    const [head, row] = buildCsvReport([learn]).trim().split('\n');
+    const cols = head!.split(',');
+    const at = cols.indexOf('alternatives');
+    expect(cols.slice(at + 1, at + 7)).toEqual(['unsupportedDespiteEvidence', 'unsupportedReasons', 'problemsByKind', 'truncatedCalls', 'callFailures', 'overfitSuspected']);
+    expect(row).toContain(',2,ambiguous 1,"diff 4, unsupportedDespiteEvidence 2",1,truncated 1,1,');
+  });
+
+  it('callsOf: counts from the call records and the kept answer only - never a message or a value', () => {
+    const call = (outcome: string, counts: Record<string, number>) => ({ outcome, problemCounts: { formula: 0, diff: 0, unsupportedDespiteEvidence: 0, truncated: 0, invalidAlternative: 0, ...counts } });
+    const result = {
+      path: 'llm' as const,
+      calls: [call('needsRepair', { diff: 3, unsupportedDespiteEvidence: 1, invalidAlternative: 2 }), call('truncated', { truncated: 1 }), call('error:timeout', { schema: 1 }), call('verified', {})],
+      rules: { unsupported: [{ outputColumn: 'A', reasonCode: 'externalData' }, { outputColumn: 'B', reasonCode: 'hiddenByMasking' }, { outputColumn: 'C', reasonCode: 'externalData' }], assumptions: [{ reasonCode: 'overfitSuspected' }, { reasonCode: 'filterGuessed' }] },
+    };
+    expect(callsOf(result as never)).toEqual({
+      unsupportedDespiteEvidence: 1,
+      unsupportedReasons: 'externalData 2, hiddenByMasking 1',
+      problemsByKind: 'diff 3, schema 1, truncated 1, unsupportedDespiteEvidence 1',
+      truncatedCalls: 1,
+      callFailures: 'error:timeout 1, truncated 1',
+      overfitSuspected: 1,
+    });
+    expect(callsOf({ path: 'local', calls: [], rules: null } as never)).toEqual({ unsupportedDespiteEvidence: 0, unsupportedReasons: '', problemsByKind: '', truncatedCalls: 0, callFailures: '', overfitSuspected: 0 });
   });
 
   it('shows n/a, never a guess, for a model with no price', () => {
