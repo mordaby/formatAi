@@ -16,10 +16,12 @@ export * from './config/detection';
 export * from './config/tiers';
 export * from './config/models';
 export * from './config/prices';
+export * from './config/pricing';
 export * from './config/prompts';
 
 export * from './prompts/learnV7';
 export * from './payload';
+export * from './tokenEstimate';
 export * from './completion';
 export * from './unsupportedEvidence';
 export * from './api';
