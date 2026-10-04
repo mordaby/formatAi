@@ -172,6 +172,12 @@ export const limits = {
       /** A request is rejected (counted, not stored) when its name, purpose or argument names contain a payload value: only tokens of at least this many characters are compared (numbers are compared whatever their length). */
       minTokenChars: 3,
     },
+    /**
+     * learn-v8 (owner decision 2026-10-04; SPEC 9.2, 21 v12 item 17): an answer may give, for an output column, a second rule that also fits
+     * every row it was shown (`alternatives`). At most one per column and at most this many per answer; the API drops the rest (counted in
+     * the call's `problemCounts.invalidAlternative`, never a repair). Each one costs the browser one more run of the rules on the example.
+     */
+    maxAlternatives: 3,
     /** The API's `function_requests` collection (SPEC 13): how many distinct (hashed) owners one request remembers; past it `distinctOwners` stops growing. */
     functionRequests: {
       maxOwnerHashes: 1000,

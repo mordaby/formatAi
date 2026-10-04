@@ -7,7 +7,7 @@ import { completionPlan, formatOf, learnFromExamples, type FillSummary, type Lea
 import { learn, repairFromBrowser, type CompleteFn, type LearnOptions, type LearnOutcome, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
-import { sumEstimates, type Format, type LearnResult, type LlmProviderName, type Rules, type Tier } from '@formatai/shared';
+import { promptVersion, sumEstimates, type Format, type LearnResult, type LlmProviderName, type PromptVersion, type Rules, type Tier } from '@formatai/shared';
 import type { CaseDef } from './caseLoader.js';
 import type { EvalMode } from './args.js';
 import { checkHoldOut } from './holdout.js';
@@ -67,6 +67,16 @@ export interface RunRecord {
   filledByCode: string;
   /** What the example could not settle (`result.ambiguities`, for the ambiguity question): the kinds, e.g. "dayMonthOrder". '' when none. */
   ambiguities: string;
+  /** The prompt version the AI step was sent (`--prompt`; the current one by default). */
+  prompt: string;
+  /**
+   * learn-v8: the second rules the AI step gave - the ones the kept answer carried that code tested on every row (`result.alternatives`),
+   * plus every one the API's checks dropped in any call of the learn (`problemCounts.invalidAlternative`). 0 when none.
+   */
+  alternativesProposed: number;
+  /** What they turned out to be, per column, then the dropped ones: "Total bothPass, Tag alternativeOnly, invalid 2" ('' when none). The
+   * outcomes: bothPass (asked of the user), answerOnly / alternativeOnly (one fits: it is the rule), bothFail, invalid (dropped by the API). */
+  alternatives: string;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
    * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
    * run's LLM calls produced, across the learn call and every repair/escalation call. */
@@ -173,6 +183,8 @@ export interface RunOneOptions {
   /** Called with every outcome of `learn()` / `repairFromBrowser()`: the answer BEFORE the AI notes are taken out of the rules (the catalogue's
    * AI measurement reads the function-request names from it). Observer only. */
   onLearnOutcome?: (outcome: LearnOutcome) => void;
+  /** `--prompt`: the prompt version to send (default: the current one). */
+  prompt?: PromptVersion;
 }
 
 export interface RunLearnResult {
@@ -207,6 +219,7 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     },
     ...(opts.noEscalation ? { noEscalation: true } : {}),
     ...(opts.complete ? { complete: opts.complete } : {}),
+    ...(opts.prompt ? { prompt: opts.prompt } : {}),
   };
   const common = {
     input: { bytes: opts.caseDef.input.bytes, name: opts.caseDef.input.fileName },
@@ -282,6 +295,7 @@ async function toRunRecord(
   ran: RunLearnResult,
   /** Set when the matrix ran more than one mode: every record then says which one it was. */
   tagMode: boolean,
+  prompt: PromptVersion = promptVersion,
 ): Promise<RunRecord> {
   const { result, formulaErrorMessages } = ran;
   const classification = classify(result);
@@ -318,6 +332,8 @@ async function toRunRecord(
     loopEnd: result.loop?.end ?? '',
     filledByCode: filledLabel(result.filled),
     ambiguities: (result.ambiguities ?? []).map((a) => a.kind).join(' '),
+    prompt,
+    ...alternativesOf(result),
     ...formula,
     ...(tagMode
       ? {
@@ -361,9 +377,21 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     loopEnd: '',
     filledByCode: '',
     ambiguities: '',
+    prompt: promptVersion,
+    alternativesProposed: 0,
+    alternatives: '',
     ...formulaStats([]),
     error,
   };
+}
+
+/** The alternatives of a learn (learn-v8): those the kept answer carried, as code found them on every row, then the ones the API dropped. */
+export function alternativesOf(result: Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'calls' | 'alternatives'>): Pick<RunRecord, 'alternativesProposed' | 'alternatives'> {
+  const tested = result.alternatives ?? [];
+  const invalid = result.path === 'llm' ? result.calls.reduce((n, c) => n + (c.problemCounts.invalidAlternative ?? 0), 0) : 0;
+  const parts = tested.map((a) => `${a.column} ${a.outcome}`);
+  if (invalid > 0) parts.push(`invalid ${invalid}`);
+  return { alternativesProposed: tested.length + invalid, alternatives: parts.join(', ') };
 }
 
 /** "lookup 47, cutoff 1, 1 check": what code filled, kinds and counts only ('' when nothing). */
@@ -387,6 +415,8 @@ export interface RunMatrixOptions {
   onProgress?: (line: string) => void;
   /** Replaces the LLM call (`RunOneOptions.complete`): a test passes a fake provider with canned answers. Default: the real provider. */
   complete?: CompleteFn;
+  /** `--prompt`: the prompt version to send (default: the current one). */
+  prompt?: PromptVersion;
 }
 
 /**
@@ -418,9 +448,9 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
 
           for (const caseDef of baseCases) {
             opts.onProgress?.(`${label}: ${caseDef.name}`);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode, ...(opts.complete ? { complete: opts.complete } : {}) });
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode, ...(opts.complete ? { complete: opts.complete } : {}), ...(opts.prompt ? { prompt: opts.prompt } : {}) });
             baseResults.set(caseDef.name, ran.result);
-            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode));
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt));
           }
 
           for (const caseDef of attachedCases) {
@@ -438,8 +468,8 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
               continue;
             }
             const target: Format = formatOf(baseRules);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode, ...(opts.complete ? { complete: opts.complete } : {}) });
-            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode));
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode, ...(opts.complete ? { complete: opts.complete } : {}), ...(opts.prompt ? { prompt: opts.prompt } : {}) });
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt));
           }
         }
       }

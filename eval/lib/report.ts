@@ -341,14 +341,14 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
 
   lines.push('### Per learn', '');
   lines.push(
-    '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user).',
+    '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user). "Alternatives" (learn-v8): the second rules the AI step gave, per column, as code found them on every row (bothPass = asked of the user; answerOnly / alternativeOnly = one fits and is the rule; bothFail), then the ones the API dropped (invalid).',
     '',
   );
   const learns = aiLearns(records).sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model) || Number(a.masking) - Number(b.masking) || a.run - b.run || (a.mode ?? '').localeCompare(b.mode ?? ''));
   lines.push(
     markdownTable(
-      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out'],
-      learns.map((r) => [r.case, ...(tagged ? [r.mode ?? 'full'] : []), r.model, r.masking ? 'on' : 'off', r.run, r.llmCalls, r.loopRounds, r.loopRowsSent, r.loopEnd || '-', r.filledByCode || '-', r.ambiguities || '-', r.estInTokens, r.estCachedTokens, r.estCacheWriteTokens, r.estOutTokens, usd(r.estCostUsd), secondsOf(r.latencyMs), r.classification === 'verified' ? 'yes' : 'no', r.holdOut === 'n/a' ? '-' : r.holdOut]),
+      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out'],
+      learns.map((r) => [r.case, ...(tagged ? [r.mode ?? 'full'] : []), r.model, r.masking ? 'on' : 'off', r.run, r.llmCalls, r.loopRounds, r.loopRowsSent, r.loopEnd || '-', r.filledByCode || '-', r.ambiguities || '-', r.alternatives || '-', r.estInTokens, r.estCachedTokens, r.estCacheWriteTokens, r.estOutTokens, usd(r.estCostUsd), secondsOf(r.latencyMs), r.classification === 'verified' ? 'yes' : 'no', r.holdOut === 'n/a' ? '-' : r.holdOut]),
     ),
     '',
   );
@@ -365,7 +365,8 @@ function expectNotesSection(records: readonly RunRecord[]): string[] {
 
 export function buildMarkdownReport(records: RunRecord[], generatedAt: string): string {
   const lines: string[] = [];
-  lines.push('# Model evaluation report (SPEC 10)', '', `Generated: ${generatedAt}`, `Total runs: ${records.length}`, '');
+  const prompts = [...new Set(records.map((r) => r.prompt).filter((p) => p !== undefined && p !== ''))];
+  lines.push('# Model evaluation report (SPEC 10)', '', `Generated: ${generatedAt}`, `Total runs: ${records.length}`, ...(prompts.length > 0 ? [`Prompt: ${prompts.join(', ')}`] : []), '');
 
   lines.push('## Per model x masking', '');
   const groups = groupSummaries(records);
@@ -484,6 +485,9 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'loopEnd',
   'filledByCode',
   'ambiguities',
+  'prompt',
+  'alternativesProposed',
+  'alternatives',
   'formulaErrorCount',
   'firstCallFormulaErrors',
   'formulaFixedByRepair',
@@ -519,10 +523,26 @@ export function printSummary(records: RunRecord[], log: (line: string) => void =
           `loop: ${u.rounds} round(s), ${u.rowsSent} row(s) sent, ends ${u.ends}; ` +
           `verified on example ${u.verified} of ${u.learns}, hold-out ${u.holdOutPass} of ${u.holdOutEligible}`,
       );
+      const proposed = aiLearns(records).filter((r) => r.model === g.model && r.masking === g.masking && (r.mode ?? 'full') === (g.mode ?? 'full'));
+      const alternatives = proposed.reduce((n, r) => n + (r.alternativesProposed ?? 0), 0);
+      if (alternatives > 0) log(`    alternatives: ${alternatives} proposed in ${proposed.filter((r) => (r.alternativesProposed ?? 0) > 0).length} learn(s) - ${outcomeCounts(proposed)}`);
     }
   }
   const failed = records.filter((r) => !r.expectationMet);
   if (failed.length > 0) {
     log(`  ${failed.length} run(s) did not meet expectation - see the report for details.`);
   }
+}
+
+/** "bothPass 1, alternativeOnly 2, invalid 1": the outcomes of the alternatives of these learns, counted (from `RunRecord.alternatives`). */
+export function outcomeCounts(records: readonly Pick<RunRecord, 'alternatives'>[]): string {
+  const counts = new Map<string, number>();
+  for (const r of records) {
+    for (const part of (r.alternatives ?? '').split(', ').filter((p) => p !== '')) {
+      const invalid = /^invalid (\d+)$/.exec(part);
+      const outcome = invalid ? 'invalid' : part.slice(part.lastIndexOf(' ') + 1);
+      counts.set(outcome, (counts.get(outcome) ?? 0) + (invalid ? Number(invalid[1]) : 1));
+    }
+  }
+  return ['bothPass', 'answerOnly', 'alternativeOnly', 'bothFail', 'invalid'].filter((k) => counts.has(k)).map((k) => `${k} ${counts.get(k)}`).join(', ');
 }

@@ -202,6 +202,10 @@ export const flagMessages: Record<FlagMessageKey, Localized> = {
     en: 'Your example did not settle which side of the cut-off this value is on (between {low} and {high}; we used {value}). Please check it.',
     he: 'הדוגמה שלך לא קבעה באיזה צד של הסף נמצא הערך הזה (בין {low} לבין {high}; השתמשנו ב-{value}). כדאי לבדוק.',
   },
+  'flag.validation.sameAs': {
+    en: 'Your example fits two rules for this column, and here they differ: the other rule gives {other}. Please check it.',
+    he: 'הדוגמה שלך מתאימה לשני כללים בעמודה הזו, וכאן הם שונים: הכלל השני נותן {other}. כדאי לבדוק.',
+  },
 };
 
 // API error messages (SPEC 9.5, 11). The API returns only codes; the web shows this text.

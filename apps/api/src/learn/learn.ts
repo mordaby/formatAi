@@ -6,14 +6,16 @@ import { formulaRulesToWire } from '@formatai/engine';
 import {
   emptyEstimate,
   estimateCall,
-  LEARN_SYSTEM_PROMPT_V7,
+  learnPromptOf,
   learnResultWireJsonSchema,
   limits,
-  promptVersion,
   REPAIR_INSTRUCTION,
   toWire,
   withRows,
+  type LearnAlternative,
   type LearnPayload,
+  type LearnPrompt,
+  type PromptVersion,
   type LearnResult,
   type PayloadCell,
   type RepairBlock,
@@ -67,16 +69,21 @@ export interface LlmCallRecord {
    * product can track things like "how often models write invalid formulas" from the
    * ledger alone. See `eval/lib`'s report for the human-readable version (which also
    * has the actual messages, via `LearnOptions.onAttempt` - a dev-only path this ledger
-   * record deliberately doesn't carry). */
-  problemCounts: Record<RepairProblem['kind'], number>;
+   * record deliberately doesn't carry). learn-v8: `invalidAlternative` counts the
+   * alternatives the answer gave that were dropped (`runChecks`; never a repair problem). */
+  problemCounts: ProblemCounts;
 }
 
 /** Every `RepairProblem` kind, for `problemCounts` (SPEC 15: counts only, never text). */
 const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'fixedMismatch', 'diff', 'rowCount', 'layout', 'unsupportedDespiteEvidence'] as const;
 
-export function countProblems(problems: readonly RepairProblem[]): Record<RepairProblem['kind'], number> {
-  const counts = Object.fromEntries(REPAIR_PROBLEM_KINDS.map((k) => [k, 0])) as Record<RepairProblem['kind'], number>;
+/** The ledger's per-call counts: each `RepairProblem` kind, plus the answer's dropped alternatives (learn-v8). */
+export type ProblemCounts = Record<RepairProblem['kind'] | 'invalidAlternative', number>;
+
+export function countProblems(problems: readonly RepairProblem[], invalidAlternatives = 0): ProblemCounts {
+  const counts = Object.fromEntries(REPAIR_PROBLEM_KINDS.map((k) => [k, 0])) as ProblemCounts;
   for (const p of problems) counts[p.kind] += 1;
+  counts.invalidAlternative = invalidAlternatives;
   return counts;
 }
 
@@ -104,6 +111,9 @@ export interface LearnOptions {
   /** SPEC 10 `--no-escalation`: skip the escalation attempt entirely (the first-try
    * model and its server repair round(s) still run) for a cheaper/faster eval pass. */
   noEscalation?: boolean;
+  /** SPEC 10 `--prompt`: send another prompt version than the current one (`promptVersion`), with the wire schema it was written for, so
+   * two versions can be compared on the same code. The production routes never set it. */
+  prompt?: PromptVersion;
   /**
    * Dev-only observability hook, called once per LLM call made during this learn, with
    * that call's FULL `RepairProblem` list (with messages - unlike `LlmCallRecord.
@@ -117,6 +127,8 @@ export interface LearnOptions {
 
 export interface LearnOutcome {
   rules: LearnResult | null;
+  /** learn-v8: the alternatives of the kept answer that passed their checks (`runChecks`), in its own vocabulary. Never part of `rules`. */
+  alternatives?: LearnAlternative[];
   /** True once an attempt passed every SPEC 9.2 check (layers 1-7) with zero
    * problems - NOT SPEC 9.2 layer 8 (full verification), which only the browser can
    * do, since it alone holds the full real file (SPEC 2). */
@@ -129,6 +141,7 @@ interface Attempt {
   raw: unknown;
   problems: RepairProblem[];
   rules: LearnResult | null;
+  alternatives: LearnAlternative[];
 }
 
 function payloadBlock(payload: LearnPayload): ContentBlock {
@@ -163,20 +176,22 @@ async function callAndCheck(
   payload: LearnPayload,
   tier: Tier,
   prefixCache: PrefixCache,
+  prompt: LearnPrompt,
   rows: readonly Sample[] = [],
 ): Promise<{ record: LlmCallRecord; attempt: Attempt }> {
-  const schema = learnResultWireJsonSchema();
+  const schema = learnResultWireJsonSchema({ alternatives: prompt.alternatives });
+  const promptVersion = prompt.version;
 
   try {
-    const result = await completeFn({ system: LEARN_SYSTEM_PROMPT_V7, content, schema, model, purpose }, env);
+    const result = await completeFn({ system: prompt.system, content, schema, model, purpose }, env);
     // The learning loop: checked on the samples plus every row the browser sent (`withRows`); a problem on one of those rows names the row.
-    const checked = runChecks(result.json, withRows(payload, rows), { tier });
+    const checked = runChecks(result.json, withRows(payload, rows), { tier, alternatives: prompt.alternatives });
     const problems = rowsNamed(checked.problems, payload, rows);
-    const { rules } = checked;
+    const { rules, alternatives } = checked;
     // The estimate counts the exact text sent (system prompt, schema, every content block) and received (the raw answer).
     const estimate = estimateCall(
       result.model,
-      { prefix: [LEARN_SYSTEM_PROMPT_V7, JSON.stringify(schema)], blocks: content.map((b) => b.text), answer: result.raw },
+      { prefix: [prompt.system, JSON.stringify(schema)], blocks: content.map((b) => b.text), answer: result.raw },
       prefixCache.has(model),
     );
     prefixCache.add(model);
@@ -192,9 +207,9 @@ async function callAndCheck(
       estimate,
       latencyMs: result.latencyMs,
       outcome: outcomeOf(problems),
-      problemCounts: countProblems(problems),
+      problemCounts: countProblems(problems, checked.invalidAlternatives),
     };
-    return { record, attempt: { raw: result.json, problems, rules } };
+    return { record, attempt: { raw: result.json, problems, rules, alternatives } };
   } catch (err) {
     const kind = err instanceof LlmError ? err.kind : 'providerError';
     const message = err instanceof Error ? err.message : 'unknown LLM error';
@@ -202,6 +217,7 @@ async function callAndCheck(
       raw: null,
       rules: null,
       problems: [{ kind: 'schema', path: '', message: `LLM call failed: ${message}` }],
+      alternatives: [],
     };
     const record: LlmCallRecord = {
       purpose,
@@ -283,6 +299,7 @@ interface CallContext {
   prefixCache: PrefixCache;
   /** The learning loop's rows (a browser round): the answers are checked on them too. */
   rows: readonly Sample[];
+  prompt: LearnPrompt;
   calls: LlmCallRecord[];
   attempts: Attempt[];
   opts: LearnOptions;
@@ -302,6 +319,7 @@ async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt>
       ctx.payload,
       ctx.tier,
       ctx.prefixCache,
+      ctx.prompt,
       ctx.rows,
     );
     ctx.calls.push(repair.record);
@@ -316,6 +334,7 @@ function outcomeOfAttempts(attempts: Attempt[], calls: LlmCallRecord[]): LearnOu
   const best = bestOf(attempts);
   return {
     rules: best.rules,
+    ...(best.rules !== null && best.alternatives.length > 0 ? { alternatives: best.alternatives } : {}),
     verified: best.rules !== null && best.problems.length === 0,
     problems: best.problems,
     calls,
@@ -342,9 +361,10 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
   const completeFn = opts.complete ?? defaultComplete;
   const block = payloadBlock(payload);
   const firstTryModel = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
-  const ctx: CallContext = { completeFn, env, model: firstTryModel, block, payload, tier: opts.tier, prefixCache: new Set(), rows: [], calls: [], attempts: [], opts };
+  const prompt = learnPromptOf(opts.prompt);
+  const ctx: CallContext = { completeFn, env, model: firstTryModel, block, payload, tier: opts.tier, prefixCache: new Set(), rows: [], prompt, calls: [], attempts: [], opts };
 
-  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier, ctx.prefixCache);
+  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier, ctx.prefixCache, prompt);
   ctx.calls.push(first.record);
   ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);
@@ -353,7 +373,7 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
 
   if (current.problems.length > 0 && !opts.signal?.aborted && !opts.noEscalation) {
     const escalationModel = opts.models?.escalation ?? resolveModel(env, 'escalation');
-    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier, ctx.prefixCache);
+    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier, ctx.prefixCache, prompt);
     ctx.calls.push(escalated.record);
     ctx.attempts.push(escalated.attempt);
     opts.onAttempt?.(escalated.attempt.problems);
@@ -388,12 +408,13 @@ export async function repairFromBrowser(
   const env = opts.env ?? loadEnv();
   const completeFn = opts.complete ?? defaultComplete;
   const block = payloadBlock(payload);
-  const previous: Attempt = { raw: null, rules: previousRules, problems };
+  const previous: Attempt = { raw: null, rules: previousRules, problems, alternatives: [] };
   const model = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
+  const prompt = learnPromptOf(opts.prompt);
   // DECISION: this call always comes after the learn's own first call on the same model, so the cached prefix is already there.
-  const ctx: CallContext = { completeFn, env, model, block, payload, tier: opts.tier, prefixCache: new Set([model]), rows: opts.rows ?? [], calls: [], attempts: [], opts };
+  const ctx: CallContext = { completeFn, env, model, block, payload, tier: opts.tier, prefixCache: new Set([model]), rows: opts.rows ?? [], prompt, calls: [], attempts: [], opts };
 
-  const first = await callAndCheck(completeFn, env, 'repair', model, [block, repairContentBlock(previous, problems)], payload, opts.tier, ctx.prefixCache, ctx.rows);
+  const first = await callAndCheck(completeFn, env, 'repair', model, [block, repairContentBlock(previous, problems)], payload, opts.tier, ctx.prefixCache, prompt, ctx.rows);
   ctx.calls.push(first.record);
   ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);

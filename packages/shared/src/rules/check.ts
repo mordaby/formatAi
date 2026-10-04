@@ -614,6 +614,9 @@ export function checkRules(rules: LearnResult | Rules, opts: CheckRulesOptions =
       checkRef(v.column, finalIds, `validations[${i}].column`, problems);
     }
     if (v.rule === 'cutoffRange') checkCutoffRange(v, `validations[${i}]`, problems);
+    // The other rule of an open question (SPEC 8.8 `sameAs`): it runs where input checks run, so it may read every column there is then
+    // (an across-row function only works in a computed column's formula).
+    if (v.rule === 'sameAs') checkExprTree(v.expr, { colIds: finalIds }, ctx, `validations[${i}].expr`, problems);
   });
 
   return problems;

@@ -223,6 +223,8 @@ export const he: Record<PhraseKey, string> = {
   'check.cutoff.high': 'לפי הדוגמה שלך, הסף בעמודה {col} גבוה מ-{low} ולכל היותר {high}; השתמשנו ב-{value}',
   'check.cutoff.low': 'לפי הדוגמה שלך, הסף בעמודה {col} הוא לפחות {low} ונמוך מ-{high}; השתמשנו ב-{value}',
   'check.cutoff.line': 'בדיקה: {rule}. ערך שביניהם: {severity}',
+  'check.sameAs': 'הדוגמה שלך מתאימה גם ל-{other} בעמודה {col}',
+  'check.sameAs.line': 'בדיקה: {rule}. שורה שבה הוא נותן ערך אחר: {severity}',
 
   'table.line': 'טבלה {name}: {count}, חיפוש לפי {key} להחזרת {cols}',
   'table.single': 'טבלה {name}: {count} של {key}',

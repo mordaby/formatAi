@@ -293,8 +293,15 @@ function describeValidation(v: Validation, ctx: Ctx): Part[] {
       rule = t(v.includes === 'high' ? 'check.cutoff.high' : 'check.cutoff.low', { col, low: shown(v.low), high: shown(v.high), value: shown(v.value) });
       break;
     }
+    case 'sameAs': {
+      // The marker of an open question (SPEC 8.8, 21 v12 item 17): the other rule the example fits for the column, as a formula.
+      const pieces = formulaPieces(v.expr, ctx);
+      rule = t('check.sameAs', { col, other: pieces ? [formulaPart(mergeText(pieces))] : [val('…')] });
+      break;
+    }
   }
-  return t(v.rule === 'cutoffRange' ? 'check.cutoff.line' : 'check.line', { rule, severity: t(v.severity === 'flag' ? 'check.severity.flag' : 'check.severity.block') });
+  const line = v.rule === 'cutoffRange' ? 'check.cutoff.line' : v.rule === 'sameAs' ? 'check.sameAs.line' : 'check.line';
+  return t(line, { rule, severity: t(v.severity === 'flag' ? 'check.severity.flag' : 'check.severity.block') });
 }
 
 // ---------------------------------------------------------------------------

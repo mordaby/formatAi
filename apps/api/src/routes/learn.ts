@@ -344,6 +344,8 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     const res: LearnResponse = {
       rules: outcome.rules,
+      // learn-v8: the answer's checked alternatives go to the browser beside it (never into the cache: `saveToCache` keeps the rules only).
+      ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
       verified: outcome.verified,
       problems: outcome.problems,
       learnId,
@@ -433,6 +435,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     const res: RepairResponse = {
       rules: outcome.rules,
+      ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
       verified: outcome.verified,
       problems: outcome.problems,
       counted: settled.counted,

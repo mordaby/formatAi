@@ -231,6 +231,8 @@ export const en = {
   'check.cutoff.high': 'your example shows the cut-off for {col} is above {low} and at most {high}; we used {value}',
   'check.cutoff.low': 'your example shows the cut-off for {col} is at least {low} and below {high}; we used {value}',
   'check.cutoff.line': 'Check: {rule}. A value in between: {severity}',
+  'check.sameAs': 'your example also fits {other} for {col}',
+  'check.sameAs.line': 'Check: {rule}. A row where it gives a different value: {severity}',
 
   // Functions and tables
   'table.line': 'Table {name}: {count}, look up by {key} to get {cols}',

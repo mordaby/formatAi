@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LearnResultSchema, type LearnResult, type Rules } from '../src/rules/schema';
-import { fromWire, learnResultWireJsonSchema, toWire } from '../src/rules/wire';
+import { LearnAlternativeSchema, LearnResultSchema, type LearnResult, type Rules } from '../src/rules/schema';
+import { fromWire, learnResultWireJsonSchema, splitAlternatives, toWire, wireAnswerSchema } from '../src/rules/wire';
 
 /** A LearnResult exercising every field wire.ts has to reshape: valueMaps.map,
  * expand.columnsToRows.labels, output.summaryRows[].cells and
@@ -297,5 +297,74 @@ describe('learnResultWireJsonSchema', () => {
     expect(s.properties.transform.properties.functions.items.properties.body.type).toBe('string');
     const exprFilterBranch = s.properties.input.properties.rowFilters.items.anyOf.find((b) => b.properties && 'expr' in b.properties);
     expect((exprFilterBranch?.properties?.expr as { type: string } | undefined)?.type).toBe('string');
+  });
+});
+
+describe('learn-v8: the optional `alternatives` of an answer (owner decision 2026-10-04)', () => {
+  /** A wire answer (formula text) with one plain column and one computed one. */
+  function wireAnswer(): Record<string, unknown> {
+    return {
+      schemaVersion: 1,
+      input: { sheet: { pick: 'first' }, headerRow: 'auto', columns: [{ id: 'status', header: 'Status', type: 'text' }, { id: 'amount', header: 'Amount', type: 'decimal' }] },
+      transform: { computed: [{ id: 'priority', type: 'text', expr: 'if(amount >= 5000, "Urgent", "Normal")' }], valueMaps: [], sort: [] },
+      output: { sheetName: 'S', direction: 'ltr', language: 'en', titleRows: [], columns: [{ header: 'Status', from: 'status' }, { header: 'Priority', from: 'priority' }] },
+      validations: [],
+      unsupported: [],
+      assumptions: [],
+    };
+  }
+  const alternative = { outputColumn: 'Priority', from: 'priorityAlt', computed: [{ id: 'priorityAlt', type: 'text', expr: 'if(amount > 4435, "Urgent", "Normal")' }] };
+
+  it('the wire schema accepts an answer with alternatives, and one without them (every learn-v7 answer stays valid)', () => {
+    const schema = wireAnswerSchema();
+    expect(schema.safeParse({ ...wireAnswer(), alternatives: [alternative] }).success).toBe(true);
+    expect(schema.safeParse({ ...wireAnswer(), alternatives: [] }).success).toBe(true);
+    expect(schema.safeParse(wireAnswer()).success).toBe(true);
+    // A plain copy as the other rule: no computed column of its own.
+    expect(schema.safeParse({ ...wireAnswer(), alternatives: [{ outputColumn: 'Priority', from: 'status', computed: [] }] }).success).toBe(true);
+  });
+
+  it('rejects an alternative of the wrong shape: a missing field, an unknown one, an expression tree instead of formula text', () => {
+    const schema = wireAnswerSchema();
+    const bad = (alt: unknown): boolean => schema.safeParse({ ...wireAnswer(), alternatives: [alt] }).success;
+    expect(bad({ outputColumn: 'Priority', from: 'priorityAlt' })).toBe(false);
+    expect(bad({ ...alternative, note: 'why' })).toBe(false);
+    expect(bad({ ...alternative, computed: [{ id: 'priorityAlt', type: 'text', expr: { op: 'add', args: [] } }] })).toBe(false);
+    expect(bad({ ...alternative, computed: [{ id: 'priorityAlt', type: 'money', expr: 'amount' }] })).toBe(false);
+    expect(schema.safeParse({ ...wireAnswer(), alternatives: alternative }).success).toBe(false);
+  });
+
+  it('learn-v7 is sent the schema it was written for: no alternatives, and an answer with them does not fit it', () => {
+    const v7 = wireAnswerSchema({ alternatives: false });
+    expect(v7.safeParse(wireAnswer()).success).toBe(true);
+    expect(v7.safeParse({ ...wireAnswer(), alternatives: [alternative] }).success).toBe(false);
+    expect(JSON.stringify(learnResultWireJsonSchema({ alternatives: false }))).not.toContain('alternatives');
+  });
+
+  it('the JSON Schema: `alternatives` optional (not required), closed objects, formula text, still well under the size guard', () => {
+    const schema = learnResultWireJsonSchema() as { properties: Record<string, { type?: string; items?: { properties: Record<string, unknown>; required: string[]; additionalProperties: unknown } }>; required: string[] };
+    expect(schema.required).not.toContain('alternatives');
+    const items = schema.properties.alternatives!.items!;
+    expect(items.required).toEqual(['outputColumn', 'from', 'computed']);
+    expect(items.additionalProperties).toBe(false);
+    expect((items.properties.computed as { items: { properties: { expr: { type: string } } } }).items.properties.expr.type).toBe('string');
+    const json = JSON.stringify(schema);
+    expect(json).not.toContain('maxItems');
+    expect(json.length).toBeLessThan(20_000);
+    // What the alternatives added, in characters (the Windows CLI argument cap is ~32k).
+    expect(json.length - JSON.stringify(learnResultWireJsonSchema({ alternatives: false })).length).toBeLessThan(1_000);
+  });
+
+  it('splitAlternatives takes them off the raw answer, so the answer is checked as before; the tree form is a LearnAlternative', () => {
+    const { answer, alternatives } = splitAlternatives({ ...wireAnswer(), alternatives: [alternative] });
+    expect(answer).toEqual(wireAnswer());
+    expect(alternatives).toEqual([alternative]);
+    expect(splitAlternatives(wireAnswer())).toEqual({ answer: wireAnswer(), alternatives: undefined });
+    expect(splitAlternatives({ ...wireAnswer(), alternatives: 'x' }).alternatives).toBeUndefined();
+    // An answer that still carries them is no LearnResult (the real gate is strict).
+    expect(LearnResultSchema.safeParse({ ...(fromWire(wireAnswer()) as object), alternatives: [] }).success).toBe(false);
+    const tree = { outputColumn: 'Priority', from: 'p2', computed: [{ id: 'p2', type: 'text', expr: { col: 'status' } }] };
+    expect(LearnAlternativeSchema.safeParse(tree).success).toBe(true);
+    expect(LearnAlternativeSchema.safeParse({ ...tree, computed: [{ id: '', type: 'text', expr: { col: 'status' } }] }).success).toBe(false);
   });
 });

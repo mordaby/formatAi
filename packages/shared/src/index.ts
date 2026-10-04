@@ -20,7 +20,7 @@ export * from './config/prices';
 export * from './config/pricing';
 export * from './config/prompts';
 
-export * from './prompts/learnV7';
+export * from './prompts/index';
 export * from './payload';
 export * from './tokenEstimate';
 export * from './completion';

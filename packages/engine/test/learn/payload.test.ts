@@ -9,7 +9,7 @@ import { limits } from '@formatai/shared';
 import { formatOf } from '../../src/registry';
 import { analyzePair, type PairAnalysis } from '../../src/learn/analyze';
 import { createMasker, type Masker } from '../../src/learn/mask';
-import { buildPayload } from '../../src/learn/payload';
+import { buildPairPriority, buildPayload } from '../../src/learn/payload';
 import { preflight } from '../../src/learn/preflight';
 import { bold, xlsx, type V } from './analyze/helpers';
 
@@ -86,6 +86,68 @@ describe('buildPayload: sample selection and failsOn', () => {
     // At least one of the sample indices it points to is a genuinely bad row.
     const pointsAtBadRow = failsOn.some((idx) => badRows.has(sampleRows[idx]!.in));
     expect(pointsAtBadRow).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// De-duplication of the first sample (proposal 3.1 follow-up)
+// ---------------------------------------------------------------------------
+
+describe('buildPayload: a repeated pair takes one slot', () => {
+  const city = ['Haifa', 'Eilat', 'Acre', 'Lod', 'Ramla', 'Yafo', 'Holon', 'Arad', 'Tiberias', 'Dimona'];
+  /** Ten rows `[code, qty, city]`, all different, with `same` rows made copies of row 0. */
+  function rows(same: number[] = []): V[][] {
+    const out: V[][] = city.map((c, i) => [`K${i}`, 10 + i, c]);
+    for (const r of same) out[r] = [...out[0]!];
+    return out;
+  }
+
+  it('two rows with the same input AND output values are sent once; the freed slot goes to the next row', () => {
+    const inRows = rows([1]);
+    const a = analyzeOkResult(['Code', 'Qty', 'City'], inRows, ['Code', 'Qty', 'City'], inRows);
+    expect(a.alignment.rows).toHaveLength(10);
+    const caps = { ...limits.payload, maxPairs: 4 };
+    const { payload, sampleRows } = buildPayload(a, preflight(a, 'registered'), { caps });
+    expect(payload.samples).toHaveLength(4);
+    expect(new Set(payload.samples.map((s) => JSON.stringify(s))).size).toBe(4);
+    const sent = sampleRows.map((r) => r.in);
+    expect(sent).toContain(0);
+    expect(sent).not.toContain(1);
+    // Without the repeat, the first rows are 0, 1, 2: the slot row 1 would have taken goes to row 3.
+    expect(sent.slice(0, 3)).toEqual([0, 2, 3]);
+  });
+
+  it('rows with the same input and a different output (a row number) are informative: both are sent', () => {
+    const inRows = rows([1]);
+    const outRows: V[][] = inRows.map((r, i) => [...r, i + 1]);
+    const a = analyzeOkResult(['Code', 'Qty', 'City'], inRows, ['Code', 'Qty', 'City', 'N'], outRows);
+    expect(a.alignment.rows).toHaveLength(10);
+    const { payload } = buildPayload(a, preflight(a, 'registered'));
+    expect(payload.samples).toHaveLength(10);
+    expect(payload.samples.filter((s) => s.in[0] === 'K0').map((s) => (s.out as number[])[3]).sort()).toEqual([1, 2]);
+  });
+
+  it('compares the real values, before masking and truncation: two cells that differ only past the 40th character are two rows', () => {
+    const long = 'y'.repeat(60);
+    const inRows = rows();
+    inRows[0]![2] = `${long}1`;
+    inRows[1] = [...inRows[0]!];
+    inRows[1]![2] = `${long}2`;
+    const a = analyzeOkResult(['Code', 'Qty', 'City'], inRows, ['Code', 'Qty', 'City'], inRows);
+    const { payload, sampleRows } = buildPayload(a, preflight(a, 'registered'), { masker: createMasker(key('dedupe')) });
+    expect(payload.samples).toHaveLength(10);
+    expect(sampleRows.map((r) => r.in)).toEqual(expect.arrayContaining([0, 1]));
+  });
+
+  it('a must-include row (a failing row of a hint) always stays, even when another chosen row holds the same values', () => {
+    const inRows = rows([2]);
+    const a = analyzeOkResult(['Code', 'Qty', 'City'], inRows, ['Code', 'Qty', 'City'], inRows);
+    // Rows 0 and 2 are the same; both are must-include (as two hints' failing rows would make them): both are sent.
+    expect(buildPairPriority(a, new Set([0, 2]), 12).slice(0, 2)).toEqual([0, 2]);
+    expect(buildPairPriority(a, new Set([0, 2]), 12)).toHaveLength(10);
+    // Not must-include: the repeat takes no slot.
+    expect(buildPairPriority(a, new Set(), 12)).not.toContain(2);
+    expect(buildPairPriority(a, new Set(), 12)).toHaveLength(9);
   });
 });
 
