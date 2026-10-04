@@ -340,11 +340,15 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
   lines.push(markdownTable(head, rows), '');
 
   lines.push('### Per learn', '');
+  lines.push(
+    '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user).',
+    '',
+  );
   const learns = aiLearns(records).sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model) || Number(a.masking) - Number(b.masking) || a.run - b.run || (a.mode ?? '').localeCompare(b.mode ?? ''));
   lines.push(
     markdownTable(
-      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out'],
-      learns.map((r) => [r.case, ...(tagged ? [r.mode ?? 'full'] : []), r.model, r.masking ? 'on' : 'off', r.run, r.llmCalls, r.loopRounds, r.loopRowsSent, r.loopEnd || '-', r.estInTokens, r.estCachedTokens, r.estCacheWriteTokens, r.estOutTokens, usd(r.estCostUsd), secondsOf(r.latencyMs), r.classification === 'verified' ? 'yes' : 'no', r.holdOut === 'n/a' ? '-' : r.holdOut]),
+      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out'],
+      learns.map((r) => [r.case, ...(tagged ? [r.mode ?? 'full'] : []), r.model, r.masking ? 'on' : 'off', r.run, r.llmCalls, r.loopRounds, r.loopRowsSent, r.loopEnd || '-', r.filledByCode || '-', r.ambiguities || '-', r.estInTokens, r.estCachedTokens, r.estCacheWriteTokens, r.estOutTokens, usd(r.estCostUsd), secondsOf(r.latencyMs), r.classification === 'verified' ? 'yes' : 'no', r.holdOut === 'n/a' ? '-' : r.holdOut]),
     ),
     '',
   );
@@ -478,6 +482,8 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'loopRounds',
   'loopRowsSent',
   'loopEnd',
+  'filledByCode',
+  'ambiguities',
   'formulaErrorCount',
   'firstCallFormulaErrors',
   'formulaFixedByRepair',

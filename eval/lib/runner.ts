@@ -3,7 +3,7 @@
 // `learn()` and `callRepair` = `repairFromBrowser` (one round of the learning loop, with
 // the rows the loop sent), called in-process (no HTTP), plus the hold-out check and
 // scoring. This is the one place that actually spends tokens.
-import { completionPlan, formatOf, learnFromExamples, type LearnFromExamplesResult } from '@formatai/engine';
+import { completionPlan, formatOf, learnFromExamples, type FillSummary, type LearnFromExamplesResult } from '@formatai/engine';
 import { learn, repairFromBrowser, type CompleteFn, type LearnOptions, type LearnOutcome, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
@@ -62,6 +62,11 @@ export interface RunRecord {
   loopRounds: number;
   loopRowsSent: number;
   loopEnd: string;
+  /** What code filled in the kept answer from every row of the example (`result.filled`, learning-loop proposal 7.1): kinds and counts,
+   * never a value - e.g. "lookup 47, cutoff 1, 1 check". '' when nothing was filled (or no AI answer). */
+  filledByCode: string;
+  /** What the example could not settle (`result.ambiguities`, for the ambiguity question): the kinds, e.g. "dayMonthOrder". '' when none. */
+  ambiguities: string;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
    * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
    * run's LLM calls produced, across the learn call and every repair/escalation call. */
@@ -307,6 +312,8 @@ async function toRunRecord(
     loopRounds: result.loop?.rounds ?? 0,
     loopRowsSent: result.loop?.rowsSent ?? 0,
     loopEnd: result.loop?.end ?? '',
+    filledByCode: filledLabel(result.filled),
+    ambiguities: (result.ambiguities ?? []).map((a) => a.kind).join(' '),
     ...formula,
     ...(tagMode
       ? {
@@ -347,9 +354,19 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     loopRounds: 0,
     loopRowsSent: 0,
     loopEnd: '',
+    filledByCode: '',
+    ambiguities: '',
     ...formulaStats([]),
     error,
   };
+}
+
+/** "lookup 47, cutoff 1, 1 check": what code filled, kinds and counts only ('' when nothing). */
+export function filledLabel(filled: FillSummary | undefined): string {
+  if (!filled) return '';
+  const parts = filled.filled.map((f) => `${f.kind} ${f.count}`);
+  if (filled.checks > 0) parts.push(`${filled.checks} check${filled.checks === 1 ? '' : 's'}`);
+  return parts.join(', ');
 }
 
 export interface RunMatrixOptions {

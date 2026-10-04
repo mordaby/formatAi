@@ -33,6 +33,8 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     loopRounds: 0,
     loopRowsSent: 0,
     loopEnd: '',
+    filledByCode: '',
+    ambiguities: '',
     formulaErrorCount: 0,
     firstCallFormulaErrors: 0,
     formulaFixedByRepair: false,
@@ -288,8 +290,18 @@ describe('token usage and cost (our own estimate)', () => {
   it('lists every AI learn with its calls, loop rounds, rows sent and how the loop ended, tokens, cost, latency, verification and hold-out', () => {
     const md = buildMarkdownReport([aiLearn({ case: 'orders-priority', holdOut: 'fail', classification: 'notVerified', loopRounds: 3, loopRowsSent: 24, loopEnd: 'roundCap' }), record({ case: 'free' })], '2025-01-01T00:00:00.000Z');
     expect(md).toContain('### Per learn');
-    expect(md).toContain('| orders-priority | haiku | off | 1 | 2 | 3 | 24 | roundCap | 3000 | 10000 | 10000 | 1500 | 0.0400 | 12.0 | no | fail |');
+    expect(md).toContain('| orders-priority | haiku | off | 1 | 2 | 3 | 24 | roundCap | - | - | 3000 | 10000 | 10000 | 1500 | 0.0400 | 12.0 | no | fail |');
     expect(md).not.toContain('| free | haiku | off | 1 |');
+  });
+
+  it('says per learn what code filled from every row and what the example could not settle (kinds and counts), and puts both in the CSV', () => {
+    const learn = aiLearn({ case: 'branch-lookup-50', filledByCode: 'lookup 47, cutoff 1, 1 check', ambiguities: 'dayMonthOrder' });
+    const md = buildMarkdownReport([learn], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| branch-lookup-50 | haiku | off | 1 | 2 | 1 | 8 | verified | lookup 47, cutoff 1, 1 check | dayMonthOrder | 3000 |');
+    const [head, row] = buildCsvReport([learn]).trim().split('\n');
+    const cols = head!.split(',');
+    expect(cols.slice(cols.indexOf('loopEnd') + 1, cols.indexOf('loopEnd') + 3)).toEqual(['filledByCode', 'ambiguities']);
+    expect(row).toContain('"lookup 47, cutoff 1, 1 check",dayMonthOrder');
   });
 
   it('shows n/a, never a guess, for a model with no price', () => {

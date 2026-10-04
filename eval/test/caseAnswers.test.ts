@@ -128,6 +128,19 @@ describe('the learning loop in the runner: the same rounds the browser makes, re
     expect(round).toContain('"expected":"Urgent","actual":"Normal"');
   });
 
+  it('a cut-off on the column itself is filled by code from every row: verified with no round, and the record says what code filled', async () => {
+    const c = load('orders-priority');
+    // the AI's cut-off is too high (the server's sample run says so, and its one repair answers the same): code settles it on every row
+    const gte = '{"op":"gte","args":[{"col":"amount"},{"const":5000}]}';
+    const wrong = wireOf(JSON.parse(JSON.stringify(c.referenceRules).replace(gte, gte.replace('5000', '6400'))));
+    const { complete, requests } = scripted([wrong, wrong]);
+    const records = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
+    expect(requests).toHaveLength(2); // the learn and its server repair; no browser round
+    expect(records[0]).toMatchObject({ loopRounds: 0, loopEnd: 'verified', verifiedFirstCall: true, filledByCode: 'cutoff 1, 1 check', ambiguities: '' });
+    // what was sent is the AI's own answer: the request carries no filled value (no cut-off check)
+    expect(JSON.stringify(requests)).not.toContain('cutoffRange');
+  });
+
   it('records rounds, rows sent and how the loop ended next to the token columns', async () => {
     const c = load('orders-priority');
     // the round's answer is the same: its server repair (the rows sent are still wrong) is the third call
