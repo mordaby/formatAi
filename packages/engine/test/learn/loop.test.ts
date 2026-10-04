@@ -1,6 +1,6 @@
 // The learning loop's driver (`learn/loop.ts`): which rows a round sends (grouped by what went wrong, biggest groups first, never a row
 // twice), and when the loop ends - done, no progress, the round cap, the row cap, the payload cap, nothing to send - keeping the best answer.
-import { payloadBytes, withRows, type LearnPayload, type RepairProblem } from '@formatai/shared';
+import { payloadBytes, withRows, type LearnPayload, type LearnResult, type RepairProblem } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { buildPayload, counterexampleSample } from '../../src/learn/payload';
 import { createMasker } from '../../src/learn/mask';
@@ -249,6 +249,67 @@ describe('verifyAgainstExample: the wrong rows and masked repair problems', () =
     expect(diff).toBeDefined();
     expect(JSON.stringify(v.repairProblems)).not.toMatch(/Dana Levi|Yossi Cohen|Noa Peretz/);
     expect(v.mismatches[0]!.expected).toBe('Dana Levi'); // the UI's copy stays real
+  });
+});
+
+// Prompt audit X1: a problem's `row.out` is always the example's own output row - nothing (`[]`) for a row the example dropped - and the
+// row the rules made where the example has none is `made`. (It used to be `row.out` in that one case, so the field meant two things.)
+describe('a row the rules make that the example does not have: row.out is the example\'s (nothing), the rules\' row is `made`', () => {
+  /** 30 orders, every 4th one "void" and dropped from the example output; rules that copy both columns and filter nothing keep them. */
+  function droppedPair(): { input: V[][]; output: V[][] } {
+    const input: V[][] = [['Ref', 'Name', 'Status']];
+    const output: V[][] = [['Ref', 'Name']];
+    for (let i = 0; i < 30; i++) {
+      const status = i % 4 === 3 ? 'void' : 'ok';
+      input.push([`R-${100 + i}`, `Name ${i}`, status]);
+      if (status === 'ok') output.push([`R-${100 + i}`, `Name ${i}`]);
+    }
+    return { input, output };
+  }
+  const keepAll: LearnResult = {
+    schemaVersion: 1,
+    input: {
+      sheet: { pick: 'first' },
+      headerRow: 'auto',
+      columns: [
+        { id: 'ref', header: 'Ref', type: 'text' },
+        { id: 'name', header: 'Name', type: 'text' },
+      ],
+    },
+    transform: { computed: [], valueMaps: [], sort: [] },
+    output: { sheetName: 'Sheet1', direction: 'ltr', language: 'en', titleRows: [], columns: [{ header: 'Ref', from: 'ref' }, { header: 'Name', from: 'name' }] },
+    validations: [],
+    unsupported: [],
+    assumptions: [],
+  };
+
+  it('verifyAgainstExample: a dropped row the rules keep', () => {
+    const { a } = analyzeWithPreflight(droppedPair());
+    const v = verifyAgainstExample(keepAll, a);
+    const extra = v.repairProblems.find((p) => p.kind === 'diff' && p.expected === null);
+    expect(extra).toEqual({ kind: 'diff', out: 0, row: { in: ['R-103', 'Name 3', 'void'], out: [] }, made: ['R-103', 'Name 3'], expected: null, actual: 'R-103' });
+  });
+
+  it('a loop round sends it the same way, every value masked (made included)', () => {
+    const pair = droppedPair();
+    const { a, pf } = analyzeWithPreflight(pair);
+    const masker = createMasker(new TextEncoder().encode('x1-test'));
+    const built = buildPayload(a, pf, { masker });
+    const ctx: LoopContext = { analysis: a, payload: built.payload, masker, caps: CAPS };
+    const v = verifyAgainstExample(keepAll, a, { wrongRows: true });
+    const r = loopStep(startLoop([...built.sampleRows.map((s) => s.in), ...built.droppedRows]), { rules: true, passes: false, wrong: wrongCount(v.wrongRows!, 0), wrongRows: v.wrongRows!, otherProblems: [] }, ctx);
+    if (r.step.kind !== 'next') throw new Error('expected a round');
+    const extras = r.step.problems.filter((p) => p.kind === 'diff' && p.expected === null);
+    expect(extras.length).toBeGreaterThan(0);
+    for (const p of extras) {
+      if (p.kind !== 'diff') continue;
+      expect(p.row?.out).toEqual([]);
+      expect(p.made).toHaveLength(2);
+      expect(p.made![0]).toBe(p.actual);
+      // the row's input and the made row hold the same (masked) reference: same word, same fake
+      expect(p.made![0]).toBe(p.row!.in[0]);
+      expect(String(p.made![1])).not.toMatch(/^Name \d+$/);
+    }
   });
 });
 

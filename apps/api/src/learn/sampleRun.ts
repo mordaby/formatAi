@@ -293,7 +293,8 @@ export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload):
       }
     }
     // Extra actual rows beyond what this sample expected (e.g. a filter/expand bug
-    // that produces too many rows for one input row).
+    // that produces too many rows for one input row). The row the rules made is `made`, like every row the example does not have
+    // (prompt audit X1); a loop round's row named here gets `row.out: []` (`rowsNamed`, learn.ts).
     for (let r = expectedRows.length; r < actualRows.length; r++) {
       const extra = actualRows[r]!;
       if (
@@ -302,6 +303,7 @@ export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload):
           out: 0,
           sample: i,
           ...(family ? { familyRow: r } : {}),
+          made: extra.cells.map(actualCellValue),
           expected: null,
           actual: actualCellValue(extra.cells[0]),
         })
@@ -312,7 +314,8 @@ export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload):
     }
   });
 
-  // Dropped rows must produce nothing at all.
+  // Dropped rows must produce nothing at all. `row.out` is the example's output for the row - nothing - and the row the rules made is
+  // `made` (prompt audit X1: `row.out` used to carry the made row here, the example's row everywhere else).
   const dropped = payload.dropped ?? [];
   dropped.forEach((droppedRow, j) => {
     if (stop) return;
@@ -323,7 +326,9 @@ export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload):
         !pushDiff(ctx, {
           kind: 'diff',
           out: 0,
-          row: { in: droppedRow, out: actual.cells.map(actualCellValue) },
+          row: { in: droppedRow, out: [] },
+          made: actual.cells.map(actualCellValue),
+          expected: null,
           actual: actualCellValue(actual.cells[0]),
         })
       ) {

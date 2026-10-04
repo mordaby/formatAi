@@ -221,13 +221,17 @@ function cellProblem(row: WrongRow, cell: WrongCell, ctx: LoopContext): RepairPr
   };
 }
 
-/** One `diff` problem for a row the rules make that the example does not have (the shape the full verification gives it). */
+/**
+ * One `diff` problem for a row the rules make that the example does not have (the shape the full verification gives it): the example's own
+ * output for it is nothing (`row.out: []`), and what the rules made is `made` - `row.out` always means the example's row (prompt audit X1).
+ */
 function extraProblem(row: WrongRow, made: readonly PayloadCell[], ctx: LoopContext): RepairProblem {
   const outProfile = ctx.analysis.output.profile;
   return {
     kind: 'diff',
     out: 0,
-    row: { in: sendableInput(row, ctx), out: made.map((v, i) => sendable(v, outProfile[i]?.type, ctx.masker)) },
+    row: { in: sendableInput(row, ctx), out: [] },
+    made: made.map((v, i) => sendable(v, outProfile[i]?.type, ctx.masker)),
     expected: null,
     actual: sendable(made[0] ?? null, outProfile[0]?.type, ctx.masker),
   };

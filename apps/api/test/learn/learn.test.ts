@@ -332,7 +332,8 @@ describe('repairFromBrowser(): one round of the learning loop', () => {
     fake.enqueue({ json: correctRulesWireJson() });
     const outcome = await repairFromBrowser(basicPayload(), wrongRoundingRules(), browserProblems, { tier: 'registered', env, complete: fakeCompleteFn(fake), rows: [{ in: ['VOID', 1], out: [] }] });
     expect(outcome.verified).toBe(false);
-    expect(outcome.problems).toContainEqual({ kind: 'diff', out: 0, expected: null, actual: 'VOID', row: { in: ['VOID', 1], out: [] } });
+    // (`row.out` is the example's output for it - nothing - and what the rules made is `made`: prompt audit X1)
+    expect(outcome.problems).toContainEqual({ kind: 'diff', out: 0, expected: null, actual: 'VOID', row: { in: ['VOID', 1], out: [] }, made: ['VOID', 2] });
   });
 
   it('sends the first payload as it was (its cached prefix still hits) and the browser\'s problems in the repair block', async () => {

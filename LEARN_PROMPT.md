@@ -285,7 +285,8 @@ The second content block of a repair call:
     { "kind": "reference", "message": "column id 'amt' does not exist" },
     { "kind": "diff", "out": 2, "sample": 1, "expected": "403.62", "actual": "403.61" },
     { "kind": "diff", "out": 3, "sample": 2, "familyRow": 1, "expected": "...", "actual": "..." },
-    { "kind": "diff", "out": 2, "row": { "in": ["..."], "out": ["..."] }, "actual": "..." },
+    { "kind": "diff", "out": 2, "row": { "in": ["..."], "out": ["..."] }, "expected": "...", "actual": "..." },
+    { "kind": "diff", "out": 0, "row": { "in": ["..."], "out": [] }, "made": ["..."], "expected": null, "actual": "..." },
     { "kind": "rowCount", "expected": 1790, "actual": 1843 },
     { "kind": "layout", "message": "expected 1 blank row after each group, found 0" },
     { "kind": "formatMismatch", "path": "output.columns[3].format", "message": "must equal the format" },
@@ -301,7 +302,7 @@ The second content block of a repair call:
 - `fixedMismatch` (completion mode only): an element of `complete.fixed` is missing or changed in the answer, something outside `complete.columns`/`complete.parts` was changed, or a listed column has neither a `from` nor an `unsupported` entry. `path` points into the answer.
 - `unsupportedDespiteEvidence`: the answer reports output column `out` as unsupported, but the app's own analysis found how it is built - the payload carries a hint for that column (a copy, template, composition, dependency, bands, value map, window, ...). The message names input columns and the kind of hint, never a value; the fix is the rule for that column. Raised by the API's checks (a server repair round) and by the browser's verification (the browser-triggered repair); a column with no hint is accepted as unsupported, with no problem.
 - `sample` refers to a sample in the payload. `familyRow` points to a row inside a family sample (0-based).
-- `row` carries a failing row from the browser's full verification (masked when masking is on). At most 10 `diff` problems are sent.
+- `row` carries a failing row of the example the model never saw - a row of a loop round, or a dropped row - masked like the samples when masking is on. `row.out` is ALWAYS the example's own output row for it: `[]` when the example has none (a row it dropped, or one row more than it made from that input row). A row the rules made that the example does not have (`expected: null`) carries that whole row in `made`. (Before learn-v8's code change, prompt audit X1, `row.out` held the made row in that one case and the example's row everywhere else; now every prompt version is sent the one meaning.) At most 10 `diff` problems are sent.
 - A `type`/`limit` problem's message may quote the offending formula text in parentheses ("in: ...") - read it, it's the exact sub-expression that's wrong.
 - Add this rule to the user content: "Fix only what the problems require. Keep everything else identical." The system prompt doesn't change, so the cache still hits.
 

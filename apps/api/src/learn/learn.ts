@@ -265,7 +265,8 @@ function repairContentBlock(previous: Attempt, problems: RepairProblem[]): Conte
 /**
  * The learning loop: a `diff` problem the sample run found on one of the browser's rows points at a sample index the model never saw (its
  * payload block is the first payload, so the cached prefix still hits). It is told the row itself instead, the way the browser tells it
- * (LEARN_PROMPT §4: `row`); a row the rules make where none is expected carries the input row and no output row.
+ * (LEARN_PROMPT §4: `row`). `row.out` is always the example's own output row - `[]` for a row the rules make where none is expected, whose
+ * made row the problem already carries in `made` (prompt audit X1: one meaning, as the browser sends it).
  */
 function rowsNamed(problems: RepairProblem[], payload: LearnPayload, rows: readonly Sample[]): RepairProblem[] {
   if (rows.length === 0) return problems;

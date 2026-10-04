@@ -159,6 +159,8 @@ describe('runOnSamples', () => {
 
     const problems = runOnSamples(rulesWithoutFilter, payload);
     expect(problems.some((p) => p.kind === 'diff' && 'row' in p && p.row?.in[0] === 'A2')).toBe(true);
+    // Prompt audit X1: `row.out` is the example's output for the row - nothing - and the row the rules made is `made`.
+    expect(problems).toContainEqual({ kind: 'diff', out: 0, row: { in: ['A2', 'Cancelled'], out: [] }, made: ['A2', 'Cancelled'], expected: null, actual: 'A2' });
 
     const rulesWithFilter: LearnResult = {
       ...rulesWithoutFilter,

@@ -40,7 +40,7 @@ export interface VerifyOptions {
    * own Excel row number, matching `Flag.rowNumber`'s convention) the user marked
    * "fixed by hand". Excluded from the count and never reported as mismatches. */
   exceptions?: number[];
-  /** SPEC 7.2/9.3: when given, every cell value carried in a `repairProblems` diff - its `row`, `expected` and `actual` (never the
+  /** SPEC 7.2/9.3: when given, every cell value carried in a `repairProblems` diff - its `row`, `made`, `expected` and `actual` (never the
    * UI-facing `mismatches`) - is masked with it, so a browser-triggered repair call never sends real data when masking is on. */
   masker?: Masker;
   /** The learning loop (`learn/loop.ts`): also list every row the rules got wrong (`VerifyResult.wrongRows`). Off by default: the
@@ -497,14 +497,16 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
       const actualRow = actualGroup[r];
 
       if (k === undefined) {
-        // The engine produced more rows for this input row than the example has.
+        // The engine produced more rows for this input row than the example has. (`row.out` is the example's row - there is none - and
+        // what the rules made is `made`: prompt audit X1.)
         const actualCells = actualRow!.cells.map(actualCellValue);
         wrong = wrongRowOf(inRow, wrong);
         wrong?.extra.push(actualCells);
         pushDiff({
           kind: 'diff',
           out: 0,
-          row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(actualCells, outProfile, masker) },
+          row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: [] },
+          made: maskCells(actualCells, outProfile, masker),
           expected: null,
           actual: maskOutputCell(actualCells[0] ?? null, 0, outProfile, masker),
         });
@@ -556,7 +558,8 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
       pushDiff({
         kind: 'diff',
         out: 0,
-        row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(actualCells, outProfile, masker) },
+        row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: [] },
+        made: maskCells(actualCells, outProfile, masker),
         expected: null,
         actual: maskOutputCell(actualCells[0] ?? null, 0, outProfile, masker),
       });

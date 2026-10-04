@@ -286,8 +286,17 @@ export type RepairProblem =
       sample?: number;
       /** Row inside a family sample, 0-based. */
       familyRow?: number;
-      /** A failing row from the browser's full verification (masked when masking is on). */
+      /**
+       * A failing row of the example the model never saw (the browser's full verification, a loop round's rows), masked when masking is on.
+       * `out` is ALWAYS the example's own output row for it - `[]` when the example has none (a row it dropped, or one more row than it
+       * made from that input row) - never what the rules made (X1 of the prompt audit: it used to be the rules' row in that case).
+       */
       row?: { in: PayloadCell[]; out: PayloadCell[] };
+      /**
+       * A row the rules made that the example does not have (`expected: null`): the whole row they made, masked like `row`. Absent for a
+       * wrong cell (`expected` and `actual` say it).
+       */
+      made?: PayloadCell[];
       expected?: PayloadCell;
       actual: PayloadCell;
     }
