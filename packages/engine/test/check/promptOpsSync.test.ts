@@ -12,8 +12,9 @@
 // the day the prompt documents it, the flag has to go (otherwise the API's LLM-answer check would keep
 // rejecting an op the model was told to use).
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT, learnPromptOf, PROMPT_VERSIONS } from '@formatai/shared';
 import { OP_SIGNATURES, WINDOW_SIGNATURES, type SigOp } from '../../src/check/signatures';
+import { parseFormula } from '../../src/formula/parseFormula';
 
 /** The "# Operations" section of LEARN_PROMPT §2 (learn-v6): from "# Operations" to the
  * "# Example" heading that follows it. Also documents functions/tables/rowFilters/
@@ -88,6 +89,26 @@ describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3,
   it('the six comparison symbols and four arithmetic symbols are all documented', () => {
     for (const symbol of ['+', '-', '*', '/', '=', '<>', '<', '>', '<=', '>=']) {
       expect(section, `expected infix symbol "${symbol}" in the prompt's Operations section`).toContain(symbol);
+    }
+  });
+
+  // The eval can send any version (`--prompt`): each must document every op too.
+  it('every prompt version the code can send documents every op', () => {
+    for (const version of PROMPT_VERSIONS) {
+      const own = extractOperationsSection(learnPromptOf(version).system);
+      expect(inPrompt.filter((op) => !mentions(own, op)), version).toEqual([]);
+    }
+  });
+
+  // The formulas the prompt shows as examples must be formulas the parser takes - an example that does not parse teaches an error. Read the
+  // way the API reads an AI answer's computed column (prompt ops only, across-row functions allowed).
+  it('every example formula in the Operations section parses', () => {
+    const line = section.split('\n').find((l) => l.startsWith('More examples: '));
+    expect(line).toBeDefined();
+    const examples = line!.slice('More examples: '.length).split(/ {3}/);
+    expect(examples.length).toBeGreaterThanOrEqual(5);
+    for (const text of [...examples, 'round(amount / groupSum(amount, by: dept) * 100, 1)', 'round(amount * 0.17, 2)']) {
+      expect(parseFormula(text, { promptOpsOnly: true, allowWindows: true }).ok, text).toBe(true);
     }
   });
 });

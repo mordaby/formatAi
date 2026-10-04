@@ -2,10 +2,10 @@
 // written for: learn-v8 added the optional `alternatives` (`learnResultWireJsonSchema({ alternatives })`); learn-v7 never saw it.
 import { promptVersion, type PromptVersion } from '../config/prompts';
 import { LEARN_SYSTEM_PROMPT_V7 } from './learnV7';
-import { LEARN_SYSTEM_PROMPT_V8 } from './learnV8';
+import { LEARN_SYSTEM_PROMPT_V8, LEARN_SYSTEM_PROMPT_V8_NO_E1 } from './learnV8';
 
 export { LEARN_SYSTEM_PROMPT_V7 } from './learnV7';
-export { LEARN_SYSTEM_PROMPT_V8 } from './learnV8';
+export { LEARN_SYSTEM_PROMPT_V8, LEARN_SYSTEM_PROMPT_V8_NO_E1 } from './learnV8';
 
 export interface LearnPrompt {
   version: PromptVersion;
@@ -18,6 +18,8 @@ export interface LearnPrompt {
 const PROMPTS: Record<PromptVersion, LearnPrompt> = {
   'learn-v7': { version: 'learn-v7', system: LEARN_SYSTEM_PROMPT_V7, alternatives: false },
   'learn-v8': { version: 'learn-v8', system: LEARN_SYSTEM_PROMPT_V8, alternatives: true },
+  // The eval's arm B: learn-v8 without its E1 line (`scripts/sync-prompt.ts`), same schema.
+  'learn-v8-noE1': { version: 'learn-v8-noE1', system: LEARN_SYSTEM_PROMPT_V8_NO_E1, alternatives: true },
 };
 
 /** The prompt of a version (default: the current one, `promptVersion`). */

@@ -5,13 +5,14 @@
 //
 //   pnpm eval --models <a>,<b> --masking on,off --runs 3 [--provider anthropic|openai|claude-cli|fake]
 //             [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]
-//             [--prompt learn-v7|learn-v8]
+//             [--prompt learn-v7|learn-v8|learn-v8-noE1]
 //
 // Defaults: provider from env (LLM_PROVIDER / .env, see apps/api/src/env.ts), models =
 // the provider's configured firstTry model, masking on and off, runs 1, mode full.
 // --mode complete runs the local partial result first (no LLM) and then the AI step on what is missing only, the local rules kept as
 // a fixed part (LEARN_PROMPT "Completing a partial rules file"); --mode both runs both and the report puts them side by side.
-// --prompt sends another prompt version than the current one (with the wire schema it was written for), to compare two on the same code.
+// --prompt sends another prompt version than the current one (with the wire schema it was written for), to compare two on the same code;
+// learn-v8-noE1 is learn-v8 without its E1 line (code completes the data parts from every row), the prompt audit's arm B.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
