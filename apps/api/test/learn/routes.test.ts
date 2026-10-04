@@ -111,7 +111,28 @@ describe('POST /api/learn', () => {
       rowCount: 0,
       layout: 0,
       unsupportedDespiteEvidence: 0,
+      // learn-v8: the answer's dropped alternatives (none here)
+      invalidAlternative: 0,
     });
+  });
+
+  it('learn-v8: sends the checked alternatives beside the rules, never in them, and never from the structure cache', async () => {
+    const fake: FakeLlmProvider = createFakeProvider();
+    const alternative = { outputColumn: 'Total', from: 'totalAlt', computed: [{ id: 'totalAlt', type: 'decimal', expr: 'amount + amount' }] };
+    fake.enqueue({ json: { ...(correctRulesWireJson() as object), alternatives: [alternative, { outputColumn: 'Nope', from: 'id', computed: [] }] } });
+    const store = createMemoryStore();
+    app = await buildServer({ env: devEnv(), db: null, logger: false, store, identify: asUser, complete: (req: CompleteRequest) => fake.complete(req) });
+    const send = () => app!.inject({ method: 'POST', url: '/api/learn', payload: JSON.stringify({ payload: basicPayload() }), headers: { 'content-type': 'application/json' } });
+
+    const body = (await send()).json();
+    expect(body.verified).toBe(true);
+    expect(body.rules).not.toHaveProperty('alternatives');
+    expect(body.alternatives).toEqual([{ outputColumn: 'Total', from: 'totalAlt', computed: [{ id: 'totalAlt', type: 'decimal', expr: { op: 'add', args: [{ col: 'amount' }, { col: 'amount' }] } }] }]);
+    expect(store.ledger[0]!.problemCounts.invalidAlternative).toBe(1);
+    // The same structure again: a cache hit carries the rules only.
+    const hit = (await send()).json();
+    expect(hit.cached).toBe(true);
+    expect(hit).not.toHaveProperty('alternatives');
   });
 });
 

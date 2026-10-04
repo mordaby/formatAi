@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V7, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
@@ -42,10 +42,10 @@ async function withServerRepairRounds<T>(rounds: number, fn: () => Promise<T>): 
   }
 }
 
-describe('learn() with the fake provider: the learn-v7 prompt, the wire schema and the notes round trip', () => {
+describe('learn() with the fake provider: the current prompt (learn-v8), the wire schema and the notes round trip', () => {
   const request = { name: 'lookupStorageSite', purpose: 'Finds the storage site of an item from a table kept elsewhere.', args: [{ name: 'item', type: 'text' as const }], returns: 'text' as const };
 
-  it('sends the learn-v7 prompt and a wire schema that carries functionRequest and explanation, and returns both on the answer', async () => {
+  it('sends the current prompt and a wire schema that carries functionRequest and explanation, and returns both on the answer', async () => {
     const fake = createFakeProvider();
     const noted = { ...externalColumnRules(), unsupported: [{ outputColumn: 'Warehouse', reasonCode: 'externalData' as const, functionRequest: request, explanation: 'Looks like the storage site of the item.' }] };
     const { toWire } = await import('@formatai/shared');
@@ -57,12 +57,12 @@ describe('learn() with the fake provider: the learn-v7 prompt, the wire schema a
     expect(outcome.verified).toBe(true);
     expect(outcome.rules?.unsupported).toEqual(noted.unsupported);
     const sent = fake.calls[0]!;
-    expect(sent.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(sent.system).toBe(LEARN_SYSTEM_PROMPT);
     expect(sent.system).toContain('functionRequest');
     expect(sent.system).toContain('runningSum(x)');
     const unsupportedItem = (sent.schema as { properties: { unsupported: { items: { properties: Record<string, unknown> } } } }).properties.unsupported.items;
     expect(Object.keys(unsupportedItem.properties).sort()).toEqual(['explanation', 'functionRequest', 'outputColumn', 'reasonCode']);
-    expect(outcome.calls[0]).toMatchObject({ promptVersion: 'learn-v7' });
+    expect(outcome.calls[0]).toMatchObject({ promptVersion: 'learn-v8' });
     // the ledger record is counts only: nothing of the notes
     expect(JSON.stringify(outcome.calls)).not.toMatch(/storage site|lookupStorageSite|explanation/);
   });
@@ -191,8 +191,8 @@ describe('learn()', () => {
 
     // Every call uses the identical, unchanging system prompt (SPEC 9.1) - no
     // conversation history is ever built up.
-    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
-    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT);
+    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT);
 
     // The learn call: exactly one content block, the cached payload.
     expect(learnCall!.content).toHaveLength(1);

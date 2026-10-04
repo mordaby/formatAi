@@ -12,7 +12,7 @@
 // the day the prompt documents it, the flag has to go (otherwise the API's LLM-answer check would keep
 // rejecting an op the model was told to use).
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V7 } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT } from '@formatai/shared';
 import { OP_SIGNATURES, WINDOW_SIGNATURES, type SigOp } from '../../src/check/signatures';
 
 /** The "# Operations" section of LEARN_PROMPT §2 (learn-v6): from "# Operations" to the
@@ -36,7 +36,7 @@ function mentions(section: string, op: SigOp): boolean {
 }
 
 describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3, learn-v6 formulas)', () => {
-  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT_V7);
+  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT);
   const ops = Object.keys(OP_SIGNATURES) as SigOp[];
   const inPrompt = ops.filter((op) => OP_SIGNATURES[op].inPrompt !== false);
   const notInPrompt = ops.filter((op) => OP_SIGNATURES[op].inPrompt === false);
@@ -75,14 +75,14 @@ describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3,
 
   it('the prompt documents the window arguments (named by:/order:/ties:, column-only) and the window hint', () => {
     for (const text of ['by:', 'order:', 'ties:', 'FILE ORDER', 'rel "window"', 'plain column ids']) {
-      expect(LEARN_SYSTEM_PROMPT_V7, text).toContain(text);
+      expect(LEARN_SYSTEM_PROMPT, text).toContain(text);
     }
   });
 
   it('the prompt documents the optional functionRequest and explanation of an unsupported entry, with the privacy wording', () => {
-    expect(LEARN_SYSTEM_PROMPT_V7).toContain('functionRequest');
-    expect(LEARN_SYSTEM_PROMPT_V7).toContain('explanation');
-    expect(LEARN_SYSTEM_PROMPT_V7).toMatch(/no examples and no values from the data of any kind/);
+    expect(LEARN_SYSTEM_PROMPT).toContain('functionRequest');
+    expect(LEARN_SYSTEM_PROMPT).toContain('explanation');
+    expect(LEARN_SYSTEM_PROMPT).toMatch(/no examples and no values from the data of any kind/);
   });
 
   it('the six comparison symbols and four arithmetic symbols are all documented', () => {
