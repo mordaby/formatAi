@@ -365,6 +365,13 @@ export function describeRules(rules: LearnResult | Rules, opts: DescribeOptions)
     const values = book.or(input.stopAt.values.map((v): Part[] => [val(quoted(v))]));
     rows.push(draft('input:stopAt', t('input.stopAt', { values }), { kind: 'input' }));
   }
+  // What a cell's exact text is read as (SPEC 8.4a): one line per text, before the filters because it is applied before them.
+  input.columns.forEach((c, i) => {
+    for (const [from, to] of Object.entries(c.readAs ?? {})) {
+      const args = { col: namePart(ctx, c.header), from: val(quoted(from)), to: val(quoted(to)) };
+      rows.push(draft(`readAs:${c.id}:${from}`, t(to === '' ? 'input.readAs.empty' : 'input.readAs.value', args), { kind: 'readAs', index: i, name: from }));
+    }
+  });
   (input.rowFilters ?? []).forEach((f, i) => {
     const d = draft(`filter:${i}`, t('filter.keep', { cond: filterCondition(f, ctx) }), { kind: 'filter', index: i });
     filterLines.push(d);
@@ -581,7 +588,7 @@ export function describeRules(rules: LearnResult | Rules, opts: DescribeOptions)
       for (const d of targets) d.reasons.push(plain(key));
     };
     if (areas.has('rows')) {
-      flag(rows.filter((d) => d.target.kind !== 'input' || d.id === 'input:stopAt'), 'reason.rowsDiffer');
+      flag(rows.filter((d) => (d.target.kind !== 'input' && d.target.kind !== 'readAs') || d.id === 'input:stopAt'), 'reason.rowsDiffer');
     }
     if (areas.has('title')) flag(titleLines, 'reason.layoutDiffers');
     if (areas.has('summary')) flag(summaryLines, 'reason.layoutDiffers');

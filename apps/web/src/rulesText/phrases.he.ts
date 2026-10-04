@@ -24,6 +24,8 @@ export const he: Record<PhraseKey, string> = {
   'input.sheetIndex': 'קריאה מגיליון מספר {n}',
   'input.headerRow': 'הכותרת נמצאת בשורה {n}',
   'input.stopAt': 'עצירת הקריאה בשורה הראשונה שמתחילה ב-{values}',
+  'input.readAs.empty': 'בעמודה {col}, {from} נקרא כריק',
+  'input.readAs.value': 'בעמודה {col}, {from} נקרא כ-{to}',
 
   'filter.keep': 'שמירת שורות שבהן {cond}',
   'cond.eq': '{a} שווה ל-{b}',

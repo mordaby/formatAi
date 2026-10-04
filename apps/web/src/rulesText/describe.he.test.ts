@@ -150,6 +150,13 @@ describe('rows', () => {
     const model = he(rules({ transform: { dedupe: { keys: ['c_order'], keep: 'last', action: 'remove' } } }));
     expect(line(model, 'dedupe')).toBe('שורות עם אותו ערך בעמודה מספר הזמנה: שמירת האחרונה והסרת הקודמות');
   });
+
+  it('says what a column reads as another value (readAs)', () => {
+    const columns = INPUT_COLUMNS.map((c) => (c.id === 'c_amount' ? { ...c, readAs: { 'N/A': '', '-': '0' } } : c));
+    const model = he(rules({ input: { columns } }));
+    expect(line(model, 'readAs:c_amount:N/A')).toBe("בעמודה סכום, 'N/A' נקרא כריק");
+    expect(line(model, 'readAs:c_amount:-')).toBe("בעמודה סכום, '-' נקרא כ-'0'");
+  });
 });
 
 describe('layout', () => {

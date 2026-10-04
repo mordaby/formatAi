@@ -30,6 +30,7 @@ export type Part =
 
 export type TargetKind =
   | 'input' // sheet / header row / stop row (`header` is unused)
+  | 'readAs' // one text an input column reads as another value (SPEC 8.4a): `index` into input.columns, `name` = the exact text
   | 'filter' // index into input.rowFilters
   | 'dedupe'
   | 'expand'

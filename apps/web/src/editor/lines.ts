@@ -2,7 +2,7 @@
 // mean in terms of them:
 //
 // - `lineIdsOf(rules)` lists every line id in map order. The ids are the contract with the rules map
-//   (`col:<header>`, `filter:<i>`, `dedupe`, `expand`, `sort`, `group`, `summary:end:<i>`,
+//   (`col:<header>`, `readAs:<input id>:<text>`, `filter:<i>`, `dedupe`, `expand`, `sort`, `group`, `summary:end:<i>`,
 //   `summary:group:<i>`, `title:<i>`, `check:<i>`, `fn:<name>`, `table:<name>`).
 // - `editedLines(baseline, current)` compares what each line says with what it said when the editor
 //   opened. List items are matched by content, so deleting filter 1 of 3 doesn't make filter 2 look edited.
@@ -15,6 +15,8 @@ import type { EditableRules, LineId } from './types';
 
 export const lineIds = {
   col: (header: string): LineId => `col:${header}`,
+  /** One text an input column reads as another value (SPEC 8.4a): the input column's id, the text exactly as written. */
+  readAs: (columnId: string, from: string): LineId => `readAs:${columnId}:${from}`,
   filter: (i: number): LineId => `filter:${i}`,
   dedupe: 'dedupe' as LineId,
   expand: 'expand' as LineId,
@@ -63,6 +65,9 @@ function collect(rules: EditableRules): Lines {
   };
 
   rules.output.columns.forEach((c) => byId.set(lineIds.col(c.header), columnContent(rules, c)));
+  for (const c of rules.input.columns) {
+    for (const [from, to] of Object.entries(c.readAs ?? {})) byId.set(lineIds.readAs(c.id, from), json(to));
+  }
   (rules.input.rowFilters ?? []).forEach((f, i) => list('filter', lineIds.filter(i), f));
   if (rules.transform.dedupe) byId.set(lineIds.dedupe, json(rules.transform.dedupe));
   if (rules.transform.expand) byId.set(lineIds.expand, json(rules.transform.expand));
