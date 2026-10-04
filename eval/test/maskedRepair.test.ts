@@ -51,9 +51,7 @@ function realWords(a: PairAnalysis): Set<string> {
  * layout problems quote.
  */
 function wrongAnswer(rules: Rules): LearnResult {
-  const r = JSON.parse(JSON.stringify(rules)) as Rules & { name?: unknown; meta?: unknown };
-  delete r.name;
-  delete r.meta;
+  const { name: _name, meta: _meta, ...r } = JSON.parse(JSON.stringify(rules)) as Rules;
   const text = r.input.columns.filter((c) => c.type === 'text' || c.type === 'idLike');
   // (text columns first: their values are words; ID-like ones after)
   const typeOf = (from: string | null): string | undefined => text.find((c) => c.id === from)?.type;
