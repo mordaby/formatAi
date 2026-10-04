@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { E1_LINE_START, extractLearnPrompt, withoutE1 } from '../scripts/sync-prompt';
-import { learnPromptOf, LEARN_SYSTEM_PROMPT } from '../src/prompts/index';
+import { learnPromptOf, LEARN_SYSTEM_PROMPT, REPAIR_INSTRUCTION, REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V7, REPAIR_INSTRUCTION_V8 } from '../src/prompts/index';
 import { LEARN_SYSTEM_PROMPT_V7 } from '../src/prompts/learnV7';
 import { LEARN_SYSTEM_PROMPT_V8, LEARN_SYSTEM_PROMPT_V8_NO_E1 } from '../src/prompts/learnV8';
 import { PROMPT_VERSIONS, promptVersion } from '../src/config/prompts';
@@ -108,9 +108,27 @@ describe('learn-v8 is the audited prompt (docs/proposals/prompt-audit-learn-v7.m
 });
 
 describe('learn-v7 stays frozen (for the eval comparison, --prompt learn-v7)', () => {
-  it('prompts/learn-v7.txt and the LEARN_SYSTEM_PROMPT_V7 constant agree, and it is sent without alternatives', () => {
+  it('prompts/learn-v7.txt and the LEARN_SYSTEM_PROMPT_V7 constant agree, and it is sent without alternatives and with its own repair instruction', () => {
     expect(LEARN_SYSTEM_PROMPT_V7).toBe(read('learn-v7.txt'));
-    expect(learnPromptOf('learn-v7')).toEqual({ version: 'learn-v7', system: LEARN_SYSTEM_PROMPT_V7, alternatives: false });
+    expect(learnPromptOf('learn-v7')).toEqual({ version: 'learn-v7', system: LEARN_SYSTEM_PROMPT_V7, alternatives: false, repair: REPAIR_INSTRUCTION_V7 });
     expect(LEARN_SYSTEM_PROMPT_V7).not.toContain('alternatives');
+    expect(REPAIR_INSTRUCTION_V7).toBe('Fix only what the problems require. Keep everything else identical.');
+  });
+});
+
+describe('the repair instruction, per version (LEARN_PROMPT §4; prompt audit F11)', () => {
+  it('learn-v8 sends the audit\'s instruction plus its E1 sentence; learn-v8-noE1 the instruction alone; the current one is learn-v8\'s', () => {
+    expect(learnPromptOf('learn-v8').repair).toBe(`${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}`);
+    expect(learnPromptOf('learn-v8-noE1').repair).toBe(REPAIR_INSTRUCTION_V8);
+    expect(REPAIR_INSTRUCTION).toBe(learnPromptOf().repair);
+  });
+
+  it('says fix only what the problems require, never a condition on one row\'s own values, and what a row in a problem holds (X1)', () => {
+    expect(REPAIR_INSTRUCTION_V8.startsWith('Fix only what the problems require; keep everything else identical.')).toBe(true);
+    expect(REPAIR_INSTRUCTION_V8).toContain("change the rule so that it fits that row and every sample, never add a condition on one row's own values.");
+    // `out` is always the example's own row; `made` is the rules' row the example does not have
+    expect(REPAIR_INSTRUCTION_V8).toContain('"out" is its output in the example, [] when it has none');
+    expect(REPAIR_INSTRUCTION_V8).toContain('"made" is a row your rules made that the example does not have');
+    expect(REPAIR_INSTRUCTION_E1).toContain('a wrong row means the logic is wrong, not that an entry is missing');
   });
 });

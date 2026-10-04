@@ -9,7 +9,6 @@ import {
   learnPromptOf,
   learnResultWireJsonSchema,
   limits,
-  REPAIR_INSTRUCTION,
   toWire,
   withRows,
   type LearnAlternative,
@@ -241,8 +240,9 @@ async function callAndCheck(
 /** Builds the repair call's second content block (LEARN_PROMPT §4): `previousRules`
  * in WIRE form (the same notation the model itself writes), plus the problems found,
  * plus the fix-only instruction appended to the same block so the system prompt -
- * and its cache breakpoint - never changes. */
-function repairContentBlock(previous: Attempt, problems: RepairProblem[]): ContentBlock {
+ * and its cache breakpoint - never changes. The instruction is the prompt version's own
+ * (`LearnPrompt.repair`: learn-v8's says what a row in a problem is, learn-v7 keeps its own). */
+function repairContentBlock(previous: Attempt, problems: RepairProblem[], prompt: LearnPrompt): ContentBlock {
   const repairBlock: RepairBlock<unknown> = {
     mode: 'repair',
     // `previous.rules` is null only when layer 0/1 (formula text / structure) itself
@@ -259,7 +259,7 @@ function repairContentBlock(previous: Attempt, problems: RepairProblem[]): Conte
     previousRules: previous.rules ? toWire(formulaRulesToWire(previous.rules) as unknown as LearnResult) : previous.raw,
     problems,
   };
-  return { text: `${JSON.stringify(repairBlock)}\n${REPAIR_INSTRUCTION}` };
+  return { text: `${JSON.stringify(repairBlock)}\n${prompt.repair}` };
 }
 
 /**
@@ -316,7 +316,7 @@ async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt>
       ctx.env,
       'repair',
       ctx.model,
-      [ctx.block, repairContentBlock(current, current.problems)],
+      [ctx.block, repairContentBlock(current, current.problems, ctx.prompt)],
       ctx.payload,
       ctx.tier,
       ctx.prefixCache,
@@ -415,7 +415,7 @@ export async function repairFromBrowser(
   // DECISION: this call always comes after the learn's own first call on the same model, so the cached prefix is already there.
   const ctx: CallContext = { completeFn, env, model, block, payload, tier: opts.tier, prefixCache: new Set([model]), rows: opts.rows ?? [], prompt, calls: [], attempts: [], opts };
 
-  const first = await callAndCheck(completeFn, env, 'repair', model, [block, repairContentBlock(previous, problems)], payload, opts.tier, ctx.prefixCache, prompt, ctx.rows);
+  const first = await callAndCheck(completeFn, env, 'repair', model, [block, repairContentBlock(previous, problems, prompt)], payload, opts.tier, ctx.prefixCache, prompt, ctx.rows);
   ctx.calls.push(first.record);
   ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);

@@ -322,8 +322,8 @@ export interface RepairBlock<Rules = unknown> {
   problems: RepairProblem[];
 }
 
-/** Appended to the repair user content (LEARN_PROMPT §4). */
-export const REPAIR_INSTRUCTION = 'Fix only what the problems require. Keep everything else identical.';
+// The fix-only instruction appended to the repair user content (LEARN_PROMPT §4) is prompt text, versioned with the system prompt:
+// `REPAIR_INSTRUCTION` / `learnPromptOf(version).repair` (`prompts/`).
 
 // ---------- The learning loop (SPEC 9.3, docs/proposals/learning-loop.md 3.2) ----------
 //

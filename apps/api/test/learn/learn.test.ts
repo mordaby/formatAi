@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT, learnPromptOf, limits, models, REPAIR_INSTRUCTION, REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V8 } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
@@ -205,6 +205,23 @@ describe('learn()', () => {
     expect(repairCall!.content[1]!.cache).toBeUndefined();
     expect(repairCall!.content[1]!.text).toContain('"mode":"repair"');
     expect(repairCall!.content[1]!.text.endsWith(REPAIR_INSTRUCTION)).toBe(true);
+  });
+
+  // Prompt audit F11: each version sends its own repair instruction, so `--prompt learn-v7` repairs exactly as learn-v7 did.
+  it('appends the repair instruction of the prompt version sent: learn-v8 (with its E1 sentence), learn-v8-noE1, learn-v7', async () => {
+    const sent: Record<string, string> = {};
+    for (const version of ['learn-v8', 'learn-v8-noE1', 'learn-v7'] as const) {
+      const fake = createFakeProvider();
+      fake.enqueue({ json: schemaBrokenRulesJson() });
+      fake.enqueue({ json: correctRulesWireJson() });
+      const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake), prompt: version });
+      expect(outcome.calls.map((c) => [c.purpose, c.promptVersion])).toEqual([['learn', version], ['repair', version]]);
+      sent[version] = fake.calls[1]!.content[1]!.text;
+      expect(sent[version]!.endsWith(`\n${learnPromptOf(version).repair}`)).toBe(true);
+    }
+    expect(sent['learn-v8']!.endsWith(`${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}`)).toBe(true);
+    expect(sent['learn-v8-noE1']!.endsWith(`\n${REPAIR_INSTRUCTION_V8}`)).toBe(true);
+    expect(sent['learn-v7']!.endsWith('\nFix only what the problems require. Keep everything else identical.')).toBe(true);
   });
 });
 
