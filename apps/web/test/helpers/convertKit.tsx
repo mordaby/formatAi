@@ -3,7 +3,7 @@
 // The API's GET /api/signatures gives ONE ENTRY PER SOURCE with the conversions (formats) it feeds (SPEC 8.15): `entry` builds a
 // source with one conversion from the per-conversion parameters, `sourceEntry` a source with several.
 import type { ConversionMatch } from '@formatai/engine';
-import { tiers, type ConversionDetail, type ConversionStatus, type MeUser, type Rules, type SignatureColumn, type SignatureEntry, type SourceConversionRef } from '@formatai/shared';
+import { tiers, type ConversionDetail, type ConversionStatus, type MeUser, type Rules, type SignatureColumn, type SignatureEntry, type SourceConversionRef, type UpdateConversionRequest, type UpdateConversionResponse } from '@formatai/shared';
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -137,11 +137,23 @@ export function fakeConvertApi(opts: { user?: MeUser | null; entries?: Signature
     conversion: vi.fn(async (id: string) => {
       const source = entries.find((e) => e.conversions.some((c) => c.conversionId === id));
       const conv = source?.conversions.find((c) => c.conversionId === id);
-      return detail({ id, sourceName: source?.name ?? 'Supplier A', formatId: conv?.formatId ?? 'F1', ...(source ? { sourceId: source.sourceId } : {}) }, opts.rulesById?.[id] ?? opts.rules ?? RULES);
+      return detail({ id, sourceName: source?.name ?? 'Supplier A', formatId: conv?.formatId ?? 'F1', sourceFormats: source?.conversions.length ?? 1, ...(source ? { sourceId: source.sourceId } : {}) }, opts.rulesById?.[id] ?? opts.rules ?? RULES);
     }),
     recordRun: vi.fn(async () => undefined),
     addAlias: vi.fn(async () => undefined),
     ignoreHeaders: vi.fn(async () => undefined),
+    // An editor-style save: the next version, and - when the source feeds more formats - the change reached the others (as the server says).
+    saveRules: vi.fn(async (id: string, body: UpdateConversionRequest): Promise<UpdateConversionResponse> => {
+      const source = entries.find((e) => e.conversions.some((c) => c.conversionId === id));
+      const others = (source?.conversions.length ?? 1) - 1;
+      return {
+        conversion: detail({ id, version: (body.baseVersion ?? 1) + 1 }, (body.rules as Rules | undefined) ?? RULES),
+        formatChanged: false,
+        affectedSources: 0,
+        needsReview: [],
+        ...(source ? { sourceChanged: true, affectedConversions: others } : {}),
+      };
+    }),
   };
 }
 

@@ -2,9 +2,10 @@
 // formats it feeds), a conversion's rules, a confirmed column rename (an alias on the SOURCE), and the counts of a finished
 // run. (Who is signed in is the app's `useMe()`.)
 //
-// SPEC 2/15: files never leave the browser. The only bodies sent here are `{ rows, flagged }` (counts) and
-// `{ header, alias }` (a column name the user confirmed). There is no method that takes a file, a value or a file name.
-import type { AddAliasRequest, ConversionDetail, IgnoreHeadersRequest, RecordRunRequest, SignatureEntry, SignaturesResponse } from '@formatai/shared';
+// SPEC 2/15: files never leave the browser. The bodies sent here are `{ rows, flagged }` (counts), `{ header, alias }` (a column name the
+// user confirmed), and - only when the user says "Do this every time?" in the row review (SPEC 5 C) - a conversion's rules saved as a new
+// version, carrying the one text of the file the user chose to keep and what they typed for it. There is no method that takes a file or a file name.
+import { stripAiNotes, type AddAliasRequest, type ConversionDetail, type IgnoreHeadersRequest, type RecordRunRequest, type SignatureEntry, type SignaturesResponse, type UpdateConversionRequest, type UpdateConversionResponse } from '@formatai/shared';
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import { createHttp, type CreateHttpOptions } from './http';
 
@@ -25,6 +26,12 @@ export interface ConvertApi {
    * the notice does not come back every month; header names only.
    */
   ignoreHeaders(sourceId: string, headers: readonly string[]): Promise<void>;
+  /**
+   * PATCH /api/conversions/:id with `rules`: the conversion's rules saved as a NEW VERSION through the same route the rules editor saves with
+   * (SPEC 8.11 "Saving", 8.15: an edit of the input side is an edit of the SOURCE, written to every format it feeds). Used by the row review's
+   * "Do this every time?" (SPEC 5 C): the rules are the ones just read from the server plus the `readAs` the user chose, nothing else.
+   */
+  saveRules(conversionId: string, body: UpdateConversionRequest): Promise<UpdateConversionResponse>;
 }
 
 export type CreateConvertApiOptions = CreateHttpOptions;
@@ -49,6 +56,17 @@ export function createConvertApi(options: CreateConvertApiOptions = {}): Convert
       // Built here, field by field: the only thing sent is a list of column names.
       const body: IgnoreHeadersRequest = { headers: headers.map(String) };
       await request('POST', `/api/sources/${encodeURIComponent(sourceId)}/ignored-headers`, body);
+    },
+    // Built here, field by field. The rules carry the user's own words (what they typed for a text of the file), exactly as an editor save does.
+    saveRules: (conversionId, req) => {
+      const body: UpdateConversionRequest = {
+        ...(req.rules ? { rules: stripAiNotes(req.rules) } : {}),
+        ...(req.status ? { status: req.status } : {}),
+        ...(req.acceptedDifferences !== undefined ? { acceptedDifferences: req.acceptedDifferences } : {}),
+        ...(req.exampleExceptions ? { exampleExceptions: req.exampleExceptions } : {}),
+        ...(req.baseVersion !== undefined ? { baseVersion: req.baseVersion } : {}),
+      };
+      return request<UpdateConversionResponse>('PATCH', `/api/conversions/${encodeURIComponent(conversionId)}`, body);
     },
   };
 }

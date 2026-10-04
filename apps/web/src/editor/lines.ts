@@ -202,7 +202,7 @@ function inputValidationKeys(rules: EditableRules): string[] {
 
 /**
  * Whether `after` changes the INPUT side of `before` - what SPEC 8.15 calls editing the source: the sheet pick, header row, stop rule
- * or input checks differ, or a column it declares has another header, aliases, type, padding or date formats - or is a column
+ * or input checks differ, or a column it declares has another header, aliases, type, padding, date formats or readAs (SPEC 8.4a) - or is a column
  * `before` did not declare. The mirror (for the main thread, which can't load the engine) of what the server's source lock treats
  * as a source edit.
  *
@@ -217,7 +217,7 @@ export function inputSideChanged(before: EditableRules, after: EditableRules): b
 
   const was = new Map(before.input.columns.map((c) => [c.id, c] as const));
   const shape = (c: EditableRules['input']['columns'][number]): string =>
-    stable({ header: c.header, aliases: sortedStrings(c.aliases), type: c.type, padLeft: c.padLeft, inputFormats: c.inputFormats });
+    stable({ header: c.header, aliases: sortedStrings(c.aliases), type: c.type, padLeft: c.padLeft, inputFormats: c.inputFormats, readAs: c.readAs });
   return after.input.columns.some((c) => {
     const old = was.get(c.id);
     return old === undefined || shape(old) !== shape(c);

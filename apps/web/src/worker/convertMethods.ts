@@ -106,7 +106,13 @@ function inputsOfRows(rules: LearnResult | Rules, table: InputTable, rowNumbers:
     cols.forEach((c, ci) => {
       const at = src[ci] ?? -1;
       if (at < 0) return; // an optional column the file doesn't have: nothing to show
-      cells.push({ columnId: c.id, header: c.header, value: cellValue(raw[at], c.inputFormats?.[0], table.date1904 === true) });
+      const cell = raw[at];
+      cells.push({
+        columnId: c.id,
+        header: c.header,
+        value: cellValue(cell, c.inputFormats?.[0], table.date1904 === true),
+        ...(typeof cell?.v === 'string' && cell.v !== '' ? { isText: true as const } : {}),
+      });
     });
     out[rowNumber] = cells;
   }

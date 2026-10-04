@@ -133,10 +133,10 @@ The AI decides the structure from the rows it sees; code fills every data parame
 Code fills only these well-defined shapes, never "any constant"; the check on every row still decides. Whether the AI needs one prompt sentence to write a lookup (rather than an if-chain or "external data") is decided by the eval, with and without it (learn-v8 only if it earns its place).
 
 ### 7.2 A: the ambiguity question (MVP)
-Where the free engine finds that a value is a constant AND derivable from the input (v12 item 10), or more than one relation fits every row, the result screen asks once, naming both readings in the user's terms. The answer is the rule; no AI call.
+Where the free engine finds that a value is a constant AND derivable from the input (v12 item 10), or more than one relation fits every row, the result screen asks once, naming both readings in the user's terms. The answer is the rule; no AI call. *Built (SPEC 21 v12 item 11): the readings come back as rule fragments; the data reading is built with a deletable check until the user answers. A date column that mixes formats has no reading code can write, so such a column still goes to the AI step (7.1 item 5 is where it belongs).*
 
 ### 7.3 C: show the rows, ask the user (MVP)
-3.5 as written, without "keep these rows as they are" for now (open). Plus, on the Run screen's row review: after the user fixes a value by hand ("N/A" -> empty), "Do this every time?" turns it into a rule of the format (a new version, visible and undoable in the editor).
+3.5 as written, without "keep these rows as they are" for now (open). *The Result-screen part is built (SPEC 21 v12 item 12).* Plus, on the Run screen's row review: after the user fixes a value by hand ("N/A" -> empty), "Do this every time?" turns it into a rule of the format (a new version, visible and undoable in the editor).
 
 ### 7.4 After the MVP: the AI asks code for rows
 A small, whitelisted query the AI can send ("rows where Amount is between 5,000 and 5,500", "rows where Status is empty"), answered by code with up to a few masked rows, in the same learn. Useful where a fitted range or a lookup isn't enough; not needed where code can compute the answer itself (a cut-off's range) or where no such row exists (then the user is asked). Its own design (query language, caps, privacy, cost) comes after the MVP.

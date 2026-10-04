@@ -2,7 +2,7 @@
 // insurer's report, a master file that is updated all the time but keeps its structure. Sources belong to the company
 // like formats do, and are named by the user. A conversion is a link between a source and a format.
 //
-// STRUCTURE ONLY (SPEC 8.15): headers, aliases, types, shapes (`padLeft`, `inputFormats`), which columns are required,
+// STRUCTURE ONLY (SPEC 8.15): headers, aliases, types, shapes (`padLeft`, `inputFormats`, `readAs`), which columns are required,
 // how the file is read (sheet, header row, stop rule) and the input checks. Never a value, a min/max or a sample
 // read from the data cells - there is no field here that could hold one. (An input check such as `range` carries the
 // bounds its author wrote into the rule, exactly as it does in the conversion's own rules file; they are part of the
@@ -16,6 +16,7 @@ import {
   ColumnTypeSchema,
   HeaderRowSchema,
   InputSheetSelectorSchema,
+  ReadAsSchema,
   StopAtSchema,
   ValidationSchema,
   type ColumnType,
@@ -38,6 +39,12 @@ export interface SourceColumn {
   padLeft?: number;
   /** `input.columns[].inputFormats` (date formats the column is read with). DECISION: part of the source lock. */
   inputFormats?: string[];
+  /**
+   * `input.columns[].readAs` (SPEC 8.4a, 8.15): a cell's exact text -> the text the column reads it as. DECISION: part of the source lock, like
+   * `inputFormats` - it is how the file is read, and a conversion that read "N/A" differently would read another file. These are the rule's own
+   * parameters, typed by the user on the Run screen (like an input check's bounds), not values code read from the data cells.
+   */
+  readAs?: Record<string, string>;
 }
 
 export interface SourceInputSignature {
@@ -96,6 +103,7 @@ export const SourceColumnSchema = z.strictObject({
   required: z.boolean(),
   padLeft: z.number().int().positive().optional(),
   inputFormats: z.array(z.string().min(1)).optional(),
+  readAs: ReadAsSchema.optional(),
 });
 
 export const SourceInputSignatureSchema = z.strictObject({

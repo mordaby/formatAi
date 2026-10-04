@@ -3,6 +3,7 @@
 // the worker (engineMethods.ts) and the main-thread client (engineClient.ts).
 import type { Format, LearnPayload, LearnResult, RepairProblem, Rules, Tier } from '@formatai/shared';
 import type {
+  AmbiguousColumn,
   AnalysisStage,
   CompleteOptions,
   ConvertResult,
@@ -91,8 +92,15 @@ export interface LoopRoundInfo {
  * `exampleId`: set when the worker kept the example (the rules editor's live check reads it, SPEC 8.11).
  * `exampleInput`: the example input's columns (headers and profile facts, no values), so the editor can offer the ones no rule uses yet.
  * `exampleOutputColumns`: how many columns the example OUTPUT has - completion mode needs the rules' output columns to line up with them.
+ * `ambiguous`: the output columns the example fits more than one rule for (a constant the input could write too) with their readings, as rule
+ * fragments: the result screen asks the user once (SPEC 8.11, 21 v12 item 11). Set whatever path the learn took; absent when there are none.
  */
-export type LearnOutput = LearnFromExamplesResult & { exampleId?: string; exampleInput?: ExampleInputColumn[]; exampleOutputColumns?: number };
+export type LearnOutput = LearnFromExamplesResult & {
+  exampleId?: string;
+  exampleInput?: ExampleInputColumn[];
+  exampleOutputColumns?: number;
+  ambiguous?: AmbiguousColumn[];
+};
 
 /** What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). `round`: the loop round of a repair (its rows go with it). */
 export interface LearnHost {

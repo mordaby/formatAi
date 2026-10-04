@@ -115,6 +115,25 @@ export const resultEn = {
   'column.mismatch.other.plain': "{n} rows in your example don't match this rule",
   'rule.fix': 'Fix the rule',
   'rule.fix.label': 'Fix the rule for {column}',
+
+  // ----- the ambiguity question (SPEC 8.11, 21 v12 item 11): the example fits more than one rule for a column -----
+  'ask.question': 'Which one is {column}?',
+  'ask.lead': 'Your example fits each of these, and they differ on other data.',
+  'ask.group': 'The choices for {column}',
+  'ask.unsure': 'Not sure yet',
+  'ask.kept': 'Not sure yet. For now: {rule}. We flag a row where {other} would give a different value.',
+  'ask.reopen': 'Choose',
+
+  // ----- rows that still don't follow the rules (SPEC 8.11, 21 v12 item 12) -----
+  'unfinished.title': "Some rows don't follow the rules yet",
+  'unfinished.lead': 'We tried more than once. These rows of your example come out different from what you gave us. Their values are shown here, on your computer only; nothing is sent.',
+  'unfinished.group.one': "1 row doesn't follow the rule we found for {column}: row {list}",
+  'unfinished.group.other': "{n} rows don't follow the rule we found for {column}: rows {list}",
+  'unfinished.more': '{list} and {n} more',
+  'unfinished.row': 'Row {row}: your example has {expected}; this rule gives {actual}',
+  'unfinished.empty': 'nothing',
+  'unfinished.leave': 'Leave it empty for now',
+  'unfinished.leave.label': 'Leave {column} empty for now',
   'preview.empty': 'No rows to show.',
   'preview.newColumns': "Columns you added aren't in your example, so there is nothing to compare them with.",
   'preview.signIn': 'Sign in to see and download all {n} rows',
@@ -539,6 +558,25 @@ export const resultHe: Record<keyof typeof resultEn, string> = {
   'column.mismatch.other.plain': '{n} שורות בדוגמה שלכם לא תואמות לכלל הזה',
   'rule.fix': 'תיקון הכלל',
   'rule.fix.label': 'תיקון הכלל של {column}',
+
+  // ----- שאלת הדו-משמעות (SPEC 8.11, 21 v12 item 11): הדוגמה מתאימה ליותר מכלל אחד בעמודה -----
+  'ask.question': 'מה נכון בעמודה {column}?',
+  'ask.lead': 'הדוגמה שלכם מתאימה לכל אחד מהם, אבל בנתונים אחרים הם יתנו תוצאות שונות.',
+  'ask.group': 'האפשרויות של {column}',
+  'ask.unsure': 'עוד לא בטוחים',
+  'ask.kept': 'עוד לא בטוחים. בינתיים: {rule}. נסמן שורה שבה {other} היה נותן ערך אחר.',
+  'ask.reopen': 'לבחור',
+
+  // ----- שורות שעדיין לא תואמות לכללים (SPEC 8.11, 21 v12 item 12) -----
+  'unfinished.title': 'חלק מהשורות עדיין לא תואמות לכללים',
+  'unfinished.lead': 'ניסינו יותר מפעם אחת. השורות האלה מהדוגמה שלכם יוצאות שונות ממה שנתתם לנו. הערכים שלהן מוצגים כאן, במחשב שלכם בלבד, ושום דבר לא נשלח.',
+  'unfinished.group.one': 'שורה אחת לא תואמת לכלל שמצאנו עבור {column}: שורה {list}',
+  'unfinished.group.other': '{n} שורות לא תואמות לכלל שמצאנו עבור {column}: שורות {list}',
+  'unfinished.more': '{list} ועוד {n}',
+  'unfinished.row': 'שורה {row}: בדוגמה שלכם {expected}; הכלל הזה נותן {actual}',
+  'unfinished.empty': 'כלום',
+  'unfinished.leave': 'להשאיר ריק בינתיים',
+  'unfinished.leave.label': 'להשאיר את {column} ריק בינתיים',
   'preview.empty': 'אין שורות להצגה.',
   'preview.newColumns': 'עמודות שהוספתם לא קיימות בדוגמה שלכם, ולכן אין למה להשוות אותן.',
   'preview.signIn': 'התחברו כדי לראות ולהוריד את כל {n} השורות',

@@ -317,6 +317,7 @@ function analyzeSides(
       const ca = columnAnalysis(o, outSide.headers[o] ?? '', rels);
       if (windows.length > 0) ca.windows = windows;
       if (guarded.derivableConstant !== undefined) ca.derivableConstant = guarded.derivableConstant;
+      if (guarded.derivableValue !== undefined) ca.derivableValue = guarded.derivableValue;
       // SPEC 6.2 step 4 (v5): an unknown column the input still determines is derived (the AI can solve it),
       // not external data. A column that is one value on every row, which the input can write as well, is derived from
       // the columns that can write it (a month label of a March file is the month of the data, not "another source").

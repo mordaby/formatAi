@@ -422,7 +422,18 @@ export interface InputColumn {
   required?: boolean;
   padLeft?: number;
   inputFormats?: string[];
+  /**
+   * SPEC 8.4a: how this column reads a cell whose text is exactly one of the keys - "N/A" -> "" (read as empty), "n/a" -> "0". Applied to the
+   * file's text cells at the very start of step 2 (before the type is read), so everything after sees the value it names; a number, a date or an
+   * empty cell is never matched. DECISION: the smallest addition that does the job. The existing `transform.valueMaps` run after the computed
+   * columns, on output values, so they can neither stop "N/A" from being flagged as a number nor change what a calculation reads. It is written by
+   * the Run screen's "Do this every time?" and never by the AI (the wire schema leaves it out), it is part of the SOURCE like `padLeft` and
+   * `inputFormats` (how the column is read, SPEC 8.15), and it holds the user's own text, not anything code read from the data.
+   */
+  readAs?: Record<string, string>;
 }
+/** The open dictionary of `readAs`: a cell's exact text -> the text it is read as (empty = an empty cell). Not on the wire (`./wire.ts`). */
+export const ReadAsSchema = z.record(z.string().min(1), z.string());
 export const InputColumnSchema = z.strictObject({
   id: z.string().min(1),
   header: z.string(),
@@ -431,6 +442,7 @@ export const InputColumnSchema = z.strictObject({
   required: z.boolean().optional(),
   padLeft: z.number().int().positive().optional(),
   inputFormats: z.array(z.string().min(1)).optional(),
+  readAs: ReadAsSchema.optional(),
 });
 
 // ---------- input.rowFilters (SPEC 8.3) ----------

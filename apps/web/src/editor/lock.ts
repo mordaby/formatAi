@@ -55,6 +55,7 @@ export function lockProblem(action: EditAction, rules: EditableRules, lock: Edit
   switch (action.type) {
     // A whole new rules text, and the shape of the columns: they would move what the answer was made for.
     case 'setAdvancedJson':
+    case 'replaceRules':
     case 'addColumn':
     case 'removeColumn':
     case 'reorderColumns':

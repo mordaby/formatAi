@@ -56,7 +56,7 @@ import {
 import { applyFormat, headerRenames } from './propagate.js';
 import { checkRulesFile, formatFields, lockProblems, plain, signatureOf, withMeta, type RulesCheck } from './rules.js';
 import { commitSource, planName, planSource, settleSource } from './sourceResolve.js';
-import { applySource, inputChecksEdited, mergeFromEdit, structureOfDoc, withSourceAliases } from './sourceLogic.js';
+import { applySource, inputChecksEdited, mergeFromEdit, structureOfDoc, withReadAsOf, withSourceAliases } from './sourceLogic.js';
 import { addSourceAlias, formatNamesOf, registerSourceRoutes } from './sourceRoutes.js';
 import { countSourceFormats, isDuplicateKey, propagateSource, renameSource, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
 
@@ -72,6 +72,25 @@ export interface RegisterRegistryRoutesOptions {
 function rulesRefusal(reply: FastifyReply, checked: Extract<RulesCheck, { ok: false }>): FastifyReply {
   if (checked.onlyRuleLimit) return fail(reply, 403, { error: 'limitHit', limit: 'rulesPerFormat' });
   return fail(reply, 422, { error: 'invalidRules', problems: checked.problems });
+}
+
+/** Gives a conversion back as it was before `next` was written, so it never disagrees with a format or source that didn't take the change. */
+async function revertConversionWrite(d: AppDb, ownerId: ObjectId, conv: ConversionDoc, next: ConversionDoc): Promise<void> {
+  await d.conversions.updateOne(
+    { _id: conv._id!, ownerId, version: next.version },
+    {
+      $set: {
+        rules: conv.rules,
+        inputSignature: conv.inputSignature,
+        status: conv.status,
+        acceptedDifferences: conv.acceptedDifferences,
+        exampleExceptions: conv.exampleExceptions,
+        version: conv.version,
+        updatedAt: conv.updatedAt,
+      },
+      $pop: { versions: 1 },
+    },
+  );
 }
 
 export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegistryRoutesOptions): void {
@@ -497,24 +516,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     );
     if (!(await saveVersion(d, caller.ownerId, conv, next))) return fail(reply, 409, { error: 'versionConflict' });
 
-    /** Gives the conversion back as it was, so it never disagrees with a format or source that didn't take the change. */
-    const revertConversion = async (): Promise<void> => {
-      await d.conversions.updateOne(
-        { _id: conv._id!, ownerId: caller.ownerId, version: next.version },
-        {
-          $set: {
-            rules: conv.rules,
-            inputSignature: conv.inputSignature,
-            status: conv.status,
-            acceptedDifferences: conv.acceptedDifferences,
-            exampleExceptions: conv.exampleExceptions,
-            version: conv.version,
-            updatedAt: conv.updatedAt,
-          },
-          $pop: { versions: 1 },
-        },
-      );
-    };
+    const revertConversion = (): Promise<void> => revertConversionWrite(d, caller.ownerId, conv, next);
 
     let writtenSource: SourceDoc | null = null;
     if (sourceEdit) {
@@ -720,9 +722,19 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     // The same for the source lock (SPEC 8.15) - except its aliases: they are what the source has learned since, not how the rules
     // behave, so the version comes back with the source's.
     const structure = structureOfDoc(source);
-    const restored = withSourceAliases(checked.rules, structure);
+    let restored = withSourceAliases(checked.rules, structure);
     const sourceProblems = checkSourceLock(restored, structure);
-    if (sourceProblems.length > 0) return fail(reply, 422, { error: 'sourceMismatch', problems: sourceProblems });
+    // SPEC 8.4a: what a column reads another way (`readAs`) belongs to the source, and the Run screen's "Do this every time?" saves it as a new
+    // version - so restoring the version before it is how it is undone. A difference in `readAs` alone is therefore not a refusal but an edit of
+    // the source, as an editor save would make it: the source takes this version's, and the other formats it feeds follow. Anything else still refuses.
+    let sourceEdit: SourceStructure | null = null;
+    if (sourceProblems.length > 0) {
+      if (!sourceProblems.every((p) => p.path.endsWith('.readAs'))) return fail(reply, 422, { error: 'sourceMismatch', problems: sourceProblems });
+      sourceEdit = withReadAsOf(structure, restored);
+      const applied = applySource(restored, sourceEdit);
+      if (applied.needsReview) return fail(reply, 422, { error: 'sourceMismatch', problems: applied.problems });
+      restored = applied.rules;
+    }
 
     const next = conversionWrite(
       conv,
@@ -735,6 +747,14 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       now,
     );
     if (!(await saveVersion(d, caller.ownerId, conv, next))) return fail(reply, 409, { error: 'versionConflict' });
+    if (sourceEdit) {
+      const written = await writeSourceVersion(d, caller.ownerId, source, sourceEdit, now);
+      if (!written) {
+        await revertConversionWrite(d, caller.ownerId, conv, next);
+        return fail(reply, 409, { error: 'versionConflict' });
+      }
+      await propagateSource(d, caller.ownerId, written._id!, sourceEdit, new Map(), now, { except: conv._id! });
+    }
     await syncRequired(d, caller.ownerId, source._id!);
     return reply.send({ conversion: conversionSummary(next, source.name) });
   });

@@ -50,6 +50,11 @@ export interface RulesMapProps {
    * no rule (`needsInput`); in memory for the session only.
    */
   aiNotes?: ReadonlyMap<string, AiColumnNote> | undefined;
+  /**
+   * The ambiguity question of a column (SPEC 21 v12 item 11), by output header: said quietly under the column's line. Nothing for a column
+   * that has none.
+   */
+  ask?: ((header: string) => ReactNode) | undefined;
 }
 
 const STATUS_ICON: Record<LineStatus, IconName> = { matches: 'check', check: 'alert', needsInput: 'alert', edited: 'pencil' };
@@ -99,7 +104,7 @@ interface DragState {
   edge: 'before' | 'after';
 }
 
-export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, intro, onSelect, onKeep, onReorder, onAdd, aiStep, addLocked, noExample, applied, aiNotes }: RulesMapProps) {
+export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, intro, onSelect, onKeep, onReorder, onAdd, aiStep, addLocked, noExample, applied, aiNotes, ask }: RulesMapProps) {
   const { t, lang } = useI18n();
   const [drag, setDrag] = useState<DragState | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -134,6 +139,7 @@ export function RulesMap({ model, rules, selectedId, columnChecks, mismatches, i
                 mismatch={isColumn && !needsAi && line.status !== 'needsInput' ? mismatches?.find((m) => m.index === line.target.index) : undefined}
                 needsAi={needsAi}
                 aiNote={isColumn ? aiNotes?.get(line.target.header ?? '') : undefined}
+                ask={isColumn ? ask?.(line.target.header ?? '') : undefined}
                 mayBeExternal={mayBeExternal}
                 running={running}
                 noExample={noExample === true}
@@ -242,6 +248,8 @@ interface MapLineProps {
   needsAi: boolean;
   /** learn-v7: the AI step's notes on this column (its guess, a recorded function request); said only while the column has no rule. */
   aiNote: AiColumnNote | undefined;
+  /** The ambiguity question of this column, when it has one. */
+  ask: ReactNode;
   /** With `needsAi`: code found no trace of this column's values in the input file, so it may come from another source (the AI step still tries it). */
   mayBeExternal: boolean;
   /** With `needsAi`: the deep analysis is working on this column right now. */
@@ -262,7 +270,7 @@ interface MapLineProps {
   onMove(delta: number): void;
 }
 
-function MapLine({ line, keepable, selected, check, mismatch, needsAi, aiNote, mayBeExternal, running, noExample, applied, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
+function MapLine({ line, keepable, selected, check, mismatch, needsAi, aiNote, ask, mayBeExternal, running, noExample, applied, intro, order, draggable, drag, dragging, onSelect, onKeep, onDragStart, onDragOver, onDrop, onDragEnd, onMove }: MapLineProps) {
   const { t } = useI18n();
   const index = line.target.index ?? 0;
   const name = line.target.header ?? '';
@@ -349,6 +357,7 @@ function MapLine({ line, keepable, selected, check, mismatch, needsAi, aiNote, m
           )}
         </button>
       </div>
+      {ask}
       {applied && (
         <p className="map-line__applied" role="status" data-fading={applied.fading || undefined} data-testid="applied">
           <Icon name="check" size={14} />

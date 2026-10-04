@@ -67,6 +67,11 @@ export interface RowInputCell {
   header: string;
   /** The cell as text/number; a date cell shows as text in the column's own format so an edit can be read back. */
   value: string | number | boolean | null;
+  /**
+   * True when the file's cell IS text (not a number, a date, a boolean or empty): the only cells a column's `readAs` (SPEC 8.4a) reads by
+   * their exact text, so the only ones "Do this every time?" can honestly be offered for. A date shown as text is not one.
+   */
+  isText?: true;
 }
 
 export interface ConvertRunArgs {

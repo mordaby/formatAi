@@ -152,6 +152,21 @@ export const convertEn = {
   'conv.review.create': 'Create the file',
   'conv.review.tally': '{keep} kept · {skip} skipped · {fix} fixed · {open} not decided',
 
+  // ----- "Do this every time?" (SPEC 5 C, 8.4a): a typed fix kept as a rule of the format -----
+  'conv.keep.title': 'Do this every time?',
+  'conv.keep.empty': "Every '{from}' in {column} will be read as empty.",
+  'conv.keep.value': "Every '{from}' in {column} will be read as '{to}'.",
+  'conv.keep.rows': 'It covers all {n} rows in this list that have it.',
+  'conv.keep.clash': "Another row in this list already reads '{from}' in {column} another way. A text is read one way only.",
+  'conv.keep.hint': 'Only this file changes now. The rule is saved when you create the file.',
+  'conv.keep.decided': 'Will be fixed, and saved as a rule when you create the file',
+  'conv.kept.title': 'Saved as a rule',
+  'conv.kept.empty': "Every '{from}' in {column} is now read as empty.",
+  'conv.kept.value': "Every '{from}' in {column} is now read as '{to}'.",
+  'conv.kept.version': 'Saved as version {version} of {format}. To undo it, restore the previous version in the editor.',
+  'conv.kept.failed.title': 'Not saved as a rule',
+  'conv.kept.failed': "We couldn't save this as a rule, but your fix was used in this file. The value will be flagged again next time.",
+
   // ----- the run result (SPEC 16.1 screen 6) -----
   'conv.done.title': 'Your file is ready',
   'conv.done.source': 'Converted with {source} of {format}.',
@@ -406,6 +421,21 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
   'conv.review.rule.hint.here': 'כדי לשנות כלל, ערכו אותו למעלה והריצו את הקובץ שוב.',
   'conv.review.create': 'ליצור את הקובץ',
   'conv.review.tally': '{keep} נשארות · {skip} מדולגות · {fix} מתוקנות · {open} בלי החלטה',
+
+  // ----- "Do this every time?" (SPEC 5 C, 8.4a): a typed fix kept as a rule of the format -----
+  'conv.keep.title': 'לעשות את זה בכל פעם?',
+  'conv.keep.empty': "כל '{from}' בעמודה {column} ייקרא כריק.",
+  'conv.keep.value': "כל '{from}' בעמודה {column} ייקרא כ-'{to}'.",
+  'conv.keep.rows': 'זה חל על כל {n} השורות ברשימה הזו שיש בהן את הטקסט הזה.',
+  'conv.keep.clash': "שורה אחרת ברשימה הזו כבר קוראת את '{from}' בעמודה {column} אחרת. טקסט נקרא בדרך אחת בלבד.",
+  'conv.keep.hint': 'רק הקובץ הזה משתנה עכשיו. הכלל יישמר כשתיצרו את הקובץ.',
+  'conv.keep.decided': 'תתוקן, ותישמר ככלל כשתיצרו את הקובץ',
+  'conv.kept.title': 'נשמר ככלל',
+  'conv.kept.empty': "כל '{from}' בעמודה {column} נקרא מעכשיו כריק.",
+  'conv.kept.value': "כל '{from}' בעמודה {column} נקרא מעכשיו כ-'{to}'.",
+  'conv.kept.version': 'נשמר כגרסה {version} של {format}. כדי לבטל, שחזרו את הגרסה הקודמת בעורך.',
+  'conv.kept.failed.title': 'לא נשמר ככלל',
+  'conv.kept.failed': 'לא הצלחנו לשמור את זה ככלל, אבל התיקון שלכם שימש בקובץ הזה. בפעם הבאה הערך יסומן שוב.',
 
   // ----- the run result (SPEC 16.1 screen 6) -----
   'conv.done.title': 'הקובץ שלכם מוכן',

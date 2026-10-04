@@ -140,11 +140,15 @@ const WireRulesFunctionSchema = buildRulesFunctionSchema(WireExprSchema);
 // learn-v7: the optional functionRequest / explanation notes, with no pattern or length caps on the wire (see `buildFunctionRequestSchema`).
 const WireUnsupportedSchema = buildUnsupportedSchema(false);
 
+// `readAs` (SPEC 8.4a) is not on the wire: it holds the user's own text (what "Do this every time?" saved on the Run screen), the AI never writes
+// it and is never shown it - so the schema sent to the provider is the one it always was, and `toWire` / `fromWire` below drop it.
+const WireInputColumnSchema = InputColumnSchema.omit({ readAs: true });
+
 const WireRulesInputSchema = z.strictObject({
   sheet: InputSheetSelectorSchema,
   headerRow: HeaderRowSchema,
   stopAt: StopAtSchema.optional(),
-  columns: z.array(InputColumnSchema).min(1),
+  columns: z.array(WireInputColumnSchema).min(1),
   rowFilters: z.array(WireRowFilterSchema).optional(),
 });
 
@@ -257,12 +261,19 @@ function outputToWire(output: RulesOutput): WireRulesOutput {
 export function toWire<T extends LearnResult>(rules: T): WireLearnResult<T> {
   return {
     ...rules,
+    input: { ...rules.input, columns: rules.input.columns.map(({ readAs: _readAs, ...column }) => column) },
     transform: transformToWire(rules.transform),
     output: outputToWire(rules.output),
   };
 }
 
 // ---------- fromWire: wire (pairs, untrusted) -> real (record-shaped) ----------
+
+/** An answer never carries `readAs` (SPEC 8.4a): a provider that does not hold to the wire schema cannot slip one in. */
+function inputFromWire(input: unknown): unknown {
+  if (!isRecord(input) || !Array.isArray(input.columns)) return input;
+  return { ...input, columns: input.columns.map((c) => (isRecord(c) && 'readAs' in c ? Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'readAs')) : c)) };
+}
 
 function summaryRowFromWire(row: unknown): unknown {
   if (!isRecord(row)) return row;
@@ -332,6 +343,7 @@ export function fromWire(json: unknown): unknown {
   if (!isRecord(json)) return json;
   return {
     ...json,
+    input: json.input === undefined ? undefined : inputFromWire(json.input),
     transform: json.transform === undefined ? undefined : transformFromWire(json.transform),
     output: json.output === undefined ? undefined : outputFromWire(json.output),
   };

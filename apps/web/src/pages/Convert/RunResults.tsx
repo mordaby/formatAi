@@ -7,10 +7,11 @@ import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { Button, InlineMessage, Spinner } from '../../ui';
 import { runAnywayLabel } from './attention';
+import { KeptRulesNotice } from './KeptRules';
 import { columnLabel, flaggedRowCount, isolate } from './logic';
 import { AttentionList, AttentionRow } from './NeedsAttention';
 import { NewColumns } from './NewColumns';
-import { failureText, type FailedFormat, type NewColumnsNotice, type RunResult } from './useConvertFlow';
+import { failureText, type FailedFormat, type KeptRules, type NewColumnsNotice, type RunResult } from './useConvertFlow';
 
 const FLAGS_LISTED = 20;
 
@@ -21,6 +22,8 @@ export interface RunResultsProps {
   aliasNotSaved: boolean;
   /** "New column in this file" (SPEC 8.15), when there is one to mention. */
   notice: NewColumnsNotice | null;
+  /** The fixes the user kept as rules in a review ("Do this every time?"), and what became of them. */
+  kept: readonly KeptRules[];
   packing: boolean;
   packError: boolean;
   onDownloadOne(conversionId: string): void;
@@ -32,7 +35,7 @@ export interface RunResultsProps {
   onDismissNotice(): void;
 }
 
-export function RunResults({ sourceName, results, failed, aliasNotSaved, notice, packing, packError, onDownloadOne, onDownloadAll, onAnother, onEdit, onRunAnyway, onDismissNotice }: RunResultsProps) {
+export function RunResults({ sourceName, results, failed, aliasNotSaved, notice, kept, packing, packError, onDownloadOne, onDownloadAll, onAnother, onEdit, onRunAnyway, onDismissNotice }: RunResultsProps) {
   const i18n = useI18n();
   const { t, code, lang } = i18n;
   const nf = new Intl.NumberFormat(lang);
@@ -64,6 +67,7 @@ export function RunResults({ sourceName, results, failed, aliasNotSaved, notice,
       ) : null}
       {packError ? <InlineMessage tone="error">{t('batch.packError')}</InlineMessage> : null}
       {aliasNotSaved ? <p className="muted">{t('conv.map.aliasNotSaved')}</p> : null}
+      <KeptRulesNotice kept={kept} />
 
       {results.length > 0 ? (
         <>

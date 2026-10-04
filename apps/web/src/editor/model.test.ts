@@ -1236,6 +1236,7 @@ describe('sourceChange (SPEC 8.15)', () => {
       ['a column\'s padding', (r) => void (r.input.columns[0]!.padLeft = 8)],
       ['a column\'s date formats', (r) => void (r.input.columns[5]!.inputFormats = ['YYYY-MM-DD'])],
       ['a column\'s aliases', (r) => void (r.input.columns[1]!.aliases = ['Vendor name'])],
+      ['what a column reads another way (readAs, SPEC 8.4a)', (r) => void (r.input.columns[2]!.readAs = { 'N/A': '' })],
       ['the sheet', (r) => void (r.input.sheet = { pick: 'name', name: 'Data' })],
       ['the header row', (r) => void (r.input.headerRow = 3)],
       ['where the file stops', (r) => void (r.input.stopAt = { when: 'firstCellEquals', values: ['Total'] } as never)],

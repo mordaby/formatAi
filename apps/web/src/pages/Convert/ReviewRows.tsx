@@ -1,17 +1,17 @@
 // The review before the file is written (SPEC 21 v5 item 5, issue #36). Flagged rows are shown BEFORE the output exists (when a
 // source feeds several formats, each format has its own review and this says which one it is);
 // for each the user picks: change the rule (the source's rules editor, then convert again), fix this row only (a one-off
-// value edit, never saved to the rules), skip it, or keep it as it is. The engine applies these per-run decisions
-// without touching the saved rules and lists them in the run summary.
+// value edit; saved to the rules only when the user also says "Do this every time?" for a cell they changed - SPEC 5 C), skip it, or
+// keep it as it is. The engine applies these per-run decisions without touching the saved rules and lists them in the run summary.
 import type { Flag } from '@formatai/engine';
 import type { LearnResult, Rules } from '@formatai/shared';
 import { useId, useState } from 'react';
 import { Cell } from '../../components/Cell';
 import { webConfig } from '../../config';
-import { useI18n } from '../../i18n';
+import { useI18n, type I18n } from '../../i18n';
 import type { RowInputCell } from '../../worker/convertApi';
 import { Badge, Button, Icon } from '../../ui';
-import { columnLabel, fixFields, isolate, tally, type Choices, type ReviewRow, type RowChoice } from './logic';
+import { columnLabel, fixFields, isolate, readAsFixes, readAsOffer, tally, type Choices, type ReadAsFix, type ReadAsOffer, type ReviewRow, type RowChoice } from './logic';
 import type { Step, Target } from './useConvertFlow';
 
 /** What the review needs of the conversion: its rules (columns are named from them) and, for "Format 2 of 3", the format's name. */
@@ -30,10 +30,15 @@ export interface ReviewRowsProps {
   onClear(): void;
   /** Opens the rules and comes back. Absent where the rules are already on screen (Result's "Try it on another file"): no button, and the hint says to edit them there. */
   onChangeRule?(): void;
+  /**
+   * "Do this every time?" (SPEC 5 C): offered next to a typed fix of one cell, to keep it as a rule of the format. Absent where rules are not
+   * saved (Result's "Try it on another file"): nothing is offered. `formats` is how many formats the source feeds (the line says so when more than one).
+   */
+  keepRule?: { formats: number };
   onCreate(): void;
 }
 
-export function ReviewRows({ target, step, rows, rowInputs, choices, onChoice, onKeepAll, onSkipAll, onClear, onChangeRule, onCreate }: ReviewRowsProps) {
+export function ReviewRows({ target, step, rows, rowInputs, choices, onChoice, onKeepAll, onSkipAll, onClear, onChangeRule, keepRule, onCreate }: ReviewRowsProps) {
   const { t, lang } = useI18n();
   const [fixing, setFixing] = useState<number | null>(null);
   const nf = new Intl.NumberFormat(lang);
@@ -83,6 +88,7 @@ export function ReviewRows({ target, step, rows, rowInputs, choices, onChoice, o
             onCloseFix={() => setFixing((f) => (f === row.rowNumber ? null : f))}
             onChoice={(c) => onChoice(row.rowNumber, c)}
             onChangeRule={onChangeRule}
+            keep={keepRule ? { formats: keepRule.formats, rowInputs, taken: readAsFixes(target.rules, rowInputs, choices, row.rowNumber) } : undefined}
           />
         ))}
       </ul>
@@ -108,11 +114,21 @@ interface RowCardProps {
   onCloseFix(): void;
   onChoice(choice: RowChoice | null): void;
   onChangeRule: (() => void) | undefined;
+  /** The "Do this every time?" offer, when there is one: the source's formats, every row's input cells (to count the rows with the same text) and what the OTHER rows already keep. */
+  keep: KeepOffer | undefined;
 }
 
-function RowCard({ target, row, cells, choice, fixing, onFix, onCloseFix, onChoice, onChangeRule }: RowCardProps) {
+interface KeepOffer {
+  formats: number;
+  rowInputs: Readonly<Record<number, readonly RowInputCell[]>>;
+  taken: readonly ReadAsFix[];
+}
+
+function RowCard({ target, row, cells, choice, fixing, onFix, onCloseFix, onChoice, onChangeRule, keep }: RowCardProps) {
   const { t, code } = useI18n();
-  const decidedKey = choice ? (`conv.review.decided.${choice.action === 'override' ? 'fix' : choice.action}` as const) : null;
+  // A fix the user also keeps as a rule says so in its own words (it is not "in this file only").
+  const keptAsRule = choice?.action === 'override' && choice.every !== undefined && choice.every.length > 0;
+  const decidedKey = choice ? (keptAsRule ? 'conv.keep.decided' : (`conv.review.decided.${choice.action === 'override' ? 'fix' : choice.action}` as const)) : null;
   return (
     <li className="rv" data-row={row.rowNumber} data-choice={choice?.action} data-testid="review-row">
       <div className="rv__head">
@@ -150,7 +166,14 @@ function RowCard({ target, row, cells, choice, fixing, onFix, onCloseFix, onChoi
       </ul>
 
       {fixing ? (
-        <FixEditor row={row} cells={fixFields(row, cells)} onApply={(values) => (onChoice({ action: 'override', values }), onCloseFix())} onCancel={onCloseFix} />
+        <FixEditor
+          row={row}
+          cells={fixFields(row, cells)}
+          rules={target.rules}
+          keep={keep}
+          onApply={(values, every) => (onChoice({ action: 'override', values, ...(every.length > 0 ? { every } : {}) }), onCloseFix())}
+          onCancel={onCloseFix}
+        />
       ) : (
         <div className="rv__actions" role="group" aria-label={t('conv.review.row', { row: row.rowNumber })}>
           {onChangeRule ? (
@@ -173,27 +196,57 @@ function RowCard({ target, row, cells, choice, fixing, onFix, onCloseFix, onChoi
   );
 }
 
-/** Fix this row only: the input values of the row, edited for this file. A flag's suggestion is one click away. */
-function FixEditor({ row, cells, onApply, onCancel }: { row: ReviewRow; cells: readonly RowInputCell[]; onApply(values: Record<string, string>): void; onCancel(): void }) {
+/** The line under "Do this every time?": what saying yes means, in the user's words (the text, the column, what it is read as). */
+function keepLine(t: I18n['t'], offer: ReadAsOffer, formats: number): string {
+  const names = { from: isolate(offer.from), column: isolate(offer.header), to: isolate(offer.to) };
+  if (offer.clash) return t('conv.keep.clash', names);
+  const parts = [t(offer.to === '' ? 'conv.keep.empty' : 'conv.keep.value', names)];
+  if (offer.rows > 1) parts.push(t('conv.keep.rows', { n: offer.rows }));
+  if (formats > 1) parts.push(t('edit.sourceChange.warn', { n: formats }));
+  return parts.join(' ');
+}
+
+interface FixEditorProps {
+  row: ReviewRow;
+  cells: readonly RowInputCell[];
+  rules: LearnResult | Rules;
+  keep: KeepOffer | undefined;
+  /** `every`: the columns whose typed fix the user also wants kept as a rule. */
+  onApply(values: Record<string, string>, every: string[]): void;
+  onCancel(): void;
+}
+
+/**
+ * Fix this row only: the input values of the row, edited for this file. A flag's suggestion is one click away. Next to a field whose text the
+ * user changed, one quiet choice - "Do this every time?" (SPEC 5 C, 8.4a) - turns the fix into a rule of the format, with a line that says what
+ * it means ("Every 'N/A' in Amount will be read as empty.", how many rows here have that text, and - when the source feeds several formats -
+ * that the change reaches all of them). Off until the user ticks it; nothing is saved until the file is created.
+ */
+function FixEditor({ row, cells, rules, keep, onApply, onCancel }: FixEditorProps) {
   const { t } = useI18n();
   const id = useId();
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(cells.map((c) => [c.columnId, c.value === null ? '' : String(c.value)])));
+  const [every, setEvery] = useState<Record<string, boolean>>({});
   const suggestionFor = (columnId: string): Flag['suggestion'] => row.flags.find((f) => f.column === columnId && f.suggestion !== undefined)?.suggestion;
+  const offerFor = (c: RowInputCell): ReadAsOffer | null => (keep ? readAsOffer(rules, c, values[c.columnId] ?? '', keep.rowInputs, keep.taken) : null);
+  /** The columns whose fix the user said "every time" to, as it stands now (a tick on a field that no longer offers it, or clashes, counts for nothing). */
+  const kept = cells.filter((c) => every[c.columnId] === true && offerFor(c)?.clash === false).map((c) => c.columnId);
   return (
     <form
       className="rv__fix"
       aria-label={t('conv.review.fix.title', { row: row.rowNumber })}
       onSubmit={(e) => {
         e.preventDefault();
-        onApply(values);
+        onApply(values, kept);
       }}
     >
       <p className="rv__fix-title">{t('conv.review.fix.title', { row: row.rowNumber })}</p>
-      <p className="field__hint">{t('conv.review.fix.hint')}</p>
+      <p className="field__hint">{t(kept.length > 0 ? 'conv.keep.hint' : 'conv.review.fix.hint')}</p>
       <div className="rv__fields">
         {cells.map((c) => {
           const suggestion = suggestionFor(c.columnId);
           const fieldId = `${id}-${c.columnId}`;
+          const offer = offerFor(c);
           return (
             <div className="field" key={c.columnId}>
               <label className="field__label" htmlFor={fieldId}>
@@ -207,6 +260,18 @@ function FixEditor({ row, cells, onApply, onCancel }: { row: ReviewRow; cells: r
                   </Button>
                 ) : null}
               </div>
+              {offer && keep ? (
+                <label className="check rv__every" data-testid="keep-offer">
+                  <input type="checkbox" checked={every[c.columnId] === true && !offer.clash} disabled={offer.clash} onChange={(e) => setEvery((v) => ({ ...v, [c.columnId]: e.target.checked }))} />
+                  <span>
+                    {t('conv.keep.title')}
+                    <span className="field__hint" data-testid="keep-line">
+                      {' '}
+                      {keepLine(t, offer, keep.formats)}
+                    </span>
+                  </span>
+                </label>
+              ) : null}
             </div>
           );
         })}
