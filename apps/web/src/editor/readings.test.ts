@@ -1,7 +1,7 @@
 // Applying a reading to rules (SPEC 21 v12 item 11): the fragment is merged by HEADER (the rules' own ids may differ from the fragment's), ids
 // stay unique, the old rule's computed column goes when nothing reads it, and the question's marker (the check) is the question's state.
-import { dayMonthQuestions, swapDayMonth, type AmbiguousColumn } from '@formatai/engine';
-import type { LearnResult, Validation } from '@formatai/shared';
+import { dayMonthQuestions, resolveAlternatives, swapDayMonth, type AmbiguousColumn, type VerifyResult } from '@formatai/engine';
+import type { Expr, LearnAlternative, LearnResult, Validation } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { applyReading, isReadingCheck, questionOpen, withOpenQuestion } from './readings';
 import { EditorStore } from './store';
@@ -229,5 +229,59 @@ describe('a day/month question', () => {
     expect(swapped.output.columns.find((c) => c.header === 'Month')!.from).toBe('month2');
     expect(swapped.transform.computed.map((c) => c.id)).toEqual(['month', 'other', 'month2']);
     expect(JSON.stringify(swapped.transform.computed.find((c) => c.id === 'month2'))).toContain('MM/DD/YYYY');
+  });
+});
+
+describe('a question about a second rule the AI step gave (learn-v8, SPEC 21 v12 item 17)', () => {
+  const cutoff = (n: number, op: 'gte' | 'gt', col = 'amount'): Expr => ({ op: 'if', cond: { op, args: [{ col }, { const: n }] }, then: { const: 'Urgent' }, else: { const: 'Normal' } }) as Expr;
+  const answer: LearnResult = {
+    schemaVersion: 1,
+    input: { sheet: { pick: 'first' }, headerRow: 'auto', columns: [{ id: 'order', header: 'Order', type: 'text' }, { id: 'amount', header: 'Amount', type: 'decimal' }] },
+    transform: { computed: [{ id: 'priority', type: 'text', expr: cutoff(5000, 'gte') }], valueMaps: [], sort: [] },
+    output: { sheetName: 'Out', direction: 'ltr', language: 'en', titleRows: [], columns: [{ header: 'Order', from: 'order' }, { header: 'Priority', from: 'priority' }] },
+    validations: [],
+    unsupported: [],
+    assumptions: [],
+  };
+  const alternative: LearnAlternative = { outputColumn: 'Priority', from: 'priorityAlt', computed: [{ id: 'priorityAlt', type: 'text', expr: cutoff(4800, 'gt') }] };
+  const fits: VerifyResult = { verified: true, matched: 3, total: 3, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] };
+  /** What the engine returns when both rules fit every row: the question, and the rules with its check. */
+  const resolved = resolveAlternatives({ rules: answer, masked: answer, verification: fits, alternatives: [alternative], verifyColumn: () => fits });
+  const question = resolved.results[0]!.question!;
+
+  it("the engine asks it with the answer's rule as the default and a sameAs check, already in the rules it returns", () => {
+    expect(resolved.results[0]!.outcome).toBe('bothPass');
+    expect(question.check).toEqual({ column: 'priority', rule: 'sameAs', expr: cutoff(4800, 'gt'), severity: 'flag' });
+    // The Result screen's starting rules (`withOpenQuestion`) are the engine's: the marker is not put in twice.
+    expect(withOpenQuestion(resolved.rules, question)).toEqual(resolved.rules);
+    expect(questionOpen(resolved.rules, question)).toBe(true);
+  });
+
+  it('the web applies the formula reading: its computed column comes in, the old rule and the marker go - one undoable edit', () => {
+    const store = new EditorStore(resolved.rules);
+    const next = applyReading(store.getState().rules, question, 1, false)!;
+    expect(next.output.columns[1]!.from).toBe('priorityAlt');
+    expect(next.transform.computed).toEqual([{ id: 'priorityAlt', type: 'text', expr: cutoff(4800, 'gt') }]);
+    expect(next.validations).toEqual([]);
+    expect(questionOpen(next, question)).toBe(false);
+    expect(store.apply({ type: 'replaceRules', rules: next })).toEqual({ ok: true, changed: true });
+    store.undo();
+    expect(questionOpen(store.getState().rules, question)).toBe(true);
+  });
+
+  it("answering with the answer's own rule keeps the rules as they are, without the marker", () => {
+    expect(applyReading(resolved.rules, question, 0, false)).toEqual(answer);
+  });
+
+  it('applies to rules that name things another way (the user renamed the input id): matched by header', () => {
+    const renamed: LearnResult = {
+      ...resolved.rules,
+      input: { ...answer.input, columns: [{ id: 'order', header: 'Order', type: 'text' }, { id: 'amt', header: 'Amount', type: 'decimal' }] },
+      transform: { ...answer.transform, computed: [{ id: 'priority', type: 'text', expr: cutoff(5000, 'gte', 'amt') }] },
+      validations: [{ ...question.check!, expr: cutoff(4800, 'gt', 'amt') } as Validation],
+    };
+    const next = applyReading(renamed, question, 1, false)!;
+    expect(next.input.columns.map((c) => c.id)).toEqual(['order', 'amt']);
+    expect(next.transform.computed.find((c) => c.id === next.output.columns[1]!.from)?.expr).toEqual(cutoff(4800, 'gt', 'amt'));
   });
 });

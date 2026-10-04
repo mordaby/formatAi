@@ -10,7 +10,7 @@
 // Real progress comes from the worker (`LearnProgress`); steps that don't happen are
 // simply never visited (the local fast path goes checking -> done, with no learning or
 // verifying). The HTTP calls are made HERE, on the main thread, on the worker's behalf.
-import { payloadBytes, withRows, type AiLearnQuotaState, type Format, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type Sample, type Tier } from '@formatai/shared';
+import { payloadBytes, withRows, type AiLearnQuotaState, type Format, type LearnAlternative, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type Sample, type Tier } from '@formatai/shared';
 import type { AnalysisStage, CompleteOptions, LearnCallResult, PreflightIssue } from '@formatai/engine';
 import type { Api } from '../api';
 import { webConfig } from '../config';
@@ -244,7 +244,7 @@ export class LearnFlow {
           learnId = res.learnId;
           lastProblems = res.problems;
           ai = { learnId: res.learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, cached: res.cached };
-          return asCallResult(res.rules, res.problems);
+          return asCallResult(res.rules, res.problems, res.alternatives);
         } catch (e) {
           hostError = e;
           throw e;
@@ -273,7 +273,7 @@ export class LearnFlow {
             failedAttempts: res.failedAttempts,
             quota: res.quota ?? ai?.quota,
           };
-          return asCallResult(res.rules, res.problems);
+          return asCallResult(res.rules, res.problems, res.alternatives);
         } catch (e) {
           hostError = e;
           throw e;
@@ -340,8 +340,9 @@ export class LearnFlow {
   }
 }
 
-function asCallResult(rules: LearnResult | null, problems: RepairProblem[]): LearnCallResult {
-  return { rules, problems, calls: [] };
+/** What the engine's learn needs of an answer: the rules, the problems and (learn-v8) the alternatives, which it tests on every row. */
+function asCallResult(rules: LearnResult | null, problems: RepairProblem[], alternatives: LearnAlternative[] | undefined): LearnCallResult {
+  return { rules, problems, calls: [], ...(alternatives && alternatives.length > 0 ? { alternatives } : {}) };
 }
 
 function stateForProgress(p: LearnProgress, sent: readonly SentRecord[]): LearnFlowState {
