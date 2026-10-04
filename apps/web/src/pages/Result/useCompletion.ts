@@ -1,4 +1,4 @@
-// "Run deep analysis with AI" as completion mode (LEARN_PROMPT "Completing a partial rules file"): the AI step produces only what is
+// "Finish with AI" as completion mode (LEARN_PROMPT "Completing a partial rules file"): the AI step produces only what is
 // missing from the rules on screen and must leave everything else exactly as it is. This hook runs it (in the session's own
 // `completion` flow, so the Result screen and its rules stay put) and decides what the answer is worth:
 //

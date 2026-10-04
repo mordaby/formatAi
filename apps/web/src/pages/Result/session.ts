@@ -30,7 +30,7 @@ export interface ResultSession {
    * never in IndexedDB (a reload or a sign-in trip forgets them, by design).
    */
   aiNotes?: AiColumnNote[] | undefined;
-  /** The deep analysis with AI has been started for this result (by the user, or by Home's "Deep analysis with AI if needed"): it is never started by itself twice. */
+  /** The deep analysis with AI has been started for this result (by the user, or by Home's "Learn with AI"): it is never started by itself twice. */
   deepRun?: boolean | undefined;
 }
 

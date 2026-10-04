@@ -1,12 +1,13 @@
 // The one place for the AI step on the Result screen (owner decision: the AI step never runs unless the user chooses it).
 // The free engine has already run: this panel says what it solved, lists what it could not (output fields, and the layout parts it could
-// not build) with a tick each, and offers the one primary action "Run deep analysis with AI" - or, for a visitor, the sign-in prompt.
+// not build) with a tick each, and offers the one action "Finish with AI" - or, for a visitor, the sign-in prompt. The one button
+// completes the ticked fields when it can and runs the whole learn when it can't (`runDeep` in the Result screen: there is no second AI button).
 // While it runs the panel shows the progress; afterwards what the AI solved and what still needs the user's input (an honest "could not
-// produce" stays "needs your input"). "Re-run all with AI" (the whole learn, replacing the rules) is a link in here too.
+// produce" stays "needs your input").
 // It also carries "See what we send" (SPEC 15) for the call it made, and the plain-words reasons a run was not used.
 import { aiReadinessMessages, aiStepPartMessages, type AiColumnNote, type AiLearnQuotaState, type AiStepPartCode } from '@formatai/shared';
 import { useId, useState, type ReactNode } from 'react';
-import { includedLabel } from '../../app/aiQuota';
+import { aiUsesLabel, includedLabel } from '../../app/aiQuota';
 import { errorView } from '../../app/messages';
 import { useLearnSession } from '../../app/LearnSession';
 import { SendPanel } from '../../app/SendPanel';
@@ -54,7 +55,6 @@ export interface DeepAnalysisPanelProps {
   /** The run is the way forward (the result can't be saved without it): the primary button; otherwise a secondary one. */
   primary: boolean;
   onRun(): void;
-  onRerunAll(): void;
   onSignIn(): void;
   /** "Download with these fields empty": the converted example, right away (a visitor is asked to sign in instead). */
   onDownload(): void;
@@ -217,12 +217,7 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
     ) : null;
 
   // ----- the quota, in the words of its period -----
-  const uses = ((): string => {
-    const q = p.quota;
-    if (!q) return t('deep.uses.unknown');
-    if (q.remaining === null || q.period === 'unlimited') return t('deep.uses.unlimited');
-    return t(`deep.uses.${q.period}`, { n: q.remaining });
-  })();
+  const uses = aiUsesLabel(t, p.quota);
 
   const state = running ? 'running' : final ? 'final' : done ? 'done' : failed ? 'failed' : p.who === 'user' ? 'offer' : 'signIn';
   return (
@@ -249,28 +244,23 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
       {done && listed === 0 ? <p>{t('deep.allSolved')}</p> : null}
       {p.who === 'guest' ? <p>{t('deep.guest', { included: includedLabel(t) })}</p> : null}
 
-      <div className="deep__actions">
-        {p.who === 'checking' ? (
-          <Button variant="primary" loading disabled>
-            {t('partial.checking')}
-          </Button>
-        ) : p.who === 'guest' ? (
-          <Button variant="primary" onClick={p.onSignIn}>
-            {t('partial.banner.signIn')}
-          </Button>
-        ) : (
-          <>
-            {showRun ? (
-              <Button variant={p.primary ? 'primary' : 'secondary'} loading={running} disabled={!canRun} onClick={p.onRun}>
-                {t('deep.run')}
-              </Button>
-            ) : null}
-            <Button variant="link" disabled={running || exhausted || noneLeft} onClick={p.onRerunAll}>
-              {t('partial.rerun')}
+      {p.who !== 'user' || showRun ? (
+        <div className="deep__actions">
+          {p.who === 'checking' ? (
+            <Button variant="primary" loading disabled>
+              {t('partial.checking')}
             </Button>
-          </>
-        )}
-      </div>
+          ) : p.who === 'guest' ? (
+            <Button variant="primary" onClick={p.onSignIn}>
+              {t('partial.banner.signIn')}
+            </Button>
+          ) : (
+            <Button variant={p.primary ? 'primary' : 'secondary'} loading={running} disabled={!canRun} onClick={p.onRun}>
+              {t('deep.run')}
+            </Button>
+          )}
+        </div>
+      ) : null}
 
       {p.who === 'user' && !running && !done && (noneLeft || showRun) ? (
         noneLeft ? (

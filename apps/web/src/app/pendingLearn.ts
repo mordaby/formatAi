@@ -1,7 +1,7 @@
 // "The learned rules survive sign-in" (SPEC 5 E). Signing in sends the browser away to Google or Microsoft and back,
 // which reloads the page and forgets everything held in memory. So just before the redirect, what has been learned so
-// far - the two example files (names and bytes), the masking choice, and the result screen's edits - is kept in this
-// browser's IndexedDB, and put back when the app starts again.
+// far - the two example files (names and bytes), the masking choice, the result screen's edits, and a visitor's choice of
+// "Learn with AI" - is kept in this browser's IndexedDB, and put back when the app starts again.
 //
 // SPEC 2/15: this NEVER leaves the browser: it is written to and read from IndexedDB only, no network code is
 // anywhere near it. It is dropped once restored, and after an hour (`webConfig.pendingLearn.maxAgeMs`) whether or
@@ -36,6 +36,8 @@ export interface PendingLearn {
   masking: boolean;
   /** The learn was continued past "rows couldn't be aligned" (SPEC 6.4); the local analysis is re-run the same way. */
   tryAnyway?: boolean;
+  /** A visitor chose "Learn with AI" on Home and signed in from its wall: once they are signed in, the learn starts by itself (no `result` is kept with it) and the AI step follows. */
+  deepAnalysis?: boolean;
   /** Set when a result was on screen; the local analysis is re-run on the files and these edits are put back on top. */
   result: PendingResult | null;
 }

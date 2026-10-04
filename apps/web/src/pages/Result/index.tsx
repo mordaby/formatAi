@@ -95,13 +95,13 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // Starting over throws the edits away: ask first when there are unsaved ones.
   const startOver = (): void => (kept.store.getState().dirty ? setConfirmStartOver(true) : goHome());
 
-  // "Run deep analysis with AI" (completion mode): the AI step produces only what is missing and the rules on screen stay as they are; an
+  // "Finish with AI" (completion mode): the AI step produces only what is missing and the rules on screen stay as they are; an
   // answer that passes the fixed lock and the verification replaces them (see useCompletion). It never runs unless the user chose it: the
-  // panel's button, or Home's "Deep analysis with AI if needed" (acted on below, once per result).
+  // panel's button, or Home's "Learn with AI" (acted on below, once per result).
   // learn-v7: the notes of an applied answer go into the session (never into the rules): see `ResultSession.aiNotes`.
   const completion = useCompletion(kept.store, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
   const completed = completion.completed;
-  const [confirmRerun, setConfirmRerun] = useState(false);
+  const [confirmWhole, setConfirmWhole] = useState(false);
   // What the AI step reported for the answer on screen (the completion's, once one has been applied).
   const aiInfo = completed ? completed.ai : ai;
   const { setQuota } = me;
@@ -227,7 +227,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     }
   };
 
-  const rerunAll = (): void => {
+  const learnWhole = (): void => {
     // The user has said the rules may go: leaving this screen for the new learn is not "leaving with unsaved changes".
     kept.store.markSaved();
     kept.deepRun = true;
@@ -235,7 +235,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   };
   const hasEdits = (): boolean => kept.store.getState().dirty || kept.store.getState().edited.size > 0;
   /**
-   * "Run deep analysis with AI": completion mode for the ticked fields when it can be, the whole learn when not (after asking, when there are
+   * "Finish with AI", the one AI button: completion mode for the ticked fields when it can be, the whole learn when not (after asking, when there are
    * edits). DECISION: nothing missing (the free rules cover every column and part, yet the strict fast path would not accept them - rows that
    * change shape go to the AI step) or rules that no longer line up with the example's output columns (columns added or removed) leave nothing
    * to complete, so the button runs the whole learn instead.
@@ -247,10 +247,10 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       if (columns.length + parts.length === 0) return;
       kept.deepRun = true;
       completion.start({ fixedRules: kept.store.getState().rules, columns, parts });
-    } else if (hasEdits()) setConfirmRerun(true);
-    else rerunAll();
+    } else if (hasEdits()) setConfirmWhole(true);
+    else learnWhole();
   };
-  // Home's "Deep analysis with AI if needed" (signed in): the AI step starts by itself right after the free result, once per result, when
+  // Home's "Learn with AI" (signed in, or signed in since): the AI step starts by itself right after the free result, once per result, when
   // fields are missing - the same completion / whole-learn logic as the button. A whole learn that would replace edits waits for the user.
   const runRef = useRef(runDeep);
   runRef.current = runDeep;
@@ -325,8 +325,17 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   const panelVisible = !source && (aiPending || completion.running || completion.outcome !== null || (me.user !== null && missing.columns.length > 0));
 
 
+  // "Learn with AI" and the free engine solved everything (the fast path): no AI call was made and nothing is counted - said, so that the
+  // click is not left looking like it did nothing. (With fields missing the AI step starts by itself, see `autoStart`.)
+  const aiNotNeeded = session.deepAnalysis && me.user !== null && !source && !partial && !completed && result.path === 'local';
+
   const banners = (info: WorkbenchInfo) => (
     <>
+      {aiNotNeeded && (
+        <InlineMessage tone="info">
+          <p data-testid="ai-not-needed">{t('deep.notNeeded')}</p>
+        </InlineMessage>
+      )}
       {panelVisible && (
         <DeepAnalysisPanel
           free={aiPending}
@@ -342,7 +351,6 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           whole={!missing.completable}
           primary={incomplete}
           onRun={runDeep}
-          onRerunAll={() => setConfirmRerun(true)}
           onSignIn={() => setPopupOpen(true)}
           onDownload={() => {
             const file = session.input;
@@ -455,20 +463,20 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           }
         }}
       />
-      <Dialog open={confirmRerun} onClose={() => setConfirmRerun(false)} title={t('partial.rerun.title')}>
-        <p>{t('partial.rerun.body')}</p>
+      <Dialog open={confirmWhole} onClose={() => setConfirmWhole(false)} title={t('partial.whole.title')}>
+        <p>{t('partial.whole.body')}</p>
         <div className="dialog__actions">
-          <Button variant="primary" onClick={() => setConfirmRerun(false)}>
-            {t('partial.rerun.keep')}
+          <Button variant="primary" onClick={() => setConfirmWhole(false)}>
+            {t('partial.whole.keep')}
           </Button>
           <Button
             variant="secondary"
             onClick={() => {
-              setConfirmRerun(false);
-              rerunAll();
+              setConfirmWhole(false);
+              learnWhole();
             }}
           >
-            {t('partial.rerun.confirm')}
+            {t('partial.whole.confirm')}
           </Button>
         </div>
       </Dialog>

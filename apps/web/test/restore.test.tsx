@@ -1,6 +1,6 @@
 // SPEC 5 E "The learned rules survive sign-in": before the browser leaves for the provider what has been learned is kept (in IndexedDB,
 // never sent); when the app starts again the LOCAL analysis is re-run on the kept files, the kept edits are put back on top, and the
-// Result screen comes back as it was - with "Run deep analysis with AI" for a user who is now signed in. A memory store stands in for
+// Result screen comes back as it was - with "Finish with AI" for a user who is now signed in. A memory store stands in for
 // IndexedDB here (its own round trip is in pendingLearn.test.ts).
 import type { Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
@@ -89,14 +89,14 @@ describe('coming back after signing in', () => {
     expect(skuLine.getAttribute('data-status')).toBe('edited');
     expect(document.querySelector('[data-line-id="col:Item"]')).toBeNull();
 
-    // Signed in: no sign-in popup, and "Run deep analysis with AI" is the next click.
+    // Signed in: no sign-in popup, and "Finish with AI" is the next click.
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Run deep analysis with AI' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Finish with AI' })).toBeTruthy();
     // It is used once: the kept copy is gone.
     expect(await store.load()).toBeNull();
   });
 
-  it('"Run deep analysis with AI" then asks the AI step (allowed) for what is missing, on the kept files', async () => {
+  it('"Finish with AI" then asks the AI step (allowed) for what is missing, on the kept files', async () => {
     await store.save(await kept());
     const results = [
       partialOutput(),
@@ -104,7 +104,7 @@ describe('coming back after signing in', () => {
     ];
     const { engine, learn } = fakeEngine(async () => results.shift()!);
     renderApp({ api: fakeApi({ user: USER }), engine, route: '/result' });
-    fireEvent.click(await screen.findByRole('button', { name: 'Run deep analysis with AI' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Finish with AI' }));
     await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
     const second = learn.mock.calls[1]![0] as { input: { name: string }; ai: string; masking: boolean; complete?: { columns: number[] } };
     expect(second).toMatchObject({ ai: 'allowed', masking: false, complete: { columns: [3, 4, 5] } });
@@ -201,6 +201,97 @@ describe('the whole trip: learn, sign in, come back', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Vendor orders');
     expect(document.querySelector('[data-line-id="col:Vendor"]')).toBeTruthy();
     expect(document.querySelector('[data-line-id="col:Supplier"]')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Run deep analysis with AI' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Finish with AI' })).toBeTruthy();
+  });
+});
+
+describe('a visitor\'s "Learn with AI": the choice survives the sign-in', () => {
+  const completed = () => learnResult({ path: 'llm', rules: ordersRules(), completion: { columns: [3, 4, 5], parts: ['sort'], fixedProblems: [], matches: true, produced: { columns: 2, parts: 1 } } });
+
+  /** A visitor drops the two files on Home and presses "Learn with AI": the sign-in wall opens, they choose Google, and the browser leaves. */
+  async function visitorLeaves() {
+    const first = fakeEngine(async () => partialOutput());
+    const before = renderApp({ api: fakeApi(), engine: first.engine });
+    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv', 'a,b\n1,2\n')] } });
+    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('Orders report.csv', 'x\n1\n')] } });
+    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Learn with AI' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Learn with AI' }));
+    const wall = await screen.findByRole('dialog', { name: 'Sign in' });
+    await act(async () => {
+      fireEvent.click(await within(wall).findByRole('button', { name: 'Continue with Google' }));
+    });
+    await waitFor(() => expect(redirectTo).toHaveBeenCalledWith('/api/auth/google/start?returnTo=%2F'));
+    expect(first.learn).not.toHaveBeenCalled(); // nothing was learned before signing in
+    before.unmount();
+  }
+
+  it('the browser keeps the two files and the choice (and no result), then the signed-in app learns by itself and the AI step follows', async () => {
+    await visitorLeaves();
+    const record = await store.load();
+    expect(record).toMatchObject({ deepAnalysis: true, result: null, path: '/' });
+    expect(record!.input!.name).toBe('orders.csv');
+    expect(record!.output!.name).toBe('Orders report.csv');
+
+    const results = [partialOutput(), completed()];
+    const { engine, learn } = fakeEngine(async () => results.shift()!);
+    const api = fakeApi({ user: USER });
+    renderApp({ api, engine, route: '/' });
+    // The learn starts by itself on the kept files (the free engine first, as a registered user) ...
+    await waitFor(() => expect(learn).toHaveBeenCalledTimes(1));
+    expect(learn.mock.calls[0]![0]).toMatchObject({ ai: 'notAllowed', tier: 'registered', masking: true });
+    // ... the Result screen opens, and the AI step starts by itself on what the free engine left (nobody pressed anything).
+    await screen.findByTestId('rules-map');
+    await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
+    expect(learn.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', tier: 'registered', complete: { columns: [3, 4, 5] } });
+    await screen.findByTestId('completion-done');
+    expect(await store.load()).toBeNull(); // used once
+  });
+
+  it('when nothing is missing after signing in, the free result is shown and no AI call is made', async () => {
+    await visitorLeaves();
+    const { engine, learn } = fakeEngine(async () => learnResult({ path: 'local' }));
+    const api = fakeApi({ user: USER });
+    renderApp({ api, engine, route: '/' });
+    await screen.findByTestId('ai-not-needed');
+    await new Promise((r) => setTimeout(r, 60));
+    expect(learn).toHaveBeenCalledTimes(1);
+    expect(api.learn).not.toHaveBeenCalled();
+  });
+
+  it('only the wall that "Learn with AI" opened carries the choice: closed again, and the header\'s plain "Sign in" brings the files back and learns nothing', async () => {
+    const first = fakeEngine(async () => partialOutput());
+    const before = renderApp({ api: fakeApi(), engine: first.engine });
+    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv', 'a,b\n1,2\n')] } });
+    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('Orders report.csv', 'x\n1\n')] } });
+    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Learn with AI' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Learn with AI' }));
+    await screen.findByRole('dialog', { name: 'Sign in' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    const wall = await screen.findByRole('dialog', { name: 'Sign in' });
+    await act(async () => {
+      fireEvent.click(await within(wall).findByRole('button', { name: 'Continue with Google' }));
+    });
+    await waitFor(() => expect(redirectTo).toHaveBeenCalled());
+    expect((await store.load())!.deepAnalysis).toBeUndefined();
+    before.unmount();
+
+    const { engine, learn } = fakeEngine(async () => partialOutput());
+    renderApp({ api: fakeApi({ user: USER }), engine, route: '/' });
+    await waitFor(() => expect(screen.getByText('orders.csv')).toBeTruthy());
+    expect(learn).not.toHaveBeenCalled();
+  });
+
+  it('a sign-in that was declined brings the two files back on Home and starts nothing', async () => {
+    await visitorLeaves();
+    const { engine, learn } = fakeEngine(async () => partialOutput());
+    renderApp({ api: fakeApi(), engine, route: '/?authError=denied' });
+    await waitFor(() => expect(screen.getByText('orders.csv')).toBeTruthy());
+    expect(screen.getByText('Orders report.csv')).toBeTruthy();
+    expect(learn).not.toHaveBeenCalled();
+    expect(await store.load()).toBeNull();
   });
 });
