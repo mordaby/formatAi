@@ -375,6 +375,9 @@ function filterListFilled(rules: LearnResult, filter: DropList, analysis: PairAn
 /** `format` with day and month swapped ("DD/MM/YYYY" -> "MM/DD/YYYY"), or null when it has no numeric day AND month (or a month name). */
 export function swapDayMonthFormat(format: string): string | null {
   if (format === 'excelSerial' || format.includes('MMM')) return null;
+  // DECISION: a year-first format (ISO "YYYY-MM-DD", "YYYY/MM/DD") is always year-month-day in practice, so it is never a day/month question:
+  // "2026-03-05" also reads as "YYYY-DD-MM", and asking about it would offer a reading no file uses (found in the browser, 2026-10-04).
+  if (/^\s*Y/.test(format)) return null;
   let out = '';
   let day = false;
   let month = false;

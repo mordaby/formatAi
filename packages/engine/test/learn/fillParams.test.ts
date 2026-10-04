@@ -322,6 +322,13 @@ describe('fillParams: the day/month order of text dates', () => {
     expect(JSON.stringify(swapDayMonth(r.rules, r.ambiguities[0]!))).toContain('"format":"MM/DD/YYYY"');
   });
 
+  it('ISO text dates are never asked about: "2026-03-05" also reads as YYYY-DD-MM, but no file means that', () => {
+    const p = datePair(['2026-03-05', '2026-04-01', '2026-01-02']);
+    const r = fillParams(toDateRules('YYYY-MM-DD'), analysisOf(p.input, p.output));
+    expect(r.ambiguities).toEqual([]);
+    expect(r.filled).toEqual([]);
+  });
+
   it('input formats are settled the same way', () => {
     const p = datePair(['05/03/2026', '13/04/2026']);
     const output: V[][] = [['Id', 'When'], ['R0', date(2026, 3, 5)], ['R1', date(2026, 4, 13)]];
@@ -333,7 +340,9 @@ describe('fillParams: the day/month order of text dates', () => {
   it('swaps day and month tokens only', () => {
     expect(swapDayMonthFormat('DD/MM/YYYY')).toBe('MM/DD/YYYY');
     expect(swapDayMonthFormat('D.M.YY')).toBe('M.D.YY');
-    expect(swapDayMonthFormat('YYYY-MM-DD')).toBe('YYYY-DD-MM');
+    // year-first (ISO) is never a day/month question: no file writes YYYY-DD-MM
+    expect(swapDayMonthFormat('YYYY-MM-DD')).toBeNull();
+    expect(swapDayMonthFormat('YYYY/MM/DD')).toBeNull();
     expect(swapDayMonthFormat('D בMMMM YYYY')).toBeNull();
     expect(swapDayMonthFormat('MM/YYYY')).toBeNull();
   });
