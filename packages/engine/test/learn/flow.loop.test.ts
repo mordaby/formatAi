@@ -18,8 +18,11 @@ interface Round {
   previous: LearnResult;
 }
 
-/** The AI step: the first answer with cut-off `first`, then each repair with the next cut-off of `repairs` (null: nothing usable). */
-function aiStep(first: number, repairs: (number | null)[]) {
+/**
+ * The AI step: the first answer with cut-off `first`, then each repair with the next cut-off of `repairs` (null: nothing usable). The
+ * cut-off is on `round(amount, 0)`, a comparison code does not fill (`fillParams`): it is the loop's to settle. `plain`: on the column itself.
+ */
+function aiStep(first: number, repairs: (number | null)[], plain = false) {
   const payloads: LearnPayload[] = [];
   const rounds: Round[] = [];
   return {
@@ -27,12 +30,12 @@ function aiStep(first: number, repairs: (number | null)[]) {
     rounds,
     callLearn: async (payload: LearnPayload): Promise<LearnCallResult> => {
       payloads.push(payload);
-      return { rules: priorityRules(first), problems: [], calls: ['learn'] };
+      return { rules: priorityRules(first, !plain), problems: [], calls: ['learn'] };
     },
     callRepair: async (_payload: LearnPayload, previous: LearnResult, problems: RepairProblem[], round: LoopRound): Promise<LearnCallResult> => {
       rounds.push({ problems, round, previous });
       const cut = repairs[rounds.length - 1];
-      return { rules: cut === null || cut === undefined ? null : priorityRules(cut), problems: [], calls: [`repair${rounds.length}`] };
+      return { rules: cut === null || cut === undefined ? null : priorityRules(cut, !plain), problems: [], calls: [`repair${rounds.length}`] };
     },
   };
 }
@@ -48,7 +51,7 @@ async function run(pair: Pair, ai: ReturnType<typeof aiStep>, masking = false) {
   });
 }
 
-const cutOf = (rules: LearnResult | null): unknown => (JSON.stringify(rules).match(/"gte","args":\[\{"col":"amount"\},\{"const":(\d+)\}/) ?? [])[1];
+const cutOf = (rules: LearnResult | null): unknown => (JSON.stringify(rules).match(/"gte","args":\[\{(?:"col":"amount"|"op":"round","arg":\{"col":"amount"\},"digits":0)\},\{"const":(\d+)\}/) ?? [])[1];
 
 describe('learnFromExamples: the learning loop', () => {
   it('verifies in round 2: each round sends new wrong rows, the request carries every row sent so far', async () => {
@@ -132,5 +135,18 @@ describe('learnFromExamples: the learning loop', () => {
     const pair = priorityPair();
     const r = await learnFromExamples({ ...(await bytes(pair)), masking: false, tier: 'paid', callLearn: aiStep(8000, []).callLearn });
     expect(r.loop).toEqual({ rounds: 0, rowsSent: 0, end: 'roundCap' });
+  });
+
+  it('a cut-off on the column itself is filled by code from every row: verified with no round, the range a visible check', async () => {
+    const ai = aiStep(9400, [8000, 5000], true);
+    const r = await run(priorityPair(), ai, true);
+    expect(ai.rounds).toHaveLength(0);
+    expect(r.loop).toEqual({ rounds: 0, rowsSent: 0, end: 'verified' });
+    expect(r.stages).toMatchObject({ verifiedFirstCall: true, browserRepairUsed: false });
+    expect(r.filled).toEqual({ filled: [{ kind: 'cutoff', count: 1 }], checks: 1 });
+    // the roundest number in the range the example leaves (it holds 5,000 itself: the check's edges are neighbouring amounts around it)
+    const check = r.rules!.validations.find((v) => v.rule === 'cutoffRange');
+    expect(check).toMatchObject({ column: 'amount', includes: 'high', severity: 'flag' });
+    expect(cutOf(r.rules)).toBe(String((check as { value: number }).value));
   });
 });

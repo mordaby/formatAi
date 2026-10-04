@@ -45,8 +45,13 @@ export function wrongWithCutoff(pair: Pair, cut: number): number[] {
 const col = (id: string): Expr => ({ col: id });
 const text = (s: string): Expr => ({ const: s });
 
-/** The rules for the pair, with the given cut-off (`CUTOFF` is right). */
-export function priorityRules(cut: number): LearnResult {
+/**
+ * The rules for the pair, with the given cut-off (`CUTOFF` is right). `beyondCode`: the comparison reads `round(amount, 0)`, not the column
+ * itself - code fills only a comparison of one column with one constant (`fillParams`, proposal 3.3), so such a cut-off is left to the
+ * learning loop, which is what the loop's own tests need.
+ */
+export function priorityRules(cut: number, beyondCode = false): LearnResult {
+  const amount: Expr = beyondCode ? { op: 'round', arg: col('amount'), digits: 0 } : col('amount');
   return {
     schemaVersion: 1,
     input: {
@@ -71,7 +76,7 @@ export function priorityRules(cut: number): LearnResult {
             else: {
               op: 'if',
               cond: { op: 'eq', args: [col('status'), text('Open')] },
-              then: { op: 'if', cond: { op: 'gte', args: [col('amount'), { const: cut }] }, then: text('Urgent'), else: text('Normal') },
+              then: { op: 'if', cond: { op: 'gte', args: [amount, { const: cut }] }, then: text('Urgent'), else: text('Normal') },
               else: text('Done'),
             },
           },

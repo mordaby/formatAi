@@ -376,12 +376,9 @@ function groupAlignmentByInputRow(analysis: PairAnalysis): { inRow: number; alig
   return order.map((inRow) => ({ inRow, alignedIdx: byIn.get(inRow)! }));
 }
 
-export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairAnalysis, opts: VerifyOptions = {}): VerifyResult {
-  const exceptions = new Set(opts.exceptions ?? []);
-  const masker = opts.masker;
-  const only = opts.onlyColumns !== undefined ? new Set(opts.onlyColumns) : null;
-
-  const table: InputTable = {
+/** The example's input as the rules run on it. */
+export function exampleTable(analysis: PairAnalysis): InputTable {
+  return {
     sheetName: analysis.input.sheetName,
     direction: analysis.input.direction,
     headers: analysis.input.headers,
@@ -389,8 +386,53 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
     rowNumbers: analysis.input.rowNumbers,
     ...(analysis.input.date1904 ? { date1904: true } : {}),
   };
+}
 
-  const result = runRules(rules, table, {});
+// ---------------------------------------------------------------------------
+// Row by row, for code that fills data parameters from the example (`fillParams.ts`): the same pairing and the same typed compare as the
+// full verification below, one cell at a time.
+// ---------------------------------------------------------------------------
+
+/**
+ * For each aligned row of the example (`analysis.alignment.rows[k]`), the data row the rules made for it, or null: an input row's rows, in
+ * order, against the example rows aligned with it - the pairing `verifyAgainstExample` compares.
+ */
+export function alignedActualRows(analysis: PairAnalysis, sheetRows: readonly OutRow[]): (OutRow | null)[] {
+  const byRowNumber = new Map<number, OutRow[]>();
+  for (const row of sheetRows) {
+    if (row.kind !== 'data' || row.sourceRow === undefined) continue;
+    const list = byRowNumber.get(row.sourceRow);
+    if (list) list.push(row);
+    else byRowNumber.set(row.sourceRow, [row]);
+  }
+  const out: (OutRow | null)[] = new Array<OutRow | null>(analysis.alignment.rows.length).fill(null);
+  for (const { inRow, alignedIdx } of groupAlignmentByInputRow(analysis)) {
+    const rowNumber = analysis.input.rowNumbers[inRow];
+    const made = rowNumber !== undefined ? (byRowNumber.get(rowNumber) ?? []) : [];
+    alignedIdx.forEach((k, r) => {
+      out[k] = made[r] ?? null;
+    });
+  }
+  return out;
+}
+
+/** The example's cell at aligned row `k`, output column `c`, as the check reads it (a real date as ISO text, with `date` set). */
+export function exampleCellAt(analysis: PairAnalysis, k: number, c: number): { v: PayloadCell; date: boolean } {
+  const sheetRow = analysis.output.dataRows[analysis.alignment.rows[k]?.out ?? -1];
+  return expectedSeen(sheetRow === undefined ? undefined : analysis.output.sheet.rows[sheetRow]?.[c]);
+}
+
+/** Whether the rules' cell matches the example's at aligned row `k`, column `c` (the typed compare of the full verification). */
+export function cellMatchesExample(analysis: PairAnalysis, k: number, c: number, actual: OutCell | undefined): boolean {
+  return cellsMatch(exampleCellAt(analysis, k, c), actualSeen(actual), analysis.layout.file.type !== 'xlsx');
+}
+
+export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairAnalysis, opts: VerifyOptions = {}): VerifyResult {
+  const exceptions = new Set(opts.exceptions ?? []);
+  const masker = opts.masker;
+  const only = opts.onlyColumns !== undefined ? new Set(opts.onlyColumns) : null;
+
+  const result = runRules(rules, exampleTable(analysis), {});
 
   if (!result.ok) {
     const missing = result.error.missing ?? [];

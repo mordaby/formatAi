@@ -109,6 +109,26 @@ describe('learnFromExamples with complete', () => {
     expect(s.repairs).toHaveLength(0);
   });
 
+  it("a cut-off check in the user's rules is never sent (its edges are values of their rows), and comes back on the answer", async () => {
+    const pair = mixedPair();
+    const { rules } = await localPartial(pair);
+    const numeric = rules.input.columns.find((c) => c.type === 'decimal' || c.type === 'integer')!;
+    const check = { column: numeric.id, rule: 'cutoffRange', low: 123.5, high: 456.25, value: 400, includes: 'high', severity: 'flag' } as const;
+    const s = spy(answerFor);
+    const r = await learnFromExamples({
+      ...(await bytes(pair)),
+      masking: false,
+      tier: 'paid',
+      complete: { fixedRules: { ...rules, validations: [...rules.validations, check] }, columns: [3], parts: [] },
+      callLearn: s.callLearn,
+      callRepair: s.callRepair,
+    });
+    expect(JSON.stringify(s.payloads)).not.toContain('cutoffRange');
+    expect(JSON.stringify(s.payloads)).not.toContain('456.25');
+    expect(r.completion).toMatchObject({ fixedProblems: [], matches: true });
+    expect(r.rules?.validations).toContainEqual(check);
+  });
+
   it('an answer that changed a fixed element gets it put back by code: the lock holds, the answer is good, and no repair is asked for', async () => {
     const { rules: fixed } = await localPartial(mixedPair());
     const bad = (p: LearnPayload): LearnResult => {

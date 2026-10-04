@@ -186,6 +186,14 @@ export const limits = {
       rowsPerRound: 8,
       maxRowsTotal: 40,
     },
+    /**
+     * Code fills the data parameters of an AI answer from every row of the example (docs/proposals/learning-loop.md 7.1, owner decision
+     * 2026-10-04; engine `learn/fillParams.ts`). Each condition (a value list, a cut-off) code settles costs two runs of the rules on the
+     * example; at most `maxConditions` of them per answer, in the order they appear (the rest are left as the AI wrote them).
+     */
+    fill: {
+      maxConditions: 24,
+    },
   },
   /**
    * SPEC 8.11 / 8.12 / 11 / 13: the registry (saved formats and their conversions).

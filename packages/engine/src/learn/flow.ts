@@ -9,7 +9,9 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import { aiNotesOf, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Tier } from '@formatai/shared';
+import { aiNotesOf, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier, type Validation } from '@formatai/shared';
+import { deepEqual } from '../registry/deepEqual';
+import { fillParams, type Ambiguity, type FillSummary } from './fillParams';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
@@ -197,6 +199,17 @@ export interface LearnFromExamplesResult<Call = unknown> {
   };
   /** The learning loop (path 'llm' with rules): rounds made, rows they sent, and how it ended. `rules` is its best answer. */
   loop?: LoopSummary;
+  /**
+   * Path 'llm' with rules: what code filled in the kept answer from every row of the example (`fillParams`, proposal 7.1) - kinds and
+   * counts only, never a value: for the UI's note ("we completed the branch table from your example: 48 entries") and the eval report.
+   */
+  filled?: FillSummary;
+  /**
+   * Path 'llm' with rules: what the example could not settle, for the ambiguity question (proposal 7.2). Today one kind:
+   * `{ kind: 'dayMonthOrder', column, format, other }` - every date text of the input column `column` reads both ways, so the rules keep
+   * the AI's `format`; answering "the other way" is `swapDayMonth(rules, ambiguity)`. Absent when there is none.
+   */
+  ambiguities?: Ambiguity[];
 }
 
 /** Like the diff problems (LEARN_PROMPT §4: "At most 10 diff problems are sent"), a repair call needs enough fixed-lock findings to fix the pattern, not all of them. */
@@ -237,6 +250,10 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     if (opts.ai === 'notAllowed') throw new Error('learnFromExamples: completion mode is the AI step, but the AI step is not allowed');
     if (!isCompletable(opts.complete.fixedRules)) throw new Error('learnFromExamples: complete.fixedRules is not a valid rules file');
   }
+  // Completion mode: a cut-off check in the user's rules (SPEC 8.8) holds two values of their rows, which are never sent (SPEC 7.2). The AI
+  // step gets their rules without it (the payload, the fixed lock, what code puts back) and it is put back on the answer at the end.
+  const userCutoffChecks = opts.complete ? opts.complete.fixedRules.validations.filter(isCodeCheck) : [];
+  const complete: CompleteOptions | undefined = opts.complete ? { ...opts.complete, fixedRules: withoutCodeChecks(opts.complete.fixedRules) } : undefined;
 
   // ---- SPEC 5 A step 1: read both files (sniff delimited output bytes so
   // detectFileSpec can see quote: 'all' - SPEC 8.13) ----
@@ -273,7 +290,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // target's exactly), so an attached source always goes through the LLM, which is
   // told to copy `target` verbatim (LEARN_PROMPT "Adding a source to an existing
   // format"). ----
-  if (!opts.target && !opts.complete) {
+  if (!opts.target && !complete) {
     stages.fastPathTried = true;
     const fp = fastPath(analysis, pf);
     if ('rules' in fp) {
@@ -299,11 +316,11 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   const ai = opts.ai ?? 'allowed';
   const masker: Masker | undefined = opts.masking ? createMasker(opts.key!) : undefined;
   // (The local partial result is only for a caller that may not use the AI step.)
-  const partial = opts.complete || ai !== 'notAllowed' ? null : localPartial(analysis, pf);
+  const partial = complete || ai !== 'notAllowed' ? null : localPartial(analysis, pf);
   const readiness = aiReadiness(analysis, pf, {
     ...(masker ? { masker } : {}),
     ...(opts.target ? { target: opts.target } : {}),
-    ...(opts.complete ? { complete: opts.complete } : {}),
+    ...(complete ? { complete } : {}),
   });
   stages.readinessChecked = true;
   const shownReadiness: AiReadiness = readiness.ready ? { ready: true } : readiness;
@@ -344,22 +361,22 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // already leaves out a column that has no rule.
   const verifyAnswer = (r: LearnResult): VerifyResult => {
     const base = { wrongRows: true, ...(masker ? { masker } : {}) };
-    if (opts.complete) return verifyAgainstExample(r, analysis, base);
+    if (complete) return verifyAgainstExample(r, analysis, base);
     const withRule = columnsWithRule(r);
     return verifyAgainstExample(r, analysis, withRule.length < r.output.columns.length ? { ...base, onlyColumns: withRule } : base);
   };
   // Completion mode: the answer must also still contain the user's rules, unchanged (the API checked this on the masked
   // copies; this is the same check on the real ones, before anything replaces what the user has).
-  const asked = opts.complete ? { columns: opts.complete.columns, parts: opts.complete.parts } : null;
-  const fixedLock = (r: LearnResult): FixedProblem[] => (opts.complete && asked ? checkFixedLock(r, opts.complete.fixedRules, asked) : []);
+  const asked = complete ? { columns: complete.columns, parts: complete.parts } : null;
+  const fixedLock = (r: LearnResult): FixedProblem[] => (complete && asked ? checkFixedLock(r, complete.fixedRules, asked) : []);
   // The fixed rules in the answer's vocabulary (masked like `complete.fixed`), for putting back what an answer changed (`restoreFixed`).
-  const maskedFixed = opts.complete ? (masker ? maskRules(learnResultOf(opts.complete.fixedRules), masker) : learnResultOf(opts.complete.fixedRules)) : null;
+  const maskedFixed = complete ? (masker ? maskRules(learnResultOf(complete.fixedRules), masker) : learnResultOf(complete.fixedRules)) : null;
   // What "the answer is good" means: a plain learn - the full verification; completion - that too, but a column with no rule does not count.
   // DECISION: in completion mode "matches the example" is relative to the user's own rules - the AI step answers for the columns it produced
   // (every cell must match) and must not make anything else worse; a difference the fixed rules already had (an edit that departs from the
   // example on purpose, a part still missing) is not its fault. Against the raw example no edit of a header or a value could ever pass.
   // What the user's own rules already differ by, against the example:
-  const before = opts.complete ? verifyAgainstExample(opts.complete.fixedRules, analysis, { wrongRows: true }) : null;
+  const before = complete ? verifyAgainstExample(complete.fixedRules, analysis, { wrongRows: true }) : null;
   const cellKey = (m: { exampleRow: number; column: string }): string => `${m.exampleRow}\u0000${m.column}`;
   const layoutKey = (i: { code: string; message: string }): string => `${i.code}\u0000${i.message}`;
   const hadCell = new Set(before?.mismatches.map(cellKey) ?? []);
@@ -368,9 +385,9 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   const headerAt = (r: LearnResult, c: number): string => r.output.columns[c]?.header ?? analysis.output.headers[c] ?? `column${c + 1}`;
   /** The mismatches an answer is answerable for (completion: see the DECISION above; a plain learn: all of them). */
   const blamed = (v: VerifyResult, r: LearnResult): { rows: WrongRow[]; layout: number; cells: number } => {
-    if (!opts.complete) return { rows: v.wrongRows ?? [], layout: v.layoutIssues.length, cells: v.mismatches.length };
+    if (!complete) return { rows: v.wrongRows ?? [], layout: v.layoutIssues.length, cells: v.mismatches.length };
     const noRule = new Set(r.output.columns.filter((c) => c.from === null).map((c) => c.header));
-    const produced = new Set(opts.complete.columns.map((i) => r.output.columns[i]).filter((c) => c !== undefined && c.from !== null).map((c) => c!.header));
+    const produced = new Set(complete.columns.map((i) => r.output.columns[i]).filter((c) => c !== undefined && c.from !== null).map((c) => c!.header));
     const counts = (m: { exampleRow: number; column: string }): boolean => !noRule.has(m.column) && (produced.has(m.column) || !hadCell.has(cellKey(m)));
     const rows: WrongRow[] = [];
     for (const w of v.wrongRows ?? []) {
@@ -381,7 +398,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     return { rows, layout: v.layoutIssues.filter((i) => !hadLayout.has(layoutKey(i))).length, cells: v.mismatches.filter(counts).length };
   };
   const matchesExample = (v: VerifyResult, r: LearnResult): boolean => {
-    if (!opts.complete || !before) return v.verified;
+    if (!complete || !before) return v.verified;
     if (v.verified) return true;
     const b = blamed(v, r);
     return b.cells === 0 && b.layout === 0;
@@ -401,6 +418,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     passes: boolean;
     wrongRows: WrongRow[];
     wrong: number;
+    /** What code filled in it (kinds and counts) and what the example could not settle. */
+    fill: { summary: FillSummary; ambiguities: Ambiguity[] };
   }
   const judge = (answer: LearnResult): Judged => {
     let masked = answer;
@@ -413,10 +432,17 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
       rules = masker ? unmaskRules(masked, masker) : masked;
       fixedProblems = fixedLock(rules);
     }
+    // Code fills the data parameters from every row (`fillParams`, proposal 7.1), on the REAL rules: lookup tables, value maps and lists,
+    // cut-offs, the day/month order, the duplicate kept, the values a filter drops. `masked` - what a repair round sends back - stays the
+    // answer as the AI wrote it, so nothing filled is ever sent. DECISION: a cut-off check is code's alone; one the answer wrote is dropped.
+    const filled = fillParams(withoutCodeChecks(rules), analysis, complete ? { fixed: learnResultOf(complete.fixedRules) } : {});
+    rules = filled.rules;
+    fixedProblems = fixedLock(rules);
+    const fill = { summary: { filled: filled.filled, checks: filled.checks }, ambiguities: filled.ambiguities };
     const sendFixed = fixedProblems.length > 0 && masker && asked && maskedFixed ? checkFixedLock(masked, maskedFixed, asked) : fixedProblems;
     const verification = verifyAnswer(rules);
     const b = blamed(verification, rules);
-    return { masked, rules, verification, fixedProblems, sendFixed, passes: passes(verification, rules, fixedProblems), wrongRows: b.rows, wrong: wrongCount(b.rows, b.layout) + fixedProblems.length };
+    return { masked, rules, verification, fixedProblems, sendFixed, passes: passes(verification, rules, fixedProblems), wrongRows: b.rows, wrong: wrongCount(b.rows, b.layout) + fixedProblems.length, fill };
   };
   /**
    * What a round tells the AI step besides the rows: the fixed lock's findings, then the row count and layout rows (not the diffs: the loop
@@ -474,7 +500,10 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
 
   // learn-v7: the notes leave the rules here (SPEC 15): the answer the caller works with has none, and they travel beside it.
   const aiNotes = aiNotesOf(rules);
-  const answer = stripAiNotes(rules);
+  const stripped = stripAiNotes(rules);
+  // Completion mode: the user's own cut-off checks come back (they were never sent).
+  const restored = userCutoffChecks.filter((v) => !stripped.validations.some((w) => deepEqual(v, w)));
+  const answer = restored.length > 0 ? { ...stripped, validations: [...stripped.validations, ...restored] } : stripped;
 
   return {
     path: 'llm',
@@ -487,9 +516,20 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     stages,
     readiness: shownReadiness,
     loop: loopSummary,
+    filled: kept.fill.summary,
+    ...(kept.fill.ambiguities.length > 0 ? { ambiguities: kept.fill.ambiguities } : {}),
     ...(aiNotes.length > 0 ? { aiNotes } : {}),
-    ...(opts.complete ? { completion: { columns: [...opts.complete.columns], parts: [...opts.complete.parts], fixedProblems, matches: matchesExample(kept.verification, rules), produced: completionProduced(rules, opts.complete.fixedRules, opts.complete) } } : {}),
+    ...(complete ? { completion: { columns: [...complete.columns], parts: [...complete.parts], fixedProblems, matches: matchesExample(kept.verification, rules), produced: completionProduced(rules, complete.fixedRules, complete) } } : {}),
   };
+}
+
+/** A check only code writes (SPEC 8.8 `cutoffRange`): its edges are values of the user's rows. */
+function isCodeCheck(v: Validation): boolean {
+  return v.rule === 'cutoffRange';
+}
+
+function withoutCodeChecks<R extends LearnResult | Rules>(rules: R): R {
+  return rules.validations.some(isCodeCheck) ? { ...rules, validations: rules.validations.filter((v) => !isCodeCheck(v)) } : rules;
 }
 
 /** The local partial result, or null when there is none. It is a preview built from what code already knows, so a
