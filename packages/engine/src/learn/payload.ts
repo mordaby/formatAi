@@ -52,6 +52,9 @@ export interface BuildPayloadResult {
    * back onto the original sheets. `out` has one entry for a pair, or one per
    * family row when rows expand. */
   sampleRows: { in: number; out: number[] }[];
+  /** The input rows (indices into `analysis.input.rows`) of `payload.dropped`, in the same order: with `sampleRows`, every row the
+   * payload already sends, which the learning loop never sends again. */
+  droppedRows: number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +352,25 @@ function finishSample(sample: Sample, analysis: PairAnalysis, masker: Masker | u
   return truncateSample(masker ? maskSample(sample, analysis, masker) : sample, maxChars);
 }
 
+/**
+ * The learning loop (`learn/loop.ts`): one row of the example as a sample, built, masked and truncated exactly like the payload's own
+ * samples (the same masker, so a value has the same fake word in every round). When rows expand it is the whole family (the input row and
+ * all its output rows); a row the example dropped is the input row with no output rows (`out: []`: the rules must make nothing for it).
+ */
+export function counterexampleSample(analysis: PairAnalysis, inRow: number, masker?: Masker, maxCellChars: number = limits.payload.maxCellChars): Sample {
+  const isFamilies = analysis.shape.kind === 'families';
+  let sample: Sample | undefined;
+  if (isFamilies) {
+    const family = analysis.shape.kind === 'families' ? analysis.shape.families.find((f) => f.in === inRow) : undefined;
+    if (family) sample = buildFamilySample(analysis, family).sample;
+  } else {
+    const k = analysis.alignment.rows.findIndex((r) => r.in === inRow);
+    if (k >= 0) sample = buildPairSample(analysis, k).sample;
+  }
+  sample ??= { in: rowCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904), out: [] as PayloadCell[][] };
+  return finishSample(sample, analysis, masker, maxCellChars);
+}
+
 function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Masker): ColumnHint {
   if (h.rel === 'valueMap') {
     const inType = analysis.input.profile[h.in[0]]?.type ?? 'text';
@@ -573,7 +595,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
     if (opts.target) payload.target = buildTargetPayload(opts.target, masker);
     if (opts.complete) payload.complete = completePayloadOf(opts.complete, masker);
 
-    return { payload, sampleRows: samplesBuilt.sampleRows };
+    return { payload, sampleRows: samplesBuilt.sampleRows, droppedRows: [...droppedPriority] };
   };
 
   let result = finalize();

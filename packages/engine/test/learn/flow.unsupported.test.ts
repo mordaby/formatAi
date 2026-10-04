@@ -162,14 +162,19 @@ describe('learnFromExamples: a column the AI step gives up on although the analy
     expect(res.unsupported.map((u) => u.outputColumn)).toEqual(['Total', 'Warehouse']);
   });
 
-  it('a repair that writes a rule for it is checked like any column: a wrong one is a mismatch', async () => {
+  it('a repair that writes a rule for it is checked like any column: a wrong one is no progress, so the first (honest) answer is kept', async () => {
     const pair = externalOnlyPair();
     const good = honest(await localRules(pair));
     const itemFrom = good.output.columns.find((c) => c.header === 'Item')!.from;
     const wrong: LearnResult = { ...good, output: { ...good.output, columns: good.output.columns.map((c) => (c.header === 'Total' ? { ...c, from: itemFrom } : c)) }, unsupported: [external()] };
-    const res = await learn(pair, spy(gaveUpOnTotal(good), wrong), false);
-    expect(res.stages).toMatchObject({ browserRepairUsed: true, verifiedAfterRepair: false });
-    expect(res.verification?.mismatches.every((m) => m.column === 'Total')).toBe(true);
+    const s = spy(gaveUpOnTotal(good), wrong);
+    const res = await learn(pair, s, false);
+    expect(s.repairs).toHaveLength(1);
+    // (the wrong rule gets every Total wrong: more wrong than the answer that gave up on it, which matches everything it produced)
+    expect(res.stages).toMatchObject({ browserRepairUsed: true, verifiedFirstCall: false, verifiedAfterRepair: true });
+    expect(res.loop).toMatchObject({ rounds: 1, end: 'noProgress' });
+    expect(res.unsupported.map((u) => u.outputColumn)).toEqual(['Total', 'Warehouse']);
+    expect(res.verification?.mismatches).toEqual([]);
   });
 
   it('without a repair call to make (callRepair not given) nothing is asked: the answer is returned as it is', async () => {

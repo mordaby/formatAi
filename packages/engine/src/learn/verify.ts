@@ -40,10 +40,12 @@ export interface VerifyOptions {
    * own Excel row number, matching `Flag.rowNumber`'s convention) the user marked
    * "fixed by hand". Excluded from the count and never reported as mismatches. */
   exceptions?: number[];
-  /** SPEC 7.2/9.3: when given, every cell value carried in a `repairProblems` `row`
-   * (never the UI-facing `mismatches`) is masked with it, so a browser-triggered
-   * repair call never sends real data when masking is on. */
+  /** SPEC 7.2/9.3: when given, every cell value carried in a `repairProblems` diff - its `row`, `expected` and `actual` (never the
+   * UI-facing `mismatches`) - is masked with it, so a browser-triggered repair call never sends real data when masking is on. */
   masker?: Masker;
+  /** The learning loop (`learn/loop.ts`): also list every row the rules got wrong (`VerifyResult.wrongRows`). Off by default: the
+   * live check and the Run screen do not need it, and a file with many wrong rows would carry them across the worker boundary. */
+  wrongRows?: boolean;
   /**
    * SPEC 21 v5 item 1 (the local partial result): only these output columns (0-based positions) are
    * compared, on the aligned data rows. Everything that is about the whole file's structure - the row count
@@ -97,6 +99,31 @@ export interface VerifyResult {
    * failing row, masked when a masker is given) plus any `rowCount`/`layout`
    * problems - ready to send as the browser-triggered repair call's problem list. */
   repairProblems: RepairProblem[];
+  /** Only with `VerifyOptions.wrongRows`: every input row whose output the rules got wrong, in file order (real values). */
+  wrongRows?: WrongRow[];
+}
+
+/** One cell of the example the rules got wrong (the learning loop's counterexamples, `learn/loop.ts`). Real values: never sent as they are. */
+export interface WrongCell {
+  /** Output column (0-based). */
+  out: number;
+  /** The example output's data row it is in (an index into `analysis.output.dataRows`). */
+  outRow: number;
+  expected: PayloadCell;
+  actual: PayloadCell;
+}
+
+/**
+ * One input row of the example whose output the rules got wrong: a cell that differs (or a row of the example the rules do not make, each
+ * of its non-empty cells a wrong cell), or rows the rules make that the example does not have (`extra`: an extra row of a family, or any row
+ * of an input row the example dropped). Real values, for the learning loop to choose from: it masks what it sends.
+ */
+export interface WrongRow {
+  /** An index into `analysis.input.rows`. */
+  inRow: number;
+  cells: WrongCell[];
+  /** The rows the rules make for this input row that the example does not have, as the rules wrote them. */
+  extra: PayloadCell[][];
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +205,11 @@ function rowToPayloadCells(row: (RawCell | null)[] | undefined, count: number, d
 function maskCells(cells: PayloadCell[], profiles: readonly { type: ProfileType }[], masker: Masker | undefined): PayloadCell[] {
   if (!masker) return cells;
   return cells.map((v, i) => masker.maskCell(v, profiles[i]?.type ?? 'text'));
+}
+
+/** One output cell's value, masked like the samples' cells of that column (the rules' own value too: it is made from real words). */
+function maskOutputCell(v: PayloadCell, column: number, profiles: readonly { type: ProfileType }[], masker: Masker | undefined): PayloadCell {
+  return masker ? masker.maskCell(v, profiles[column]?.type ?? 'text') : v;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,11 +377,11 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
         : `rules could not run on the input (${result.error.code})`;
     const repairProblems: RepairProblem[] =
       result.error.code === 'missingRequiredColumns' ? [{ kind: 'reference', message }] : [{ kind: 'schema', path: 'input', message }];
-    return { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [message], layoutIssues: [{ code: 'runFailed', message }], repairProblems };
+    return { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [message], layoutIssues: [{ code: 'runFailed', message }], repairProblems, ...(opts.wrongRows ? { wrongRows: [] } : {}) };
   }
 
   if (only !== null && only.size === 0) {
-    return { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] };
+    return { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [], ...(opts.wrongRows ? { wrongRows: [] } : {}) };
   }
 
   const repairProblems: RepairProblem[] = [];
@@ -377,11 +409,22 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   }
 
   const inputCellsFor = (inRow: number): PayloadCell[] => rowToPayloadCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904);
+  const outProfile = analysis.output.profile;
+  // The learning loop's wrong rows (only when asked for), one per input row, in file order.
+  const wrongRows: WrongRow[] | undefined = opts.wrongRows ? [] : undefined;
+  const wrongRowOf = (inRow: number, current: WrongRow | null): WrongRow | null => {
+    if (!wrongRows) return null;
+    if (current) return current;
+    const row: WrongRow = { inRow, cells: [], extra: [] };
+    wrongRows.push(row);
+    return row;
+  };
 
   for (const { inRow, alignedIdx } of groupAlignmentByInputRow(analysis)) {
     const rowNumber = analysis.input.rowNumbers[inRow];
     const actualGroup = rowNumber !== undefined ? (byRowNumber.get(rowNumber) ?? []) : [];
     const groupLen = Math.max(alignedIdx.length, actualGroup.length);
+    let wrong: WrongRow | null = null;
 
     for (let r = 0; r < groupLen; r++) {
       const k = alignedIdx[r];
@@ -390,12 +433,14 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
       if (k === undefined) {
         // The engine produced more rows for this input row than the example has.
         const actualCells = actualRow!.cells.map(actualCellValue);
+        wrong = wrongRowOf(inRow, wrong);
+        wrong?.extra.push(actualCells);
         pushDiff({
           kind: 'diff',
           out: 0,
-          row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(actualCells, analysis.output.profile, masker) },
+          row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(actualCells, outProfile, masker) },
           expected: null,
-          actual: actualCells[0] ?? null,
+          actual: maskOutputCell(actualCells[0] ?? null, 0, outProfile, masker),
         });
         continue;
       }
@@ -418,12 +463,14 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
           rowOk = false;
           const header = rules.output.columns[c]?.header ?? analysis.output.headers[c] ?? `column${c + 1}`;
           mismatches.push({ exampleRow, column: header, expected, actual });
+          wrong = wrongRowOf(inRow, wrong);
+          wrong?.cells.push({ out: c, outRow: outIdx, expected, actual });
           pushDiff({
             kind: 'diff',
             out: c,
-            row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(expectedCells, analysis.output.profile, masker) },
-            expected,
-            actual,
+            row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(expectedCells, outProfile, masker) },
+            expected: maskOutputCell(expected, c, outProfile, masker),
+            actual: maskOutputCell(actual, c, outProfile, masker),
           });
         }
       }
@@ -435,14 +482,17 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   for (const inRow of analysis.alignment.droppedIn) {
     const rowNumber = analysis.input.rowNumbers[inRow];
     const actualRows = rowNumber !== undefined ? (byRowNumber.get(rowNumber) ?? []) : [];
+    let wrong: WrongRow | null = null;
     for (const actualRow of actualRows) {
       const actualCells = actualRow.cells.map(actualCellValue);
+      wrong = wrongRowOf(inRow, wrong);
+      wrong?.extra.push(actualCells);
       pushDiff({
         kind: 'diff',
         out: 0,
-        row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(actualCells, analysis.output.profile, masker) },
+        row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(actualCells, outProfile, masker) },
         expected: null,
-        actual: actualCells[0] ?? null,
+        actual: maskOutputCell(actualCells[0] ?? null, 0, outProfile, masker),
       });
     }
   }
@@ -481,5 +531,5 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   const layoutProblems = layoutIssues.map((i) => i.message);
   const verified = layoutProblems.length === 0 && repairProblems.length === 0 && matched === total;
 
-  return { verified, matched, total, mismatches, layoutProblems, layoutIssues, repairProblems };
+  return { verified, matched, total, mismatches, layoutProblems, layoutIssues, repairProblems, ...(wrongRows ? { wrongRows: wrongRows.sort((a, b) => a.inRow - b.inRow) } : {}) };
 }

@@ -1,9 +1,9 @@
 // learnFromExamples (SPEC 5 flow A/A2): the end-to-end learn pipeline, from the two
 // example files to a verified (or best-effort) rules file. Pure orchestration - every
-// real decision (pre-flight, the fast path, masking, the payload, full verification)
-// is already implemented elsewhere in this package; this module only sequences them
-// exactly as SPEC 5 flow A describes, steps 1-6 (step 7, "show the rules map", and
-// step 8, "saving", are UI/registry concerns outside the engine).
+// real decision (pre-flight, the fast path, masking, the payload, full verification,
+// the learning loop's next step) is already implemented elsewhere in this package; this
+// module only sequences them exactly as SPEC 5 flow A describes, steps 1-6 (step 7, "show
+// the rules map", and step 8, "saving", are UI/registry concerns outside the engine).
 //
 // Deliberately transport-agnostic: `callLearn`/`callRepair` are injected by the caller,
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
@@ -15,13 +15,15 @@ import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
 import { analyzePair } from './analyze';
 import { checkFixedLock, type FixedProblem } from '../registry/checkFixedLock';
-import { columnsWithRule, completionProduced, isCompletable, type CompleteOptions } from './complete';
+import { restoreFixed } from '../registry/restoreFixed';
+import { columnsWithRule, completionProduced, isCompletable, learnResultOf, type CompleteOptions } from './complete';
 import { fastPath } from './fastPath';
-import { createMasker, unmaskRules, type Masker } from './mask';
+import { loopCaps, loopStep, startLoop, wrongCount, type LoopRound, type LoopSummary } from './loop';
+import { createMasker, maskRules, unmaskRules, type Masker } from './mask';
 import { partialRules, type PartialRulesResult } from './partial';
 import { preflight, type PreflightResult } from './preflight';
 import { aiReadiness, type AiReadiness } from './readiness';
-import { verifyAgainstExample, type VerifyResult } from './verify';
+import { verifyAgainstExample, type VerifyResult, type WrongRow } from './verify';
 
 /** What `callLearn`/`callRepair` return - the shape of `apps/api/src/learn`'s
  * `LearnOutcome` (`learn()`/`repairFromBrowser()`), minus the `verified` flag this
@@ -78,15 +80,13 @@ export interface LearnFromExamplesOptions<Call = unknown> {
    * `apps/api/src/learn`'s `learn()`). */
   callLearn: (payload: LearnPayload) => Promise<LearnCallResult<Call>>;
   /**
-   * SPEC 5 A step 6 / 9.3: the one browser-triggered repair call, made only when the
-   * browser's own full verification (not `callLearn`'s internal sample-run checks)
-   * finds a mismatch. `previousRules` is passed back in the SAME (possibly masked)
-   * vocabulary `callLearn` returned - never the unmasked copy this module verifies
-   * with - because the API holds no masking key and can only recognize its own prior
-   * fake words (SPEC 7.2/15: the key, and so the fake<->real map, never leaves the
-   * browser).
+   * SPEC 5 A step 6 / 9.3: a browser-triggered repair call - one round of the learning loop (`learn/loop.ts`), made only when the
+   * browser's own full verification (not `callLearn`'s internal sample-run checks) finds a mismatch, at most `limits.learn.loop.maxRounds`
+   * times. `previousRules` is passed back in the SAME (possibly masked) vocabulary `callLearn` returned - never the unmasked copy this
+   * module verifies with - because the API holds no masking key and can only recognize its own prior fake words (SPEC 7.2/15: the key, and
+   * so the fake<->real map, never leaves the browser). `round.rows` are every row the loop sent so far, masked (the request's `rows`).
    */
-  callRepair?: (payload: LearnPayload, previousRules: LearnResult, problems: RepairProblem[]) => Promise<LearnCallResult<Call>>;
+  callRepair?: (payload: LearnPayload, previousRules: LearnResult, problems: RepairProblem[], round: LoopRound) => Promise<LearnCallResult<Call>>;
   onProgress?: (p: AnalysisProgress) => void;
   /**
    * Called once with the successful pair analysis, before pre-flight. The web worker keeps it
@@ -121,8 +121,9 @@ export interface LearnStages {
    * browser-triggered repair - and the answer gave up on no column the pair analysis had found a relation for
    * (`unsupportedDespiteEvidence`: that alone is a reason for the repair call). Meaningless (always false) off the LLM path. */
   verifiedFirstCall: boolean;
+  /** At least one round of the learning loop was made (`LearnFromExamplesResult.loop` says how many). */
   browserRepairUsed: boolean;
-  /** Final verification result: after the browser-triggered repair when one was used,
+  /** Final verification result: of the answer kept (the best of the loop's answers) when a round was made,
    * otherwise the same as `verifiedFirstCall` (or the fast path's own verification). */
   verifiedAfterRepair: boolean;
   /** v5: the AI readiness gate ran (the fast path did not finish the learn). */
@@ -194,6 +195,8 @@ export interface LearnFromExamplesResult<Call = unknown> {
     /** What the answer produced of what was asked: listed columns that got a rule, listed parts it built. Nothing produced is no completion. */
     produced: { columns: number; parts: number };
   };
+  /** The learning loop (path 'llm' with rules): rounds made, rows they sent, and how it ended. `rules` is its best answer. */
+  loop?: LoopSummary;
 }
 
 /** Like the diff problems (LEARN_PROMPT §4: "At most 10 diff problems are sent"), a repair call needs enough fixed-lock findings to fix the pattern, not all of them. */
@@ -222,7 +225,8 @@ function blockedResult<Call>(pf: PreflightResult): LearnFromExamplesResult<Call>
  * Runs SPEC 5 flow A/A2 end to end: read both files, analyze the pair, pre-flight,
  * the local fast path, the AI readiness gate (v5: which also builds the (optionally masked) payload, and
  * decides whether the AI step runs at all - see `ai`, `partial` and `readiness`), the learn call,
- * unmasking, full verification, and - when needed and offered - one browser-triggered repair.
+ * unmasking, full verification, and - when needed and offered - the learning loop: rounds of
+ * browser-triggered repairs, each sending rows the rules got wrong, as `loopStep` decides.
  */
 export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesOptions<Call>): Promise<LearnFromExamplesResult<Call>> {
   if (opts.masking && !opts.key) {
@@ -331,9 +335,6 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     return { path: 'llm', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls, stages, readiness: shownReadiness };
   }
 
-  let maskedRules = learned.rules;
-  let rules: LearnResult = masker ? unmaskRules(maskedRules, masker) : maskedRules;
-
   // ---- SPEC 5 A step 6 / 9.2 layer 8: full verification on the real, unmasked data ----
   // DECISION (SPEC 4/8.10: a partial, correct rules file beats a complete, wrong one; an unsupported column is "needs your input", not an
   // error): a plain learn is checked on the columns that have a rule - one the AI step honestly reported as unsupported (`from: null` plus
@@ -342,58 +343,126 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // a rule this is the full verification (layout rows included). Completion mode keeps the full verification: its own `matchesExample` below
   // already leaves out a column that has no rule.
   const verifyAnswer = (r: LearnResult): VerifyResult => {
-    const base = masker ? { masker } : {};
+    const base = { wrongRows: true, ...(masker ? { masker } : {}) };
     if (opts.complete) return verifyAgainstExample(r, analysis, base);
     const withRule = columnsWithRule(r);
     return verifyAgainstExample(r, analysis, withRule.length < r.output.columns.length ? { ...base, onlyColumns: withRule } : base);
   };
-  let verification = verifyAnswer(rules);
   // Completion mode: the answer must also still contain the user's rules, unchanged (the API checked this on the masked
   // copies; this is the same check on the real ones, before anything replaces what the user has).
-  const fixedLock = (r: LearnResult): FixedProblem[] => (opts.complete ? checkFixedLock(r, opts.complete.fixedRules, { columns: opts.complete.columns, parts: opts.complete.parts }) : []);
-  let fixedProblems = fixedLock(rules);
+  const asked = opts.complete ? { columns: opts.complete.columns, parts: opts.complete.parts } : null;
+  const fixedLock = (r: LearnResult): FixedProblem[] => (opts.complete && asked ? checkFixedLock(r, opts.complete.fixedRules, asked) : []);
+  // The fixed rules in the answer's vocabulary (masked like `complete.fixed`), for putting back what an answer changed (`restoreFixed`).
+  const maskedFixed = opts.complete ? (masker ? maskRules(learnResultOf(opts.complete.fixedRules), masker) : learnResultOf(opts.complete.fixedRules)) : null;
   // What "the answer is good" means: a plain learn - the full verification; completion - that too, but a column with no rule does not count.
   // DECISION: in completion mode "matches the example" is relative to the user's own rules - the AI step answers for the columns it produced
   // (every cell must match) and must not make anything else worse; a difference the fixed rules already had (an edit that departs from the
   // example on purpose, a part still missing) is not its fault. Against the raw example no edit of a header or a value could ever pass.
   // What the user's own rules already differ by, against the example:
-  const before = opts.complete ? verifyAgainstExample(opts.complete.fixedRules, analysis) : null;
+  const before = opts.complete ? verifyAgainstExample(opts.complete.fixedRules, analysis, { wrongRows: true }) : null;
   const cellKey = (m: { exampleRow: number; column: string }): string => `${m.exampleRow}\u0000${m.column}`;
+  const layoutKey = (i: { code: string; message: string }): string => `${i.code}\u0000${i.message}`;
+  const hadCell = new Set(before?.mismatches.map(cellKey) ?? []);
+  const hadLayout = new Set(before?.layoutIssues.map(layoutKey) ?? []);
+  const hadExtra = new Map((before?.wrongRows ?? []).map((w) => [w.inRow, w.extra.length] as const));
+  const headerAt = (r: LearnResult, c: number): string => r.output.columns[c]?.header ?? analysis.output.headers[c] ?? `column${c + 1}`;
+  /** The mismatches an answer is answerable for (completion: see the DECISION above; a plain learn: all of them). */
+  const blamed = (v: VerifyResult, r: LearnResult): { rows: WrongRow[]; layout: number; cells: number } => {
+    if (!opts.complete) return { rows: v.wrongRows ?? [], layout: v.layoutIssues.length, cells: v.mismatches.length };
+    const noRule = new Set(r.output.columns.filter((c) => c.from === null).map((c) => c.header));
+    const produced = new Set(opts.complete.columns.map((i) => r.output.columns[i]).filter((c) => c !== undefined && c.from !== null).map((c) => c!.header));
+    const counts = (m: { exampleRow: number; column: string }): boolean => !noRule.has(m.column) && (produced.has(m.column) || !hadCell.has(cellKey(m)));
+    const rows: WrongRow[] = [];
+    for (const w of v.wrongRows ?? []) {
+      const cells = w.cells.filter((cell) => counts({ exampleRow: (analysis.output.dataRows[cell.outRow] ?? -1) + 1, column: headerAt(r, cell.out) }));
+      const extra = w.extra.slice(hadExtra.get(w.inRow) ?? 0);
+      if (cells.length > 0 || extra.length > 0) rows.push({ inRow: w.inRow, cells, extra });
+    }
+    return { rows, layout: v.layoutIssues.filter((i) => !hadLayout.has(layoutKey(i))).length, cells: v.mismatches.filter(counts).length };
+  };
   const matchesExample = (v: VerifyResult, r: LearnResult): boolean => {
     if (!opts.complete || !before) return v.verified;
     if (v.verified) return true;
-    const noRule = new Set(r.output.columns.filter((c) => c.from === null).map((c) => c.header));
-    const produced = new Set(opts.complete.columns.map((i) => r.output.columns[i]).filter((c) => c !== undefined && c.from !== null).map((c) => c!.header));
-    const hadCell = new Set(before.mismatches.map(cellKey));
-    const hadLayout = new Set(before.layoutIssues.map((i) => `${i.code}\u0000${i.message}`));
-    const worse =
-      v.mismatches.some((m) => !noRule.has(m.column) && (produced.has(m.column) || !hadCell.has(cellKey(m)))) ||
-      v.layoutIssues.some((i) => !hadLayout.has(`${i.code}\u0000${i.message}`));
-    return !worse;
+    const b = blamed(v, r);
+    return b.cells === 0 && b.layout === 0;
   };
   const passes = (v: VerifyResult, r: LearnResult, lock: readonly FixedProblem[]): boolean => lock.length === 0 && matchesExample(v, r);
-  // DECISION (an honest unsupported is not a mismatch, with one exception): a column the answer gives up on although the pair analysis found how
-  // it is built (the payload carries a hint for it) is a problem for the repair round - one call to write the rule. It is the repair's trigger
-  // and no more: a model that stands by "unsupported" after that round is accepted (the column stays "needs your input").
-  const evidence = unsupportedDespiteEvidence(rules, payload);
-  stages.verifiedFirstCall = passes(verification, rules, fixedProblems) && evidence.length === 0;
 
-  // ---- SPEC 5 A step 6 / 9.3: at most one browser-triggered repair ----
-  // (Nothing to say to the AI step when there is no problem to name: an answer that produced no column at all is no verified learn, but
-  // there is nothing in the example it differs from - the API's own checks already asked for more.)
-  const problems: RepairProblem[] = [...fixedProblems.slice(0, MAX_FIXED_PROBLEMS), ...verification.repairProblems, ...evidence];
-  if (!stages.verifiedFirstCall && opts.callRepair && problems.length > 0) {
-    stages.browserRepairUsed = true;
-    const repaired = await opts.callRepair(payload, maskedRules, problems);
-    calls.push(...repaired.calls);
-    if (repaired.rules) {
-      maskedRules = repaired.rules;
-      rules = masker ? unmaskRules(maskedRules, masker) : maskedRules;
-      verification = verifyAnswer(rules);
+  /** One answer of the loop, judged on every row of the example. */
+  interface Judged {
+    /** In the answer's own vocabulary (masked when masking is on): what a repair call sends back. */
+    masked: LearnResult;
+    /** Unmasked: what is verified, shown and saved. */
+    rules: LearnResult;
+    verification: VerifyResult;
+    fixedProblems: FixedProblem[];
+    passes: boolean;
+    wrongRows: WrongRow[];
+    wrong: number;
+  }
+  const judge = (answer: LearnResult): Judged => {
+    let masked = answer;
+    let rules: LearnResult = masker ? unmaskRules(masked, masker) : masked;
+    let fixedProblems = fixedLock(rules);
+    // Completion mode: what the answer changed of the fixed rules is put back by code first (`restoreFixed`, on the answer's own vocabulary
+    // so its new words stay as it wrote them), and the checks below decide on what comes out.
+    if (fixedProblems.length > 0 && asked && maskedFixed) {
+      masked = restoreFixed(masked, maskedFixed, asked);
+      rules = masker ? unmaskRules(masked, masker) : masked;
       fixedProblems = fixedLock(rules);
     }
+    const verification = verifyAnswer(rules);
+    const b = blamed(verification, rules);
+    return { masked, rules, verification, fixedProblems, passes: passes(verification, rules, fixedProblems), wrongRows: b.rows, wrong: wrongCount(b.rows, b.layout) + fixedProblems.length };
+  };
+  /** What a round tells the AI step besides the rows: the fixed lock's findings, then the row count and layout rows (not the diffs: the loop picks those). */
+  const otherProblems = (j: Judged): RepairProblem[] => [...j.fixedProblems.slice(0, MAX_FIXED_PROBLEMS), ...j.verification.repairProblems.filter((p) => p.kind !== 'diff')];
+
+  const first = judge(learned.rules);
+  // DECISION (an honest unsupported is not a mismatch, with one exception): a column the answer gives up on although the pair analysis found how
+  // it is built (the payload carries a hint for it) is a problem for the first round - one call to write the rule. It is that round's trigger
+  // and no more: a model that stands by "unsupported" after it is accepted (the column stays "needs your input").
+  const evidence = unsupportedDespiteEvidence(first.rules, payload);
+  stages.verifiedFirstCall = first.passes && evidence.length === 0;
+
+  // ---- SPEC 5 A step 6 / 9.3: the learning loop (`learn/loop.ts`) - rounds of browser-triggered repairs, each with the rows still wrong ----
+  // (Nothing to say to the AI step when there is no problem to name: an answer that produced no column at all is no verified learn, but
+  // there is nothing in the example it differs from - the API's own checks already asked for more.)
+  const built = readiness.built!;
+  const caps = opts.callRepair ? loopCaps() : { ...loopCaps(), maxRounds: 0 };
+  const loopCtx = { analysis, payload, masker, caps };
+  const answers: (Judged | null)[] = [first];
+  let loop = startLoop([...built.sampleRows.map((s) => s.in), ...built.droppedRows]);
+  let decided = loopStep(
+    loop,
+    { rules: true, passes: stages.verifiedFirstCall, wrong: first.wrong + evidence.length, wrongRows: first.wrongRows, otherProblems: [...otherProblems(first), ...evidence] },
+    loopCtx,
+  );
+  loop = decided.state;
+  while (decided.step.kind === 'next' && opts.callRepair) {
+    const step = decided.step;
+    stages.browserRepairUsed = true;
+    const previous = answers[loop.best]!;
+    const repaired = await opts.callRepair(payload, previous.masked, step.problems, { round: step.round, maxRounds: caps.maxRounds, rows: loop.sent.map((r) => r.sample), newRows: step.rows.length });
+    calls.push(...repaired.calls);
+    const judged = repaired.rules ? judge(repaired.rules) : null;
+    answers.push(judged);
+    decided = loopStep(
+      loop,
+      judged
+        ? { rules: true, passes: judged.passes, wrong: judged.wrong, wrongRows: judged.wrongRows, otherProblems: otherProblems(judged) }
+        : { rules: false, passes: false, wrong: Number.POSITIVE_INFINITY, wrongRows: [], otherProblems: [] },
+      loopCtx,
+    );
+    loop = decided.state;
   }
-  stages.verifiedAfterRepair = passes(verification, rules, fixedProblems);
+  // The answer kept is the loop's best (the fewest wrong rows; ties keep the earliest).
+  const kept = answers[loop.best] ?? first;
+  const { rules, fixedProblems } = kept;
+  // (The wrong rows were the loop's to choose from; they hold real values and stay here.)
+  const { wrongRows: _wrongRows, ...verification } = kept.verification;
+  stages.verifiedAfterRepair = kept.passes;
+  const loopSummary: LoopSummary = { rounds: loop.rounds, rowsSent: loop.sent.length, end: decided.step.kind === 'stop' ? decided.step.reason : 'verified' };
 
   // learn-v7: the notes leave the rules here (SPEC 15): the answer the caller works with has none, and they travel beside it.
   const aiNotes = aiNotesOf(rules);
@@ -409,8 +478,9 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     calls,
     stages,
     readiness: shownReadiness,
+    loop: loopSummary,
     ...(aiNotes.length > 0 ? { aiNotes } : {}),
-    ...(opts.complete ? { completion: { columns: [...opts.complete.columns], parts: [...opts.complete.parts], fixedProblems, matches: matchesExample(verification, rules), produced: completionProduced(rules, opts.complete.fixedRules, opts.complete) } } : {}),
+    ...(opts.complete ? { completion: { columns: [...opts.complete.columns], parts: [...opts.complete.parts], fixedProblems, matches: matchesExample(kept.verification, rules), produced: completionProduced(rules, opts.complete.fixedRules, opts.complete) } } : {}),
   };
 }
 
