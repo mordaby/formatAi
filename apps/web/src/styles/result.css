@@ -456,6 +456,7 @@
 /* A long rule wraps inside its button instead of running out of the map. */
 .map-line__ask-choices .btn {
   max-inline-size: 100%;
+  padding-block: var(--s-2);
   white-space: normal;
   text-align: start;
 }
