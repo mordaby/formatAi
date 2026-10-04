@@ -82,6 +82,11 @@ const MONTH_BY_NAME: ReadonlyMap<string, number> = (() => {
   return m;
 })();
 
+/** The month (1-12) a month name stands for when parsing (`MONTH_BY_NAME`: Hebrew or English, full or short, English in any case), or undefined. */
+export function monthOfName(name: string): number | undefined {
+  return MONTH_BY_NAME.get(name.toLowerCase());
+}
+
 function daysInMonth(y: number, m: number): number {
   const standard = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (m === 2) {

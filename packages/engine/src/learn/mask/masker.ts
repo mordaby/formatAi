@@ -5,10 +5,58 @@
 // (`fakeToReal`) is exposed only so the caller can unmask constants that come
 // back from the LLM (unmaskRules.ts) — it is never serialized into a payload.
 
-import type { PayloadCell, ProfileType } from '@formatai/shared';
+import { maskingVocabulary, type PayloadCell, type ProfileType } from '@formatai/shared';
+import { MONTH_NAMES, WEEKDAY_NAMES, monthOfName } from '../../values/dates';
 import { isValidIsraeliId, makeValidIsraeliId } from '../../values/israeliId';
 import { normalizeText } from '../../values/text';
+import { readsAsDate } from '../analyze/dateReadings';
 import { buildWordFromBytes, deriveBytes, splitWords } from './words';
+
+// ---------- Vocabulary that is never masked (SPEC 7.2: dates are sent real; learning-loop proposal 7.5) ----------
+
+/** A placeholder cell compared without case and without any space (see `maskingVocabulary.noValueTokens`). */
+function placeholderKey(s: string): string {
+  return normalizeText(s).replace(/\s+/g, '').toLowerCase();
+}
+const NO_VALUE = new Set(maskingVocabulary.noValueTokens.map(placeholderKey));
+
+/**
+ * A month name in every form the date reader accepts (`toDate`'s `MMMM` / `MMM`: Hebrew or English, full or short, English in any
+ * case, "מרס", "Sept"), and the Hebrew "ב" + a month name ("במרץ", the `D בMMMM YYYY` reading).
+ */
+function isMonthWord(word: string): boolean {
+  if (monthOfName(word) !== undefined) return true;
+  return word === 'במרס' || (word.startsWith('ב') && MONTH_NAMES.he.some((m) => word === `ב${m}` || word === `ב${m.slice(0, 3)}`));
+}
+
+/** English weekday names, full and short, in any case ("Monday", "thu"). */
+const WEEKDAY_EN = new Set([...WEEKDAY_NAMES.en.full, ...WEEKDAY_NAMES.en.short].map((w) => w.toLowerCase()));
+/** The Hebrew word after "יום" in a weekday name: "ראשון" ... "שישי" (full) and "א" ... "ו" (short, "יום א'"). */
+const WEEKDAY_HE_AFTER_YOM = new Set(
+  [...WEEKDAY_NAMES.he.full, ...WEEKDAY_NAMES.he.short].filter((w) => w.startsWith('יום ')).map((w) => w.slice('יום '.length).replace(/['׳]/g, '')),
+);
+
+/**
+ * DECISION (owner, 2026-10-04): month and weekday names are vocabulary, not personal data, and are never masked. Hebrew weekdays
+ * are kept only as a weekday NAME - "יום" followed by its day word ("יום שני", "יום ה'") - and "שבת"; on its own "שני" is also a
+ * first name, so it is masked like any word. English month names that are also first names ("May", "June") are kept, as decided.
+ */
+function vocabularyWords(tokens: readonly { isWord: boolean; text: string }[]): Set<number> {
+  const keep = new Set<number>();
+  tokens.forEach((t, i) => {
+    if (!t.isWord) return;
+    if (isMonthWord(t.text) || WEEKDAY_EN.has(t.text.toLowerCase()) || t.text === 'שבת') keep.add(i);
+    else if (t.text === 'יום') {
+      const sep = tokens[i + 1];
+      const day = tokens[i + 2];
+      if (sep && !sep.isWord && sep.text.trim() === '' && day?.isWord && WEEKDAY_HE_AFTER_YOM.has(day.text)) {
+        keep.add(i);
+        keep.add(i + 2);
+      }
+    }
+  });
+  return keep;
+}
 
 // DECISION: a small, bounded number of retries when a freshly derived fake
 // word collides with something it shouldn't (see pickCandidate below). This
@@ -161,9 +209,12 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
 
   function maskText(s: string): string {
     if (s === '') return s;
-    return splitWords(s)
-      .map((t) => (t.isWord ? maskWord(t.text) : t.text))
-      .join('');
+    // Sent as it is (SPEC 7.2, proposal 7.5): a placeholder for "no value", and a text that reads as a date (dates are sent real,
+    // whatever the cell type). Everything else is masked word by word, month and weekday names kept.
+    if (NO_VALUE.has(placeholderKey(s)) || readsAsDate(s)) return s;
+    const tokens = splitWords(s);
+    const keep = vocabularyWords(tokens);
+    return tokens.map((t, i) => (t.isWord && !keep.has(i) ? maskWord(t.text) : t.text)).join('');
   }
 
   function maskIdLike(s: string): string {

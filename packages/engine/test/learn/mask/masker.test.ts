@@ -200,3 +200,42 @@ describe('createMasker: determinism', () => {
     expect(a).not.toBe(b);
   });
 });
+
+describe('createMasker: vocabulary sent as it is (SPEC 7.2, learning-loop proposal 7.5)', () => {
+  it('a text cell that reads as a date is sent as it is, in any reading or with the shape of one', () => {
+    const masker = createMasker(key('dates'));
+    for (const d of ['12 במרץ 2026', '2026-03-07', '05/03/2026', '5.3.26', 'March 12, 2026', '12-Mar-2026', 'ינואר 2026', '31/02/2026']) {
+      expect(masker.maskCell(d, 'text')).toBe(d);
+      expect(masker.maskCell(d, 'idLike')).toBe(d);
+    }
+    // not a date: a phone number, parts too big for a day or a month
+    expect(masker.maskCell('054-123-4567', 'text')).not.toBe('054-123-4567');
+    expect(masker.maskCell('45/67/2026', 'text')).not.toBe('45/67/2026');
+  });
+
+  it('a placeholder for "no value" is sent as it is when it is the whole cell, case- and space-insensitive', () => {
+    const masker = createMasker(key('placeholders'));
+    for (const p of ['N/A', 'n/a', ' n / a ', 'NA', 'null', 'None', 'nil', '-', '--', '—', '?', 'אין', 'לא ידוע', 'לא  ידוע', 'ריק']) {
+      expect(masker.maskCell(p, 'text')).toBe(p);
+    }
+    // only the whole cell: next to a name the name is masked, and a real word is not a placeholder
+    expect(masker.maskCell('N/A Cohen', 'text')).not.toContain('Cohen');
+    expect(masker.maskCell('Nadav', 'text')).not.toBe('Nadav');
+  });
+
+  it('month and weekday names are kept inside any text; the words around them are masked', () => {
+    const masker = createMasker(key('months'));
+    const out = masker.maskText('Order for March from Cohen');
+    expect(out).toContain('March');
+    expect(out).not.toContain('Cohen');
+    expect(masker.maskText('תשלום במרץ לכהן')).toContain('במרץ');
+    expect(masker.maskText('דוח ספטמבר')).toContain('ספטמבר');
+    expect(masker.maskText('due on Thursday')).toContain('Thursday');
+    expect(masker.maskText('נמסר ביום שני בבוקר')).not.toContain('ביום'); // "ביום" is not the weekday name's "יום"
+    expect(masker.maskText('יום שני')).toBe('יום שני');
+    expect(masker.maskText("יום ה' בערב")).toContain("יום ה'");
+    expect(masker.maskText('שבת')).toBe('שבת');
+    // "שני" on its own is also a first name: masked
+    expect(masker.maskText('שני')).not.toBe('שני');
+  });
+});

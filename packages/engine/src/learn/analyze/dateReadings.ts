@@ -38,6 +38,31 @@ function textReadings(text: string): number[] {
   return found;
 }
 
+/** Three numeric parts with one separator: day and month (1-2 digits each, either order) and a year (2 or 4 digits), or ISO order. */
+const DATE_SHAPE_DMY = /^(\d{1,2})([./-])(\d{1,2})\2(\d{4}|\d{2})$/;
+const DATE_SHAPE_YMD = /^(\d{4})([./-])(\d{1,2})\2(\d{1,2})$/;
+
+/**
+ * Whether a text reads as a date (SPEC 7.2, the masking switch: dates are sent real, text dates too): any reading of
+ * `textReadings` (day/month, month/day or ISO numbers with / . -, a month name in Hebrew or English), or the SHAPE of one -
+ * DECISION: a date the example got wrong ("31/02/2026", "00/13/2026") is what a cleanup rule is about, so it is sent as it is
+ * too, as long as its two short parts are at most 31 and a 4-digit year is between 1900 and 2099 (a phone number or a code
+ * with three parts does not fit that shape).
+ */
+export function readsAsDate(text: string): boolean {
+  const t = text.trim();
+  if (t === '') return false;
+  if (textReadings(t).length > 0) return true;
+  const dmy = DATE_SHAPE_DMY.exec(t);
+  if (dmy) return Number(dmy[1]) <= 31 && Number(dmy[3]) <= 31 && (dmy[4]!.length === 2 || plausibleYear(Number(dmy[4])));
+  const ymd = DATE_SHAPE_YMD.exec(t);
+  return ymd !== null && plausibleYear(Number(ymd[1])) && Number(ymd[3]) <= 31 && Number(ymd[4]) <= 31;
+}
+
+function plausibleYear(y: number): boolean {
+  return y >= 1900 && y <= 2099;
+}
+
 const MEMO = new WeakMap<ColumnData, (number[][] | null)>();
 
 /**
