@@ -6,6 +6,7 @@
     "fiftyValues",
     "rareValues",
     "nameNotDerivableFromCode",
+    "lookupWithCondition",
     "newMixNextMonth"
   ],
   "expect": "verified"

@@ -72,7 +72,7 @@ describe('branch-lookup-50', () => {
     return [...counts.values()].sort((a, b) => a - b);
   };
 
-  it('400 rows with 50 codes, every code at least twice, several only 2-3 times; the name is added after the code', async () => {
+  it('400 rows with 50 codes, every code at least twice, several only 2-3 times; the name is added after the code, "Online" for online sales', async () => {
     const input = await table(c.input);
     const output = await table(c.output);
     expect(input).toHaveLength(400);
@@ -80,11 +80,16 @@ describe('branch-lookup-50', () => {
     expect(counts).toHaveLength(50);
     expect(counts[0]).toBeGreaterThanOrEqual(2);
     expect(counts.filter((n) => n <= 3).length).toBeGreaterThanOrEqual(5);
-    // one name per code, 50 distinct names, none of them readable from the code
-    const names = new Map(output.map((r) => [String(r[1]), String(r[2])]));
+    // input: Sale ID, Branch Code, Channel, ...; output: Sale ID, Branch Code, Branch Name, ...
+    const online = input.filter((r) => r[2] === 'Online').length;
+    expect(online).toBeGreaterThan(20);
+    expect(online).toBeLessThan(100);
+    // in-store sales: one name per code, 50 distinct names, none of them readable from the code
+    const store = output.filter((_, i) => input[i]![2] === 'Store');
+    const names = new Map(store.map((r) => [String(r[1]), String(r[2])]));
     expect(names.size).toBe(50);
     expect(new Set(names.values()).size).toBe(50);
-    expect(output.every((r, i) => r[0] === input[i]![0] && r[1] === input[i]![1] && names.get(String(r[1])) === r[2])).toBe(true);
+    expect(output.every((r, i) => r[0] === input[i]![0] && r[1] === input[i]![1] && r[2] === (input[i]![2] === 'Online' ? 'Online' : names.get(String(r[1]))))).toBe(true);
   });
 
   it('next month: the same 50 codes in a different mix', async () => {

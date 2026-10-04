@@ -19,6 +19,12 @@
         "required": true
       },
       {
+        "id": "channel",
+        "header": "Channel",
+        "type": "text",
+        "required": true
+      },
+      {
         "id": "product",
         "header": "Product",
         "type": "text"
@@ -43,13 +49,34 @@
         "id": "branchName",
         "type": "text",
         "expr": {
-          "op": "lookup",
-          "table": "branches",
-          "key": {
-            "col": "branchCode"
-          },
-          "return": "name",
-          "onMissing": "flag"
+          "op": "switch",
+          "cases": [
+            {
+              "when": {
+                "op": "eq",
+                "args": [
+                  {
+                    "col": "channel"
+                  },
+                  {
+                    "const": "Online"
+                  }
+                ]
+              },
+              "then": {
+                "const": "Online"
+              }
+            }
+          ],
+          "else": {
+            "op": "lookup",
+            "table": "branches",
+            "key": {
+              "col": "branchCode"
+            },
+            "return": "name",
+            "onMissing": "flag"
+          }
         }
       }
     ],

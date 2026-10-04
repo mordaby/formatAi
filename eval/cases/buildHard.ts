@@ -3,7 +3,8 @@
 // outputs produced by the real engine from a rules file; see README.md), kept in this file only because build.ts is already long.
 //
 //   orders-priority       a rule on two columns whose rare branch ("Urgent") sits away from every row the sample picks first
-//   branch-lookup-50      a lookup of 50 values, some seen 2-3 times in 400 rows (the 12-row sample shows a handful of them)
+//   branch-lookup-50      a lookup of 50 values mixed with a condition (online sales say "Online"), so no plain value map fits
+//                         and the AI step gets it: a 12-row sample shows a handful of the 50 names
 //   discount-hand-edited  a clean rule plus 3 rows whose output a person edited by hand
 //
 // ASCII only (no Hebrew); every case has a next-month pair.
@@ -207,7 +208,9 @@ async function buildOrdersPriority(): Promise<CaseSpec> {
 }
 
 // ===========================================================================
-// branch-lookup-50 (hard, English LTR): a lookup of 50 values, some rare
+// branch-lookup-50 (hard, English LTR): a lookup of 50 values, some rare, mixed with a condition.
+// DECISION: a plain lookup (every sale shows its branch name) is solved by the free engine from every row (a value map
+// whose keys repeat), so it would never test the AI step; "Online" for online sales breaks that value map on purpose.
 // ===========================================================================
 
 /** B01..B50 and a name for each, arbitrary on purpose: nothing in a code tells its name. */
@@ -238,7 +241,15 @@ function branchCodes(rng: Rng, total: number, rare: Record<string, number>, base
 }
 
 function genSaleRows(rng: Rng, codes: readonly string[], startId: number, year: number, month: number): Cell[][] {
-  return codes.map((code, i) => [`S-${padNum(startId + i, 5)}`, code, pick(rng, PRODUCTS), randAmount(rng, 25, 1800), dateCell(year, month, randInt(rng, 1, 28))]);
+  // About 1 sale in 7 is online.
+  return codes.map((code, i) => [
+    `S-${padNum(startId + i, 5)}`,
+    code,
+    rng() < 0.15 ? 'Online' : 'Store',
+    pick(rng, PRODUCTS),
+    randAmount(rng, 25, 1800),
+    dateCell(year, month, randInt(rng, 1, 28)),
+  ]);
 }
 
 async function buildBranchLookup(): Promise<CaseSpec> {
@@ -250,13 +261,24 @@ async function buildBranchLookup(): Promise<CaseSpec> {
       columns: [
         { id: 'saleId', header: 'Sale ID', type: 'idLike', required: true },
         { id: 'branchCode', header: 'Branch Code', type: 'text', required: true },
+        { id: 'channel', header: 'Channel', type: 'text', required: true },
         { id: 'product', header: 'Product', type: 'text' },
         { id: 'amount', header: 'Amount', type: 'decimal', required: true },
         { id: 'saleDate', header: 'Sale Date', type: 'date', required: true },
       ],
     },
     transform: {
-      computed: [{ id: 'branchName', type: 'text', expr: { op: 'lookup', table: 'branches', key: { col: 'branchCode' }, return: 'name', onMissing: 'flag' } }],
+      computed: [
+        {
+          id: 'branchName',
+          type: 'text',
+          expr: {
+            op: 'switch',
+            cases: [{ when: { op: 'eq', args: [{ col: 'channel' }, { const: 'Online' }] }, then: { const: 'Online' } }],
+            else: { op: 'lookup', table: 'branches', key: { col: 'branchCode' }, return: 'name', onMissing: 'flag' },
+          },
+        },
+      ],
       valueMaps: [],
       sort: [],
       tables: [{ name: 'branches', columns: ['code', 'name'], rows: BRANCH_CODES.map((code, i) => [code, BRANCH_NAMES[i]!]) }],
@@ -281,7 +303,7 @@ async function buildBranchLookup(): Promise<CaseSpec> {
     assumptions: [],
   };
   const referenceRules = mkRules('Sales export -> sales with branch name', rulesBody);
-  const header = hdr(['Sale ID', 'Branch Code', 'Product', 'Amount', 'Sale Date']);
+  const header = hdr(['Sale ID', 'Branch Code', 'Channel', 'Product', 'Amount', 'Sale Date']);
 
   // 400 rows, every code at least twice; 8 codes only 2-3 times, so a 12-row sample shows a handful of the 50 and almost never a rare one.
   const rng = makeRng('branch-lookup-50');
@@ -300,7 +322,7 @@ async function buildBranchLookup(): Promise<CaseSpec> {
     meta: {
       difficulty: 'hard',
       domain: 'salesByBranch',
-      features: ['lookupTable', 'fiftyValues', 'rareValues', 'nameNotDerivableFromCode', 'newMixNextMonth'],
+      features: ['lookupTable', 'fiftyValues', 'rareValues', 'nameNotDerivableFromCode', 'lookupWithCondition', 'newMixNextMonth'],
       expect: 'verified',
     },
     input,
