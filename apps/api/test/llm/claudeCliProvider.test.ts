@@ -211,6 +211,25 @@ describe('claude-cli provider - response mapping', () => {
 
     await expect(provider.complete(baseRequest())).rejects.toMatchObject({ kind: 'providerError' });
   });
+
+  // X2: the CLI's JSON carries the model's stop_reason (a real run: "tool_use" for a --json-schema answer, "max_tokens" when cut off).
+  it('reports an answer cut off at max_tokens as truncated, like the API providers, whatever the CLI says about the run', async () => {
+    for (const isError of [false, true]) {
+      const cliOutput = JSON.stringify({ is_error: isError, stop_reason: 'max_tokens', result: '{"answer":"h', usage: { input_tokens: 10, output_tokens: 5 } });
+      const spawn = vi.fn().mockImplementation(() => fakeChild(cliOutput));
+      const result = await createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development' }).complete(baseRequest());
+      expect(result).toMatchObject({ truncated: true, json: null, raw: '{"answer":"h', costUsd: 0, provider: 'claude-cli' });
+      expect(result.usage).toEqual({ tokensIn: 10, tokensOut: 5, tokensCachedRead: 0, tokensCachedWrite: 0 });
+    }
+  });
+
+  it('a whole answer (stop_reason "tool_use", as a --json-schema run reports it) is not truncated', async () => {
+    const cliOutput = JSON.stringify({ is_error: false, stop_reason: 'tool_use', result: JSON.stringify({ answer: 'hi' }) });
+    const spawn = vi.fn().mockImplementation(() => fakeChild(cliOutput));
+    const result = await createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development' }).complete(baseRequest());
+    expect(result.truncated).toBeUndefined();
+    expect(result.json).toEqual({ answer: 'hi' });
+  });
 });
 
 describe('claude-cli provider - production refusal', () => {

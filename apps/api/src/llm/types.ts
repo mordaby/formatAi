@@ -27,7 +27,7 @@ export interface CompleteRequest {
   schema: Record<string, unknown>;
   model: string;
   purpose: CallPurpose;
-  /** Defaults to `limits.llm.maxTokens` (SPEC 9.1) when omitted. */
+  /** Defaults to `limits.llm.maxTokens` (SPEC 9.1) when omitted - `limits.llm.maxTokensThinking` for an Anthropic model that always thinks. */
   maxTokens?: number;
 }
 
@@ -39,10 +39,16 @@ export interface LlmUsage {
 }
 
 export interface CompleteResult {
-  /** The parsed structured output. */
+  /** The parsed structured output (null when `truncated`). */
   json: unknown;
   /** The raw text the model/CLI returned, before parsing - never logged (SPEC 15). */
   raw: string;
+  /**
+   * Prompt audit X2: the model stopped at the output-token limit before the answer was complete (Anthropic `stop_reason` `max_tokens` or
+   * `model_context_window_exceeded`, OpenAI `incomplete_details.reason` `max_output_tokens`, the CLI's `stop_reason`). `json` is then null,
+   * `raw` the text so far, and usage and cost are the call's own (a cut answer is billed). Its own outcome - never an invalid-JSON error.
+   */
+  truncated?: boolean;
   usage: LlmUsage;
   costUsd: number;
   latencyMs: number;

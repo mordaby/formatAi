@@ -20,6 +20,12 @@ export const limits = {
   /** SPEC 9.1, 9.3: LLM call settings and repair-round caps. */
   llm: {
     maxTokens: 4000,
+    /**
+     * Prompt audit X2: `max_tokens` for a model whose thinking cannot be turned off (Opus 5.5, Fable 5 / 5.1, Mythos: `apps/api/src/llm/
+     * providers/anthropic.ts`). Thinking counts toward `max_tokens`, so 4,000 could leave no room for the answer. 16,000 keeps a
+     * non-streaming request well under the SDK's HTTP timeout. Every model that can run without thinking is sent `maxTokens` with thinking off.
+     */
+    maxTokensThinking: 16_000,
     temperature: 0,
     /** SPEC 9.3 / 20.5. Default 1; set to 0 for exactly one LLM call per learn. Every loop round gets the same (`learn.loop`). */
     serverRepairRounds: 1,

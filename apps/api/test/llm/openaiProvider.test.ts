@@ -134,6 +134,18 @@ describe('openai provider - response mapping', () => {
 
     await expect(provider.complete(baseRequest())).rejects.toMatchObject({ kind: 'invalidJson' });
   });
+
+  it('X2: an answer cut off at max_output_tokens (status incomplete) is a truncated result with the call\'s usage - not an invalidJson error', async () => {
+    const create = vi.fn().mockResolvedValue(fakeResponse({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output_text: '{"name":"ab' }));
+    const result = await createOpenAiProvider({ client: mockClient(create) }).complete(baseRequest());
+    expect(result).toMatchObject({ truncated: true, json: null, raw: '{"name":"ab', provider: 'openai' });
+    expect(result.usage).toEqual({ tokensIn: 100, tokensOut: 20, tokensCachedRead: 5, tokensCachedWrite: 7 });
+  });
+
+  it('an incomplete answer for another reason (a content filter) is not called truncated', async () => {
+    const create = vi.fn().mockResolvedValue(fakeResponse({ status: 'incomplete', incomplete_details: { reason: 'content_filter' }, output_text: '{"name":"ab' }));
+    await expect(createOpenAiProvider({ client: mockClient(create) }).complete(baseRequest())).rejects.toMatchObject({ kind: 'invalidJson' });
+  });
 });
 
 describe('openai provider - error mapping', () => {

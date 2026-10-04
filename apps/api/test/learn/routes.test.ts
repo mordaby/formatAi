@@ -111,6 +111,8 @@ describe('POST /api/learn', () => {
       rowCount: 0,
       layout: 0,
       unsupportedDespiteEvidence: 0,
+      // prompt audit X2: an answer cut off at the output-token limit (none here)
+      truncated: 0,
       // learn-v8: the answer's dropped alternatives (none here)
       invalidAlternative: 0,
     });

@@ -225,6 +225,57 @@ describe('learn()', () => {
   });
 });
 
+// Prompt audit X2: an answer cut off at the output-token limit used to surface as "not valid JSON" (a schema problem). It is its own
+// outcome now, counted on its own, with the call's usage (a cut answer is billed).
+describe('learn(): an answer cut off at the output-token limit (truncated)', () => {
+  it('is recorded as truncated - not a schema error - with its usage, and the repair asks for the whole answer again', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ truncated: true, raw: '{"schemaVersion":1,"input":{"sheet"', usage: { tokensIn: 900, tokensOut: 4000 }, costUsd: 0.02 });
+    fake.enqueue({ json: correctRulesWireJson() });
+
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.verified).toBe(true);
+    expect(outcome.rules).toEqual(correctRules());
+    const [cut, repair] = outcome.calls;
+    expect(cut).toMatchObject({ purpose: 'learn', outcome: 'truncated', tokensIn: 900, tokensOut: 4000, costUsd: 0.02 });
+    expect(cut!.problemCounts).toMatchObject({ truncated: 1, schema: 0, formula: 0 });
+    expect(cut!.estimate.outputTokens).toBeGreaterThan(0); // the cut text, counted by us too
+    expect(repair).toMatchObject({ purpose: 'repair', outcome: 'verified' });
+    expect(repair!.problemCounts.truncated).toBe(0);
+    // the repair block: nothing of the cut answer (it never parsed), and the one truncated problem
+    const block = JSON.parse(fake.calls[1]!.content[1]!.text.split('\n')[0]!) as { previousRules: unknown; problems: { kind: string; message: string }[] };
+    expect(block.previousRules).toBeNull();
+    expect(block.problems).toEqual([{ kind: 'truncated', message: expect.stringContaining('cut off at the output limit') }]);
+  });
+
+  it('a cut-off escalation never beats an answer with rules, however few its problems: the best real answer is kept', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: wrongRoundingWireJson() }); // learn: rules, some diff problems
+    fake.enqueue({ json: wrongRoundingWireJson() }); // repair: the same
+    fake.enqueue({ truncated: true }); // escalation: cut off (one problem)
+
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.calls.map((c) => [c.purpose, c.outcome])).toEqual([['learn', 'needsRepair'], ['repair', 'needsRepair'], ['escalation', 'truncated']]);
+    expect(outcome.calls[0]!.problemCounts.diff).toBeGreaterThan(1);
+    expect(outcome.rules).toEqual(wrongRoundingRules());
+    expect(outcome.verified).toBe(false);
+    expect(outcome.problems.every((p) => p.kind === 'diff')).toBe(true);
+  });
+
+  it('when no attempt has rules, the one with the fewest problems is still kept (no rules)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ truncated: true });
+    fake.enqueue({ truncated: true });
+    fake.enqueue({ truncated: true });
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    expect(outcome.calls.map((c) => c.outcome)).toEqual(['truncated', 'truncated', 'truncated']);
+    expect(outcome.rules).toBeNull();
+    expect(outcome.problems.map((p) => p.kind)).toEqual(['truncated']);
+  });
+});
+
 describe('learn(): an honest "cannot produce this column"', () => {
   it('verifies on the first call: the column reported as unsupported is not compared, so there is nothing to repair or escalate (exactly 1 call)', async () => {
     const fake = createFakeProvider();

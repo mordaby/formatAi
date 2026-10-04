@@ -12,6 +12,8 @@ export interface FakeCannedResponse {
   model?: string;
   /** Throw this instead of returning a result. */
   error?: LlmError;
+  /** Prompt audit X2: the answer was cut off at the output limit - the result is `truncated`, `json` null and `raw` this text (default ''). */
+  truncated?: boolean;
 }
 
 /** A stable key for a request, used by `registerForRequest`/`respondTo`. */
@@ -68,6 +70,16 @@ export function createFakeProvider(): FakeLlmProvider {
       }
       if (canned.error) throw canned.error;
 
+      const usage: LlmUsage = {
+        tokensIn: canned.usage?.tokensIn ?? 0,
+        tokensOut: canned.usage?.tokensOut ?? 0,
+        tokensCachedRead: canned.usage?.tokensCachedRead ?? 0,
+        tokensCachedWrite: canned.usage?.tokensCachedWrite ?? 0,
+      };
+      if (canned.truncated) {
+        return { json: null, raw: canned.raw ?? '', truncated: true, usage, costUsd: canned.costUsd ?? 0, latencyMs: Date.now() - start, model: canned.model ?? req.model, provider: 'fake' };
+      }
+
       const raw = canned.raw ?? JSON.stringify(canned.json ?? {});
       let json = canned.json;
       if (json === undefined) {
@@ -77,13 +89,6 @@ export function createFakeProvider(): FakeLlmProvider {
           throw new LlmError('invalidJson', 'fake', 'canned response raw text was not valid JSON');
         }
       }
-
-      const usage: LlmUsage = {
-        tokensIn: canned.usage?.tokensIn ?? 0,
-        tokensOut: canned.usage?.tokensOut ?? 0,
-        tokensCachedRead: canned.usage?.tokensCachedRead ?? 0,
-        tokensCachedWrite: canned.usage?.tokensCachedWrite ?? 0,
-      };
 
       return {
         json,

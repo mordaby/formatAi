@@ -61,6 +61,7 @@ export interface LlmCallRecord {
   estimate: TokenEstimate;
   latencyMs: number;
   /** 'verified' (zero problems), 'needsRepair' (some problems, rules still returned),
+   * 'truncated' (the answer was cut off at the output-token limit: prompt audit X2; usage and cost are the call's own),
    * or 'error:<LlmErrorKind>' (the call itself failed - SPEC 15: never the payload). */
   outcome: string;
   /** How many of each `RepairProblem` kind this one call's attempt produced - COUNTS
@@ -74,7 +75,13 @@ export interface LlmCallRecord {
 }
 
 /** Every `RepairProblem` kind, for `problemCounts` (SPEC 15: counts only, never text). */
-const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'fixedMismatch', 'diff', 'rowCount', 'layout', 'unsupportedDespiteEvidence'] as const;
+const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'fixedMismatch', 'diff', 'rowCount', 'layout', 'unsupportedDespiteEvidence', 'truncated'] as const;
+
+/** Prompt audit X2: the problem of an answer cut off at the output-token limit (no payload text: SPEC 15). */
+const TRUNCATED_PROBLEM: RepairProblem = {
+  kind: 'truncated',
+  message: 'The previous answer was cut off at the output limit before it was complete, so none of it could be read: write the whole answer again, shorter.',
+};
 
 /** The ledger's per-call counts: each `RepairProblem` kind, plus the answer's dropped alternatives (learn-v8). */
 export type ProblemCounts = Record<RepairProblem['kind'] | 'invalidAlternative', number>;
@@ -164,7 +171,9 @@ function outcomeOf(problems: RepairProblem[]): string {
  * into a zero-usage call record with `outcome: "error:<kind>"`, and a synthetic
  * `schema`-kind problem (the closest existing `RepairProblem` kind to "the call
  * itself failed" - SPEC 15: the message is the provider's own diagnostic text, never
- * payload content).
+ * payload content). An answer cut off at the output-token limit (`CompleteResult.truncated`,
+ * prompt audit X2) is neither: the call is recorded with its own usage and `outcome:
+ * "truncated"`, and its one problem is a `truncated` one (never checked: nothing of it parses).
  */
 async function callAndCheck(
   completeFn: CompleteFn,
@@ -184,7 +193,10 @@ async function callAndCheck(
   try {
     const result = await completeFn({ system: prompt.system, content, schema, model, purpose }, env);
     // The learning loop: checked on the samples plus every row the browser sent (`withRows`); a problem on one of those rows names the row.
-    const checked = runChecks(result.json, withRows(payload, rows), { tier, alternatives: prompt.alternatives });
+    // (A cut-off answer is not checked: there is nothing whole to check.)
+    const checked = result.truncated
+      ? { problems: [TRUNCATED_PROBLEM], rules: null, alternatives: [], invalidAlternatives: 0 }
+      : runChecks(result.json, withRows(payload, rows), { tier, alternatives: prompt.alternatives });
     const problems = rowsNamed(checked.problems, payload, rows);
     const { rules, alternatives } = checked;
     // The estimate counts the exact text sent (system prompt, schema, every content block) and received (the raw answer).
@@ -205,10 +217,10 @@ async function callAndCheck(
       costUsd: result.costUsd,
       estimate,
       latencyMs: result.latencyMs,
-      outcome: outcomeOf(problems),
+      outcome: result.truncated ? 'truncated' : outcomeOf(problems),
       problemCounts: countProblems(problems, checked.invalidAlternatives),
     };
-    return { record, attempt: { raw: result.json, problems, rules, alternatives } };
+    return { record, attempt: { raw: result.truncated ? null : result.json, problems, rules, alternatives } };
   } catch (err) {
     const kind = err instanceof LlmError ? err.kind : 'providerError';
     const message = err instanceof Error ? err.message : 'unknown LLM error';
@@ -281,10 +293,17 @@ function rowsNamed(problems: RepairProblem[], payload: LearnPayload, rows: reado
   });
 }
 
+/**
+ * The attempt with the fewest problems (ties keep the earliest). DECISION (prompt audit X2): an attempt with no rules - a call that failed
+ * or was cut off, an answer whose structure did not parse - never beats one with rules, whatever the counts: its one `truncated` or
+ * "call failed" problem is not fewer mistakes than a real answer's two, and keeping it would lose that answer for the browser's loop.
+ */
 function bestOf(attempts: Attempt[]): Attempt {
+  const worse = (a: Attempt, b: Attempt): boolean =>
+    (a.rules === null) !== (b.rules === null) ? a.rules === null : a.problems.length > b.problems.length;
   let best = attempts[0]!;
   for (const a of attempts) {
-    if (a.problems.length < best.problems.length) best = a;
+    if (worse(best, a)) best = a;
   }
   return best;
 }

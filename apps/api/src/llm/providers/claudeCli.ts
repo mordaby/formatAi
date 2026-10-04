@@ -68,6 +68,8 @@ export interface CreateClaudeCliProviderOptions {
 interface ClaudeCliJsonResult {
   is_error?: boolean;
   result?: string;
+  /** The model's own stop reason for its last turn (e.g. "end_turn", "tool_use", "max_tokens"), when the CLI reports one. */
+  stop_reason?: string | null;
   total_cost_usd?: number;
   usage?: {
     input_tokens?: number;
@@ -222,6 +224,19 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
         throw new LlmError('providerError', 'claude-cli', 'the claude CLI did not return valid JSON output');
       }
 
+      const usage: LlmUsage = {
+        tokensIn: cliResult.usage?.input_tokens ?? 0,
+        tokensOut: cliResult.usage?.output_tokens ?? 0,
+        tokensCachedRead: cliResult.usage?.cache_read_input_tokens ?? 0,
+        tokensCachedWrite: cliResult.usage?.cache_creation_input_tokens ?? 0,
+      };
+
+      // Prompt audit X2: the CLI's JSON carries the model's `stop_reason`; an answer cut off at the output limit is reported the way the
+      // API providers report it (whatever else the CLI says about that run). The CLI's own thinking and token limits are left as they are.
+      if (cliResult.stop_reason === 'max_tokens' || cliResult.stop_reason === 'model_context_window_exceeded') {
+        return { json: null, raw: cliResult.result ?? '', truncated: true, usage, costUsd: 0, latencyMs: Date.now() - start, model: req.model, provider: 'claude-cli' };
+      }
+
       if (cliResult.is_error) {
         const message = cliResult.result ?? 'the claude CLI reported an error';
         const lower = message.toLowerCase();
@@ -241,13 +256,6 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
       } catch {
         throw new LlmError('invalidJson', 'claude-cli', 'model response was not valid JSON');
       }
-
-      const usage: LlmUsage = {
-        tokensIn: cliResult.usage?.input_tokens ?? 0,
-        tokensOut: cliResult.usage?.output_tokens ?? 0,
-        tokensCachedRead: cliResult.usage?.cache_read_input_tokens ?? 0,
-        tokensCachedWrite: cliResult.usage?.cache_creation_input_tokens ?? 0,
-      };
 
       return {
         json,

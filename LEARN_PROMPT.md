@@ -29,7 +29,8 @@ This file defines exactly what is sent to the LLM when a format is learned from 
   - `system` = the system prompt in section 2, marked with a cache breakpoint.
   - `messages` = exactly one user message. Its content is the payload JSON (section 3), serialized compactly with no pretty-printing.
   - Output is constrained to the `LearnResult` JSON Schema (section 5), generated from the zod rules schema. Use JSON outputs (`output_config.format`) or strict tool use.
-- **Settings:** `max_tokens` from config (start at 4,000). Temperature 0 if the model supports it. No tools.
+- **Settings:** `max_tokens` from config (start at 4,000). Temperature 0 if the model supports it. No tools. **Thinking off** where the model allows it (prompt audit X2; thinking counts toward `max_tokens`): nothing is sent to a model that does not think unasked (Haiku 4.5, Opus 4.x, Sonnet 4.6), `thinking: { type: "disabled" }` to Sonnet 5 and Opus 5 (adaptive by default), `{ type: "between_tools" }` to Sonnet 5.5; a model whose thinking cannot be turned off (Opus 5.5, Fable, Mythos) gets `limits.llm.maxTokensThinking` (16,000) instead. No effort is sent.
+- **A cut-off answer** (the provider's stop reason: Anthropic `max_tokens`, OpenAI `incomplete` / `max_output_tokens`, the CLI's `stop_reason`) is its own outcome: the call is recorded as `truncated` with its usage, counted in `problemCounts.truncated`, never as invalid JSON; its repair gets a `truncated` problem (section 4). An attempt without rules never beats one with rules.
 - **Repair calls** use the same system prompt and one user message with two content blocks:
   1. the original payload, with a cache breakpoint;
   2. the repair block (section 4).
@@ -293,7 +294,8 @@ The second content block of a repair call:
     { "kind": "fixedMismatch", "path": "transform.computed[1]", "message": "computed column \"total\" is part of complete.fixed and must stay unchanged" },
     { "kind": "type", "path": "transform.computed[1].expr", "message": "expected decimal, got text; use toNumber (in: toNumber(amount))" },
     { "kind": "limit", "message": "output column 4 uses 260 nodes after expanding calls; the limit is 200" },
-    { "kind": "unsupportedDespiteEvidence", "out": 2, "message": "Column \"Unit Price\": the app found it is built from \"Cost\" (copy); write a rule for it." }
+    { "kind": "unsupportedDespiteEvidence", "out": 2, "message": "Column \"Unit Price\": the app found it is built from \"Cost\" (copy); write a rule for it." },
+    { "kind": "truncated", "message": "The previous answer was cut off at the output limit before it was complete, so none of it could be read: write the whole answer again, shorter." }
   ]
 }
 ```
@@ -301,6 +303,7 @@ The second content block of a repair call:
 - `formula` is a formula-text parse error: `offset` is the character offset INTO that one formula string (not the payload). Fix only the formula named by `path`.
 - `fixedMismatch` (completion mode only): an element of `complete.fixed` is missing or changed in the answer, something outside `complete.columns`/`complete.parts` was changed, or a listed column has neither a `from` nor an `unsupported` entry. `path` points into the answer.
 - `unsupportedDespiteEvidence`: the answer reports output column `out` as unsupported, but the app's own analysis found how it is built - the payload carries a hint for that column (a copy, template, composition, dependency, bands, value map, window, ...). The message names input columns and the kind of hint, never a value; the fix is the rule for that column. Raised by the API's checks (a server repair round) and by the browser's verification (the browser-triggered repair); a column with no hint is accepted as unsupported, with no problem.
+- `truncated` (prompt audit X2): the previous answer was cut off at the output-token limit, so `previousRules` is null; the model is asked for the whole answer again, shorter.
 - `sample` refers to a sample in the payload. `familyRow` points to a row inside a family sample (0-based).
 - `row` carries a failing row of the example the model never saw - a row of a loop round, or a dropped row - masked like the samples when masking is on. `row.out` is ALWAYS the example's own output row for it: `[]` when the example has none (a row it dropped, or one row more than it made from that input row). A row the rules made that the example does not have (`expected: null`) carries that whole row in `made`. (Before learn-v8's code change, prompt audit X1, `row.out` held the made row in that one case and the example's row everywhere else; now every prompt version is sent the one meaning.) At most 10 `diff` problems are sent.
 - A `type`/`limit` problem's message may quote the offending formula text in parentheses ("in: ...") - read it, it's the exact sub-expression that's wrong.

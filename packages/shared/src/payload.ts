@@ -313,7 +313,13 @@ export type RepairProblem =
    * is no mismatch, but giving up on a column code can already trace to the input is worth one repair round (`unsupportedDespiteEvidence`,
    * `unsupportedEvidence.ts`). The message names columns and the hint kind only, never a value.
    */
-  | { kind: 'unsupportedDespiteEvidence'; out: number; message: string };
+  | { kind: 'unsupportedDespiteEvidence'; out: number; message: string }
+  /**
+   * Prompt audit X2: the answer was cut off at the output-token limit before it was complete (the provider's stop reason), so nothing of it
+   * could be read. Its own kind - never a `schema` problem - so the ledger counts it apart (`problemCounts.truncated`); the repair round is
+   * asked for the whole answer again, shorter (`previousRules` is null).
+   */
+  | { kind: 'truncated'; message: string };
 
 export interface RepairBlock<Rules = unknown> {
   mode: 'repair';

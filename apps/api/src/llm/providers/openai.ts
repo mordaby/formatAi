@@ -66,6 +66,21 @@ export function createOpenAiProvider(opts: CreateOpenAiProviderOptions = {}): Ll
       }
 
       const raw = response.output_text ?? '';
+      const usage: LlmUsage = {
+        tokensIn: response.usage?.input_tokens ?? 0,
+        tokensOut: response.usage?.output_tokens ?? 0,
+        tokensCachedRead: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+        tokensCachedWrite: response.usage?.input_tokens_details?.cache_write_tokens ?? 0,
+      };
+      const model = response.model ?? req.model;
+      const served = { usage, costUsd: computeCostUsd(model, usage), model, provider: 'openai' as const };
+
+      // Prompt audit X2: the Responses API's cut-off answer (`max_output_tokens` counts a reasoning model's reasoning tokens too) is its
+      // own outcome, with the call's usage - never "not valid JSON".
+      if (response.status === 'incomplete' && response.incomplete_details?.reason === 'max_output_tokens') {
+        return { json: null, raw, truncated: true, ...served, latencyMs: Date.now() - start };
+      }
+
       let parsed: unknown;
       try {
         parsed = JSON.parse(raw);
@@ -76,22 +91,7 @@ export function createOpenAiProvider(opts: CreateOpenAiProviderOptions = {}): Ll
       // against the original (non-strict) LearnResult schema again.
       const json = stripOpenAiNulls(req.schema, parsed);
 
-      const usage: LlmUsage = {
-        tokensIn: response.usage?.input_tokens ?? 0,
-        tokensOut: response.usage?.output_tokens ?? 0,
-        tokensCachedRead: response.usage?.input_tokens_details?.cached_tokens ?? 0,
-        tokensCachedWrite: response.usage?.input_tokens_details?.cache_write_tokens ?? 0,
-      };
-
-      return {
-        json,
-        raw,
-        usage,
-        costUsd: computeCostUsd(response.model ?? req.model, usage),
-        latencyMs: Date.now() - start,
-        model: response.model ?? req.model,
-        provider: 'openai',
-      };
+      return { json, raw, ...served, latencyMs: Date.now() - start };
     },
   };
 }
