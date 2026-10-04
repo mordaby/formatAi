@@ -459,6 +459,34 @@
   white-space: normal;
   text-align: start;
 }
+/* Rows that still don't follow the rules (SPEC 21 v12 item 12): real differences, so amber is right. */
+.unfinished__groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.unfinished__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--diff-tint);
+  color: var(--on-diff-tint);
+  font-size: var(--fs-small);
+}
+.unfinished__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding-inline-start: var(--s-4);
+  list-style: disc;
+}
+.unfinished__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
 .map-line[data-dragging] {
   opacity: 0.45;
 }
