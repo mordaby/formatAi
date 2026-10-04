@@ -3,7 +3,6 @@ import { stripAiNotes, type AiStepPartCode, type LearnResult, type Rules, type T
 import { useLearnFlow, type UseLearnFlow } from '../flow/useLearnFlow';
 import { peekResultSession, seedResultSession } from '../pages/Result/session';
 import { webConfig } from '../config';
-import { readDeepAnalysis, writeDeepAnalysis } from './deepAnalysisPref';
 import { useMe } from './Me';
 import { fileOf, getPendingStore, storeFile, type PendingLearn, type PendingResult } from './pendingLearn';
 import { useSignIn } from './SignIn';
@@ -16,7 +15,9 @@ import { useSignIn } from './SignIn';
  *
  * It also carries the learned rules across the trip to a sign-in provider and back (SPEC 5 E): just before the browser
  * leaves, what has been learned is kept in IndexedDB (never sent), and when the app starts again the local analysis is
- * re-run on the kept files and the kept edits are put back on top - so the Result screen comes back as it was.
+ * re-run on the kept files and the kept edits are put back on top - so the Result screen comes back as it was. A visitor's
+ * "Learn with AI" (Home, the 'ai' sign-in wall) is carried the same way: only the two files and the choice are kept, and after
+ * the sign-in the learn starts by itself, the AI step following it.
  */
 export interface LearnSession {
   flow: UseLearnFlow;
@@ -27,19 +28,19 @@ export interface LearnSession {
   setInput(file: File | null): void;
   setOutput(file: File | null): void;
   setMasking(masking: boolean): void;
-  /** Home's "Deep analysis with AI if needed" (signed in): when on, the AI step starts by itself after the free result, if fields are missing. Remembered in this browser. */
+  /** Home's "Learn with AI" chose the AI step for this learn: it starts by itself after the free result, only if fields are missing. Not remembered: the next learn asks again. */
   deepAnalysis: boolean;
-  setDeepAnalysis(on: boolean): void;
   /**
    * Starts (or restarts) a learn from the two files in the session. No-op while a file is missing. EVERY learn is the free engine only
    * (owner decision: the AI step never runs unless the user chooses it - signed in or not); the learn waits until who is signed in is
-   * known (`/api/me`) so its tier's limits are right. `opts.ai` says it outright (only "Re-run all with AI" does).
+   * known (`/api/me`) so its tier's limits are right. `opts.ai` says it outright (only "Finish with AI" as a whole learn does).
+   * `opts.deep` sets `deepAnalysis` for this learn ("Learn with AI" true, "Learn the format" false); a retry leaves it as it was.
    */
-  begin(opts?: { ai?: 'allowed' | 'notAllowed' }): void;
-  /** The whole learn again, with the AI step allowed (signed in): "Re-run all with AI". It replaces the result on screen. */
+  begin(opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean }): void;
+  /** The whole learn again, with the AI step allowed (signed in): "Finish with AI" when too little is solved to complete. It replaces the result on screen. */
   finishWithAi(): void;
   /**
-   * "Run deep analysis with AI" (completion mode, LEARN_PROMPT "Completing a partial rules file"): the AI step produces only what is
+   * "Finish with AI" (completion mode, LEARN_PROMPT "Completing a partial rules file"): the AI step produces only what is
    * missing from `fixedRules` (the rules as they are on screen). It runs in `completion`, a flow of its own, so the Result screen
    * and its rules stay as they are until an answer has passed the fixed lock and the verification.
    */
@@ -68,7 +69,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   // Read at the start of every learn, so a sign-in never replaces the flow (and with it a result on screen).
   const getTier = useCallback((): Tier => meRef.current.tier, []);
   // The AI step never runs by itself, whoever is signed in: a learn is the free engine, and the AI step is the user's choice on the
-  // Result screen ("Run deep analysis with AI", or Home's "Deep analysis with AI if needed", which that screen acts on).
+  // Result screen ("Finish with AI", or Home's "Learn with AI", which that screen acts on once the free result is in).
   const getAi = useCallback((): 'allowed' | 'notAllowed' => 'notAllowed', []);
   // ... and a learn started before that answer is waiting for it (it would otherwise run as a visitor's - tier, limits and all).
   const meAnswered = useRef<{ promise: Promise<void>; resolve(): void } | null>(null);
@@ -93,11 +94,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const [input, setInput] = useState<File | null>(null);
   const [output, setOutput] = useState<File | null>(null);
   const [masking, setMasking] = useState(true);
-  const [deepAnalysis, setDeepAnalysisState] = useState(readDeepAnalysis);
-  const setDeepAnalysis = useCallback((on: boolean) => {
-    setDeepAnalysisState(on);
-    writeDeepAnalysis(on);
-  }, []);
+  const [deepAnalysis, setDeepAnalysis] = useState(false);
   const [restoring, setRestoring] = useState(true);
   // The latest of everything a callback below needs to read at the moment it runs (not when it was made).
   const latest = useRef({ input, output, masking, state: flow.state });
@@ -106,8 +103,9 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const { start, reset } = flow;
   const { start: startCompletion, reset: resetCompletion } = completion;
   const begin = useCallback(
-    (opts?: { ai?: 'allowed' | 'notAllowed' }) => {
+    (opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean }) => {
       if (!input || !output) return;
+      if (opts?.deep !== undefined) setDeepAnalysis(opts.deep);
       // (no `ai` given: the free engine only, see `getAi`)
       void start({ input, output, masking, ...(opts?.ai ? { ai: opts.ai } : {}) });
     },
@@ -136,14 +134,18 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
     resetCompletion();
     setInput(null);
     setOutput(null);
+    setDeepAnalysis(false);
   }, [reset, resetCompletion]);
 
   // ---- keeping what has been learned across the trip to the provider (SPEC 5 E) ----
   useEffect(() => {
-    signIn.setBeforeRedirect(async () => {
+    signIn.setBeforeRedirect(async ({ reason }) => {
       const { input: i, output: o, masking: m, state } = latest.current;
-      const tryAnyway = state.status === 'done' && state.tryAnyway === true;
-      const resultSession = state.status === 'done' && state.result.rules ? peekResultSession(state.result) : undefined;
+      // A visitor's "Learn with AI" (Home, the 'ai' wall): the learn they asked for is a new one from the two files, so nothing of an earlier
+      // result is kept - only the files and the choice (the free engine runs again after the sign-in, and the AI step follows it).
+      const aiLearn = reason === 'ai' && i !== null && o !== null;
+      const tryAnyway = !aiLearn && state.status === 'done' && state.tryAnyway === true;
+      const resultSession = !aiLearn && state.status === 'done' && state.result.rules ? peekResultSession(state.result) : undefined;
       if (!i && !o && !resultSession) return;
       let result: PendingResult | null = null;
       if (resultSession) {
@@ -159,6 +161,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
         output: o ? await storeFile(o) : null,
         masking: m,
         ...(tryAnyway ? { tryAnyway: true } : {}),
+        ...(aiLearn ? { deepAnalysis: true } : {}),
         result,
       };
       await getPendingStore().save(record);
@@ -168,6 +171,8 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
 
   // ---- putting it back when the app starts again ----
   const seed = useRef<PendingResult | null>(null);
+  // A visitor's "Learn with AI" is being carried on (no edits to put back, only the learn to wait for).
+  const resuming = useRef(false);
   const started = useRef(false);
   const meReady = me.status === 'ready';
   // (`start` changes with every state of the flow: read it when needed, so this effect runs once and is never cancelled by a click)
@@ -206,6 +211,12 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
         seed.current = record.result;
         // The local analysis only: the AI step is the user's choice on the Result screen (never started here).
         void startRef.current({ input: i, output: o, masking: record.masking, ai: 'notAllowed', ...(record.tryAnyway ? { tryAnyway: true } : {}) });
+      } else if (record.deepAnalysis && i && o && meRef.current.user) {
+        // "Learn with AI" from a visitor, now signed in: the learn they asked for starts by itself, and the Result screen goes on with the AI step
+        // when fields are missing (`deepAnalysis`). Not signed in after all (declined, failed): the files are back and nothing starts.
+        resuming.current = true;
+        setDeepAnalysis(true);
+        void startRef.current({ input: i, output: o, masking: record.masking, ai: 'notAllowed' });
       } else {
         restored();
       }
@@ -217,18 +228,21 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const status = flow.state.status;
   const doneResult = flow.state.status === 'done' ? flow.state.result : undefined;
   useEffect(() => {
-    if (!restoring || !seed.current) return;
+    if (!restoring || (!seed.current && !resuming.current)) return;
     if (doneResult?.rules) {
       const kept = seed.current;
       seed.current = null;
+      resuming.current = false;
       // The same local analysis gives the same rules, so the kept (edited) rules are what the screen starts from.
-      seedResultSession(doneResult, { name: kept.name, rules: kept.rules, edited: kept.edited, exceptions: kept.exceptions });
+      if (kept) seedResultSession(doneResult, { name: kept.name, rules: kept.rules, edited: kept.edited, exceptions: kept.exceptions });
       restored();
     } else if (status === 'error' || status === 'blocked' || status === 'warn' || status === 'notReady') {
       seed.current = null; // the kept learn did not come back as a result: nothing to put on top
+      resuming.current = false;
       restored();
     } else if (status === 'idle' && ranOnce.current) {
       seed.current = null; // cancelled meanwhile
+      resuming.current = false;
       restored();
     } else if (status !== 'idle') {
       ranOnce.current = true;
@@ -251,8 +265,8 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   }, [quota, setQuota]);
 
   const value = useMemo<LearnSession>(
-    () => ({ flow, completion, input, output, masking, deepAnalysis, setDeepAnalysis, setInput, setOutput, setMasking, begin, finishWithAi, completeWithAi, startOver, restoring }),
-    [flow, completion, input, output, masking, deepAnalysis, setDeepAnalysis, begin, finishWithAi, completeWithAi, startOver, restoring],
+    () => ({ flow, completion, input, output, masking, deepAnalysis, setInput, setOutput, setMasking, begin, finishWithAi, completeWithAi, startOver, restoring }),
+    [flow, completion, input, output, masking, deepAnalysis, begin, finishWithAi, completeWithAi, startOver, restoring],
   );
   return <LearnSessionContext.Provider value={value}>{children}</LearnSessionContext.Provider>;
 }

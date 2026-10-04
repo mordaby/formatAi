@@ -1,7 +1,9 @@
 import { useId, useState } from 'react';
+import { aiUsesLabel, includedLabel } from '../app/aiQuota';
 import { SendPanel } from '../app/SendPanel';
 import { useLearnSession } from '../app/LearnSession';
 import { useMe } from '../app/Me';
+import { useSignIn } from '../app/SignIn';
 import { useFileInfo } from '../app/useFileInfo';
 import { webConfig } from '../config';
 import { useI18n } from '../i18n';
@@ -13,21 +15,30 @@ export interface HomeFormProps {
   busy: boolean;
 }
 
-/** SPEC 16.1 screen 1, the tool itself: two drop zones, the masking switch, the privacy line, one primary button. */
+/** SPEC 16.1 screen 1, the tool itself: two drop zones, the masking switch, the privacy line, "Learn the format" and next to it "Learn with AI". */
 export function HomeForm({ busy }: HomeFormProps) {
   const { t } = useI18n();
   const session = useLearnSession();
   const me = useMe();
+  const signIn = useSignIn();
   const { input, output, masking } = session;
   const inputInfo = useFileInfo(input, 'input');
   const outputInfo = useFileInfo(output, 'output');
   const [sendOpen, setSendOpen] = useState(false);
   const sendId = useId();
   const hintId = useId();
-  const deepId = useId();
-  const deepHintId = useId();
+  const aiHintId = useId();
 
   const ready = input !== null && output !== null && inputInfo?.status !== 'unreadable' && outputInfo?.status !== 'unreadable';
+  // Which of the two buttons started the learn that is running (the one that shows it is working).
+  const withAi = session.deepAnalysis;
+  // What "Learn with AI" costs, in one line: signed in, one AI format and only if it succeeds (or that none are left); a visitor, what signing in gives.
+  const noneLeft = me.user !== null && me.quota !== null && me.quota.remaining === 0;
+  const aiHint = me.user
+    ? noneLeft
+      ? `${t('aiLimit.title')}. ${t('aiLimit.local')}`
+      : aiUsesLabel(t, me.quota)
+    : t('home.learnAi.guest', { included: includedLabel(t) });
 
   return (
     <div className="view">
@@ -64,27 +75,6 @@ export function HomeForm({ busy }: HomeFormProps) {
 
       <HomeMasking masking={masking} onChange={session.setMasking} disabled={busy} />
 
-      {/* Signed in: the AI step is the user's choice. Off, the free engine's result is shown and the Result screen offers the AI step; on, it starts by itself when fields are missing. */}
-      {me.user ? (
-        <div className="check deep-pref" data-testid="deep-analysis-pref">
-          <input
-            id={deepId}
-            type="checkbox"
-            className="check__box"
-            checked={session.deepAnalysis}
-            disabled={busy}
-            aria-describedby={deepHintId}
-            onChange={(e) => session.setDeepAnalysis(e.target.checked)}
-          />
-          <label htmlFor={deepId} className="check__label">
-            {t('deep.pref')}
-          </label>
-          <p className="field__hint" id={deepHintId}>
-            {t('deep.pref.hint')}
-          </p>
-        </div>
-      ) : null}
-
       <div className="privacy">
         <p className="privacy__line">
           <Icon name="lock" size={16} />
@@ -96,15 +86,37 @@ export function HomeForm({ busy }: HomeFormProps) {
         {sendOpen && <SendPanel id={sendId} sent={session.flow.state.sent} masking={masking} onClose={() => setSendOpen(false)} />}
       </div>
 
-      <div className="learn-row">
-        <Button variant="primary" iconEnd="arrow" disabled={!ready} loading={busy} aria-describedby={ready ? undefined : hintId} onClick={() => session.begin()}>
-          {t('home.learn')}
-        </Button>
-        {!ready && (
-          <p className="learn-row__hint" id={hintId}>
-            {t('home.needFiles')}
-          </p>
-        )}
+      <div className="learn">
+        <div className="learn-row">
+          <Button
+            variant="primary"
+            iconEnd="arrow"
+            disabled={!ready || (busy && withAi)}
+            loading={busy && !withAi}
+            aria-describedby={ready ? undefined : hintId}
+            onClick={() => session.begin({ deep: false })}
+          >
+            {t('home.learn')}
+          </Button>
+          {/* The same learn, with the AI step to follow if the free engine leaves fields unsolved. A visitor is asked to sign in first (the learn then carries on by itself, see LearnSession). */}
+          <Button
+            variant="secondary"
+            disabled={!ready || me.status === 'loading' || noneLeft || (busy && !withAi)}
+            loading={busy && withAi}
+            aria-describedby={ready ? aiHintId : `${aiHintId} ${hintId}`}
+            onClick={() => (me.user ? session.begin({ deep: true }) : signIn.open('ai'))}
+          >
+            {t('home.learnAi')}
+          </Button>
+          {!ready && (
+            <p className="learn-row__hint" id={hintId}>
+              {t('home.needFiles')}
+            </p>
+          )}
+        </div>
+        <p className="learn-row__hint" id={aiHintId} data-testid="learn-ai-hint">
+          {aiHint}
+        </p>
       </div>
     </div>
   );

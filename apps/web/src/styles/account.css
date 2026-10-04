@@ -261,9 +261,6 @@
 .map-line[data-ai-running] .spinner {
   flex: none;
 }
-.deep-pref {
-  max-inline-size: 68ch;
-}
 
 .ai-note {
   display: flex;

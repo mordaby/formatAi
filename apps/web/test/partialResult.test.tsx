@@ -1,6 +1,6 @@
 // SPEC 21 v5 items 1 and 4: an example that needs the AI step shows the LOCAL result first - what code worked out, checked against
 // the example, with the rest marked "Needs the AI step" - and a popup asks a visitor to sign in free to finish. A signed-in user
-// gets "Run deep analysis with AI". A column code could not explain at all (external) needs the AI step too ("may come from another
+// gets "Finish with AI". A column code could not explain at all (external) needs the AI step too ("may come from another
 // source"), and when the AI can't help at all the screen says what to fix. The worker is a fake; the API is never asked to learn for a visitor.
 import type { LearnResult, MeUser, Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
@@ -182,7 +182,7 @@ describe('a signed-in user', () => {
     expect(screen.queryByTestId('deep-panel')).toBeNull(); // nothing is missing: there is nothing to offer
   });
 
-  it('sees no popup on a local result: "Run deep analysis with AI" asks the AI step for only what is missing, keeping the rules on screen', async () => {
+  it('sees no popup on a local result: "Finish with AI" asks the AI step for only what is missing, keeping the rules on screen', async () => {
     const full = ordersRules();
     const results: LearnOutput[] = [
       partialOutput(),
@@ -197,7 +197,7 @@ describe('a signed-in user', () => {
     await screen.findByTestId('rules-map');
     expect(screen.queryByRole('dialog')).toBeNull();
     // (this fake hands a partial result even to a signed-in user: what matters is what the button then does)
-    fireEvent.click(await screen.findByRole('button', { name: 'Run deep analysis with AI' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Finish with AI' }));
     await waitFor(() => expect(learnMock).toHaveBeenCalledTimes(2));
     expect(learnMock.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', tier: 'registered', complete: { columns: [3, 4, 5], parts: ['summaryRows'] } });
     // ... and the result screen comes back with the finished rules (details of the completion: completion.test.tsx).
@@ -240,12 +240,12 @@ describe('only an unexplained (external) column is left', () => {
     expect(screen.queryByRole('button', { name: /Save format/ })).toBeNull();
   });
 
-  it('a signed-in user can finish it: "Run deep analysis with AI" asks for that column', async () => {
+  it('a signed-in user can finish it: "Finish with AI" asks for that column', async () => {
     const results: LearnOutput[] = [onlyRemarks(), learnResult({ path: 'llm', rules: ordersRules(), completion: { columns: [5], parts: [], fixedProblems: [], matches: true, produced: { columns: 1, parts: 0 } } })];
     const { engine, learn: learnMock } = fakeEngine(async () => results.shift()!);
     await learn(engine, fakeApi({ user: USER }));
     await screen.findByTestId('rules-map');
-    fireEvent.click(await screen.findByRole('button', { name: 'Run deep analysis with AI' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Finish with AI' }));
     await waitFor(() => expect(learnMock).toHaveBeenCalledTimes(2));
     expect(learnMock.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', complete: { columns: [5], parts: [] } });
   });

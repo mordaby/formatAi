@@ -112,7 +112,7 @@ const line = (id: string): HTMLElement => {
   return el as HTMLElement;
 };
 const run = async (lang: 'en' | 'he' = 'en') => {
-  fireEvent.click(screen.getByRole('button', { name: lang === 'en' ? 'Run deep analysis with AI' : 'הפעלת ניתוח מעמיק עם AI' }));
+  fireEvent.click(screen.getByRole('button', { name: lang === 'en' ? 'Finish with AI' : 'השלמה עם AI' }));
   await screen.findByTestId('completion-done');
 };
 
