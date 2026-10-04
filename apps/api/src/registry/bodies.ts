@@ -157,6 +157,23 @@ export function parseRun(body: Record<string, unknown>): { rows: number; flagged
   return rows === null || flagged === null ? null : { rows, flagged };
 }
 
+/**
+ * POST /api/sources/:id/ignored-headers: the headers to ignore (SPEC 8.15). A header that is empty or longer than an alias may be is left out
+ * rather than failing the request (the notice it came from must be dismissable); anything that is not a list of strings, or has nothing
+ * left, is not this route's body.
+ */
+export function parseIgnoredHeaders(body: Record<string, unknown>): string[] | null {
+  const headers = body.headers;
+  if (!Array.isArray(headers) || headers.length === 0 || headers.length > limits.registry.maxInputHeaders) return null;
+  const out: string[] = [];
+  for (const h of headers) {
+    if (typeof h !== 'string') return null;
+    const header = h.trim();
+    if (header.length > 0 && header.length <= limits.registry.maxAliasChars) out.push(header);
+  }
+  return out.length > 0 ? out : null;
+}
+
 export function parseAlias(body: Record<string, unknown>): { header: string; alias: string } | null {
   const header = body.header;
   if (typeof header !== 'string' || header.length === 0 || header.length > limits.registry.maxAliasChars) return null;
@@ -174,12 +191,14 @@ export interface SourceChoiceFields {
   newSourceName?: string;
   /** Headers of the example input, to match against the owner's sources. */
   inputHeaders?: string[];
-  /** The name for the source the server creates when nothing matched (none: the server picks "Source N"). */
+  /** The name the user typed for the source the server creates when nothing matched (none: `suggestedSourceName`, else "Source N"). */
   sourceName?: string;
+  /** The client's default name (from the example input file's name): made unique, never refused. */
+  suggestedSourceName?: string;
 }
 
 /**
- * `sourceId`, `newSource`, `inputHeaders` and `sourceName` (all optional). Null for a body that names both a source and a
+ * `sourceId`, `newSource`, `inputHeaders`, `sourceName` and `suggestedSourceName` (all optional). Null for a body that names both a source and a
  * new source, or anything malformed. Over-long headers are left out of `inputHeaders` rather than failing the save: they can't
  * match anything worth matching, and the save must not depend on them.
  */
@@ -201,6 +220,11 @@ export function parseSourceChoice(body: Record<string, unknown>): SourceChoiceFi
     const name = parseName(body.sourceName);
     if (name === null) return null;
     out.sourceName = name;
+  }
+  // A default is a courtesy: one that cannot be a name is left out (the server names the source), never a reason to refuse the save.
+  if (body.suggestedSourceName !== undefined) {
+    const name = parseName(body.suggestedSourceName);
+    if (name !== null) out.suggestedSourceName = name;
   }
   if (body.inputHeaders !== undefined) {
     if (!Array.isArray(body.inputHeaders) || body.inputHeaders.length > limits.registry.maxInputHeaders) return null;

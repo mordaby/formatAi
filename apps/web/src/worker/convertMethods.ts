@@ -7,17 +7,19 @@ import {
   formatYmd,
   mapHeaders,
   matchConversions,
+  missingInputColumns,
   pickConversion,
   readWorkbook,
   runRules,
   serialToYmd,
+  unlikeColumns,
   writeOutput,
   writeXlsxWorkbook,
   writeZip,
 } from '@formatai/engine';
 import type { InputTable, OutputSheet, OutRow, RawCell, RawWorkbook } from '@formatai/engine';
 import type { LearnResult, Rules } from '@formatai/shared';
-import type { BatchArgs, BatchOutput, ConvertRunArgs, ConvertRunOutput, HeadersArgs, HeadersOutput, MatchFileArgs, MatchFileOutput, RowInputCell, SummaryTable } from './convertApi';
+import type { BatchArgs, BatchOutput, ColumnGapsArgs, ColumnGapsOutput, ConvertRunArgs, ConvertRunOutput, HeadersArgs, HeadersOutput, MatchFileArgs, MatchFileOutput, RowInputCell, SummaryTable } from './convertApi';
 import { Transfer } from './runtime';
 
 /** A detached-safe ArrayBuffer holding exactly `bytes`. */
@@ -64,6 +66,14 @@ async function matchFile(args: MatchFileArgs): Promise<MatchFileOutput> {
   if (!read.ok) return read;
   const ranked = matchConversions(read.table.headers, args.signatures);
   return { ok: true, headers: read.table.headers, ranked, pick: pickConversion(ranked) };
+}
+
+/**
+ * What each conversion needs that the file does not have (SPEC 8.15, 21 v11 items 4-7): a required column, or a column the rules use though it is
+ * optional. From the file's headers as matching read them, with the engine's own header mapping - nothing is parsed again.
+ */
+async function columnGaps(args: ColumnGapsArgs): Promise<ColumnGapsOutput> {
+  return args.rules.map((rules) => missingInputColumns(rules, args.headers));
 }
 
 // ---------- running a conversion with the user's decisions ----------
@@ -121,7 +131,9 @@ async function convertWithDecisions(args: ConvertRunArgs): Promise<Transfer<Conv
   if (!result.ok) return { ok: false, error: result.error };
 
   const fileType = result.sheet.file?.type ?? 'xlsx';
-  const base = { ok: true as const, flags: result.flags, summary: result.summary, fileType };
+  // SPEC 21 v11 items 4-7: a used column whose values mostly failed to parse is "same name, different meaning" - counts only, from the flags.
+  const unlike = unlikeColumns(rules, result.flags, result.summary.rowsIn);
+  const base = { ok: true as const, flags: result.flags, summary: result.summary, fileType, ...(unlike.length > 0 ? { unlike } : {}) };
 
   if (mode === 'review') {
     // Rows to look at: a flag not yet accepted, or a row a check with severity "block" left out.
@@ -194,4 +206,4 @@ async function batch(args: BatchArgs): Promise<Transfer<BatchOutput>> {
   return new Transfer({ zip, summary: alone }, [zip, alone]);
 }
 
-export const convertMethods = { readHeaders, matchFile, convertWithDecisions, batch };
+export const convertMethods = { readHeaders, matchFile, columnGaps, convertWithDecisions, batch };

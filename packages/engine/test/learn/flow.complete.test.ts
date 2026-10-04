@@ -186,6 +186,33 @@ describe('learnFromExamples with complete', () => {
     expect((r.rules!.input.rowFilters![0] as { value: string }).value).toBe('Zzqx'); // unmasked again
   });
 
+  it('with masking: the fixed lock\'s findings are asked of the answer as the AI wrote it (masked) - the repair call carries no real word', async () => {
+    const { rules } = await localPartial(mixedPair());
+    const withFilter: LearnResult = {
+      ...rules,
+      input: { ...rules.input, columns: [...rules.input.columns, { id: 'group', header: 'Group', type: 'text' }], rowFilters: [{ column: 'group', op: 'ne', value: 'Zzqx' }] },
+    };
+    // the answer drops the user's row filter
+    const dropsFilter = (p: LearnPayload): LearnResult => {
+      const a = answerFor(p);
+      return { ...a, input: { ...a.input, rowFilters: [] } };
+    };
+    const s = spy(dropsFilter);
+    const r = await learnFromExamples({
+      ...(await bytes(mixedPair())),
+      masking: true,
+      key: new TextEncoder().encode('flow-complete-key'),
+      tier: 'paid',
+      complete: { fixedRules: withFilter, columns: [3], parts: [] },
+      callLearn: s.callLearn,
+      callRepair: s.callRepair,
+    });
+    expect(r.completion!.fixedProblems.map((p) => p.path)).toEqual(['input.rowFilters']); // the UI's own check, on the real answer
+    expect(s.repairs).toHaveLength(1);
+    expect(s.repairs[0]!.problems.filter((p) => p.kind === 'fixedMismatch').map((p) => (p as { path: string }).path)).toEqual(['input.rowFilters']);
+    expect(JSON.stringify([s.payloads[0], s.repairs[0]!.problems])).not.toContain('Zzqx');
+  });
+
   it('what is asked for does not depend on the readiness gate: only external columns left still goes to the AI step', async () => {
     const s = spy((p) => fixedOf(p));
     const { rules } = await localPartial(externalOnlyPair());

@@ -180,8 +180,17 @@ export interface SourceChoice {
    * sources. Without it the headers the rules declare are used, which is usually a subset of the file's.
    */
   inputHeaders?: string[];
-  /** The name of the source to CREATE when neither `sourceId` nor `newSource` is given and no existing source matches (default: the first free "Source N"). */
+  /**
+   * The name of the source to CREATE when neither `sourceId` nor `newSource` is given and no existing source matches (default: the first free
+   * "Source N"). A name the user typed: in use by another source (case-insensitively) it is refused, 409 `nameTaken`.
+   */
   sourceName?: string;
+  /**
+   * A DEFAULT name for that source, derived by the client from the example input file's name (`defaultSourceName`; nothing from the file's
+   * cells): used when neither `sourceId`, `newSource` nor `sourceName` names it. Never refused for a clash - it becomes "name (2)", "name (3)"
+   * - and dropped when it is not a usable name (then "Source N").
+   */
+  suggestedSourceName?: string;
 }
 
 /** POST /api/formats body: creates the format (from the rules' output side), its source (or reuses one) and the conversion. */
@@ -377,6 +386,11 @@ export interface SignatureEntry {
   /** The source's name. */
   name: string;
   columns: SignatureColumn[];
+  /**
+   * Headers of this kind of file that no format uses and that need no notice (SPEC 8.15, 13): the example's columns no rule reads, and the
+   * ones the user dismissed as "new column". Header names only. Absent when there are none.
+   */
+  ignoredHeaders?: string[];
   conversions: SourceConversionRef[];
 }
 export interface SignaturesResponse {
@@ -452,6 +466,19 @@ export interface DeleteSourceResponse {
 /** POST /api/sources/:id/aliases 200 body. */
 export interface AddAliasResponse {
   inputSignature: { columns: SignatureColumn[] };
+}
+
+/**
+ * POST /api/sources/:id/ignored-headers body (SPEC 8.15): the file headers the user dismissed as "new column" - header names only, never a
+ * value. Added once per source, deduplicated by normalized header, capped (`limits.registry.maxIgnoredHeaders`).
+ */
+export interface IgnoreHeadersRequest {
+  headers: string[];
+}
+
+/** POST /api/sources/:id/ignored-headers 200 body: every header the source now ignores. */
+export interface IgnoreHeadersResponse {
+  ignoredHeaders: string[];
 }
 
 /** POST /api/conversions/:id/runs 200 body. */

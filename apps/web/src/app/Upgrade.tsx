@@ -8,7 +8,7 @@ import { Button, Panel } from '../ui';
  * short panel that says so and points to a contact address (a placeholder until M4 records the intent with the limit that
  * triggered it).
  */
-export function UpgradeButton({ variant = 'secondary' }: { variant?: 'primary' | 'secondary' }) {
+export function UpgradeButton({ variant = 'secondary' }: { variant?: 'primary' | 'secondary' | 'link' }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const id = useId();

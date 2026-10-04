@@ -297,31 +297,30 @@ function collectLabelTexts(analysis: PairAnalysis, target?: Format, complete?: C
   return texts;
 }
 
-function collectDataWords(analysis: PairAnalysis, pairRows: readonly number[], families: readonly Family[], droppedRows: readonly number[]): Set<string> {
-  const words = new Set<string>();
-  const addRow = (row: (RawCell | null)[] | undefined, profiles: readonly { type: ProfileType }[]): void => {
+/**
+ * The label words among `candidates` (normalized words of the title, summary-label and other label texts): those that appear in no text or
+ * ID-like data cell of the example, input or output, in any row (SPEC 7.2). Scans until every candidate has turned up in a cell.
+ */
+function labelWordsOf(analysis: PairAnalysis, candidates: ReadonlySet<string>): Set<string> {
+  const left = new Set(candidates);
+  const scan = (row: (RawCell | null)[] | undefined, profiles: readonly { type: ProfileType }[]): void => {
     if (!row) return;
     profiles.forEach((p, c) => {
       const cell = row[c];
       if (cell && typeof cell.v === 'string' && (p.type === 'text' || p.type === 'idLike')) {
-        for (const tok of splitWords(cell.v)) if (tok.isWord) words.add(normalizeText(tok.text));
+        for (const tok of splitWords(cell.v)) if (tok.isWord) left.delete(normalizeText(tok.text));
       }
     });
   };
-  const inRows = new Set<number>();
-  for (const k of pairRows) inRows.add(analysis.alignment.rows[k]!.in);
-  for (const f of families) inRows.add(f.in);
-  for (const r of droppedRows) inRows.add(r);
-  for (const r of inRows) addRow(analysis.input.rows[r], analysis.input.profile);
-
-  const outRows = new Set<number>();
-  for (const k of pairRows) outRows.add(analysis.alignment.rows[k]!.out);
-  for (const f of families) for (const k of f.rows) outRows.add(analysis.alignment.rows[k]!.out);
-  for (const outIdx of outRows) {
-    const sheetRow = analysis.output.dataRows[outIdx];
-    addRow(sheetRow !== undefined ? analysis.output.sheet.rows[sheetRow] : undefined, analysis.output.profile);
+  for (const row of analysis.input.rows) {
+    if (left.size === 0) return left;
+    scan(row, analysis.input.profile);
   }
-  return words;
+  for (const sheetRow of analysis.output.dataRows) {
+    if (left.size === 0) return left;
+    scan(analysis.output.sheet.rows[sheetRow], analysis.output.profile);
+  }
+  return left;
 }
 
 function maskSample(sample: Sample, analysis: PairAnalysis, masker: Masker): Sample {
@@ -500,13 +499,10 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
   const familyPriority = isFamilies ? buildFamilyPriority(families, must.familyIdx).slice(0, caps.maxFamilies) : [];
   const droppedPriority = buildDroppedPriority(analysis, must.droppedRows).slice(0, caps.maxDropped);
 
-  // ---- masking setup: label words registered once, on the full initial selection ----
-  if (masker) {
-    const dataWords = collectDataWords(analysis, pairPriority, familyPriority, droppedPriority);
-    const labelWords = new Set<string>();
-    for (const w of extractWords(collectLabelTexts(analysis, opts.target, opts.complete))) if (!dataWords.has(w)) labelWords.add(w);
-    masker.addLabelWords(labelWords);
-  }
+  // ---- masking setup: label words registered once, up front ----
+  // SPEC 7.2: a label word is one that appears in NO data cell of the example - every row, not only the rows this payload sends: the
+  // repair call's problems quote cells of rows the samples do not carry, and a word that sits in one of them must be masked there.
+  if (masker) masker.addLabelWords(labelWordsOf(analysis, extractWords(collectLabelTexts(analysis, opts.target, opts.complete))));
 
   const maskedHints = masker ? maskHintList(hints, analysis, masker) : hints;
 

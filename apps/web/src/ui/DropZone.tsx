@@ -27,6 +27,11 @@ export interface DropZoneProps {
   /** Rows and columns once the worker has read the file; while it is `reading` a small spinner shows. */
   info?: DropZoneInfo | undefined;
   onFile(file: File): void;
+  /**
+   * Turns the zone into one that takes several files (the browse dialog allows it too): one file still goes to `onFile`, with the
+   * checks below; two or more go to `onFiles` as they are, and the caller turns away what it cannot use. Leave it out for one file only.
+   */
+  onFiles?(files: File[]): void;
   onClear?(): void;
   onReject?(rejection: DropRejection): void;
   accept?: readonly string[];
@@ -50,7 +55,7 @@ function hasFiles(e: DragEvent): boolean {
  * its row and column count once the worker reports them), or click / press Enter or Space to
  * browse. Only the accepted types get in; a refused file is explained right here.
  */
-export function DropZone({ label, caption, file, info, onFile, onClear, onReject, accept = ACCEPTED_EXTENSIONS, maxBytes, disabled }: DropZoneProps) {
+export function DropZone({ label, caption, file, info, onFile, onFiles, onClear, onReject, accept = ACCEPTED_EXTENSIONS, maxBytes, disabled }: DropZoneProps) {
   const { t, lang } = useI18n();
   const id = useId();
   const labelId = `${id}-label`;
@@ -65,6 +70,11 @@ export function DropZone({ label, caption, file, info, onFile, onClear, onReject
     if (disabled) return;
     const first = files && files.length > 0 ? files[0] : undefined;
     if (!first) return;
+    if (onFiles && files && files.length > 1) {
+      setRejected(null);
+      onFiles(Array.from(files));
+      return;
+    }
     if (!isAcceptedFile(first.name, accept)) {
       const r: DropRejection = { kind: 'type', file: first };
       setRejected(r);
@@ -127,6 +137,7 @@ export function DropZone({ label, caption, file, info, onFile, onClear, onReject
           className="dz__input"
           type="file"
           accept={accept.join(',')}
+          multiple={onFiles !== undefined}
           disabled={disabled}
           aria-labelledby={labelId}
           aria-describedby={errorText ? `${captionId} ${errorId}` : captionId}
@@ -183,10 +194,10 @@ export function DropZone({ label, caption, file, info, onFile, onClear, onReject
             )}
             <span className="dz__hint">
               {dragging ? (
-                t('dropzone.release')
+                t(onFiles ? 'dropzone.releaseMany' : 'dropzone.release')
               ) : (
                 <>
-                  {t('dropzone.drop')} <u>{t('dropzone.browse')}</u>
+                  {t(onFiles ? 'dropzone.dropMany' : 'dropzone.drop')} <u>{t('dropzone.browse')}</u>
                 </>
               )}
             </span>

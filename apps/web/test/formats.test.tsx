@@ -56,7 +56,7 @@ describe('My formats', () => {
     expect(supplier.textContent).toContain('Run 12 times');
     expect(supplier.textContent).toContain('Last run');
 
-    expect(within(supplier).getByRole('link', { name: 'Convert a file' }).getAttribute('href')).toBe('/convert?format=F1');
+    expect(within(supplier).getByRole('link', { name: 'Run this format' }).getAttribute('href')).toBe('/convert?format=F1');
     expect(within(supplier).getByRole('link', { name: 'Add a source' }).getAttribute('href')).toBe('/formats/F1/add-source');
     expect(within(supplier).getByRole('link', { name: 'Edit rules' }).getAttribute('href')).toBe('/formats/F1');
     expect(within(supplier).getByRole('button', { name: 'Rename' })).toBeTruthy();
@@ -242,7 +242,7 @@ describe('one format', () => {
     expect(within(rows[1]!).getByText('Needs review')).toBeTruthy();
     expect(rows[1]!.textContent).toContain('The format changed since the last run.');
     expect(screen.getByRole('link', { name: 'Add a source' }).getAttribute('href')).toBe('/formats/F1/add-source');
-    expect(screen.getByRole('link', { name: 'Convert a file' }).getAttribute('href')).toBe('/convert?format=F1');
+    expect(screen.getByRole('link', { name: 'Run this format' }).getAttribute('href')).toBe('/convert?format=F1');
   });
 
   it('renames a source (a name another source has is refused in words) and deletes one', async () => {
@@ -304,9 +304,9 @@ describe('one format', () => {
 });
 
 describe('Home for a signed-in user (SPEC 16.1 screen 5)', () => {
-  it('starts from "Convert a file", with "Teach a new format" next to it, when there are saved formats', async () => {
+  it('starts from "Run a format", with "Teach a new format" next to it, when there are saved formats', async () => {
     renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) } }) });
-    const convert = await screen.findByRole('button', { name: 'Convert a file' });
+    const convert = await screen.findByRole('button', { name: 'Run a format' });
     const teach = screen.getByRole('button', { name: 'Teach a new format' });
     expect(convert.compareDocumentPosition(teach) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByLabelText('Example input')).toBeNull();
@@ -321,13 +321,13 @@ describe('Home for a signed-in user (SPEC 16.1 screen 5)', () => {
     await screen.findByRole('button', { name: /Account menu/ });
     await act(async () => {});
     expect(screen.getByLabelText('Example input')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Convert a file' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run a format' })).toBeNull();
     unmount();
 
     renderApp({ api: fakeApi({ registry: { listFormats: vi.fn(async () => [SUPPLIER]) } }) });
     await act(async () => {});
     expect(screen.getByLabelText('Example input')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Convert a file' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run a format' })).toBeNull();
   });
 
   it('"Teach a new format" from My formats opens the two zones', async () => {

@@ -2,7 +2,7 @@
 // the local result before the AI step (SPEC 21 v5), the AI quota, "this looks like your format X" (SPEC 5 A2), and saving.
 // Once the learn is saved (a format and its first source) the SAME screen becomes the editor of that source: its address is the
 // source's own, the example files stay in the worker for the live check, and every further save is a new version of the source.
-import { limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
+import { defaultSourceName, limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
 import { completionPlan, fixedColumnShare, isCompletable } from '@formatai/shared';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -12,7 +12,6 @@ import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
 import { useSignIn } from '../../app/SignIn';
 import { Cell } from '../../components/Cell';
-import type { EditableRules } from '../../editor';
 import type { AiInfo } from '../../flow/learnFlow';
 import type { UseLearnFlow } from '../../flow/useLearnFlow';
 import { useI18n } from '../../i18n';
@@ -25,9 +24,11 @@ import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './Dee
 import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
 import { applyCompletionNotes, defaultFormatName, getResultSession, sourcePath, type SavedSource } from './session';
+import { TryAnotherFile } from './TryAnotherFile';
 import { useCompletion } from './useCompletion';
 import { useFormatMatch } from './useFormatMatch';
-import { convertAndDownload, useSave } from './useSave';
+import { useDownload } from './useDownload';
+import { useSave } from './useSave';
 import { Workbench, type WorkbenchInfo } from './Workbench';
 
 /** The props are exactly what `useLearnFlow` returns: `state` (status 'done' here), and the flow's actions. */
@@ -40,7 +41,7 @@ export function ResultPage({ state }: ResultPageProps) {
 
 function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefined }) {
   const { t } = useI18n();
-  const { api, engine } = useServices();
+  const { api } = useServices();
   const session = useLearnSession();
   const signIn = useSignIn();
   const me = useMe();
@@ -72,15 +73,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     if (source && location.pathname !== sourcePath(source)) navigate(sourcePath(source), { replace: true });
   }, [source, location.pathname, navigate]);
 
-  // "Download" after saving: the example input, converted with the rules as they are on screen.
-  const [download, setDownload] = useState<'idle' | 'busy' | 'failed'>('idle');
-  const downloadFile = (file: File, current: EditableRules): void => {
-    setDownload('busy');
-    convertAndDownload(engine, file, current).then(
-      () => setDownload('idle'),
-      () => setDownload('failed'),
-    );
-  };
+  // "Download the file", before and after saving: the example input, converted with the rules as they are on screen. Saving never does it.
+  const download = useDownload();
 
   // "Start over" from a saved result: the way home is taken first, and the session is forgotten once this screen is gone (forgetting it
   // first would show the saved source's plain editor for a moment).
@@ -175,6 +169,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     // there is no source UI in the MVP. What it matches on is the example input's HEADERS (structure only - the file and its values never
     // leave the computer); the rules alone would give a subset.
     const inputHeaders = result.exampleInput?.map((c) => c.header);
+    // A new source is named after the example input file, without what changes from file to file ("orders 2026-09.xlsx" is "orders"); nothing
+    // is sent when nothing is left of the name (the server then names it "Source N"). Only the file's name is used, never a cell.
+    const suggestedSourceName = defaultSourceName(file.name);
     const body: CreateFormatRequest = {
       name,
       rules: info.rules,
@@ -183,6 +180,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       exampleExceptions: info.exceptions,
       learnPath,
       masking: session.masking,
+      ...(suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
       ...(learnPath === 'local' ? {} : { promptVersion }),
     };
@@ -207,7 +205,6 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
             .catch(() => undefined);
         }
       },
-      download: { file, rules: info.rules },
     });
   };
 
@@ -282,7 +279,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           saver={saver}
           extra={
             file ? (
-              <Button variant="secondary" loading={download === 'busy'} disabled={info.status.kind === 'blocked'} onClick={() => downloadFile(file, info.rules)}>
+              <Button variant="secondary" loading={download.status === 'busy'} disabled={info.status.kind === 'blocked'} onClick={() => download.run(file, info.rules)}>
                 {t('result.download')}
               </Button>
             ) : null
@@ -293,18 +290,32 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     const label =
       info.differences && info.differences > 0 ? t(info.differences === 1 ? 'save.differences.one' : 'save.differences.other', { n: info.differences }) : t('result.save');
     const saving = save.state.status === 'saving';
+    const file = session.input;
     return (
       <>
-        <Button
-          // (while the panel asks for the deep analysis, that is the one primary action)
-          variant={incomplete ? 'secondary' : 'primary'}
-          loading={saving}
-          // A visitor is asked to sign in (SPEC 5 E); a signed-in user needs rules that can be saved right now - and the AI step not at work on them.
-          disabled={completion.running || (me.user ? info.metaStatus === null : info.status.kind === 'blocked')}
-          onClick={() => (me.user ? doSave(info) : signIn.open('save'))}
-        >
-          {label}
-        </Button>
+        <div className="result-head__buttons">
+          <Button
+            // (while the panel asks for the deep analysis, that is the one primary action)
+            variant={incomplete ? 'secondary' : 'primary'}
+            loading={saving}
+            // A visitor is asked to sign in (SPEC 5 E); a signed-in user needs rules that can be saved right now - and the AI step not at work on them.
+            disabled={completion.running || (me.user ? info.metaStatus === null : info.status.kind === 'blocked')}
+            onClick={() => (me.user ? doSave(info) : signIn.open('save'))}
+          >
+            {label}
+          </Button>
+          {/* For someone who already has the output and wants only the format: saving does not download. A visitor is asked to sign in (SPEC 11). */}
+          {file ? (
+            <Button
+              variant="secondary"
+              loading={download.status === 'busy'}
+              disabled={completion.running || info.status.kind === 'blocked'}
+              onClick={() => (me.user ? download.run(file, info.rules) : signIn.open('download'))}
+            >
+              {t('conv.done.download')}
+            </Button>
+          ) : null}
+        </div>
         {!me.user && tierLimits.previewRows !== null ? <p className="muted">{t('result.freeHint', { n: tierLimits.previewRows })}</p> : null}
       </>
     );
@@ -335,10 +346,10 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           onSignIn={() => setPopupOpen(true)}
           onDownload={() => {
             const file = session.input;
-            if (!me.user) signIn.open('save'); // (a visitor keeps the preview; the file itself is for signed-in users)
-            else if (file) downloadFile(file, kept.store.getState().rules);
+            if (!me.user) signIn.open('download'); // (a visitor keeps the preview; the file itself is for signed-in users)
+            else if (file) download.run(file, kept.store.getState().rules);
           }}
-          downloading={download === 'busy'}
+          downloading={download.status === 'busy'}
         />
       )}
       {match.format && !match.dismissed && (
@@ -370,7 +381,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       {source && (
         <SourceMessages info={info} saver={saver} notice={notice} formatId={source.formatId} onReload={() => void reload(source)} onSignIn={() => signIn.open('save')} />
       )}
-      {download === 'failed' && <InlineMessage tone="warn">{t('result.downloadFailed')}</InlineMessage>}
+      {download.status === 'failed' && <InlineMessage tone="warn">{t('result.downloadFailed')}</InlineMessage>}
     </>
   );
 
@@ -405,11 +416,12 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
             : t(partial ? (incomplete ? 'partial.note' : 'flow.path.local') : completed || result.path !== 'local' ? 'flow.path.llm' : 'flow.path.local')
         }
         previewLimit={tierLimits.previewRows}
-        onSignIn={() => signIn.open('save')}
+        onSignIn={() => signIn.open('download')}
         actions={actions}
         banners={banners}
         footer={
           <>
+            <TryAnotherFile getRules={() => kept.store.getState().rules} tier={me.tier} onSignIn={() => signIn.open('download')} />
             {source && (
               <>
                 <Versions conversionId={source.conversionId} refreshKey={saver.savedVersion} onRestored={() => void reload(source)} />

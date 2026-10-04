@@ -3,7 +3,8 @@
 //   * an explicit `sourceId`: that source (404 if it isn't the caller's, 422 `sourceMismatch` if the conversion doesn't fit it);
 //   * an explicit `newSource`: a new source with that name, never a reuse (409 `nameTaken` if the name is in use);
 //   * neither: the caller's source the example input MATCHES (the same matching and threshold as flow C - `pickReusableSource`)
-//     is REUSED and the caller is told; otherwise a new source, named by `sourceName` or the first free "Source N".
+//     is REUSED and the caller is told; otherwise a new source, named by `sourceName` (typed: refused when in use), else by the client's
+//     `suggestedSourceName` (made unique with " (2)", " (3)"), else the first free "Source N".
 // Whatever the choice, the conversion ends up with a source: there is no way to save one without.
 //
 // `planSource` decides and refuses; it writes nothing. `commitSource` performs the source's part of the save, and `settleSource`
@@ -14,8 +15,8 @@ import type { ObjectId } from 'mongodb';
 import type { AppDb } from '../db.js';
 import type { SourceDoc } from '../models.js';
 import { nameKey, type SourceChoiceFields } from './bodies.js';
-import { applySource, mergeForReuse, pickReusableSource, structureOfDoc } from './sourceLogic.js';
-import { freeSourceName, isDuplicateKey, newSourceDoc, propagateSource, syncRequired, writeSourceVersion } from './sourceStore.js';
+import { applySource, mergeForReuse, pickReusableSource, structureOfDoc, unusedExampleHeaders } from './sourceLogic.js';
+import { addIgnoredHeaders, freeSourceName, isDuplicateKey, newSourceDoc, propagateSource, syncRequired, uniqueSourceName, writeSourceVersion } from './sourceStore.js';
 
 export type SourcePlan =
   | { kind: 'new'; name: string; structure: SourceStructure }
@@ -87,7 +88,11 @@ export async function planSource(
   }
 
   const taken = owned.map((s) => s.name);
-  const name = choice.newSourceName ?? choice.sourceName ?? freeSourceName(taken);
+  // DECISION (SPEC 21 v11 item 9): a name somebody CHOSE (`newSource`, or the one typed as `sourceName`) that is in use is refused: they asked for
+  // that name. The default derived from the example file's name (`suggestedSourceName`) is the server's to make work: two files that give the
+  // same name ("orders 2026-09", "orders 2026-10" for two different suppliers) are told apart by " (2)", " (3)", never by an error the user
+  // can do nothing about. Without any name it is the first free "Source N", as before.
+  const name = choice.newSourceName ?? choice.sourceName ?? (choice.suggestedSourceName !== undefined ? uniqueSourceName(taken, choice.suggestedSourceName) : freeSourceName(taken));
   if (taken.some((t) => nameKey(t) === nameKey(name))) return refuse(409, { error: 'nameTaken' });
   return settle({ kind: 'new', name, structure: sourceOf(rules) });
 }
@@ -141,13 +146,21 @@ export async function commitSource(
   return { ok: true, source: { id: current._id!, name: current.name, reused: true, created: false } };
 }
 
-/** After the conversion is stored: bring every conversion of a reused source up to its aliases, and derive `required`. */
-export async function settleSource(d: AppDb, ownerId: ObjectId, sourceId: ObjectId, plan: SourcePlan, now: Date): Promise<void> {
+/**
+ * After the conversion is stored: bring every conversion of a reused source up to its aliases, derive `required`, and remember the
+ * example input's columns that nothing reads (`exampleHeaders`: names only) as headers to ignore - what the source was learned from is
+ * not "new" in the first real file (SPEC 8.15).
+ */
+export async function settleSource(d: AppDb, ownerId: ObjectId, sourceId: ObjectId, plan: SourcePlan, now: Date, exampleHeaders: readonly string[] = []): Promise<void> {
   if (plan.kind === 'reuse' && plan.changed) {
     const doc = await d.sources.findOne({ _id: sourceId, ownerId });
     if (doc) await propagateSource(d, ownerId, sourceId, structureOfDoc(doc), new Map(), now, { aliasesOnly: true });
   }
   await syncRequired(d, ownerId, sourceId);
+  if (exampleHeaders.length > 0) {
+    const doc = await d.sources.findOne({ _id: sourceId, ownerId }, { projection: { inputSignature: 1 } });
+    if (doc) await addIgnoredHeaders(d, ownerId, sourceId, unusedExampleHeaders(doc.inputSignature, exampleHeaders));
+  }
 }
 
 /** The source lock as an API refusal, or null when `rules` honours it. */

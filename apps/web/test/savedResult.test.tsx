@@ -41,10 +41,10 @@ async function openSaved(over: Record<string, unknown> = {}, edit?: () => Promis
   const updateConversion = vi.fn(async () => patched());
   const api = fakeApi({ user: USER, registry: { createFormat, updateConversion, ...over } });
   const ctx = await openResult({ api, convert: converted, dataRouter: true });
-  await waitFor(() => enabled('Save format and download'));
+  await waitFor(() => enabled('Save format'));
   await edit?.();
-  await waitFor(() => enabled('Save format and download'));
-  fireEvent.click(button('Save format and download'));
+  await waitFor(() => enabled('Save format'));
+  fireEvent.click(button('Save format'));
   await screen.findByRole('button', { name: 'Save changes' });
   return { ...ctx, createFormat, updateConversion, api };
 }
@@ -68,13 +68,13 @@ describe('after the first save', () => {
     expect(screen.queryByRole('button', { name: /Rename/ })).toBeNull();
     expect(screen.getByText('A source of "Orders report". We do not keep your files.')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/saved as (the )?source|recogni[sz]ed|reused/i);
-    expect(screen.queryByRole('button', { name: 'Save format and download' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save format' })).toBeNull();
     expect(button('Save changes').disabled).toBe(true);
     expect(screen.getByText('No changes to save.')).toBeTruthy();
     expect(button('Download')).toBeTruthy();
     expect(flag()).toBe('');
     // What the first save said stays, with the way to My formats.
-    expect(await screen.findByText('Saved. "Orders report" is in My formats, and your file is downloading.')).toBeTruthy();
+    expect(await screen.findByText('Saved. "Orders report" is in My formats.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Open My formats' })).toBeTruthy();
     expect(screen.getByTestId('versions')).toBeTruthy();
   });
@@ -123,7 +123,7 @@ describe('after the first save', () => {
 
     expect(await screen.findByText('Saved as version 2.')).toBeTruthy();
     // The first save's message has done its job.
-    expect(screen.queryByText(/is in My formats, and your file is downloading/)).toBeNull();
+    expect(screen.queryByText(/is in My formats/)).toBeNull();
     await waitFor(() => expect(flag()).toBe(''));
     expect(button('Save changes').disabled).toBe(true);
 
@@ -232,26 +232,25 @@ describe('after the first save', () => {
 describe('Download after saving', () => {
   it('stays available: the example input converted with the rules as they are on screen, saved edits or not', async () => {
     const { convert } = await openSaved();
-    await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(1));
+    // (saving did not download the file)
+    expect(downloaded).not.toHaveBeenCalled();
     await addFilter();
     await waitFor(() => enabled('Download'));
     fireEvent.click(button('Download'));
-    await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(1));
     const full = convert.mock.calls.filter((c) => (c as unknown as [{ previewRows: number }])[0].previewRows === 0);
-    expect(full).toHaveLength(2);
-    // The second file was made with the new filter.
-    expect((full[1] as unknown as [{ rules: Rules }])[0].rules.input.rowFilters).toHaveLength(FILTERS + 1);
-    expect((full[0] as unknown as [{ rules: Rules }])[0].rules.input.rowFilters ?? []).toHaveLength(FILTERS);
-    expect(downloaded.mock.calls[1]![0]).toBe('orders (converted).xlsx');
+    expect(full).toHaveLength(1);
+    // The file was made with the new filter, saved or not.
+    expect((full[0] as unknown as [{ rules: Rules }])[0].rules.input.rowFilters).toHaveLength(FILTERS + 1);
+    expect(downloaded.mock.calls[0]![0]).toBe('orders (converted).xlsx');
   });
 
   it('a file that cannot be made says so, and Download can be tried again', async () => {
     const { convert } = await openSaved();
-    await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(1));
     (convert as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => ({ ok: false, error: { code: 'noTable' } }));
     fireEvent.click(button('Download'));
     expect(await screen.findByText("We couldn't prepare the file. Try again.")).toBeTruthy();
-    expect(downloaded).toHaveBeenCalledTimes(1);
+    expect(downloaded).not.toHaveBeenCalled();
   });
 });
 
@@ -324,7 +323,7 @@ describe('a visitor', () => {
     const createFormat = vi.fn();
     const api = fakeApi({ registry: { createFormat } });
     const { router } = await openResult({ api, convert: converted, dataRouter: true });
-    fireEvent.click(screen.getByRole('button', { name: 'Save format and download' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save format' }));
     expect(await screen.findByRole('dialog', { name: 'Sign in' })).toBeTruthy();
     expect(createFormat).not.toHaveBeenCalled();
     expect(router!.state.location.pathname).toBe('/result');

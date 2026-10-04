@@ -1039,3 +1039,17 @@
     display: none;
   }
 }
+
+/* ---------- Try it on another file (SPEC 5 A step 7): quiet, under the preview and the flags; nothing here is amber but the flags it shows ---------- */
+.try {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding-block-start: var(--s-5);
+  border-block-start: 1px solid var(--line);
+}
+.try__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}

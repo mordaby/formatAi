@@ -1,7 +1,7 @@
 // The pure parts of convert: which rows need a look, the decisions the user's choices become, the counts a run reports.
 import type { Flag, RunSummary } from '@formatai/engine';
 import { describe, expect, it } from 'vitest';
-import { applyToAll, baseName, columnLabel, fixFields, flaggedRowCount, mappingOptions, matchWords, normalizeHeader, reviewRows, runCounts, scopeSources, signatureOf, tally, toRowDecisions, withAliases } from '../src/pages/Convert/logic';
+import { applyToAll, attentionOfGaps, attentionOfUnlike, baseName, canRunAnyway, columnLabel, fixFields, flaggedRowCount, formatsNeeding, mappingOptions, matchWords, newColumns, normalizeHeader, quoteNames, requiredAcross, reviewRows, runCounts, scopeSources, signatureOf, tally, toRowDecisions, withAliases } from '../src/pages/Convert/logic';
 import { entry, match, RULES, sourceEntry } from './helpers/convertKit';
 
 const flag = (rowNumber: number, column: string, extra: Partial<Flag> = {}): Flag => ({ rowNumber, column, rule: 'type', value: 'x', messageKey: 'flag.parseFailed.number', ...extra });
@@ -91,6 +91,44 @@ describe('renamed columns', () => {
     const m = match({ id: 'x', missingRequired: ['Qty'], extra: ['Foo', 'Quantity', 'Bar'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] });
     expect(mappingOptions(m, 'Qty')).toEqual({ suggested: ['Quantity'], others: ['Foo', 'Bar'] });
   });
+
+  it('does not offer a header the source already knew (the engine leaves it out of `unknownExtra`)', () => {
+    const m = match({ id: 'x', missingRequired: ['Qty'], extra: ['City', 'Quantity', 'Region'], unknownExtra: ['Quantity', 'Region'], renamedCandidates: [{ required: 'Qty', candidates: ['Quantity'] }] });
+    expect(mappingOptions(m, 'Qty')).toEqual({ suggested: ['Quantity'], others: ['Region'] });
+  });
+
+  it('hands the source\'s ignored headers to the matcher, and nothing when there are none', () => {
+    const known = { ...entry({ conversionId: 'c1' }), ignoredHeaders: ['City', 'Created by'] };
+    expect(signatureOf(known).ignoredHeaders).toEqual(['City', 'Created by']);
+    expect('ignoredHeaders' in signatureOf(entry({ conversionId: 'c1' }))).toBe(false);
+    expect('ignoredHeaders' in signatureOf({ ...entry({ conversionId: 'c1' }), ignoredHeaders: [] })).toBe(false);
+  });
+});
+
+describe('the formats a missing column affects', () => {
+  const ref = (conversionId: string, formatName: string) => ({ conversionId, formatId: `F-${conversionId}`, formatName, status: 'verified' as const });
+  const contacts = ref('c1', 'crm contacts');
+  const short = ref('c2', 'crm short');
+  const checked = [
+    { conversion: contacts, gaps: [{ header: 'Phone' }, { header: 'Region' }] },
+    { conversion: short, gaps: [{ header: 'Region' }] },
+  ];
+
+  it('lists only the formats that need the column (required, or used though optional)', () => {
+    const out = formatsNeeding(['Phone', 'Region'], checked);
+    expect(out.get('Phone')).toEqual([contacts]);
+    expect(out.get('Region')).toEqual([contacts, short]);
+  });
+
+  it('a column no format needs maps to an empty list', () => {
+    expect(formatsNeeding(['Fax'], checked).get('Fax')).toEqual([]);
+    expect(formatsNeeding(['Phone'], []).get('Phone')).toEqual([]);
+  });
+
+  it('finds the header the way matching does: case and spacing do not matter', () => {
+    expect(formatsNeeding(['phone '], checked).get('phone ')).toEqual([contacts]);
+    expect(formatsNeeding(['PHONE'], [{ conversion: short, gaps: [{ header: ' Phone' }] }]).get('PHONE')).toEqual([short]);
+  });
 });
 
 describe('sources and the formats they feed (SPEC 8.15)', () => {
@@ -143,5 +181,48 @@ describe('a confirmed rename is keyed by the source\'s header', () => {
   it('compares headers after NFC, trimming and lower-casing', () => {
     expect(normalizeHeader('  Item CODE ')).toBe('item code');
     expect(normalizeHeader('Cafe\u0301')).toBe(normalizeHeader('Caf\u00e9'));
+  });
+});
+
+describe('formats that need attention (SPEC 21 v11 items 4-7)', () => {
+  it('what a file lacks becomes an attention note, with the required columns kept apart (no note when nothing is missing)', () => {
+    expect(attentionOfGaps([])).toBeNull();
+    expect(attentionOfGaps([{ header: 'Price', required: false }])).toEqual({ kind: 'missing', columns: ['Price'], required: [] });
+    expect(attentionOfGaps([{ header: 'Qty', required: true }, { header: 'Price', required: false }])).toEqual({ kind: 'missing', columns: ['Qty', 'Price'], required: ['Qty'] });
+  });
+
+  it('"Run anyway" is offered unless a required column is missing; a values note can always be run anyway', () => {
+    expect(canRunAnyway({ kind: 'missing', columns: ['Price'], required: [] })).toBe(true);
+    expect(canRunAnyway({ kind: 'missing', columns: ['Qty', 'Price'], required: ['Qty'] })).toBe(false);
+    expect(canRunAnyway({ kind: 'values', columns: [{ header: 'Qty', type: 'integer' }] })).toBe(true);
+  });
+
+  it('what a run says about unreadable values becomes a note naming the columns and their types (counts and names only)', () => {
+    expect(attentionOfUnlike(undefined)).toBeNull();
+    expect(attentionOfUnlike([])).toBeNull();
+    expect(attentionOfUnlike([{ header: 'Qty', type: 'integer', id: 'c_qty', rows: 9 } as { header: string; type: 'integer' }])).toEqual({ kind: 'values', columns: [{ header: 'Qty', type: 'integer' }] });
+  });
+
+  it('the columns a missing-columns stop names are the required ones, once each, in the order found', () => {
+    expect(
+      requiredAcross([
+        { kind: 'missing', columns: ['Qty', 'Price'], required: ['Qty'] },
+        { kind: 'missing', columns: ['Code', 'Qty'], required: ['Code', 'Qty'] },
+        { kind: 'values', columns: [{ header: 'Qty', type: 'integer' }] },
+      ]),
+    ).toEqual(['Qty', 'Code']);
+  });
+
+  it('quotes and isolates each name, so a Hebrew name in an English sentence (or the reverse) stays whole', () => {
+    expect(quoteNames(['Qty', 'שם'])).toBe("'⁨Qty⁩', '⁨שם⁩'");
+  });
+});
+
+describe('a new column in the file (SPEC 8.15)', () => {
+  it('is a header the source does not know, that no confirmed rename used, and that nobody dismissed (compared like the engine: case, spacing)', () => {
+    expect(newColumns(['Notes', 'Created by', 'Quantity'], { Qty: 'Quantity' }, [])).toEqual(['Notes', 'Created by']);
+    expect(newColumns(['Notes', 'Created by'], {}, ['  notes ', 'Other'])).toEqual(['Created by']);
+    expect(newColumns(['Notes'], {}, ['Notes'])).toEqual([]);
+    expect(newColumns([], {}, [])).toEqual([]);
   });
 });

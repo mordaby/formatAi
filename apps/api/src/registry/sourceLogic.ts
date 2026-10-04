@@ -8,6 +8,7 @@
 import {
   checkSourceLock,
   columnDifferences,
+  compareInputChecks,
   findSourceColumn,
   matchConversions,
   pickConversion,
@@ -66,8 +67,11 @@ export type ReuseMerge =
  * Merges a NEW conversion's input side into an existing source (SPEC 8.15 "Saving"): columns the source doesn't have are
  * added, aliases are unioned (`required` accumulates). Everything else must already agree, because it is the way the
  * file is read and a conversion that read it differently would break the source lock for its siblings:
- * the type, `padLeft` and `inputFormats` of a column both have, the sheet pick, the header row, `stopAt` and the input
- * checks. Otherwise the conversion doesn't fit this source (`ok: false`, with what differs).
+ * the type, `padLeft` and `inputFormats` of a column both have, the sheet pick, the header row, `stopAt` and the `block`
+ * input checks on the columns both have. Otherwise the conversion doesn't fit this source (`ok: false`, with what differs).
+ * Input checks are the source's per column (SPEC 8.15 "The source lock", `compareInputChecks`): a check on a column only the
+ * conversion reads, and a `flag` check the source lacks on a column both read, are added to the source; a check on a column
+ * the conversion doesn't declare is none of its business.
  *
  * DECISION: nothing that differs is "fixed" by taking the source's value over the conversion's: the conversion was
  * verified against its own example with its own types, so silently changing them could change its output.
@@ -97,12 +101,20 @@ export function mergeForReuse(source: SourceStructure, rules: LearnResult | Rule
     if (c.required) s.required = true;
   });
 
-  // The input checks are compared with each column named as the SOURCE names it (a conversion may spell a header differently).
-  const inSourceTerms: Validation[] = own.inputValidations.map((v) => {
-    const at = findSourceColumn(source.inputSignature.columns, v.column);
-    return at < 0 ? v : ({ ...v, column: source.inputSignature.columns[at]!.header } as Validation);
-  });
-  problems.push(...readingDifferences({ ...own, inputValidations: inSourceTerms }, source));
+  // The input checks are compared with each column named as the SOURCE names it (a conversion may spell a header differently); a
+  // check on something that is not one of the conversion's columns (a computed one) keeps its id as written.
+  const sourceHeaderOf = new Map(own.inputSignature.columns.map((c) => {
+    const at = findSourceColumn(source.inputSignature.columns, c.header);
+    return [c.header, at < 0 ? c.header : source.inputSignature.columns[at]!.header] as const;
+  }));
+  const inSourceTerms: SourceStructure = {
+    ...own,
+    inputSignature: { columns: own.inputSignature.columns.map((c) => ({ ...c, header: sourceHeaderOf.get(c.header)! })) },
+    inputValidations: own.inputValidations.map((v) => ({ ...v, column: sourceHeaderOf.get(v.column) ?? v.column }) as Validation),
+  };
+  problems.push(...readingDifferences(inSourceTerms, source));
+  const { additions } = compareInputChecks(inSourceTerms, source);
+  if (additions.length > 0) changed = true;
 
   if (problems.length > 0) return { ok: false, problems };
   return {
@@ -111,7 +123,7 @@ export function mergeForReuse(source: SourceStructure, rules: LearnResult | Rule
     structure: {
       inputSignature: { columns },
       inputReading: JSON.parse(JSON.stringify(source.inputReading)) as SourceStructure['inputReading'],
-      inputValidations: JSON.parse(JSON.stringify(source.inputValidations)) as Validation[],
+      inputValidations: JSON.parse(JSON.stringify([...source.inputValidations, ...additions])) as Validation[],
     },
   };
 }
@@ -127,10 +139,29 @@ export interface EditMerge {
 }
 
 /**
+ * Whether an editor save changed the conversion's own input checks (as a set, by header). The source lock lets a `flag` check differ
+ * from the source's, so an edit that only adds, drops or changes one would pass it and never reach the source: this says it is still an
+ * edit of the source's checks (the editor says "this changes the source" for it), so the source takes it and the conversions that read
+ * the column follow.
+ */
+export function inputChecksEdited(after: LearnResult | Rules, before: LearnResult | Rules | null): boolean {
+  const key = (v: Validation): string => JSON.stringify(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const keys = (r: LearnResult | Rules | null): string => (r ? sourceOf(r).inputValidations.map(key).sort().join('\n') : '');
+  return keys(after) !== keys(before);
+}
+
+/**
  * The source after a conversion's editor save changed the input side (the analogue of "an edit of the output side is an edit of
  * the format", SPEC 8.12): every column the conversion declares is written to the source (a column the source lacks is added,
  * a renamed one - found through the conversion's OLD rules by id - is renamed, type / padLeft / inputFormats follow the edit,
- * aliases are unioned), and the reading options and input checks are the conversion's.
+ * aliases are unioned), and the reading options are the conversion's. The input checks are the conversion's on the columns it
+ * declares (they replace the source's there) and the source's own on every other column (SPEC 8.15: input checks are the source's
+ * per column, a conversion is held only to those on its columns).
+ *
+ * DECISION: the replacement is of the whole of the conversion's columns, so a `flag` check that a sibling brought to a column this
+ * conversion also reads, and this one lacks, goes when this edit is saved - it is an edit of the source, which every conversion of it
+ * follows (the editor says so first when the source feeds several formats), and flags only mark rows, so no output changes. A check on
+ * no column of the source (a computed column's) is replaced as a whole, as the lock compares it.
  *
  * DECISION: aliases only ever grow from an editor save (a union). Removing one needs an explicit source edit
  * (PATCH /api/sources/:id): otherwise saving one conversion could quietly drop a name another format's files rely on.
@@ -140,6 +171,10 @@ export function mergeFromEdit(source: SourceStructure, after: LearnResult | Rule
   const oldHeaderOfId = new Map((before?.input.columns ?? []).map((c) => [c.id, c.header] as const));
   const columns = source.inputSignature.columns.map(cloneColumn);
   const renames = new Map<string, string>();
+  /** Header the conversion has (its own spelling) -> the header the source has for that column after this edit. */
+  const finalHeader = new Map<string, string>();
+  /** Every header the source had for a column this conversion declares (before the edit): their checks are the ones replaced. */
+  const declared = new Set<string>();
 
   after.input.columns.forEach((c, i) => {
     const mine = own.inputSignature.columns[i]!;
@@ -147,14 +182,17 @@ export function mergeFromEdit(source: SourceStructure, after: LearnResult | Rule
     if (at < 0) at = findSourceColumn(columns, mine.header);
     if (at < 0) {
       columns.push(cloneColumn(mine));
+      finalHeader.set(mine.header, mine.header);
       return;
     }
     const s = columns[at]!;
+    declared.add(s.header);
     // DECISION: a header that differs from the source's only as the engine ignores (case, spacing, quote marks) is the same column
     // spelled another way, not a rename: the source's spelling stays, and the conversion is brought to it (a source is built from
     // conversions that may spell a header differently, and one of them being saved must not re-spell it for the rest).
     const header = sourceHeaderKey(s.header) === sourceHeaderKey(mine.header) ? s.header : mine.header;
     if (s.header !== header) renames.set(s.header, header);
+    finalHeader.set(mine.header, header);
     const next: SourceColumn = {
       header,
       aliases: unionAliases(header, s.aliases, mine.aliases),
@@ -166,9 +204,15 @@ export function mergeFromEdit(source: SourceStructure, after: LearnResult | Rule
     columns[at] = next;
   });
 
+  // The checks of the source on columns this conversion doesn't declare stay; the conversion's own, named as the source now names
+  // the columns, take the place of the rest.
+  const sourceHeaders = new Set(source.inputSignature.columns.map((c) => c.header));
+  const kept = source.inputValidations.filter((v) => sourceHeaders.has(v.column) && !declared.has(v.column));
+  const mine = own.inputValidations.map((v) => ({ ...v, column: finalHeader.get(v.column) ?? v.column }) as Validation);
+
   return {
     renames,
-    structure: { inputSignature: { columns }, inputReading: own.inputReading, inputValidations: own.inputValidations },
+    structure: { inputSignature: { columns }, inputReading: own.inputReading, inputValidations: [...kept, ...mine] },
   };
 }
 
@@ -192,9 +236,15 @@ export interface SourceApplied {
  *  - each column the conversion declares takes its header, aliases, type, `padLeft` and `inputFormats` from the source column
  *    it stands for (found through `renames`, then the way the engine finds a header). It keeps its id, its `required` and its place;
  *    a column the source no longer has is dropped (what still refers to it then fails `checkRules`: `needsReview`);
- *  - sheet, header row and `stopAt` are the source's; the conversion's input validations are the source's, with each header turned
- *    back into this conversion's own id. Its output validations, transform, output and row filters are not touched.
+ *  - sheet, header row and `stopAt` are the source's; the conversion's input validations are the source's on the columns IT
+ *    declares, with each header turned back into this conversion's own id (SPEC 8.15: input checks are the source's per column). Its
+ *    output validations, transform, output and row filters are not touched.
  * Never touches what the rules DO with the columns.
+ *
+ * DECISION: a check of the source on a column the conversion doesn't declare is never written into it: the rules would refer to a
+ * column they don't have. A check on no column of the source at all (a computed column's, kept by id, see `sourceOf`) is written as
+ * before. After a merge (`mergeForReuse`) the source may hold a `flag` check that another conversion brought, on a column this one
+ * also reads: it comes along, and that never changes the conversion's output (flags only mark rows).
  */
 export function applySource(target: Rules, source: SourceStructure, renames: ReadonlyMap<string, string> = new Map()): SourceApplied {
   const known = source.inputSignature.columns;
@@ -221,7 +271,10 @@ export function applySource(target: Rules, source: SourceStructure, renames: Rea
   else delete input.stopAt;
 
   const idOfHeader = new Map(columns.map((c) => [c.header, c.id] as const));
-  const inputValidations = source.inputValidations.map((v) => ({ ...v, column: idOfHeader.get(v.column) ?? v.column }) as Validation);
+  const sourceHeaders = new Set(known.map((c) => c.header));
+  const inputValidations = source.inputValidations
+    .filter((v) => idOfHeader.has(v.column) || !sourceHeaders.has(v.column))
+    .map((v) => ({ ...v, column: idOfHeader.get(v.column) ?? v.column }) as Validation);
   const validations = [...inputValidations, ...target.validations.filter((v) => (v.on ?? 'input') === 'output')];
 
   const rules: Rules = { ...target, input, validations };
@@ -296,4 +349,34 @@ export function withDerivedRequired(
       }),
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Headers a source needs no "new column" notice for (SPEC 8.15)
+// ---------------------------------------------------------------------------
+
+/**
+ * The headers of `add` a source does not ignore yet, in order: trimmed, never empty, one per normalized header (`sourceHeaderKey`,
+ * the way the engine compares a file's headers), and not one `existing` already holds. Names only.
+ */
+export function newIgnoredHeaders(existing: readonly string[], add: readonly string[]): string[] {
+  const seen = new Set(existing.map(sourceHeaderKey));
+  const out: string[] = [];
+  for (const raw of add) {
+    const header = raw.trim();
+    const key = sourceHeaderKey(header);
+    if (key === '' || seen.has(key)) continue;
+    seen.add(key);
+    out.push(header);
+  }
+  return out;
+}
+
+/**
+ * The headers of the EXAMPLE input that this kind of file already has no use for (SPEC 8.15 "Saving"): the ones no column of the
+ * source's signature (header or alias, found the way the engine reads a file) stands for. Remembered when a source is saved, so the
+ * columns the example always had are not announced as new on the first real file.
+ */
+export function unusedExampleHeaders(source: Pick<SourceStructure['inputSignature'], 'columns'>, exampleHeaders: readonly string[]): string[] {
+  return exampleHeaders.filter((h) => h.trim() !== '' && findSourceColumn(source.columns, h) < 0);
 }

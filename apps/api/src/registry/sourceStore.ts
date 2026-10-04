@@ -9,7 +9,7 @@ import type { ConversionDoc, SourceDoc } from '../models.js';
 import { nameKey } from './bodies.js';
 import { conversionWrite, saveVersion } from './conversionStore.js';
 import { plain, signatureOf } from './rules.js';
-import { applySource, structureOfDoc, withDerivedRequired, withSourceAliases } from './sourceLogic.js';
+import { applySource, newIgnoredHeaders, structureOfDoc, withDerivedRequired, withSourceAliases } from './sourceLogic.js';
 
 /** The first "Source N" no other source of the owner has. */
 export function freeSourceName(taken: readonly string[]): string {
@@ -17,6 +17,20 @@ export function freeSourceName(taken: readonly string[]): string {
   for (let n = 1; ; n++) {
     const name = `Source ${n}`;
     if (!used.has(nameKey(name))) return name;
+  }
+}
+
+/**
+ * `name` when no other source of the owner has it, else the first free "name (2)", "name (3)", ... (compared like every source name: case and
+ * spacing do not matter). A name too long for the number is cut, so the result is never longer than `maxNameChars`.
+ */
+export function uniqueSourceName(taken: readonly string[], name: string): string {
+  const used = new Set(taken.map(nameKey));
+  if (!used.has(nameKey(name))) return name;
+  for (let n = 2; ; n++) {
+    const suffix = ` (${n})`;
+    const candidate = `${name.slice(0, limits.registry.maxNameChars - suffix.length).trimEnd()}${suffix}`;
+    if (!used.has(nameKey(candidate))) return candidate;
   }
 }
 
@@ -100,6 +114,25 @@ export async function syncRequired(d: AppDb, ownerId: ObjectId, sourceId: Object
   const after = withDerivedRequired(before, conversions.map((c) => c.inputSignature));
   if (deepEqual(before.inputSignature, after.inputSignature)) return;
   await d.sources.updateOne({ _id: sourceId, ownerId }, { $set: { inputSignature: after.inputSignature } });
+}
+
+/**
+ * Remembers file headers a source needs no "new column" notice for (SPEC 8.15): the ones it does not hold yet are appended (one per
+ * normalized header), and past `limits.registry.maxIgnoredHeaders` the OLDEST are dropped, so a dismissal just made always holds. Names
+ * only. Derived/remembered data, not an edit of the structure: no new version, and no conversion is touched. One atomic update, so
+ * two dismissals at once cannot lose each other. Null when the source is not the owner's; else every header the source now ignores.
+ */
+export async function addIgnoredHeaders(d: AppDb, ownerId: ObjectId, sourceId: ObjectId, headers: readonly string[]): Promise<string[] | null> {
+  const source = await d.sources.findOne({ _id: sourceId, ownerId }, { projection: { ignoredHeaders: 1 } });
+  if (!source) return null;
+  const fresh = newIgnoredHeaders(source.ignoredHeaders ?? [], headers);
+  if (fresh.length === 0) return source.ignoredHeaders ?? [];
+  const after = await d.sources.findOneAndUpdate(
+    { _id: sourceId, ownerId },
+    { $push: { ignoredHeaders: { $each: fresh, $slice: -limits.registry.maxIgnoredHeaders } } },
+    { returnDocument: 'after', projection: { ignoredHeaders: 1 } },
+  );
+  return after ? (after.ignoredHeaders ?? []) : null;
 }
 
 /** Renames a source; the conversions' rules files follow (`meta.sourceName` is informational: the source's own name is the only name). */

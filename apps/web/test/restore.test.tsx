@@ -109,7 +109,7 @@ describe('coming back after signing in', () => {
     const second = learn.mock.calls[1]![0] as { input: { name: string }; ai: string; masking: boolean; complete?: { columns: number[] } };
     expect(second).toMatchObject({ ai: 'allowed', masking: false, complete: { columns: [3, 4, 5] } });
     expect(second.input.name).toBe('orders.csv');
-    expect(await screen.findByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Save format' })).toBeTruthy();
   });
 
   it('after a sign-in that was declined the visitor gets the same screen back, and the popup again', async () => {

@@ -1,6 +1,7 @@
 // The renamed-columns step (SPEC 5 C, 8.15): a required column the file doesn't have under its usual name, and columns of the
 // file that nothing claimed. The user says which is which (suggestions first); "remember this" saves each answer once, as an
-// alias on the SOURCE. It is asked once per source, so it lists every format the change affects.
+// alias on the SOURCE. It is asked once per source; it lists the formats that use a column asked about (the others are not affected by
+// this file), while what is saved holds for all of the source's formats.
 import type { ConversionMatch } from '@formatai/engine';
 import { useId, useState } from 'react';
 import { Cell } from '../../components/Cell';
@@ -13,14 +14,16 @@ const NONE = '__none__';
 
 export interface MapColumnsProps {
   sourceName: string;
-  /** The names of every format this source feeds (in scope): all of them are affected by the renamed column. */
+  /** The names of the formats that use one of the missing columns: the ones this file affects. */
   formats: readonly string[];
+  /** How many formats the source feeds (in scope): a saved rename applies to all of them, not only to `formats`. */
+  sourceFormats: number;
   match: ConversionMatch;
   onSubmit(mapping: Record<string, string | null>, remember: boolean): void;
   onCancel(): void;
 }
 
-export function MapColumns({ sourceName, formats, match, onSubmit, onCancel }: MapColumnsProps) {
+export function MapColumns({ sourceName, formats, sourceFormats, match, onSubmit, onCancel }: MapColumnsProps) {
   const { t } = useI18n();
   const id = useId();
   const required = match.missingRequired;
@@ -98,7 +101,7 @@ export function MapColumns({ sourceName, formats, match, onSubmit, onCancel }: M
         <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
         <span>
           {t('conv.map.remember')}
-          <span className="field__hint"> {t(formats.length > 1 ? 'conv.map.remember.hint.all' : 'conv.map.remember.hint', { n: formats.length })}</span>
+          <span className="field__hint"> {t(sourceFormats > 1 ? 'conv.map.remember.hint.all' : 'conv.map.remember.hint', { n: sourceFormats })}</span>
         </span>
       </label>
       <div className="conv__actions">

@@ -201,7 +201,7 @@ describe('a signed-in user', () => {
     await waitFor(() => expect(learnMock).toHaveBeenCalledTimes(2));
     expect(learnMock.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', tier: 'registered', complete: { columns: [3, 4, 5], parts: ['summaryRows'] } });
     // ... and the result screen comes back with the finished rules (details of the completion: completion.test.tsx).
-    expect(await screen.findByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Save format' })).toBeTruthy();
   });
 
   it('is told what the AI step costs, next to the button', async () => {

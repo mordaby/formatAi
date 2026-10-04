@@ -3,7 +3,7 @@
 // on restore, and the alias route.
 import { randomUUID } from 'node:crypto';
 import { checkSourceLock, sourceOf } from '@formatai/engine';
-import type { LearnResult, Rules } from '@formatai/shared';
+import { limits, type LearnResult, type Rules } from '@formatai/shared';
 import type { FastifyInstance } from 'fastify';
 import { ObjectId } from 'mongodb';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -116,6 +116,105 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       expect(await appDb.sources.countDocuments()).toBe(1);
       const [s] = await sources();
       expect(s.conversions.map((c: any) => c.formatName)).toEqual(['Catalog', 'Amounts']);
+    });
+
+    describe('input checks are the source\'s per column (8.15 "The source lock")', () => {
+      // What the learn step does: a `required` check on every column the format reads that had no empty cell in the example.
+      const required = (column: string) => ({ column, rule: 'required', severity: 'flag' }) as const;
+      const FILE = ['ID', 'Amount', 'Note'];
+      /** Reads ID, Amount and Note out of the file. */
+      const readsThree = (): LearnResult =>
+        edited(sourceOne(), (r) => {
+          r.input.columns.push({ id: 'note', header: 'Note', type: 'text' });
+          r.output.columns = [{ header: 'ID', from: 'id' }, { header: 'Total', from: 'total' }, { header: 'Note', from: 'note' }];
+          r.validations = [required('id'), required('amount'), required('note')];
+        });
+      /** Reads one column fewer out of the same file: no Note, so no check on it. */
+      const readsTwo = (): LearnResult =>
+        edited(sourceOne(), (r) => {
+          r.validations = [required('id'), required('amount')];
+        });
+
+      it('two formats learned from the same file that read different columns share ONE source', async () => {
+        const first = await create(readsThree(), { name: 'Wide', inputHeaders: FILE });
+        const second = await create(readsTwo(), { name: 'Narrow', inputHeaders: FILE });
+        expect(first.status).toBe(201);
+        expect(second.status).toBe(201);
+        expect(second.body.sourceReused).toEqual({ id: first.body.source.id, name: first.body.source.name });
+        expect(second.body.source).toMatchObject({ id: first.body.source.id, formats: 2 });
+        expect(await appDb.sources.countDocuments()).toBe(1);
+        const [s] = await sources();
+        expect(s.conversions.map((c: any) => c.formatName)).toEqual(['Wide', 'Narrow']);
+        // nothing was added to the source (the narrow one lacks only checks on a column it doesn't read), and both honour its lock
+        const doc = await source(first.body.source.id);
+        expect(doc.version).toBe(1);
+        expect(doc.inputValidations).toEqual([required('ID'), required('Amount'), required('Note')]);
+        expect(checkSourceLock(await rulesOf(first.body.conversion.id), doc)).toEqual([]);
+        expect(checkSourceLock(await rulesOf(second.body.conversion.id), doc)).toEqual([]);
+        // ...and the narrow conversion was given no check on a column it does not have
+        expect((await rulesOf(second.body.conversion.id)).validations).toEqual([required('id'), required('amount')]);
+        // the other order works too: the wide one joins the narrow one's source and brings the checks on its extra column
+        await Promise.all([appDb.formats.deleteMany({}), appDb.conversions.deleteMany({}), appDb.sources.deleteMany({})]);
+        const narrowFirst = await create(readsTwo(), { name: 'Narrow', inputHeaders: FILE });
+        const wideSecond = await create(readsThree(), { name: 'Wide', inputHeaders: FILE });
+        expect(wideSecond.body.sourceReused).toEqual({ id: narrowFirst.body.source.id, name: narrowFirst.body.source.name });
+        expect((await source(narrowFirst.body.source.id)).inputValidations).toEqual([required('ID'), required('Amount'), required('Note')]);
+      });
+
+      it("an editor save that changes the conversion's input checks edits them on the source: only the conversions that read the column follow", async () => {
+        const wide = await create(readsThree(), { name: 'Wide', inputHeaders: FILE });
+        const narrow = await create(readsTwo(), { name: 'Narrow', inputHeaders: FILE });
+        const sourceId = wide.body.source.id as string;
+        const range = (column: string) => ({ column, rule: 'range', min: 0, severity: 'flag' }) as const;
+        const unique = (column: string) => ({ column, rule: 'unique', severity: 'flag' }) as const;
+        // a flag check on Note, which the narrow format does not read: the source takes it, the narrow conversion is not touched
+        const onNote = await saveRules(wide.body.conversion.id, edited(await rulesOf(wide.body.conversion.id), (r) => { r.validations.push(unique('note')); }));
+        expect(onNote.status).toBe(200);
+        expect(onNote.body).toMatchObject({ sourceChanged: true, affectedConversions: 1 });
+        expect((await source(sourceId)).inputValidations).toEqual([required('ID'), required('Amount'), required('Note'), unique('Note')]);
+        expect((await detail(narrow.body.conversion.id)).version).toBe(1);
+        expect((await rulesOf(narrow.body.conversion.id)).validations).toEqual([required('id'), required('amount')]);
+        // a flag check on Amount, which both read: the narrow conversion gets it too (it only marks rows)
+        const onAmount = await saveRules(wide.body.conversion.id, edited(await rulesOf(wide.body.conversion.id), (r) => { r.validations.push(range('amount')); }));
+        expect(onAmount.body).toMatchObject({ sourceChanged: true });
+        const doc = await source(sourceId);
+        expect(doc.inputValidations).toEqual([required('ID'), required('Amount'), required('Note'), unique('Note'), range('Amount')]);
+        expect((await rulesOf(narrow.body.conversion.id)).validations).toEqual([required('id'), required('amount'), range('amount')]);
+        expect(checkSourceLock(await rulesOf(narrow.body.conversion.id), doc)).toEqual([]);
+        expect(checkSourceLock(await rulesOf(wide.body.conversion.id), doc)).toEqual([]);
+        // an edit that leaves the checks as they were is still not a source edit
+        const same = await saveRules(narrow.body.conversion.id, edited(await rulesOf(narrow.body.conversion.id), (r) => { r.output.columns[1]!.format = '0.0'; }));
+        expect(same.body.sourceChanged).toBeUndefined();
+      });
+
+      it('DECISION: a flag check only one of them has on a shared column is merged into the source; a block check is a mismatch', async () => {
+        const first = await create(readsTwo(), { name: 'Plain', inputHeaders: FILE });
+        const flagged = edited(readsTwo(), (r) => {
+          r.output.columns = [{ header: 'ID', from: 'id' }, { header: 'Amount', from: 'amount' }];
+          r.transform.computed = [];
+          r.validations.push({ column: 'amount', rule: 'range', min: 0, severity: 'flag' });
+        });
+        const second = await create(flagged, { name: 'Flagged', inputHeaders: FILE });
+        expect(second.body.sourceReused).toEqual({ id: first.body.source.id, name: first.body.source.name });
+        const doc = await source(first.body.source.id);
+        expect(doc.version).toBe(2);
+        expect(doc.inputValidations).toEqual([required('ID'), required('Amount'), { column: 'Amount', rule: 'range', min: 0, severity: 'flag' }]);
+        // the first conversation is untouched (a flag never changes what it produces) and still fits the source
+        expect((await detail(first.body.conversion.id)).version).toBe(1);
+        expect(checkSourceLock(await rulesOf(first.body.conversion.id), doc)).toEqual([]);
+        expect(checkSourceLock(await rulesOf(second.body.conversion.id), doc)).toEqual([]);
+
+        // a check that leaves rows out would change the other format's output: not the same source
+        const blocking = edited(readsTwo(), (r) => {
+          r.output.columns = [{ header: 'ID', from: 'id' }];
+          r.transform.computed = [];
+          r.validations.push({ column: 'amount', rule: 'range', min: 0, severity: 'block' });
+        });
+        const third = await create(blocking, { name: 'Blocking', inputHeaders: FILE });
+        expect(third.status).toBe(201);
+        expect(third.body.sourceReused).toBeUndefined();
+        expect(await appDb.sources.countDocuments()).toBe(2);
+      });
     });
 
     it('matches on the example input\'s headers when the client sends them, and on the declared ones otherwise', async () => {
@@ -233,6 +332,61 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       expect(a.body.source.name).toBe('Source 1');
       const b = await create(edited(sourceTwo(), (r) => { r.input.columns[0]!.header = 'Other'; }));
       expect(b.body.source.name).toBe('Source 2');
+    });
+
+    it('a default name from the example file (`suggestedSourceName`) names a new source, and is numbered - never refused - when it is taken', async () => {
+      const first = await create(sourceOne(), { suggestedSourceName: 'orders' });
+      expect(first.status).toBe(201);
+      expect(first.body.source.name).toBe('orders');
+      expect(first.body.conversion.sourceName).toBe('orders');
+      expect((await rulesOf(first.body.conversion.id)).meta.sourceName).toBe('orders');
+      // another kind of file with the same default ("orders 2026-09.xlsx" from a different supplier): " (2)", " (3)", whatever the case
+      const second = await create(sourceTwo(), { suggestedSourceName: 'Orders' });
+      expect(second.status).toBe(201);
+      expect(second.body.source.name).toBe('Orders (2)');
+      const third = await create(edited(sourceTwo(), (r) => { r.input.columns[0]!.header = 'Other'; }), { suggestedSourceName: ' orders  ' });
+      expect(third.status).toBe(201);
+      expect(third.body.source.name).toBe('orders (3)');
+      expect((await sources()).map((s) => s.name).sort()).toEqual(['Orders (2)', 'orders', 'orders (3)']);
+      // names belong to the owner: another one is not in the way (Hebrew works like any other)
+      expect((await create(sourceOne(), { suggestedSourceName: 'orders' }, OTHER_USER)).body.source.name).toBe('orders');
+      expect((await create(sourceTwo(), { suggestedSourceName: 'ספקים' }, OTHER_USER)).body.source.name).toBe('ספקים');
+      const hebrew = await create(edited(sourceTwo(), (r) => { r.input.columns[0]!.header = 'Other'; }), { suggestedSourceName: 'ספקים' }, OTHER_USER);
+      expect(hebrew.body.source.name).toBe('ספקים (2)');
+    });
+
+    it('a name somebody chose (`sourceName` typed, or `newSource`) is still refused when taken, and wins over the default', async () => {
+      const first = await create(sourceOne(), { sourceName: 'Supplier A', suggestedSourceName: 'orders' });
+      expect(first.body.source.name).toBe('Supplier A');
+      const typed = await create(sourceTwo(), { sourceName: 'supplier a', suggestedSourceName: 'prices' });
+      expect(typed.status).toBe(409);
+      expect(typed.body).toEqual({ error: 'nameTaken' });
+      const explicit = await create(sourceTwo(), { newSource: { name: 'SUPPLIER A' }, suggestedSourceName: 'prices' });
+      expect(explicit.status).toBe(409);
+      expect(explicit.body).toEqual({ error: 'nameTaken' });
+      expect(await appDb.sources.countDocuments()).toBe(1);
+      expect(await appDb.formats.countDocuments()).toBe(1);
+      expect((await create(sourceTwo(), { newSource: { name: 'Mine' }, suggestedSourceName: 'prices' })).body.source.name).toBe('Mine');
+    });
+
+    it('a default that cannot be a name is ignored ("Source N"), and none is used when an existing source is reused', async () => {
+      for (const [i, bad] of ['', '   ', 'x'.repeat(limits.registry.maxNameChars + 1), 5].entries()) {
+        const res = await create(edited(sourceOne(), (r) => { r.input.columns[0]!.header = `Col ${i}`; }), { suggestedSourceName: bad });
+        expect(res.status).toBe(201);
+        expect(res.body.source.name).toBe(`Source ${i + 1}`);
+      }
+      await Promise.all([appDb.formats.deleteMany({}), appDb.conversions.deleteMany({}), appDb.sources.deleteMany({})]);
+      const { sourceId } = await oneSourceTwoFormats();
+      const again = await create(
+        edited(sourceOne(), (r) => {
+          r.output.columns = [{ header: 'ID', from: 'id' }];
+          r.transform.computed = [];
+        }),
+        { name: 'Ids', suggestedSourceName: 'orders' },
+      );
+      expect(again.status).toBe(201);
+      expect(again.body.sourceReused).toEqual({ id: sourceId, name: 'Supplier A' });
+      expect(await appDb.sources.countDocuments()).toBe(1);
     });
 
     it('flow A2 reuses a matching source for the new conversion; a source that already feeds THIS format is not reused on its own', async () => {
@@ -642,6 +796,113 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       // deleting a format's conversion takes it off the count
       await call('DELETE', `/api/conversions/${a.conversion.id}`, undefined, paid);
       expect((await detail(b.conversion.id)).sourceFormats).toBe(1);
+    });
+  });
+
+  // ---------------------------------------------------------------- headers to ignore ("new column" dismissals)
+
+  describe('ignored headers (SPEC 8.15: the "new column" notice does not come back every month)', () => {
+    const ignoredIn = async (id: string): Promise<string[] | undefined> => (await appDb.sources.findOne({ _id: new ObjectId(id) }))?.ignoredHeaders;
+    const ignore = (id: string, headers: unknown, user: string | null = TEST_USER) => call('POST', `/api/sources/${id}/ignored-headers`, { headers }, { user, ...paid });
+    /** The signature entry the browser matches a file against. */
+    const entryOf = async (id: string): Promise<any> => (await call('GET', '/api/signatures', undefined, paid)).body.signatures.find((s: any) => s.sourceId === id);
+
+    it("a save remembers the example's columns that no rule reads, so the first real file does not announce them as new", async () => {
+      const res = await create(sourceOne(), { sourceName: 'Supplier A', inputHeaders: ['ID', 'Amount', 'Notes', 'Created by'] });
+      const id = res.body.source.id as string;
+      // ID and Amount are the source's columns; the other two are what the example also had.
+      expect(await ignoredIn(id)).toEqual(['Notes', 'Created by']);
+      expect((await entryOf(id)).ignoredHeaders).toEqual(['Notes', 'Created by']);
+      // The structure (and its version) is untouched: this is about files, not about how a format reads one.
+      expect((await source(id)).version).toBe(1);
+    });
+
+    it("a save with nothing unread, or without the example's headers, remembers nothing (the field is absent, not empty)", async () => {
+      const exact = await create(sourceOne(), { sourceName: 'Exact', inputHeaders: ['ID', 'Amount'] });
+      expect(await ignoredIn(exact.body.source.id)).toBeUndefined();
+      expect((await entryOf(exact.body.source.id)).ignoredHeaders).toBeUndefined();
+      const bare = await create(sourceTwo(), { sourceName: 'Bare' });
+      expect(await ignoredIn(bare.body.source.id)).toBeUndefined();
+    });
+
+    it("a reused source gains the new example's unread columns, and never a column it knows (by header or alias) or already ignores", async () => {
+      const { sourceId } = await oneSourceTwoFormats(); // the second example also had 'Something else'
+      expect(await ignoredIn(sourceId)).toEqual(['Something else']);
+      const withAlias = edited(sourceOne(), (r) => {
+        r.input.columns[0]!.aliases = ['Identifier'];
+        r.transform.computed = [];
+        r.output.columns = [{ header: 'ID', from: 'id' }];
+      });
+      const res = await create(withAlias, { name: 'Ids', inputHeaders: ['Identifier', 'ID', 'Amount', 'something ELSE', 'Remark'] });
+      expect(res.body.sourceReused).toEqual({ id: sourceId, name: 'Supplier A' });
+      expect(await ignoredIn(sourceId)).toEqual(['Something else', 'Remark']);
+    });
+
+    it('POST adds the headers once per source, deduplicated by normalized header, and answers what the source now ignores', async () => {
+      const { sourceId } = await oneSourceTwoFormats();
+      const first = await ignore(sourceId, ['  Notes ', 'notes', 'Created by']);
+      expect(first.status).toBe(200);
+      expect(first.body).toEqual({ ignoredHeaders: ['Something else', 'Notes', 'Created by'] });
+      // the same again (in another case) is a no-op
+      const again = await ignore(sourceId, ['NOTES', 'Remark']);
+      expect(again.body).toEqual({ ignoredHeaders: ['Something else', 'Notes', 'Created by', 'Remark'] });
+      expect((await entryOf(sourceId)).ignoredHeaders).toEqual(['Something else', 'Notes', 'Created by', 'Remark']);
+      // names only: no new version of the source, and no conversion is touched
+      expect((await source(sourceId)).version).toBe(1);
+      expect(await appDb.conversions.countDocuments({ version: { $gt: 1 } })).toBe(0);
+      const doc = await appDb.sources.findOne({ _id: new ObjectId(sourceId) });
+      expect(doc!.ignoredHeaders!.every((h) => typeof h === 'string')).toBe(true);
+    });
+
+    it("is owner-scoped: someone else's source is a 404 that changes nothing, and signed out is a 401", async () => {
+      const { sourceId } = await oneSourceTwoFormats();
+      const other = await create(sourceOne(), { sourceName: 'Theirs' }, OTHER_USER);
+      const theirs = other.body.source.id as string;
+
+      const stolen = await ignore(sourceId, ['Notes'], OTHER_USER);
+      expect(stolen.status).toBe(404);
+      expect(stolen.body).toEqual({ error: 'notFound' });
+      expect(await ignoredIn(sourceId)).toEqual(['Something else']);
+      // each owner can change only their own source, and each list stays their own
+      expect((await ignore(theirs, ['Notes'], OTHER_USER)).status).toBe(200);
+      expect(await ignoredIn(theirs)).toEqual(['Notes']);
+      expect((await ignore(theirs, ['Notes'])).status).toBe(404);
+      expect((await ignore(sourceId, ['Notes'], null)).status).toBe(401);
+      expect((await ignore('not-an-id', ['Notes'])).status).toBe(404);
+      // and the signatures only ever carry the caller's own
+      expect((await call('GET', '/api/signatures', undefined, { user: OTHER_USER, ...paid })).body.signatures.map((s: any) => s.ignoredHeaders)).toEqual([['Notes']]);
+    });
+
+    it('takes only a list of header names: anything else is a 400, and an over-long or empty name is left out rather than blocking the rest', async () => {
+      const { sourceId } = await oneSourceTwoFormats();
+      const tooLong = 'x'.repeat(limits.registry.maxAliasChars + 1);
+      const tooMany = Array.from({ length: limits.registry.maxInputHeaders + 1 }, (_, i) => `h${i}`);
+      for (const bad of [undefined, 'Notes', [], [1], ['Notes', null], [{ header: 'Notes' }], ['', '   '], [tooLong], tooMany]) {
+        const res = await ignore(sourceId, bad);
+        expect(res.status, JSON.stringify(bad)?.slice(0, 40)).toBe(400);
+        expect(res.body).toEqual({ error: 'invalidRequest' });
+      }
+      // a field the route does not know is not stored
+      expect((await call('POST', `/api/sources/${sourceId}/ignored-headers`, { headers: ['Notes'], values: ['secret'] }, paid)).status).toBe(200);
+      const mixed = await ignore(sourceId, ['', tooLong, 'Remark']);
+      expect(mixed.body).toEqual({ ignoredHeaders: ['Something else', 'Notes', 'Remark'] });
+      // nothing but header names is ever stored
+      const doc = await appDb.sources.findOne({ _id: new ObjectId(sourceId) });
+      expect(Object.keys(doc!).sort()).toEqual(['_id', 'createdAt', 'ignoredHeaders', 'inputReading', 'inputSignature', 'inputValidations', 'name', 'nameKey', 'ownerId', 'updatedAt', 'version', 'versions']);
+    });
+
+    it('is capped: past the limit the oldest are dropped, so the dismissal just made always holds', async () => {
+      const { sourceId } = await oneSourceTwoFormats();
+      const cap = limits.registry.maxIgnoredHeaders;
+      const names = (from: number, n: number): string[] => Array.from({ length: n }, (_, i) => `Column ${from + i}`);
+      expect((await ignore(sourceId, names(0, 300))).status).toBe(200);
+      const res = await ignore(sourceId, names(300, 300));
+      expect(res.body.ignoredHeaders).toHaveLength(cap);
+      // 'Something else' + 600 added = 601: the oldest 101 are gone, the newest is there
+      expect(res.body.ignoredHeaders).not.toContain('Something else');
+      expect(res.body.ignoredHeaders[0]).toBe('Column 100');
+      expect(res.body.ignoredHeaders.at(-1)).toBe('Column 599');
+      expect(await ignoredIn(sourceId)).toHaveLength(cap);
     });
   });
 });

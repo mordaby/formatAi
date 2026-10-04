@@ -199,10 +199,10 @@ describe('the Add a source screen', () => {
     await waitFor(() => expect(engine.staticChecks).toHaveBeenCalled());
     const asked = (engine.staticChecks as ReturnType<typeof vi.fn>).mock.calls as unknown as [unknown, { format?: { output: unknown } }][];
     expect(asked.some(([, options]) => options.format?.output !== undefined)).toBe(true);
-    expect(screen.getByRole('button', { name: 'Add source and download' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add source' })).toBeTruthy();
   });
 
-  it('saving POSTs a new conversion of the format with the source\'s name, then downloads the full file', async () => {
+  it('saving POSTs a new conversion of the format with the source\'s name, and does not download the file', async () => {
     const { api } = setup();
     await screen.findByTestId('add-format-columns');
     typeName('Supplier B');
@@ -213,8 +213,8 @@ describe('the Add a source screen', () => {
       fireEvent.click(learnButton());
     });
     await screen.findByTestId('rules-map');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source and download' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole('button', { name: 'Add source and download' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
 
     const attachSource = api.registry.attachSource;
     await waitFor(() => expect(attachSource).toHaveBeenCalledTimes(1));
@@ -222,10 +222,33 @@ describe('the Add a source screen', () => {
     expect(formatId).toBe('F1');
     expect(body).toMatchObject({ sourceName: 'Supplier B', status: 'verified', acceptedDifferences: 0, exampleExceptions: [], learnPath: 'llm', masking: true, promptVersion });
     expect(body.rules).toEqual(RULES);
+    expect(await screen.findByText('Added "Supplier B" to "Supplier price list".')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open My formats' })).toBeTruthy();
+    expect(downloaded).not.toHaveBeenCalled();
+  });
+
+  it('"Download the file" converts the example input with the rules on screen and downloads it, before or after saving', async () => {
+    const { api } = setup();
+    await screen.findByTestId('add-format-columns');
+    typeName('Supplier B');
+    await drop('Example input', csv('supplier-b.csv'));
+    await drop('Example output', xlsx('load.xlsx'));
+    await waitFor(() => expect(learnButton().disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    await screen.findByTestId('rules-map');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Download the file' }));
     await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(1));
     expect(downloaded.mock.calls[0]![0]).toBe('supplier-b (converted).xlsx');
-    expect(await screen.findByText('Added "Supplier B" to "Supplier price list". Your file is downloading.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Open My formats' })).toBeTruthy();
+    expect(api.registry.attachSource).not.toHaveBeenCalled();
+    // After saving it is still there.
+    fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    await screen.findByText('Added "Supplier B" to "Supplier price list".');
+    expect(downloaded).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Download the file' }));
+    await waitFor(() => expect(downloaded).toHaveBeenCalledTimes(2));
   });
 
   it('a source that breaks the format lock is refused with the columns that differ', async () => {
@@ -242,8 +265,8 @@ describe('the Add a source screen', () => {
       fireEvent.click(learnButton());
     });
     await screen.findByTestId('rules-map');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source and download' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole('button', { name: 'Add source and download' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     expect(await screen.findByText("This file's output doesn't match the format. See which columns differ and fix them, or save it as a new format.")).toBeTruthy();
     expect(screen.getByText('This source does not reproduce the format')).toBeTruthy();
     expect(screen.getByText('output.columns[1].header: expected "Description", got "Product"')).toBeTruthy();
@@ -262,8 +285,8 @@ describe('the Add a source screen', () => {
       fireEvent.click(learnButton());
     });
     await screen.findByTestId('rules-map');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source and download' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole('button', { name: 'Add source and download' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     expect(await screen.findByText('This format already has as many sources as your plan allows.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Upgrade' })).toBeTruthy();
   });
@@ -294,16 +317,16 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
   const SUPPLIER_A = sourceSummary({ id: 'S1', name: 'Supplier A', conversions: [{ conversionId: 'C1', formatId: 'F1', formatName: 'Supplier price list', status: 'verified' }] });
 
   /** Drops both files, learns, and saves the result; resolves once attachSource has been asked. */
-  async function learnAndSave(): Promise<void> {
-    await drop('Example input', csv('supplier-b.csv'));
+  async function learnAndSave(inputName = 'supplier-b.csv'): Promise<void> {
+    await drop('Example input', csv(inputName));
     await drop('Example output', xlsx('load.xlsx'));
     await waitFor(() => expect(learnButton().disabled).toBe(false));
     await act(async () => {
       fireEvent.click(learnButton());
     });
     await screen.findByTestId('rules-map');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source and download' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole('button', { name: 'Add source and download' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
   }
   const body = (api: ReturnType<typeof fakeApi>): Record<string, unknown> => (api.registry.attachSource.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
 
@@ -329,11 +352,13 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
     expect(body(api)).toMatchObject({ sourceName: 'Supplier B', inputHeaders: ['Code', 'Name', 'Price'] });
     expect(body(api)).not.toHaveProperty('sourceId');
     expect(body(api)).not.toHaveProperty('newSource');
+    // A name the user typed is theirs: no default is sent next to it.
+    expect(body(api)).not.toHaveProperty('suggestedSourceName');
     // (never a value: the body carries the rules and the headers, not a row of the example)
     expect(JSON.stringify(body(api))).not.toContain('supplier-b.csv');
   });
 
-  it('left without a name, sends no name at all (the server names it) - and the result is headed by the file\'s name', async () => {
+  it('left without a name, sends the example input file\'s name as the default (`suggestedSourceName`) and no `sourceName` - and the result is headed by the file\'s name', async () => {
     const { api } = setup({ learn: learnWithInput });
     await screen.findByTestId('add-format-columns');
     await drop('Example input', csv('supplier-b.csv'));
@@ -344,13 +369,30 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
     });
     await screen.findByTestId('rules-map');
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('supplier-b');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source and download' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole('button', { name: 'Add source and download' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     await waitFor(() => expect(api.registry.attachSource).toHaveBeenCalledTimes(1));
     expect(body(api)).not.toHaveProperty('sourceName');
-    expect(body(api)).toMatchObject({ inputHeaders: ['Code', 'Name', 'Price'] });
+    expect(body(api)).toMatchObject({ suggestedSourceName: 'supplier-b', inputHeaders: ['Code', 'Name', 'Price'] });
     // The saved message names the source the server made.
-    expect(await screen.findByText('Added "Supplier B" to "Supplier price list". Your file is downloading.')).toBeTruthy();
+    expect(await screen.findByText('Added "Supplier B" to "Supplier price list".')).toBeTruthy();
+  });
+
+  it('the default has the date and counters of the file taken out, and is not sent when nothing is left of the name', async () => {
+    const { api } = setup({ learn: learnWithInput });
+    await screen.findByTestId('add-format-columns');
+    await learnAndSave('Supplier B 2026-09 (1).csv');
+    await waitFor(() => expect(api.registry.attachSource).toHaveBeenCalledTimes(1));
+    expect(body(api)).toMatchObject({ suggestedSourceName: 'Supplier B' });
+    cleanup();
+
+    const again = setup({ learn: learnWithInput });
+    await screen.findByTestId('add-format-columns');
+    await learnAndSave('2026-09-15.csv');
+    await waitFor(() => expect(again.api.registry.attachSource).toHaveBeenCalledTimes(1));
+    const sent = (again.api.registry.attachSource.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+    expect(sent).not.toHaveProperty('suggestedSourceName');
+    expect(sent).not.toHaveProperty('sourceName');
   });
 
   it('never runs a source check of its own in the browser: which source this becomes is the server\'s decision', async () => {
@@ -373,7 +415,7 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
     await screen.findByTestId('add-format-columns');
     await learnAndSave();
     // the message for the save itself is all there is: the source is the server's word
-    expect(await screen.findByText('Added "Master prices" to "Supplier price list". Your file is downloading.')).toBeTruthy();
+    expect(await screen.findByText('Added "Master prices" to "Supplier price list".')).toBeTruthy();
     expect(screen.queryByTestId('source-reused')).toBeNull();
     expect(document.body.textContent).not.toMatch(/reused|recogni[sz]ed|saved as source/i);
   });
@@ -383,7 +425,7 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
     await screen.findByTestId('add-format-columns');
     typeName('Supplier B');
     await learnAndSave();
-    await screen.findByText('Added "Supplier B" to "Supplier price list". Your file is downloading.');
+    await screen.findByText('Added "Supplier B" to "Supplier price list".');
     expect(screen.queryByTestId('source-reused')).toBeNull();
     expect(document.body.textContent).not.toMatch(/reused|recogni[sz]ed|saved as source/i);
   });
@@ -472,7 +514,7 @@ describe('flow A: "This looks like your format X"', () => {
     await learnLocally(api);
     fireEvent.click(await screen.findByRole('button', { name: 'No, save it as a new format' }));
     expect(screen.queryByText('This looks like your format "Names list"')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
   });
 
   it('does not offer a format whose headers or file type differ', async () => {

@@ -1,5 +1,5 @@
-// Who may use Convert and Batch (SPEC 5 E, 11): both need an account, so a visitor who is signed out meets the sign-in wall
-// here, not an empty tool. Who is signed in comes from the app's `useMe()`.
+// Who may use the Run screen (SPEC 5 E, 11): it needs an account (only accounts have saved formats), so a visitor who is signed out
+// meets the sign-in wall here, not an empty tool. Who is signed in comes from the app's `useMe()`.
 import type { MeUser } from '@formatai/shared';
 import type { ReactNode } from 'react';
 import { useMe } from '../../app/Me';
@@ -8,7 +8,7 @@ import { useI18n, type MessageKey } from '../../i18n';
 import { Button, InlineMessage, Spinner } from '../../ui';
 
 export interface AccountGateProps {
-  /** The wall's heading and text (Convert and Batch each say what they need the account for). */
+  /** The wall's heading and text (what the account is needed for). */
   title: MessageKey;
   text: MessageKey;
   children(user: MeUser): ReactNode;

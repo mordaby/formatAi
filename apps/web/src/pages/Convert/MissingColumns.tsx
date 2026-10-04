@@ -7,14 +7,15 @@ import { FormatChips } from './FormatChips';
 import { isolate } from './logic';
 
 export interface MissingColumnsProps {
-  sourceName: string;
+  /** The saved source the file was matched to. Absent when the rules are not a saved source (Result's "Try it on another file"): the text says "the rules". */
+  sourceName?: string;
   /** The names of every format this source feeds (in scope): none of them can be made from this file. */
-  formats: readonly string[];
+  formats?: readonly string[];
   missing: readonly string[];
   onAnotherFile(): void;
 }
 
-export function MissingColumns({ sourceName, formats, missing, onAnotherFile }: MissingColumnsProps) {
+export function MissingColumns({ sourceName, formats = [], missing, onAnotherFile }: MissingColumnsProps) {
   const { t } = useI18n();
   const count = missing.length;
   return (
@@ -22,14 +23,18 @@ export function MissingColumns({ sourceName, formats, missing, onAnotherFile }: 
       <InlineMessage
         tone="block"
         title={t('conv.missing.title')}
-        todo={t('conv.missing.todo')}
+        todo={t(sourceName === undefined ? 'conv.missing.todo.rules' : 'conv.missing.todo')}
         actions={
           <Button variant="secondary" onClick={onAnotherFile}>
             {t('conv.missing.another')}
           </Button>
         }
       >
-        <p>{t(count === 1 ? 'conv.missing.text.one' : 'conv.missing.text.other', { source: isolate(sourceName), count })}</p>
+        <p>
+          {sourceName === undefined
+            ? t(count === 1 ? 'conv.missing.rules.one' : 'conv.missing.rules.other', { count })
+            : t(count === 1 ? 'conv.missing.text.one' : 'conv.missing.text.other', { source: isolate(sourceName), count })}
+        </p>
         <ul className="chips" data-testid="missing-list">
           {missing.map((h) => (
             <li key={h}>

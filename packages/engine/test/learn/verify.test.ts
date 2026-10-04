@@ -90,6 +90,60 @@ describe('verifyAgainstExample: a wrong constant', () => {
     expect(diff.row).toBeDefined();
     // The masked row must not contain the real name anywhere.
     expect(JSON.stringify(diff.row)).not.toContain('Dana');
+    // ... nor the diff's own expected value (a real cell of the example)
+    expect(diff.expected).not.toBe('Dana');
+    expect(diff.expected).not.toBeNull();
+  });
+
+  it('masks a diff\'s expected and actual values too (the rules\' own value is made from real words), keeps them real in the UI-facing mismatches', () => {
+    const { a, rules } = simplePair();
+    const wrong: LearnResult = {
+      ...rules,
+      transform: { ...rules.transform, computed: [...rules.transform.computed, { id: 'x', type: 'text', expr: { const: 'Haifa Port' } }] },
+      output: { ...rules.output, columns: rules.output.columns.map((c) => (c.header === 'Name' ? { header: 'Name', from: 'x' } : c)) },
+    };
+    const plain = verifyAgainstExample(wrong, a);
+    const unmasked = plain.repairProblems.find((p) => p.kind === 'diff') as Extract<(typeof plain.repairProblems)[number], { kind: 'diff' }>;
+    expect(unmasked.expected).toBe('Dana'); // masking off: the real values, as before
+    expect(unmasked.actual).toBe('Haifa Port');
+
+    const masker = createMasker(new TextEncoder().encode('test-key'));
+    const v = verifyAgainstExample(wrong, a, { masker });
+    expect(v.mismatches[0]).toMatchObject({ expected: 'Dana', actual: 'Haifa Port' }); // the UI keeps the real values
+    const diffs = v.repairProblems.filter((p) => p.kind === 'diff') as Extract<(typeof v.repairProblems)[number], { kind: 'diff' }>[];
+    expect(diffs.length).toBeGreaterThan(0);
+    for (const d of diffs) {
+      expect(typeof d.expected).toBe('string');
+      expect(typeof d.actual).toBe('string');
+      expect(JSON.stringify([d.expected, d.actual, d.row])).not.toMatch(/Dana|Yossi|Noa|Omer|Maya|Haifa/);
+    }
+    // the same real value is masked the same way in the row and in expected (one masker, one map)
+    const first = diffs[0]!;
+    expect((first.row as { out: unknown[] }).out[0]).toBe(first.expected);
+  });
+});
+
+describe('verifyAgainstExample: layout problems for the repair call are masked', () => {
+  it('quotes a title cell masked like the payload\'s titles (a data word masked, a label word real), and keeps the real text for the UI', () => {
+    const inHeaders = ['Customer ID', 'Customer Name'];
+    const inRows: V[][] = [[1, 'Dana'], [2, 'Yossi'], [3, 'Noa'], [4, 'Omer'], [5, 'Maya']];
+    const out: V[][] = [['Report for Dana'], [null], ['Name', 'ID'], ...inRows.map((r) => [r[1]!, r[0]!])];
+    const a = analyzePair(xlsx([inHeaders, ...inRows]), xlsx(out));
+    if (!a.ok) throw new Error('analysis failed');
+    expect(a.layout.titleRows.length).toBeGreaterThan(0);
+    const fp = fastPath(a, preflight(a, 'registered'));
+    if (!('rules' in fp)) throw new Error('fastPath failed');
+    const rules: LearnResult = { ...fp.rules, output: { ...fp.rules.output, titleRows: fp.rules.output.titleRows.map((t) => ('text' in t ? { ...t, text: 'Weekly report' } : t)) } };
+    const masker = createMasker(new TextEncoder().encode('layout-key'));
+    masker.addLabelWords(['Report', 'for', 'Weekly', 'report']); // (as `buildPayload` registers the example's and the rules' label words)
+    const v = verifyAgainstExample(rules, a, { masker });
+    const layout = v.repairProblems.filter((p) => p.kind === 'layout').map((p) => (p as { message: string }).message);
+    expect(layout.some((m) => m.includes('title row'))).toBe(true);
+    expect(layout.join(' ')).not.toContain('Dana');
+    expect(layout.join(' ')).toContain('Report for'); // label words stay real, as in the payload
+    expect(v.layoutProblems.join(' ')).toContain('Report for Dana'); // the UI's copy stays real
+    // without a masker (masking off) the repair problem is the UI's sentence
+    expect(verifyAgainstExample(rules, a).repairProblems.filter((p) => p.kind === 'layout').map((p) => (p as { message: string }).message).join(' ')).toContain('Report for Dana');
   });
 });
 
@@ -292,5 +346,35 @@ describe('verifyAgainstExample: rules that fail to run at all', () => {
     expect(v.verified).toBe(false);
     expect(v.total).toBe(0);
     expect(v.repairProblems.some((p) => p.kind === 'reference')).toBe(true);
+  });
+});
+
+describe('verifyAgainstExample: empty text cells', () => {
+  it('an example cell holding empty text matches the empty cell the engine writes (they look the same in Excel)', () => {
+    const inHeaders = ['Customer ID', 'Customer Name'];
+    const inRows: V[][] = [
+      [1, 'Dana'],
+      [2, ''],
+      [3, 'Noa'],
+      [4, 'Omer'],
+      [5, 'Maya'],
+    ];
+    const outRows: V[][] = inRows.map((r) => [r[1]!, r[0]!]);
+    const a = analyzeOkResult(inHeaders, inRows, ['Name', 'ID'], outRows);
+    const fp = fastPath(a, preflight(a, 'registered'));
+    if (!('rules' in fp)) throw new Error(`fastPath failed: ${JSON.stringify(fp)}`);
+    const v = verifyAgainstExample(fp.rules, a);
+    expect(v.mismatches).toEqual([]);
+    expect(v.matched).toBe(5);
+  });
+
+  it('a real value still differs from an empty cell', () => {
+    const { a, rules } = simplePair();
+    const blankName: LearnResult = {
+      ...rules,
+      output: { ...rules.output, columns: rules.output.columns.map((c) => (c.header === 'Name' ? { header: 'Name', from: null } : c)) },
+    };
+    const v = verifyAgainstExample(blankName, a);
+    expect(v.mismatches.length).toBe(5);
   });
 });

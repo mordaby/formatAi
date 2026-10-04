@@ -1,12 +1,16 @@
 // The result of a file that fed several formats (SPEC 5 C, 8.15): one line per format (rows in and out, flagged rows, an
-// individual download), the formats that could not be made and why, and "Download all (zip)" - a folder per format plus a small
-// summary sheet. Exactly one result is not shown here: that is `RunDone`, as before. Nothing here leaves the browser.
+// individual download), the formats that need attention (SPEC 21 v11 items 4-7: why, and "Open in editor" / "Run anyway"), the ones that could
+// not be made and why, and "Download all (zip)" - a folder per format plus a small summary sheet. Exactly one result and nothing else
+// is not shown here: that is `RunDone`, as before. Nothing here leaves the browser.
 import { Link } from 'react-router-dom';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { Button, InlineMessage, Spinner } from '../../ui';
+import { runAnywayLabel } from './attention';
 import { columnLabel, flaggedRowCount, isolate } from './logic';
-import { failureText, type FailedFormat, type RunResult } from './useConvertFlow';
+import { AttentionList, AttentionRow } from './NeedsAttention';
+import { NewColumns } from './NewColumns';
+import { failureText, type FailedFormat, type NewColumnsNotice, type RunResult } from './useConvertFlow';
 
 const FLAGS_LISTED = 20;
 
@@ -15,17 +19,26 @@ export interface RunResultsProps {
   results: readonly RunResult[];
   failed: readonly FailedFormat[];
   aliasNotSaved: boolean;
+  /** "New column in this file" (SPEC 8.15), when there is one to mention. */
+  notice: NewColumnsNotice | null;
   packing: boolean;
   packError: boolean;
   onDownloadOne(conversionId: string): void;
   onDownloadAll(): void;
   onAnother(): void;
+  /** A format that needs attention: its editor (the page holds the file for the trip), or making it now anyway. */
+  onEdit(format: { conversionId: string; formatId: string }): void;
+  onRunAnyway(conversionId: string): void;
+  onDismissNotice(): void;
 }
 
-export function RunResults({ sourceName, results, failed, aliasNotSaved, packing, packError, onDownloadOne, onDownloadAll, onAnother }: RunResultsProps) {
+export function RunResults({ sourceName, results, failed, aliasNotSaved, notice, packing, packError, onDownloadOne, onDownloadAll, onAnother, onEdit, onRunAnyway, onDismissNotice }: RunResultsProps) {
   const i18n = useI18n();
   const { t, code, lang } = i18n;
   const nf = new Intl.NumberFormat(lang);
+  // Formats not made because this file needs the user's decision first are listed apart from the ones that failed.
+  const needAttention = failed.flatMap((x) => (x.failure.kind === 'attention' ? [{ ...x, failure: x.failure }] : []));
+  const couldNot = failed.filter((x) => x.failure.kind !== 'attention');
 
   return (
     <section className="conv__step" aria-labelledby="conv-results-title" data-testid="run-results">
@@ -95,23 +108,51 @@ export function RunResults({ sourceName, results, failed, aliasNotSaved, packing
         </>
       ) : null}
 
-      {failed.length > 0 ? (
+      {needAttention.length > 0 ? (
+        <AttentionList>
+          {needAttention.map((x) => {
+            const label = runAnywayLabel(i18n, x.failure.attention);
+            return (
+              <AttentionRow key={x.conversionId} formatName={x.formatName} attention={x.failure.attention}>
+                {x.failure.skipped ? (
+                  <span className="muted">{t('conv.attention.skipped')}</span>
+                ) : (
+                  <>
+                    <Button variant="secondary" size="sm" onClick={() => onEdit(x)}>
+                      {t('conv.attention.edit')}
+                    </Button>
+                    {label ? (
+                      <Button variant="secondary" size="sm" onClick={() => onRunAnyway(x.conversionId)}>
+                        {label}
+                      </Button>
+                    ) : null}
+                  </>
+                )}
+              </AttentionRow>
+            );
+          })}
+        </AttentionList>
+      ) : null}
+
+      {couldNot.length > 0 ? (
         <section className="bgroup" aria-label={t('conv.results.failed.title')} data-testid="result-failed">
           <h3 className="bgroup__title">{t('conv.results.failed.title')}</h3>
           <ul className="bfiles">
-            {failed.map((x) => (
+            {couldNot.map((x) => (
               <li className="bfile" key={x.conversionId} data-status="noMatch">
                 <div className="bfile__main">
                   <p className="bfile__name">
                     <Cell value={x.formatName} empty="—" />
                   </p>
-                  <p className="muted bfile__reason">{failureText(i18n, x.failure)}</p>
+                  <p className="muted bfile__reason">{failureText(i18n, x.failure, x.formatName)}</p>
                 </div>
               </li>
             ))}
           </ul>
         </section>
       ) : null}
+
+      {notice ? <NewColumns notice={notice} onDismiss={onDismissNotice} onAdd={onEdit} /> : null}
 
       <p className="conv__foot">
         <Link to="/formats">{t('conv.done.formats')}</Link>

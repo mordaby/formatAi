@@ -4,7 +4,7 @@
 // learn runs in attach mode - the format is the `target`, the AI only decides how THIS input produces the format's columns - and
 // the result opens in the same map and editor, ready to save as a new conversion of the format (a link from the source to it).
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
-import { limits, promptVersion } from '@formatai/shared';
+import { defaultSourceName, limits, promptVersion } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useLearnSession } from '../../app/LearnSession';
@@ -33,6 +33,7 @@ import { TextField } from '../Result/fields';
 import { compareOutput, fileTypeOfName, type OutputMismatch, type OutputFileType } from '../Result/matchFormat';
 import { SaveFailureMessage } from '../Result/SaveMessages';
 import { defaultFormatName } from '../Result/session';
+import { useDownload } from '../Result/useDownload';
 import { useSave } from '../Result/useSave';
 import { Workbench, type WorkbenchInfo } from '../Result/Workbench';
 import type { LearnOutput } from '../../worker/engineApi';
@@ -390,6 +391,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
     const learnPath = result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
     // The example input's HEADERS (structure only): what the server matches against the company's sources (SPEC 8.15).
     const inputHeaders = result.exampleInput?.map((c) => c.header);
+    const suggestedSourceName = defaultSourceName(input.name);
     const body: AttachSourceRequest = {
       rules: info.rules,
       status: info.metaStatus,
@@ -397,8 +399,9 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
       exampleExceptions: info.exceptions,
       learnPath,
       masking,
-      // The name typed is used if the server has to create a source (nothing when the field was left empty).
-      ...(sourceName !== '' ? { sourceName } : {}),
+      // The name typed is used if the server has to create a source; left empty, the example input file's name is the default
+      // (SPEC 21 v11 item 9), and the server makes it unique. Nothing when no name is left of it ("Source N").
+      ...(sourceName !== '' ? { sourceName } : suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
       ...(learnPath === 'local' ? {} : { promptVersion }),
     };
@@ -414,7 +417,6 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
         }
         void me.refreshFormats();
       },
-      download: { file: input, rules: info.rules },
     });
   };
 
@@ -422,19 +424,34 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
   const problemsTitle =
     failure?.kind !== 'api' ? undefined : failure.code === 'formatMismatch' ? t('add.saveMismatch.title') : failure.code === 'sourceMismatch' ? t('add.saveSourceMismatch.title') : undefined;
 
+  // "Download the file": the example input converted with the rules as they are on screen, before or after saving. Saving never does it.
+  const download = useDownload();
+  const downloadButton = (info: WorkbenchInfo) =>
+    input ? (
+      <Button variant="secondary" loading={download.status === 'busy'} disabled={info.status.kind === 'blocked'} onClick={() => download.run(input, info.rules)}>
+        {t('conv.done.download')}
+      </Button>
+    ) : null;
+
   const actions = (info: WorkbenchInfo) => {
     if (save.state.status === 'saved') {
       return (
-        <Button variant="primary" onClick={() => navigate(`/formats/${format.id}`)}>
-          {t('save.viewFormats')}
-        </Button>
+        <div className="result-head__buttons">
+          <Button variant="primary" onClick={() => navigate(`/formats/${format.id}`)}>
+            {t('save.viewFormats')}
+          </Button>
+          {downloadButton(info)}
+        </div>
       );
     }
     const label = info.differences && info.differences > 0 ? t(info.differences === 1 ? 'save.differences.one' : 'save.differences.other', { n: info.differences }) : t('add.save');
     return (
-      <Button variant="primary" loading={save.state.status === 'saving'} disabled={info.metaStatus === null} onClick={() => doSave(info)}>
-        {label}
-      </Button>
+      <div className="result-head__buttons">
+        <Button variant="primary" loading={save.state.status === 'saving'} disabled={info.metaStatus === null} onClick={() => doSave(info)}>
+          {label}
+        </Button>
+        {downloadButton(info)}
+      </div>
     );
   };
 
@@ -452,6 +469,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
         </InlineMessage>
       )}
       {failure && <SaveFailureMessage failure={failure} onSignIn={() => undefined} {...(problemsTitle ? { problemsTitle } : {})} />}
+      {download.status === 'failed' && <InlineMessage tone="warn">{t('result.downloadFailed')}</InlineMessage>}
     </>
   );
 

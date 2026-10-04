@@ -4,9 +4,9 @@
 
 export const formatsEn = {
   // ----- Home for a signed-in user with formats (SPEC 16.1 screen 5) -----
-  'home.convert': 'Convert a file',
+  'home.convert': 'Run a format',
   'home.teachNew': 'Teach a new format',
-  'home.convertLead': 'Drop the next file on one of your formats, or teach a new one from two examples.',
+  'home.convertLead': 'Drop your next files on your formats, or teach a new one from two examples.',
 
   // ----- statuses -----
   'status.verified': 'Verified',
@@ -38,7 +38,7 @@ export const formatsEn = {
   'formats.count.draft': '{n} draft',
   'formats.count.needsReview': '{n} need review',
   'formats.slots': 'Saved formats: {used} of {max}',
-  'formats.convert': 'Convert a file',
+  'formats.convert': 'Run this format',
   'formats.addSource': 'Add a source',
   'formats.batch': 'Run a batch',
   'formats.editRules': 'Edit rules',
@@ -140,8 +140,8 @@ export const formatsEn = {
   'add.mismatch.todo': "Change the output file so its columns are the format's, in the same order, then drop it again.",
   'add.saveMismatch.title': 'This source does not reproduce the format',
   'add.saveSourceMismatch.title': "This file doesn't fit the source you chose",
-  'add.save': 'Add source and download',
-  'add.saved': 'Added "{source}" to "{format}". Your file is downloading.',
+  'add.save': 'Add source',
+  'add.saved': 'Added "{source}" to "{format}".',
   'add.changeFiles': 'Choose other files',
   'add.type.xlsx': 'an Excel file (.xlsx)',
   'add.type.csv': 'a CSV file',
@@ -150,9 +150,9 @@ export const formatsEn = {
 } as const satisfies Record<string, string>;
 
 export const formatsHe: Record<keyof typeof formatsEn, string> = {
-  'home.convert': 'המרת קובץ',
+  'home.convert': 'הרצת פורמט',
   'home.teachNew': 'ללמד פורמט חדש',
-  'home.convertLead': 'העלו את הקובץ הבא לאחד הפורמטים שלכם, או למדו פורמט חדש משתי דוגמאות.',
+  'home.convertLead': 'העלו את הקבצים הבאים לפורמטים שלכם, או למדו פורמט חדש משתי דוגמאות.',
 
   'status.verified': 'מאומת',
   'status.differencesAccepted.one': 'הבדל אחד',
@@ -182,7 +182,7 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'formats.count.draft': '{n} טיוטות',
   'formats.count.needsReview': '{n} דורשים בדיקה',
   'formats.slots': 'פורמטים שמורים: {used} מתוך {max}',
-  'formats.convert': 'המרת קובץ',
+  'formats.convert': 'הרצת הפורמט',
   'formats.addSource': 'הוספת מקור',
   'formats.batch': 'הרצת קבוצת קבצים',
   'formats.editRules': 'עריכת כללים',
@@ -279,8 +279,8 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'add.mismatch.todo': 'שנו את קובץ הפלט כך שהעמודות שלו יהיו של הפורמט, באותו סדר, ואז העלו אותו שוב.',
   'add.saveMismatch.title': 'המקור הזה לא משחזר את הפורמט',
   'add.saveSourceMismatch.title': 'הקובץ הזה לא מתאים למקור שבחרתם',
-  'add.save': 'הוספת המקור והורדה',
-  'add.saved': 'המקור "{source}" נוסף אל "{format}". הקובץ שלכם יורד.',
+  'add.save': 'הוספת המקור',
+  'add.saved': 'המקור "{source}" נוסף אל "{format}".',
   'add.changeFiles': 'בחירת קבצים אחרים',
   'add.type.xlsx': 'Excel (.xlsx)',
   'add.type.csv': 'CSV',

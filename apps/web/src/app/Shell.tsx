@@ -36,9 +36,14 @@ export function Shell({ children }: { children: ReactNode }) {
           </Link>
           <div className="app-header__actions">
             {user ? (
-              <Link className="app-header__link" to="/formats">
-                {t('account.myFormats')}
-              </Link>
+              <>
+                <Link className="app-header__link" to="/convert">
+                  {t('conv.nav')}
+                </Link>
+                <Link className="app-header__link" to="/formats">
+                  {t('account.myFormats')}
+                </Link>
+              </>
             ) : null}
             <LanguageToggle />
             <AccountMenu />

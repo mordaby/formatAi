@@ -40,9 +40,9 @@ export interface VerifyOptions {
    * own Excel row number, matching `Flag.rowNumber`'s convention) the user marked
    * "fixed by hand". Excluded from the count and never reported as mismatches. */
   exceptions?: number[];
-  /** SPEC 7.2/9.3: when given, every cell value carried in a `repairProblems` `row`
-   * (never the UI-facing `mismatches`) is masked with it, so a browser-triggered
-   * repair call never sends real data when masking is on. */
+  /** SPEC 7.2/9.3: when given, every value a `repairProblems` entry carries (never the UI-facing `mismatches` and `layoutProblems`) is masked
+   * with it - a diff's `row`, `expected` and `actual`, the cells a layout problem quotes, a missing header the answer wrote - so a
+   * browser-triggered repair call never sends real data when masking is on. */
   masker?: Masker;
   /**
    * SPEC 21 v5 item 1 (the local partial result): only these output columns (0-based positions) are
@@ -140,6 +140,9 @@ function actualSeen(cell: OutCell | undefined): Seen {
  * `Number` for `OutCell.v` can drift in the last bit); everything else compares exactly. */
 function valuesEqual(expected: PayloadCell, actual: PayloadCell): boolean {
   if (typeof expected === 'number' && typeof actual === 'number') return Math.abs(expected - actual) < 1e-9;
+  // A cell holding empty text and an empty cell look the same in Excel: files often carry "" cells (a formula's =IF(..., "", ...), an
+  // export that writes every cell), and the engine writes nothing for an empty value. Only exact "" - text with spaces is not empty.
+  if ((expected === '' && actual === null) || (expected === null && actual === '')) return true;
   return expected === actual;
 }
 
@@ -175,6 +178,11 @@ function rowToPayloadCells(row: (RawCell | null)[] | undefined, count: number, d
 function maskCells(cells: PayloadCell[], profiles: readonly { type: ProfileType }[], masker: Masker | undefined): PayloadCell[] {
   if (!masker) return cells;
   return cells.map((v, i) => masker.maskCell(v, profiles[i]?.type ?? 'text'));
+}
+
+/** One output cell's value, masked like the samples' cells of that column (the rules' own value too: it is made from real words). */
+function maskOutputCell(v: PayloadCell, column: number, profiles: readonly { type: ProfileType }[], masker: Masker | undefined): PayloadCell {
+  return masker ? masker.maskCell(v, profiles[column]?.type ?? 'text') : v;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,12 +253,28 @@ function actualCategory(kind: OutRowKind): LayoutCategory | 'data' {
 
 interface LayoutIssue {
   code: LayoutProblemCode;
+  /** For the UI: real values. */
   message: string;
+  /** For the repair call (`repairProblems`): the same sentence with every value masked like the payload's (see `layoutValue`). */
+  repair: string;
 }
 
 const LAYOUT_CODE: Record<LayoutCategory, LayoutProblemCode> = { title: 'titleRow', header: 'headerRow', blank: 'blankRow', summary: 'summaryRow' };
 
-function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]): LayoutIssue[] {
+/**
+ * A layout cell's value as a repair problem may quote it (SPEC 7.2/9.3): with a masker, text is masked the way the payload masks the same
+ * rows' text (`maskText`: a title, a summary-row label - label words stay real), a header the example has stays real (headers are sent
+ * real), and numbers, booleans and real dates are sent real as everywhere. `undefined`: a value that cannot be masked, which the message
+ * then leaves out (it says only where the difference is).
+ */
+function layoutValue(seen: Seen, masker: Masker | undefined, headers: ReadonlySet<string> | null): string | undefined {
+  const v = seen.v;
+  if (!masker || v === null || typeof v === 'number' || typeof v === 'boolean' || seen.date) return JSON.stringify(v);
+  if (typeof v !== 'string') return undefined;
+  return JSON.stringify(headers?.has(v) ? v : masker.maskText(v));
+}
+
+function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[], masker?: Masker): LayoutIssue[] {
   const delimited = analysis.layout.file.type !== 'xlsx';
   // SPEC 8.13: a headerless output has no header row in the real file (rowKinds never
   // marks one), but the engine's own OutputSheet model always carries one structurally
@@ -266,32 +290,38 @@ function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]
     .filter((r): r is { category: LayoutCategory; row: OutRow } => r.category !== 'data' && !(headerless && r.category === 'header'));
 
   const issues: LayoutIssue[] = [];
+  const plain = (code: LayoutProblemCode, message: string): void => void issues.push({ code, message, repair: message });
+  const knownHeaders = new Set(analysis.output.headers);
   const len = Math.max(expected.length, actual.length);
   for (let i = 0; i < len; i++) {
     const exp = expected[i];
     const act = actual[i];
     if (!exp) {
-      issues.push({ code: LAYOUT_CODE[act!.category], message: `the rules produce an extra ${act!.category} row the example output doesn't have` });
+      plain(LAYOUT_CODE[act!.category], `the rules produce an extra ${act!.category} row the example output doesn't have`);
       continue;
     }
     if (!act) {
-      issues.push({ code: LAYOUT_CODE[exp.category], message: `the example output has a ${exp.category} row (row ${exp.sheetRow + 1}) the rules don't produce` });
+      plain(LAYOUT_CODE[exp.category], `the example output has a ${exp.category} row (row ${exp.sheetRow + 1}) the rules don't produce`);
       continue;
     }
     if (exp.category !== act.category) {
-      issues.push({ code: LAYOUT_CODE[exp.category], message: `row ${exp.sheetRow + 1}: expected a ${exp.category} row, the rules produce a ${act.category} row` });
+      plain(LAYOUT_CODE[exp.category], `row ${exp.sheetRow + 1}: expected a ${exp.category} row, the rules produce a ${act.category} row`);
       continue;
     }
     if (exp.category === 'blank') continue;
     const expectedRow = analysis.output.sheet.rows[exp.sheetRow] ?? [];
     const width = Math.max(expectedRow.length, act.row.cells.length);
+    const headers = exp.category === 'header' ? knownHeaders : null;
     for (let c = 0; c < width; c++) {
       const expectedVal = expectedSeen(expectedRow[c]);
       const actualVal = actualSeen(act.row.cells[c]);
       if (!cellsMatch(expectedVal, actualVal, delimited)) {
+        const where = `${exp.category} row (row ${exp.sheetRow + 1}), column ${c + 1}`;
+        const [e, a] = [layoutValue(expectedVal, masker, headers), layoutValue(actualVal, masker, headers)];
         issues.push({
           code: LAYOUT_CODE[exp.category],
-          message: `${exp.category} row (row ${exp.sheetRow + 1}), column ${c + 1}: expected ${JSON.stringify(expectedVal.v)}, the rules produce ${JSON.stringify(actualVal.v)}`,
+          message: `${where}: expected ${JSON.stringify(expectedVal.v)}, the rules produce ${JSON.stringify(actualVal.v)}`,
+          repair: e !== undefined && a !== undefined ? `${where}: expected ${e}, the rules produce ${a}` : `${where}: the value differs from the example`,
         });
       }
     }
@@ -336,12 +366,14 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   const result = runRules(rules, table, {});
 
   if (!result.ok) {
+    const missing = result.error.missing ?? [];
     const message =
-      result.error.code === 'missingRequiredColumns'
-        ? `required input column(s) not found: ${(result.error.missing ?? []).join(', ')}`
-        : `rules could not run on the input (${result.error.code})`;
+      result.error.code === 'missingRequiredColumns' ? `required input column(s) not found: ${missing.join(', ')}` : `rules could not run on the input (${result.error.code})`;
+    // (For the repair call, a header the input does not have is a name the answer wrote - unmasked here, so it is masked back.)
+    const inputHeaders = new Set(analysis.input.headers);
+    const sendable = masker ? `required input column(s) not found: ${missing.map((h) => (inputHeaders.has(h) ? h : masker.maskText(h))).join(', ')}` : message;
     const repairProblems: RepairProblem[] =
-      result.error.code === 'missingRequiredColumns' ? [{ kind: 'reference', message }] : [{ kind: 'schema', path: 'input', message }];
+      result.error.code === 'missingRequiredColumns' ? [{ kind: 'reference', message: sendable }] : [{ kind: 'schema', path: 'input', message }];
     return { verified: false, matched: 0, total: 0, mismatches: [], layoutProblems: [message], layoutIssues: [{ code: 'runFailed', message }], repairProblems };
   }
 
@@ -392,7 +424,7 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
           out: 0,
           row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(actualCells, analysis.output.profile, masker) },
           expected: null,
-          actual: actualCells[0] ?? null,
+          actual: maskOutputCell(actualCells[0] ?? null, 0, analysis.output.profile, masker),
         });
         continue;
       }
@@ -419,8 +451,8 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
             kind: 'diff',
             out: c,
             row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(expectedCells, analysis.output.profile, masker) },
-            expected,
-            actual,
+            expected: maskOutputCell(expected, c, analysis.output.profile, masker),
+            actual: maskOutputCell(actual, c, analysis.output.profile, masker),
           });
         }
       }
@@ -439,7 +471,7 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
         out: 0,
         row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(actualCells, analysis.output.profile, masker) },
         expected: null,
-        actual: actualCells[0] ?? null,
+        actual: maskOutputCell(actualCells[0] ?? null, 0, analysis.output.profile, masker),
       });
     }
   }
@@ -470,9 +502,9 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   }
 
   // ---- layout: titles, header, summary rows, blank rows ----
-  for (const issue of only === null ? compareLayoutRows(analysis, result.sheet.rows) : []) {
+  for (const issue of only === null ? compareLayoutRows(analysis, result.sheet.rows, masker) : []) {
     layoutIssues.push({ code: issue.code, message: issue.message });
-    repairProblems.push({ kind: 'layout', message: issue.message });
+    repairProblems.push({ kind: 'layout', message: issue.repair });
   }
 
   const layoutProblems = layoutIssues.map((i) => i.message);

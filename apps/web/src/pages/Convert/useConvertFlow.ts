@@ -4,11 +4,12 @@
 //
 // A file is matched to a SOURCE; a source feeds one or several formats (one conversion each):
 //
-//   idle -> matching -> (choose a source) -> (mapping | missing)            structure checked ONCE per source
-//                                          -> (formats)                     only when the source feeds several formats
+//   idle -> matching -> (choose a source) -> (mapping)                      the rename step, ONCE per source
+//                                          -> (missing)                     no format can run: the columns it lacks
+//                                          -> (formats)                     several formats, or some need attention (SPEC 21 v11 items 4-7)
 //                                          -> running -> review -> writing  once per chosen conversion, one after another,
 //                                             running -> done                each with its OWN review before writing
-//   after the last one: done (exactly one file) or results (several: a download each and a zip)
+//   after the last one: done (exactly one file) or results (several, or some not made: a download each, and a zip)
 import type { ConversionMatch, Flag, OutputSheet, RunError, RunSummary } from '@formatai/engine';
 import type { ConversionDetail, Rules, SignatureEntry, SourceConversionRef } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -21,8 +22,31 @@ import { useI18n, type I18n } from '../../i18n';
 import { useServices } from '../../services';
 import type { BatchOutputFile, RowInputCell, SummaryTable } from '../../worker/convertApi';
 import { RpcRemoteError } from '../../worker/rpcClient';
+import { attentionLines } from './attention';
 import { convertErrorText } from './errors';
-import { applyToAll, baseName, columnLabel, flaggedRowCount, reviewRows, runCounts, scopeSources, signatureOf, toRowDecisions, withAliases, type Choices, type ReviewRow, type RowChoice } from './logic';
+import {
+  applyToAll,
+  attentionOfGaps,
+  attentionOfUnlike,
+  baseName,
+  canRunAnyway,
+  columnLabel,
+  flaggedRowCount,
+  formatsNeeding,
+  newColumns,
+  requiredAcross,
+  reviewRows,
+  runCounts,
+  scopeSources,
+  signatureOf,
+  toRowDecisions,
+  withAliases,
+  withChoice,
+  type Attention,
+  type Choices,
+  type ReviewRow,
+  type RowChoice,
+} from './logic';
 import { convertSession } from './session';
 
 /** Everything the run needs to know about the conversion it uses (rules included, with any confirmed rename already in). */
@@ -53,13 +77,43 @@ export interface RunResult {
   finished: Finished;
 }
 
-/** Why one of several conversions made no file (the others went on). */
-export type FormatFailure = ConvertError | { kind: 'missing'; columns: string[] };
+/**
+ * Why one of several conversions made no file (the others went on). `attention` is a format that was not made because this file
+ * needs the user's decision first (SPEC 21 v11 items 4-7); `skipped` says the user chose "Skip this time".
+ */
+export type RunFailure = ConvertError | { kind: 'missing'; columns: string[] };
+export type FormatFailure = RunFailure | { kind: 'attention'; attention: Attention; skipped?: boolean };
 
 export interface FailedFormat {
   conversionId: string;
+  formatId: string;
   formatName: string;
   failure: FormatFailure;
+}
+
+/** A format this file cannot be made into as it is (a column it uses is not in the file), and why: the formats step lists it with what to do. */
+export interface AttentionFormat {
+  conversionId: string;
+  formatId: string;
+  formatName: string;
+  attention: Attention;
+}
+
+/** What the user decided in the formats step: the ready formats to make, the ones to make anyway, and the ones skipped this time. */
+export interface FormatChoice {
+  run: string[];
+  anyway: string[];
+  skipped: string[];
+}
+
+/**
+ * "New column in this file" (SPEC 8.15): headers the source does not know and no rename used, with the formats the user may add them
+ * to. Shown once after the run; dismissing it is remembered on the source.
+ */
+export interface NewColumnsNotice {
+  sourceId: string;
+  columns: string[];
+  formats: SourceConversionRef[];
 }
 
 /**
@@ -77,6 +131,10 @@ export interface Job {
   index: number;
   results: RunResult[];
   failed: FailedFormat[];
+  /** Conversions the user chose to make although their values look different ("Run anyway"): the values check is not made again for them. */
+  bypass: string[];
+  /** The new-column notice for this file, shown after the run. */
+  notice: NewColumnsNotice | null;
 }
 
 /** "Format 2 of 3": shown while one of several conversions is under review. */
@@ -91,19 +149,25 @@ export type Phase =
   /** Options are SOURCES (`id` is the source's id). */
   | { kind: 'choose'; options: ConversionMatch[] }
   | { kind: 'noMatch' }
-  /** Required columns are missing but the file has columns nothing claimed: the user can say which is which (once per source). */
-  | { kind: 'mapping'; source: SignatureEntry; match: ConversionMatch }
-  /** Required columns are missing and nothing can stand in for them: stop, and say exactly which (and which formats it affects). */
+  /**
+   * Required columns are missing but the file has columns nothing claimed: the user can say which is which (once per source). `match.missingRequired`
+   * holds only the columns some format needs; `formats` are the formats that need one of them (the source may feed more).
+   */
+  | { kind: 'mapping'; source: SignatureEntry; match: ConversionMatch; formats: SourceConversionRef[] }
+  /** No format can be made from this file: each lacks a column it requires and nothing can stand in. Stop, and say exactly which (and which formats it affects). */
   | { kind: 'missing'; source: SignatureEntry; missing: string[] }
-  /** The source feeds several formats: which of them to make (all pre-checked). `mapping` is any rename already confirmed. */
-  | { kind: 'formats'; source: SignatureEntry; mapping: Record<string, string> }
+  /**
+   * Which formats of the source to make (all pre-checked): the source feeds several, or some need attention (SPEC 21 v11 items 4-7) - those are
+   * listed apart, with what to do. `mapping` is any rename already confirmed.
+   */
+  | { kind: 'formats'; source: SignatureEntry; mapping: Record<string, string>; ready: SourceConversionRef[]; attention: AttentionFormat[]; notice: NewColumnsNotice | null }
   | { kind: 'running'; target: Target | null }
   | { kind: 'review'; target: Target; step: Step | null; flags: Flag[]; summary: RunSummary; rowInputs: Record<number, RowInputCell[]>; rows: ReviewRow[]; choices: Choices }
   | { kind: 'writing'; target: Target }
   /** Exactly one file was made. */
-  | { kind: 'done'; target: Target; finished: Finished }
-  /** Several formats were made (or some could not be): a file each, and all of them in one zip. */
-  | { kind: 'results'; source: SignatureEntry; results: RunResult[]; failed: FailedFormat[] }
+  | { kind: 'done'; target: Target; finished: Finished; notice: NewColumnsNotice | null }
+  /** Several formats were made (or some could not be, or need attention): a file each, and all of them in one zip. */
+  | { kind: 'results'; source: SignatureEntry; results: RunResult[]; failed: FailedFormat[]; notice: NewColumnsNotice | null }
   | { kind: 'error'; error: ConvertError };
 
 export type SourcesState = { status: 'loading' } | { status: 'ready'; entries: SignatureEntry[] } | { status: 'error' };
@@ -122,8 +186,8 @@ export interface UseConvertFlow {
   start(file: File): void;
   /** From "which source is this file?" (a source id). */
   choose(sourceId: string): void;
-  /** From "this file feeds N formats": runs these conversions, one after another. */
-  chooseFormats(conversionIds: readonly string[]): void;
+  /** From the formats step: runs the chosen conversions (and the ones to make anyway), one after another; the rest are listed in the results. */
+  chooseFormats(choice: FormatChoice): void;
   /** From the renamed-columns step: required header -> the file's header (null: "it's not in this file"). */
   submitMapping(mapping: Record<string, string | null>, remember: boolean): void;
   setChoice(rowNumber: number, choice: RowChoice | null): void;
@@ -139,6 +203,15 @@ export interface UseConvertFlow {
   downloadAll(): void;
   /** Keeps the file (and the rest of the run) for the trip to the rules editor and back (`/convert?resume=1`). */
   holdForEditing(target: Target): void;
+  /**
+   * The same trip from a format that needs attention (the formats step or the results) or from the new-column notice: the file waits, and
+   * coming back checks it again (before a run) or makes that one format again with its edited rules (after one), keeping the others.
+   */
+  editFormat(format: { conversionId: string; formatId: string }): void;
+  /** "Run anyway" on a format of the results that was not made: makes it now, with the others kept. */
+  runAnyway(conversionId: string): void;
+  /** Dismisses the new-column notice and remembers it on the source (header names only). */
+  dismissNewColumns(): void;
   /** Picks up the file held for the editor, converting again with the (edited) rules. */
   resume(): boolean;
   reset(): void;
@@ -152,7 +225,7 @@ export function toConvertError(e: unknown): ConvertError {
 }
 
 /** What the engine's error means for the user: the phase to show when a single conversion cannot run. */
-function runFailure(error: RunError): FormatFailure {
+export function runFailure(error: RunError): RunFailure {
   if (error.code === 'missingRequiredColumns') return { kind: 'missing', columns: error.missing ?? [] };
   if (error.code === 'noTable') return { kind: 'noTable' };
   if (error.code === 'sheetNotFound') return { kind: 'sheetNotFound' };
@@ -160,9 +233,20 @@ function runFailure(error: RunError): FormatFailure {
 }
 
 /** The plain-words reason one format failed (the results screen and the summary sheet). */
-export function failureText(i18n: I18n, failure: FormatFailure): string {
+export function failureText(i18n: I18n, failure: FormatFailure, formatName = ''): string {
   if (failure.kind === 'missing') return i18n.t('batch.reason.missing', { columns: failure.columns.join(', ') });
+  if (failure.kind === 'attention') return attentionLines(i18n, formatName, failure.attention).join(' ');
   return convertErrorText(i18n, failure);
+}
+
+/** A job over `queue`, with nothing run yet. */
+function newJob(file: File, source: SignatureEntry, mapping: Record<string, string>, queue: SourceConversionRef[], failed: FailedFormat[], notice: NewColumnsNotice | null): Job {
+  return { file, source, mapping, queue, index: 0, results: [], failed, bypass: [], notice };
+}
+
+/** The formats of a split that were not made, as the results list them. */
+function attentionFailures(items: readonly AttentionFormat[], skipped: ReadonlySet<string>): FailedFormat[] {
+  return items.map((a) => ({ conversionId: a.conversionId, formatId: a.formatId, formatName: a.formatName, failure: { kind: 'attention', attention: a.attention, ...(skipped.has(a.conversionId) ? { skipped: true } : {}) } }));
 }
 
 /** Moves the job to its next conversion; false when it was the last. */
@@ -198,8 +282,14 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   const abortRef = useRef<AbortController | null>(null);
   const fileRef = useRef<File | null>(null);
   const rankedRef = useRef<ConversionMatch[]>([]);
+  /** The file's own headers, as matching read them: what each format is checked against (SPEC 21 v11 items 4-7). */
+  const headersRef = useRef<string[]>([]);
+  /** The conversions fetched for this file (rules included), kept for the runs: the formats are checked before they are run. */
+  const detailsRef = useRef(new Map<string, ConversionDetail>());
   /** The run in progress (its queue, its results): the state that outlives one phase. */
   const jobRef = useRef<Job | null>(null);
+  /** The job that last ended in `done` or `results`: what "Run anyway" and the editor trip of that screen continue from. */
+  const finishedRef = useRef<Job | null>(null);
   const phaseRef = useRef<Phase>(phase);
   phaseRef.current = phase;
 
@@ -245,11 +335,12 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   const showOutcome = useCallback((job: Job) => {
     convertSession.clear();
     jobRef.current = null;
+    finishedRef.current = job;
     if (job.results.length === 1 && job.failed.length === 0) {
       const only = job.results[0] as RunResult;
-      setPhase({ kind: 'done', target: only.target, finished: only.finished });
+      setPhase({ kind: 'done', target: only.target, finished: only.finished, notice: job.notice });
     } else {
-      setPhase({ kind: 'results', source: job.source, results: [...job.results], failed: [...job.failed] });
+      setPhase({ kind: 'results', source: job.source, results: [...job.results], failed: [...job.failed], notice: job.notice });
     }
   }, []);
 
@@ -272,14 +363,16 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     async (job: Job, runId: number, signal: AbortSignal): Promise<'made' | 'skipped' | 'wait' | 'stale'> => {
       jobRef.current = job;
       const conv = job.queue[job.index] as SourceConversionRef;
-      const several = job.queue.length > 1;
+      // Other outcomes are (or will be) on the results screen - several formats, formats that need attention, files already made - so a
+      // format that fails joins them there; alone, its failure is the whole answer.
+      const several = job.queue.length > 1 || job.failed.length > 0 || job.results.length > 0;
       /**
        * This conversion could not run: alone, that is the whole answer; among several, the others still go on and this one is
        * listed with why on the results screen (DECISION: one broken format must not cost the user the files of the others).
        */
-      const failedHere = (failure: FormatFailure): 'skipped' | 'wait' => {
+      const failedHere = (failure: RunFailure): 'skipped' | 'wait' => {
         if (several) {
-          job.failed.push({ conversionId: conv.conversionId, formatName: conv.formatName, failure });
+          job.failed.push({ conversionId: conv.conversionId, formatId: conv.formatId, formatName: conv.formatName, failure });
           return 'skipped';
         }
         jobRef.current = null;
@@ -290,13 +383,17 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
       setPhase({ kind: 'running', target: null });
       try {
         let detail: ConversionDetail;
-        try {
-          detail = await api.conversion(conv.conversionId, signal);
-        } catch (e) {
-          if (runId !== runRef.current) return 'stale';
-          const converted = toConvertError(e);
-          if (several && converted.kind === 'gone') return failedHere(converted);
-          throw e;
+        const cached = detailsRef.current.get(conv.conversionId);
+        if (cached) detail = cached;
+        else {
+          try {
+            detail = await api.conversion(conv.conversionId, signal);
+          } catch (e) {
+            if (runId !== runRef.current) return 'stale';
+            const converted = toConvertError(e);
+            if (several && converted.kind === 'gone') return failedHere(converted);
+            throw e;
+          }
         }
         if (runId !== runRef.current) return 'stale';
         // DECISION (SPEC 8.15): the renames confirmed for this file are applied in memory to every conversion that runs; the
@@ -315,11 +412,19 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         );
         if (runId !== runRef.current) return 'stale';
         if (!out.ok) return failedHere(runFailure(out.error));
+        // DECISION (SPEC 21 v11 items 4-7, "same name, different meaning"): when most of a used column's values did not parse as the type it was saved
+        // with, the format is not made (and no review of every row is shown): it goes under "Needs attention" with "Open in editor" and
+        // "Run anyway". A smaller share is ordinary dirty data and is the row review's business, as before. Counts only.
+        const unlike = attentionOfUnlike(out.unlike);
+        if (unlike && !job.bypass.includes(conv.conversionId)) {
+          job.failed.push({ conversionId: conv.conversionId, formatId: conv.formatId, formatName: conv.formatName, failure: { kind: 'attention', attention: unlike } });
+          return 'skipped';
+        }
         if (!out.written) {
           setPhase({
             kind: 'review',
             target,
-            step: several ? { n: job.index + 1, total: job.queue.length } : null,
+            step: job.queue.length > 1 ? { n: job.index + 1, total: job.queue.length } : null,
             flags: out.flags,
             summary: out.summary,
             rowInputs: out.rowInputs,
@@ -356,26 +461,123 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   /** The queue is decided: run it from its first conversion. */
   const startJob = drive;
 
-  /** The source is known and its structure is settled: one conversion runs at once; several ask which formats first. */
-  const proceed = useCallback(
-    (source: SignatureEntry, mapping: Record<string, string>, sourceFile: File, runId: number, signal: AbortSignal) => {
-      if (source.conversions.length === 1) {
-        void startJob({ file: sourceFile, source, mapping, queue: [...source.conversions], index: 0, results: [], failed: [] }, runId, signal);
-        return;
+  /** The rules of every format of the source (kept for the runs). A format that is gone has none (null): it is dealt with when it is run. */
+  const loadDetails = useCallback(
+    (source: SignatureEntry, signal: AbortSignal): Promise<(ConversionDetail | null)[]> =>
+      Promise.all(
+        source.conversions.map(async (c): Promise<ConversionDetail | null> => {
+          const cached = detailsRef.current.get(c.conversionId);
+          if (cached) return cached;
+          try {
+            const detail = await api.conversion(c.conversionId, signal);
+            detailsRef.current.set(c.conversionId, detail);
+            return detail;
+          } catch (e) {
+            if (toConvertError(e).kind === 'gone') return null;
+            throw e;
+          }
+        }),
+      ),
+    [api],
+  );
+
+  /**
+   * The source is known and the rename step is behind us: every format of it is checked against THIS file (SPEC 8.15, 21 v11 items 4-7) before any
+   * runs. A format whose rules need none of the columns the file lacks is ready; one that needs a missing column - required, or used
+   * though optional - needs attention, with the columns named. Then: one ready format runs at once; several formats (or some needing
+   * attention) ask which to make; and when no format can run at all it is the missing-columns stop.
+   *
+   * DECISION: the checks use the headers matching already read (`headersRef`) and the engine's own header mapping (the worker's
+   * `columnGaps`), so the file is not parsed again and a check cannot disagree with a run. Without headers (nothing was read) nothing is
+   * claimed: every format is ready, and the engine's own refusal of a missing required column is still there when it runs.
+   */
+  const settle = useCallback(
+    async (source: SignatureEntry, mapping: Record<string, string>, sourceFile: File, match: ConversionMatch | null, runId: number, signal: AbortSignal): Promise<void> => {
+      setPhase({ kind: 'running', target: null });
+      try {
+        const details = await loadDetails(source, signal);
+        if (runId !== runRef.current) return;
+        // What each format needs that the file does not have, with the renames the user confirmed applied in memory.
+        const checked = details.flatMap((d, at) => (d ? [{ at, rules: withAliases(d.rules, mapping) }] : []));
+        const headers = headersRef.current;
+        const gaps = headers.length > 0 && checked.length > 0 ? await engine.columnGaps({ headers, rules: checked.map((c) => c.rules) }, { signal }) : [];
+        if (runId !== runRef.current) return;
+
+        const ready: SourceConversionRef[] = [];
+        const attention: AttentionFormat[] = [];
+        source.conversions.forEach((c, at) => {
+          const k = checked.findIndex((x) => x.at === at);
+          const needs = k < 0 ? null : attentionOfGaps(gaps[k] ?? []);
+          if (needs) attention.push({ conversionId: c.conversionId, formatId: c.formatId, formatName: c.formatName, attention: needs });
+          else ready.push(c);
+        });
+        // A new column (SPEC 8.15): in the file, unknown to the source, used by no rename, and not dismissed before.
+        const columns = match ? newColumns(match.extra, mapping, source.ignoredHeaders) : [];
+        const notice: NewColumnsNotice | null = columns.length > 0 ? { sourceId: source.sourceId, columns, formats: source.conversions } : null;
+
+        if (attention.length === 0 && source.conversions.length === 1) {
+          void startJob(newJob(sourceFile, source, mapping, [...source.conversions], [], notice), runId, signal);
+          return;
+        }
+        if (ready.length === 0 && attention.every((a) => !canRunAnyway(a.attention))) {
+          // No format can run: today's missing-columns stop, naming the columns and (below it) every format it affects.
+          setPhase({ kind: 'missing', source, missing: requiredAcross(attention.map((a) => a.attention)) });
+          return;
+        }
+        setPhase({ kind: 'formats', source, mapping, ready, attention, notice });
+      } catch (e) {
+        fail(runId, e);
       }
-      setPhase({ kind: 'formats', source, mapping });
     },
-    [startJob],
+    [engine, fail, loadDetails, startJob],
+  );
+
+  /**
+   * The file lacks required columns of the source and has columns nothing claimed: asks which is which - but only for the columns a format
+   * of the source needs. Which formats need one is worked out the way `settle` does it (the worker's `columnGaps`, over the formats' rules).
+   *
+   * DECISION: the source's required columns are those ANY of its formats requires (and on `?format=` the page only runs one of them), so a
+   * missing column may be needed by only some of the formats, or by none that this page runs: the step lists only the formats that need
+   * one of the columns it asks about, and a column no format needs is not asked about at all. When that leaves nothing to ask, the formats are
+   * checked at once, as for a file with nothing to rename.
+   */
+  const askRename = useCallback(
+    async (source: SignatureEntry, match: ConversionMatch, sourceFile: File, runId: number, signal: AbortSignal): Promise<void> => {
+      setPhase({ kind: 'running', target: null });
+      try {
+        const details = await loadDetails(source, signal);
+        if (runId !== runRef.current) return;
+        const known = details.flatMap((d, at) => (d ? [{ conversion: source.conversions[at] as SourceConversionRef, rules: d.rules }] : []));
+        const gaps = known.length > 0 ? await engine.columnGaps({ headers: headersRef.current, rules: known.map((k) => k.rules) }, { signal }) : [];
+        if (runId !== runRef.current) return;
+        const needing = formatsNeeding(
+          match.missingRequired,
+          known.map((k, i) => ({ conversion: k.conversion, gaps: gaps[i] ?? [] })),
+        );
+        const asked = match.missingRequired.filter((h) => (needing.get(h) ?? []).length > 0);
+        if (asked.length === 0) {
+          await settle(source, {}, sourceFile, match, runId, signal);
+          return;
+        }
+        const formats = source.conversions.filter((c) => asked.some((h) => needing.get(h)?.includes(c)));
+        setPhase({ kind: 'mapping', source, match: { ...match, missingRequired: asked }, formats });
+      } catch (e) {
+        fail(runId, e);
+      }
+    },
+    [engine, fail, loadDetails, settle],
   );
 
   /**
    * A source was picked (by the matcher or by the user). Its structure is checked ONCE, here (SPEC 8.15): a required column that
-   * is missing or renamed is dealt with before any format runs, and the step names every format it affects.
+   * is missing while the file has columns nothing claimed is first offered as a rename; what is still missing after that is settled
+   * PER FORMAT (`settle`).
    *
-   * DECISION: the structure step comes BEFORE "which formats?", and it is the source's, not a format's: a source's required
-   * columns are those any of its conversions requires, so a column missing for one format stops all of them (even on
-   * `?format=`, where the list of affected formats is just that page's). The user is asked once, the answer holds for every
-   * format, and the message can name every format it touches, which per-format detection could not do before the user chose.
+   * DECISION (SPEC 21 v11 items 4-7): the rename step stays first and is the source's, not a format's: a source's required columns are those any
+   * of its conversions requires, so the user is asked once, the answer is saved once on the source and holds for every format, and the
+   * step can name the formats that need the columns it asks about (`askRename`). It no longer stops everything, though: after it (or when nothing can stand in for a missing
+   * column) each format is checked on its own, so a format that needs none of the missing columns is made while the ones that do are
+   * listed as needing attention - the user decides what to fix and how, and nothing is changed automatically.
    */
   const selectSource = useCallback(
     (sourceId: string, match: ConversionMatch | null, sourceFile: File, runId: number, signal: AbortSignal) => {
@@ -384,14 +586,15 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         setPhase({ kind: 'error', error: { kind: 'gone' } });
         return;
       }
-      if (match && match.missingRequired.length > 0) {
-        // The source can't run without these columns (a score of 0.9 allows one to be missing).
-        setPhase(match.extra.length > 0 ? { kind: 'mapping', source, match } : { kind: 'missing', source, missing: match.missingRequired });
+      if (match && match.missingRequired.length > 0 && match.unknownExtra.length > 0) {
+        // The source can't run without these columns (a score of 0.9 allows one to be missing), and the file has columns nothing claimed
+        // that the source did not already know. The question is asked only if a format needs a missing column (`askRename`).
+        void askRename(source, match, sourceFile, runId, signal);
         return;
       }
-      proceed(source, {}, sourceFile, runId, signal);
+      void settle(source, {}, sourceFile, match, runId, signal);
     },
-    [proceed],
+    [askRename, settle],
   );
 
   const start = useCallback(
@@ -399,6 +602,9 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
       const { run: runId, signal } = begin();
       fileRef.current = next;
       jobRef.current = null;
+      finishedRef.current = null;
+      headersRef.current = [];
+      detailsRef.current.clear();
       setFile(next);
       setAliasNotSaved(false);
       setPackError(false);
@@ -416,6 +622,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
             return;
           }
           rankedRef.current = out.ranked;
+          headersRef.current = out.headers;
           if (out.pick.kind === 'auto') selectSource(out.pick.match.id, out.pick.match, next, runId, signal);
           else if (out.pick.options.length === 0) setPhase({ kind: 'noMatch' });
           else setPhase({ kind: 'choose', options: out.pick.options });
@@ -438,15 +645,18 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   );
 
   const chooseFormats = useCallback(
-    (conversionIds: readonly string[]) => {
+    (choice: FormatChoice) => {
       const current = phaseRef.current;
       const f = fileRef.current;
       if (current.kind !== 'formats' || !f) return;
-      // In the source's own order, whatever order the boxes were ticked in.
-      const queue = current.source.conversions.filter((c) => conversionIds.includes(c.conversionId));
+      // The formats to make: the chosen ones that are ready and the ones to make anyway, in the source's own order, whatever order the
+      // boxes were ticked in.
+      const queue = current.source.conversions.filter((c) => choice.run.includes(c.conversionId) || choice.anyway.includes(c.conversionId));
       if (queue.length === 0) return;
+      // The formats that needed attention and were not chosen to run are listed with the results (the user skipped them, or has not decided yet).
+      const left = current.attention.filter((a) => !choice.anyway.includes(a.conversionId));
       const { run: runId, signal } = begin();
-      void startJob({ file: f, source: current.source, mapping: current.mapping, queue, index: 0, results: [], failed: [] }, runId, signal);
+      void startJob(newJob(f, current.source, current.mapping, queue, attentionFailures(left, new Set(choice.skipped)), current.notice), runId, signal);
     },
     [begin, startJob],
   );
@@ -459,11 +669,6 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
       const { source } = current;
       const chosen: Record<string, string> = {};
       for (const [header, fileHeader] of Object.entries(mapping)) if (fileHeader) chosen[header] = fileHeader;
-      const stillMissing = current.match.missingRequired.filter((h) => chosen[h] === undefined);
-      if (stillMissing.length > 0) {
-        setPhase({ kind: 'missing', source, missing: stillMissing });
-        return;
-      }
       const { run: runId, signal } = begin();
       setPhase({ kind: 'running', target: null });
       void (async () => {
@@ -488,19 +693,17 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
             );
           }
         }
-        proceed(source, chosen, f, runId, signal);
+        // What the user said is a column, or "it isn't in this file": either way the formats are checked next, one by one.
+        await settle(source, chosen, f, current.match, runId, signal);
       })();
     },
-    [api, begin, proceed],
+    [api, begin, settle],
   );
 
   const setChoice = useCallback((rowNumber: number, choice: RowChoice | null) => {
     setPhase((p) => {
       if (p.kind !== 'review') return p;
-      const choices = { ...p.choices };
-      if (choice === null) delete choices[rowNumber];
-      else choices[rowNumber] = choice;
-      return { ...p, choices };
+      return { ...p, choices: withChoice(p.choices, rowNumber, choice) };
     });
   }, []);
   const keepAll = useCallback(() => setPhase((p) => (p.kind === 'review' ? { ...p, choices: applyToAll(p.rows, 'keep', p.choices) } : p)), []);
@@ -572,7 +775,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
           headers: (['file', 'format', 'source', 'status', 'rowsIn', 'rowsOut', 'flagged', 'note'] as const).map((k) => t(`batch.summary.col.${k}` as const)),
           rows: [
             ...results.map((r) => [f.name, r.target.formatName, r.target.sourceName, t(flagCount(r) > 0 ? 'batch.status.convertedFlags' : 'batch.status.converted'), r.finished.summary.rowsIn, r.finished.summary.rowsOut, flagCount(r), ''] as const),
-            ...failed.map((x) => [f.name, x.formatName, current.source.name, t('batch.status.noMatch'), null, null, 0, failureText(i18nRef.current, x.failure).replace(/[⁦-⁩]/g, '')] as const),
+            ...failed.map((x) => [f.name, x.formatName, current.source.name, t(x.failure.kind === 'attention' ? 'batch.status.needsAttention' : 'batch.status.noMatch'), null, null, 0, failureText(i18nRef.current, x.failure, x.formatName).replace(/[⁦-⁩]/g, '')] as const),
           ].map((row) => [...row]),
         };
         const flags: SummaryTable = {
@@ -604,9 +807,61 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     convertSession.save({ file: f, conversionId: target.conversionId, formatId: target.formatId, ...(job ? { job: { ...job, results: [...job.results], failed: [...job.failed] } } : {}) });
   }, []);
 
+  const editFormat = useCallback((format: { conversionId: string; formatId: string }) => {
+    const f = fileRef.current;
+    if (!f) return;
+    const { conversionId, formatId } = format;
+    if (phaseRef.current.kind === 'formats') {
+      // DECISION (SPEC 21 v11 items 4-7): nothing has run yet, so only the file waits; coming back checks it against the edited rules from the
+      // start (the format may no longer need the missing column), with every format still to be chosen.
+      convertSession.save({ file: f, conversionId, formatId, again: true });
+      return;
+    }
+    // After a run: what was made stays, and that one format is made again with its edited rules (the same trip as "Change the rule").
+    const job = finishedRef.current;
+    const conv = job?.source.conversions.find((c) => c.conversionId === conversionId);
+    if (!job || !conv) return;
+    const others = { results: job.results.filter((r) => r.target.conversionId !== conversionId), failed: job.failed.filter((x) => x.conversionId !== conversionId) };
+    convertSession.save({ file: f, conversionId, formatId, job: { ...job, queue: [conv], index: 0, ...others } });
+  }, []);
+
+  const runAnyway = useCallback(
+    (conversionId: string) => {
+      const job = finishedRef.current;
+      const conv = job?.source.conversions.find((c) => c.conversionId === conversionId);
+      if (!job || !conv) return;
+      const { run: runId, signal } = begin();
+      // What was made stays; this one format is made now, and the values check is not made again for it.
+      void startJob({ ...job, queue: [conv], index: 0, results: [...job.results], failed: job.failed.filter((x) => x.conversionId !== conversionId), bypass: [...job.bypass, conversionId] }, runId, signal);
+    },
+    [begin, startJob],
+  );
+
+  const dismissNewColumns = useCallback(() => {
+    const current = phaseRef.current;
+    if (current.kind !== 'done' && current.kind !== 'results') return;
+    const { notice } = current;
+    if (!notice) return;
+    if (finishedRef.current) finishedRef.current = { ...finishedRef.current, notice: null };
+    setPhase({ ...current, notice: null });
+    // Remembered on the SOURCE, so it does not come back every month: header names only. A failure only means it may be shown again.
+    void api.ignoreHeaders(notice.sourceId, notice.columns).catch(() => undefined);
+    setSources((s) =>
+      s.status === 'ready'
+        ? { status: 'ready', entries: s.entries.map((e) => (e.sourceId === notice.sourceId ? { ...e, ignoredHeaders: [...(e.ignoredHeaders ?? []), ...notice.columns] } : e)) }
+        : s,
+    );
+  }, [api]);
+
   const resume = useCallback((): boolean => {
     const held = convertSession.peek();
     if (!held) return false;
+    if (held.again) {
+      // The file waited for the editor before anything was run: check it again, from the start.
+      convertSession.clear();
+      start(held.file);
+      return true;
+    }
     const { run: runId, signal } = begin();
     fileRef.current = held.file;
     setFile(held.file);
@@ -616,18 +871,21 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
       const listed = entriesRef.current.find((e) => e.conversions.some((c) => c.conversionId === held.conversionId));
       const conv = listed?.conversions.find((c) => c.conversionId === held.conversionId) ?? { conversionId: held.conversionId, formatId: held.formatId, formatName: '', status: 'verified' as const };
       const source: SignatureEntry = listed ? { ...listed, conversions: [conv] } : { sourceId: '', name: '', columns: [], conversions: [conv] };
-      job = { file: held.file, source, mapping: {}, queue: [conv], index: 0, results: [], failed: [] };
+      job = newJob(held.file, source, {}, [conv], [], null);
     }
     void startJob(job, runId, signal);
     return true;
-  }, [begin, startJob]);
+  }, [begin, start, startJob]);
 
   const reset = useCallback(() => {
     runRef.current++;
     abortRef.current?.abort();
     fileRef.current = null;
     rankedRef.current = [];
+    headersRef.current = [];
+    detailsRef.current.clear();
     jobRef.current = null;
+    finishedRef.current = null;
     convertSession.clear();
     setFile(null);
     setAliasNotSaved(false);
@@ -657,6 +915,9 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     downloadOne,
     downloadAll,
     holdForEditing,
+    editFormat,
+    runAnyway,
+    dismissNewColumns,
     resume,
     reset,
   };

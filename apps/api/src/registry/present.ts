@@ -168,6 +168,7 @@ export function signatureEntry(
     sourceId: doc._id!.toHexString(),
     name: doc.name,
     columns: doc.inputSignature.columns.map((c) => ({ header: c.header, aliases: c.aliases, type: c.type, required: c.required })),
+    ...(doc.ignoredHeaders && doc.ignoredHeaders.length > 0 ? { ignoredHeaders: [...doc.ignoredHeaders] } : {}),
     conversions: conversionRefs(conversions, formatNames),
   };
 }

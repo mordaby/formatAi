@@ -150,7 +150,7 @@ describe('"Run deep analysis with AI" completes only what is missing', () => {
     expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
     expect(document.querySelector('[data-line-id="col:Supplier"]')).toBeNull();
     // It is an ordinary result now: there is something to save, and nothing waits for the AI step.
-    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull();
     expect(screen.queryByTestId('ai-step-parts')).toBeNull();
     expect(screen.getByText('Everything you had was kept as it was.', { exact: false })).toBeTruthy();
@@ -202,7 +202,7 @@ describe('"Run deep analysis with AI" completes only what is missing', () => {
     expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
     expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
     // The result can still be delivered as it is (the missing fields are saved as "needs your input"), and the AI step can be tried again.
-    expect(screen.getByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
     expect(finishButton().hasAttribute('disabled')).toBe(false);
   });
 
@@ -350,7 +350,7 @@ describe('"Re-run all with AI" is the whole learn again, behind a confirmation',
     const second = learn.mock.calls[1]![0] as CompletionArgs;
     expect(second).toMatchObject({ ai: 'allowed', tier: 'registered' });
     expect(second.complete).toBeUndefined();
-    expect(await screen.findByRole('button', { name: 'Save format and download' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Save format' })).toBeTruthy();
     expect(document.querySelector('[data-line-id="col:Vendor"]')).toBeNull(); // the user's edit went with the old rules
   });
 

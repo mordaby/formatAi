@@ -4,6 +4,7 @@
 // value edit, never saved to the rules), skip it, or keep it as it is. The engine applies these per-run decisions
 // without touching the saved rules and lists them in the run summary.
 import type { Flag } from '@formatai/engine';
+import type { LearnResult, Rules } from '@formatai/shared';
 import { useId, useState } from 'react';
 import { Cell } from '../../components/Cell';
 import { webConfig } from '../../config';
@@ -13,8 +14,11 @@ import { Badge, Button, Icon } from '../../ui';
 import { columnLabel, fixFields, isolate, tally, type Choices, type ReviewRow, type RowChoice } from './logic';
 import type { Step, Target } from './useConvertFlow';
 
+/** What the review needs of the conversion: its rules (columns are named from them) and, for "Format 2 of 3", the format's name. */
+export type ReviewTarget = { rules: LearnResult | Rules } & Partial<Pick<Target, 'formatName'>>;
+
 export interface ReviewRowsProps {
-  target: Target;
+  target: ReviewTarget;
   /** "Format 2 of 3": set when the file is being made into several formats. */
   step: Step | null;
   rows: readonly ReviewRow[];
@@ -24,7 +28,8 @@ export interface ReviewRowsProps {
   onKeepAll(): void;
   onSkipAll(): void;
   onClear(): void;
-  onChangeRule(): void;
+  /** Opens the rules and comes back. Absent where the rules are already on screen (Result's "Try it on another file"): no button, and the hint says to edit them there. */
+  onChangeRule?(): void;
   onCreate(): void;
 }
 
@@ -40,7 +45,7 @@ export function ReviewRows({ target, step, rows, rowInputs, choices, onChoice, o
       <header className="conv__head">
         {step ? (
           <p className="conv__stepno" data-testid="review-step">
-            {t('conv.review.for', { n: nf.format(step.n), total: nf.format(step.total), format: isolate(target.formatName) })}
+            {t('conv.review.for', { n: nf.format(step.n), total: nf.format(step.total), format: isolate(target.formatName ?? '') })}
           </p>
         ) : null}
         <h2 id="conv-review-title">{t('conv.review.title')}</h2>
@@ -87,14 +92,14 @@ export function ReviewRows({ target, step, rows, rowInputs, choices, onChoice, o
         <Button variant="primary" onClick={onCreate}>
           {t('conv.review.create')}
         </Button>
-        <p className="muted">{t('conv.review.rule.hint')}</p>
+        <p className="muted">{t(onChangeRule ? 'conv.review.rule.hint' : 'conv.review.rule.hint.here')}</p>
       </div>
     </section>
   );
 }
 
 interface RowCardProps {
-  target: Target;
+  target: ReviewTarget;
   row: ReviewRow;
   cells: readonly RowInputCell[];
   choice: RowChoice | undefined;
@@ -102,7 +107,7 @@ interface RowCardProps {
   onFix(): void;
   onCloseFix(): void;
   onChoice(choice: RowChoice | null): void;
-  onChangeRule(): void;
+  onChangeRule: (() => void) | undefined;
 }
 
 function RowCard({ target, row, cells, choice, fixing, onFix, onCloseFix, onChoice, onChangeRule }: RowCardProps) {
@@ -148,9 +153,11 @@ function RowCard({ target, row, cells, choice, fixing, onFix, onCloseFix, onChoi
         <FixEditor row={row} cells={fixFields(row, cells)} onApply={(values) => (onChoice({ action: 'override', values }), onCloseFix())} onCancel={onCloseFix} />
       ) : (
         <div className="rv__actions" role="group" aria-label={t('conv.review.row', { row: row.rowNumber })}>
-          <Button variant="secondary" size="sm" onClick={onChangeRule}>
-            {t('conv.review.action.rule')}
-          </Button>
+          {onChangeRule ? (
+            <Button variant="secondary" size="sm" onClick={onChangeRule}>
+              {t('conv.review.action.rule')}
+            </Button>
+          ) : null}
           <Button variant="secondary" size="sm" onClick={onFix} disabled={cells.length === 0}>
             {t('conv.review.action.fix')}
           </Button>

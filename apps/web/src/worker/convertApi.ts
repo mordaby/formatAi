@@ -1,7 +1,7 @@
 // The worker methods of "convert a file" (SPEC 5 C, 5 D, 8.15, 21 v5 item 5): types only, re-exported from engineApi.ts so the
 // rest of the app sees one worker surface. Matching a file to a saved SOURCE, running one of its conversions with the user's row
 // decisions (the review happens BEFORE the file is written), and packing a batch into a zip and a summary workbook.
-import type { ConversionMatch, ConversionPick, Flag, OutputSheet, RowDecisions, RunError, RunSummary } from '@formatai/engine';
+import type { ConversionMatch, ConversionPick, Flag, InputColumnGap, OutputSheet, RowDecisions, RunError, RunSummary, UnlikeColumn } from '@formatai/engine';
 import type { LearnResult, Rules, SignatureColumn } from '@formatai/shared';
 import type { FileBytes } from './engineApi';
 
@@ -25,6 +25,8 @@ export interface SignatureInput {
   /** The source's name, shown next to the score in the "which source is this file?" list. */
   name: string;
   columns: SignatureColumn[];
+  /** The source's `ignoredHeaders`: headers it already knows, which are never offered as a renamed column. Names only. */
+  ignoredHeaders?: string[];
 }
 
 export interface MatchFileArgs {
@@ -43,6 +45,17 @@ export type MatchFileOutput =
       pick: ConversionPick;
     }
   | { ok: false; reason: 'unreadable' | 'noTable' };
+
+// ---------- which columns a conversion needs that a file lacks (SPEC 8.15, 21 v11 items 4-7) ----------
+
+/** Headers of a file (as matching read them) and the rules of the conversions it may run: no file, no value, so nothing is parsed again. */
+export interface ColumnGapsArgs {
+  headers: string[];
+  rules: (LearnResult | Rules)[];
+}
+
+/** Per conversion (in the order sent): the columns it needs that the file does not have - required ones, and used ones that are optional. */
+export type ColumnGapsOutput = InputColumnGap[][];
 
 // ---------- running a conversion, with the user's decisions about flagged rows ----------
 
@@ -76,6 +89,11 @@ interface ConvertRunBase {
   flags: Flag[];
   summary: RunSummary;
   fileType: 'xlsx' | 'csv' | 'txt';
+  /**
+   * "Same name, different meaning" (SPEC 8.15, 21 v11 items 4-7): the used columns whose values mostly failed to parse as the saved type
+   * (`limits.matching.parseFailShare`). Counts only; absent when there are none.
+   */
+  unlike?: UnlikeColumn[];
 }
 
 export type ConvertRunOutput =

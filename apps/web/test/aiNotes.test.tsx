@@ -176,7 +176,7 @@ describe('never persisted', () => {
     const { engine } = engineWith((a) => answerWithNotes(a));
     await toResult(engine, api);
     await run();
-    const save = (await screen.findByRole('button', { name: 'Save format and download' })) as HTMLButtonElement;
+    const save = (await screen.findByRole('button', { name: 'Save format' })) as HTMLButtonElement;
     await waitFor(() => expect(save.disabled).toBe(false));
     fireEvent.click(save);
     await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));

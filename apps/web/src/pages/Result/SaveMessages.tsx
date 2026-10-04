@@ -28,14 +28,6 @@ export function SaveFailureMessage({ failure, onSignIn, problemsTitle }: SaveFai
     if (sessionGone) void refresh();
   }, [sessionGone, refresh]);
 
-  if (failure.kind === 'download') {
-    return (
-      <InlineMessage tone="warn" actions={<Link to="/formats">{t('save.viewFormats')}</Link>}>
-        {t('save.downloadFailed')}
-      </InlineMessage>
-    );
-  }
-
   if (failure.code === 'signInRequired') {
     return (
       <InlineMessage

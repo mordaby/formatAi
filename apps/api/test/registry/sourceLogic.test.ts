@@ -6,7 +6,7 @@ import { ObjectId } from 'mongodb';
 import { describe, expect, it } from 'vitest';
 import type { SourceDoc } from '../../src/models.js';
 import { checkRulesFile, withMeta } from '../../src/registry/rules.js';
-import { applySource, mergeForReuse, mergeFromEdit, pickReusableSource, withDerivedRequired, withSourceAliases } from '../../src/registry/sourceLogic.js';
+import { applySource, mergeForReuse, mergeFromEdit, newIgnoredHeaders, pickReusableSource, unusedExampleHeaders, withDerivedRequired, withSourceAliases } from '../../src/registry/sourceLogic.js';
 import { edited, sourceOne, sourceTwo } from './helpers.js';
 
 function asRules(learn: LearnResult): Rules {
@@ -76,12 +76,87 @@ describe('mergeForReuse (saving a conversion into an existing source)', () => {
     expect(g.ok).toBe(false);
     if (!g.ok) expect(g.problems.map((p) => p.path)).toEqual(['input.headerRow', 'input.stopAt']);
 
+    // a check that leaves rows out must agree (a flag check need not: see below)
     const check = edited(one(), (r) => {
-      r.validations.push({ column: 'amount', rule: 'range', min: 0, severity: 'flag' });
+      r.validations.push({ column: 'amount', rule: 'range', min: 0, severity: 'block' });
     });
     const v = mergeForReuse(source, check);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.problems.map((p) => p.path)).toEqual(['validations']);
+  });
+
+  // SPEC 8.15 "The source lock": input checks are the source's per column; a conversion is held only to those on its columns.
+  describe('input checks, per column', () => {
+    const required = (column: string, severity: 'flag' | 'block' = 'flag') => ({ column, rule: 'required', severity }) as const;
+    /** A source learned from a conversion that reads ID and Amount and carries a check on each. */
+    const wide = (): SourceStructure => sourceOf(edited(one(), (r) => { r.validations = [required('id'), required('amount')]; }));
+    const onlyId = (): Rules =>
+      edited(one(), (r) => {
+        r.input.columns = [r.input.columns[0]!];
+        r.transform.computed = [];
+        r.output.columns = [{ header: 'ID', from: 'id' }];
+      });
+
+    it('a conversion that reads fewer columns, so lacks the checks on the ones it does not read, fits and changes nothing', () => {
+      const subset = edited(onlyId(), (r) => { r.validations = [required('id')]; });
+      expect(mergeForReuse(wide(), subset)).toMatchObject({ ok: true, changed: false });
+      expect(mergeForReuse(wide(), onlyId())).toMatchObject({ ok: true, changed: false });
+    });
+
+    it('DECISION: a flag check only the conversion has, on a column both read, is merged into the source (the union)', () => {
+      const more = edited(one(), (r) => { r.validations = [required('id'), { column: 'amount', rule: 'range', min: 0, severity: 'flag' }]; });
+      const r = mergeForReuse(wide(), more);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.changed).toBe(true);
+      expect(r.structure.inputValidations).toEqual([required('ID'), required('Amount'), { column: 'Amount', rule: 'range', min: 0, severity: 'flag' }]);
+      // the source itself was not touched, and the conversion still honours the lock of the merged source
+      expect(wide().inputValidations).toHaveLength(2);
+      expect(checkSourceLock(more, r.structure)).toEqual([]);
+    });
+
+    it('a flag check only the source has is not a mismatch: the source keeps it and nothing changes', () => {
+      const lacking = edited(one(), (r) => { r.validations = [required('id')]; });
+      const r = mergeForReuse(wide(), lacking);
+      expect(r).toMatchObject({ ok: true, changed: false });
+      if (r.ok) expect(r.structure.inputValidations).toEqual(wide().inputValidations);
+    });
+
+    it('a block check only one side has, on a column both read, does not fit', () => {
+      const block = edited(one(), (r) => { r.validations = [required('id'), required('amount', 'block')]; });
+      const a = mergeForReuse(wide(), block);
+      expect(a.ok).toBe(false);
+      if (!a.ok) expect(a.problems.map((p) => p.path)).toEqual(['validations']);
+      const source = sourceOf(block);
+      const b = mergeForReuse(source, edited(one(), (r) => { r.validations = [required('id')]; }));
+      expect(b.ok).toBe(false);
+      // ...but on a column the conversion doesn't read it is none of its business
+      expect(mergeForReuse(source, onlyId())).toMatchObject({ ok: true, changed: false });
+    });
+
+    it('checks on a column only the conversion reads are added to the source, whatever their severity', () => {
+      const withNote = edited(one(), (r) => {
+        r.input.columns.push({ id: 'note', header: 'Note', type: 'text' });
+        r.validations = [required('id'), required('note', 'block')];
+      });
+      const r = mergeForReuse(wide(), withNote);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.changed).toBe(true);
+      expect(r.structure.inputSignature.columns.map((c) => c.header)).toEqual(['ID', 'Amount', 'Note']);
+      expect(r.structure.inputValidations).toEqual([required('ID'), required('Amount'), required('Note', 'block')]);
+      expect(checkSourceLock(withNote, r.structure)).toEqual([]);
+    });
+
+    it('finds the shared column the way the engine does: a header spelled another way is the same column', () => {
+      const shouting = edited(one(), (r) => {
+        r.input.columns[1]!.header = 'AMOUNT';
+        r.validations = [required('id'), { column: 'amount', rule: 'range', min: 0, severity: 'flag' }];
+      });
+      const r = mergeForReuse(wide(), shouting);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.structure.inputValidations.at(-1)).toEqual({ column: 'Amount', rule: 'range', min: 0, severity: 'flag' });
+    });
   });
 });
 
@@ -123,6 +198,47 @@ describe('applySource (a source edit reaches a conversion)', () => {
     expect(applied.problems.length).toBeGreaterThan(0);
   });
 
+  it("DECISION: gives a conversion only the source's input checks on the columns IT declares (another column's would refer to one the rules lack)", () => {
+    const source: SourceStructure = {
+      ...sourceOf(one()),
+      inputValidations: [
+        { column: 'ID', rule: 'required', severity: 'flag' },
+        { column: 'Amount', rule: 'range', min: 0, severity: 'block' },
+      ],
+    };
+    const onlyId = edited(one(), (r) => {
+      r.input.columns = [r.input.columns[0]!];
+      r.transform.computed = [];
+      r.output.columns = [{ header: 'ID', from: 'id' }];
+    });
+    const applied = applySource(onlyId, source);
+    expect(applied.needsReview).toBe(false);
+    expect(applied.rules.validations).toEqual([{ column: 'id', rule: 'required', severity: 'flag' }]);
+    expect(checkSourceLock(applied.rules, source)).toEqual([]);
+    // the one that reads both gets both, turned back into its own ids
+    expect(applySource(one(), source).rules.validations).toEqual([
+      { column: 'id', rule: 'required', severity: 'flag' },
+      { column: 'amount', rule: 'range', min: 0, severity: 'block' },
+    ]);
+  });
+
+  it("a flag check another conversion brought to a shared column comes along; the conversion's output validations stay", () => {
+    const source: SourceStructure = { ...sourceOf(one()), inputValidations: [{ column: 'Amount', rule: 'range', min: 0, severity: 'flag' }] };
+    const target = edited(one(), (r) => { r.validations = [{ on: 'output', column: 'Total', rule: 'unique', severity: 'flag' }]; });
+    const applied = applySource(target, source);
+    expect(applied.rules.validations).toEqual([
+      { column: 'amount', rule: 'range', min: 0, severity: 'flag' },
+      { on: 'output', column: 'Total', rule: 'unique', severity: 'flag' },
+    ]);
+    expect(applied.needsReview).toBe(false);
+  });
+
+  it("a check on no column of the source (a computed column's) is written as it is", () => {
+    const check = { column: 'total', rule: 'range', min: 0, severity: 'flag' } as const;
+    const source: SourceStructure = { ...sourceOf(one()), inputValidations: [check] };
+    expect(applySource(edited(one(), (r) => { r.validations = [check]; }), source).rules.validations).toEqual([check]);
+  });
+
   it('is a no-op for a conversion already as the source says', () => {
     const applied = applySource(one(), sourceOf(one()));
     expect(applied).toMatchObject({ changed: false, needsReview: false, problems: [] });
@@ -161,6 +277,39 @@ describe('mergeFromEdit (an input-side edit made from a conversion’s rules map
     expect(structure).toEqual(source);
     // ...and the conversion is brought to it
     expect(applySource(after, structure).rules.input.columns[0]!.header).toBe('ID');
+  });
+
+  it("its input checks replace the source's on the columns the conversion declares; the source's checks on every other column stay", () => {
+    const before = edited(one(), (r) => {
+      r.validations = [{ column: 'id', rule: 'required', severity: 'flag' }, { column: 'amount', rule: 'range', min: 0, severity: 'flag' }];
+    });
+    const own = sourceOf(before);
+    const source: SourceStructure = {
+      ...own,
+      inputSignature: { columns: [...own.inputSignature.columns, { header: 'Note', aliases: [], type: 'text', required: false }] },
+      inputValidations: [...own.inputValidations, { column: 'Note', rule: 'required', severity: 'block' }],
+    };
+    // the edit drops the check on ID, changes the one on Amount, and renames ID
+    const after = edited(before, (r) => {
+      r.input.columns[0]!.header = 'Identifier';
+      r.input.columns[0]!.aliases = ['ID'];
+      r.validations = [{ column: 'amount', rule: 'range', min: 1, severity: 'flag' }];
+    });
+    expect(mergeFromEdit(source, after, before).structure.inputValidations).toEqual([
+      { column: 'Note', rule: 'required', severity: 'block' }, // a column this conversion doesn't read: not its to change
+      { column: 'Amount', rule: 'range', min: 1, severity: 'flag' },
+    ]);
+    // a column the edit adds brings its checks, named as the source names it
+    const more = edited(before, (r) => {
+      r.input.columns.push({ id: 'qty', header: 'Quantity', type: 'integer' });
+      r.validations.push({ column: 'qty', rule: 'required', severity: 'block' });
+    });
+    expect(mergeFromEdit(source, more, before).structure.inputValidations).toEqual([
+      { column: 'Note', rule: 'required', severity: 'block' },
+      { column: 'ID', rule: 'required', severity: 'flag' },
+      { column: 'Amount', rule: 'range', min: 0, severity: 'flag' },
+      { column: 'Quantity', rule: 'required', severity: 'block' },
+    ]);
   });
 
   it('never drops an alias another conversion relies on (aliases only grow from an editor save)', () => {
@@ -246,5 +395,19 @@ describe('pickReusableSource (the same matching and threshold as flow C)', () =>
     const big = sourceDoc('Big', wide); // 10 required + Amount
     const headers = wide.input.columns.map((c) => c.header).filter((h) => h !== 'C8'); // 1 of 10 required missing -> 0.9
     expect(pickReusableSource([big], headers)).toBeNull();
+  });
+});
+
+describe('headers a source needs no "new column" notice for', () => {
+  it('newIgnoredHeaders: trimmed, never empty, one per normalized header, and none the source already ignores', () => {
+    expect(newIgnoredHeaders([], ['  Notes ', 'notes', '', '   ', 'Created by'])).toEqual(['Notes', 'Created by']);
+    expect(newIgnoredHeaders(['Notes'], ['NOTES', 'Remark', 'remark'])).toEqual(['Remark']);
+    expect(newIgnoredHeaders(['Notes'], [])).toEqual([]);
+  });
+
+  it("unusedExampleHeaders: the example's columns no source column stands for (header, alias or normalized), blanks left out", () => {
+    const columns = sourceOf(edited(one(), (r) => { r.input.columns[0]!.aliases = ['Identifier']; })).inputSignature.columns;
+    expect(unusedExampleHeaders({ columns }, ['Identifier', 'id ', 'Amount', 'Notes', '', 'Created by'])).toEqual(['Notes', 'Created by']);
+    expect(unusedExampleHeaders({ columns }, [])).toEqual([]);
   });
 });

@@ -56,7 +56,7 @@ import {
 import { applyFormat, headerRenames } from './propagate.js';
 import { checkRulesFile, formatFields, lockProblems, plain, signatureOf, withMeta, type RulesCheck } from './rules.js';
 import { commitSource, planName, planSource, settleSource } from './sourceResolve.js';
-import { applySource, mergeFromEdit, structureOfDoc, withSourceAliases } from './sourceLogic.js';
+import { applySource, inputChecksEdited, mergeFromEdit, structureOfDoc, withSourceAliases } from './sourceLogic.js';
 import { addSourceAlias, formatNamesOf, registerSourceRoutes } from './sourceRoutes.js';
 import { countSourceFormats, isDuplicateKey, propagateSource, renameSource, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
 
@@ -210,7 +210,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       await refund();
       throw err;
     }
-    await settleSource(d, caller.ownerId, source.id, planned.plan, now);
+    await settleSource(d, caller.ownerId, source.id, planned.plan, now, choice.inputHeaders);
 
     const response: CreateFormatResponse = {
       format: formatSummary(formatDoc, aggregateSources([conversionDoc])),
@@ -367,7 +367,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       if (source.created) await d.sources.deleteOne({ _id: source.id, ownerId: caller.ownerId }).catch(() => undefined);
       throw err;
     }
-    await settleSource(d, caller.ownerId, source.id, planned.plan, now);
+    await settleSource(d, caller.ownerId, source.id, planned.plan, now, choice.inputHeaders);
 
     const response: AttachSourceResponse = {
       conversion: conversionSummary(doc, sourceName),
@@ -470,7 +470,8 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     // takes the change, this conversion is brought to the source (aliases the source has and it doesn't), and the others follow below.
     let sourceEdit: { structure: SourceStructure; renames: Map<string, string> } | null = null;
     const structure = structureOfDoc(source);
-    if (checkSourceLock(rules, structure).length > 0) {
+    // (The lock lets a flag check differ from the source's, so an edit of the conversion's own input checks counts as one too.)
+    if (checkSourceLock(rules, structure).length > 0 || inputChecksEdited(rules, before)) {
       const merge = mergeFromEdit(structure, rules, before);
       const applied = applySource(rules, merge.structure);
       if (applied.needsReview) return fail(reply, 422, { error: 'sourceMismatch', problems: applied.problems });

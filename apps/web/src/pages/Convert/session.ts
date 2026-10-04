@@ -13,6 +13,11 @@ export interface ConvertSession {
    * renames confirmed for this run, so coming back continues where it stopped. Absent: just the one conversion is run again.
    */
   job?: Job;
+  /**
+   * The user left from a format that needs attention before anything had run (SPEC 21 v11 items 4-7): the file is checked again from the start,
+   * against the format as edited, with every format still to be chosen.
+   */
+  again?: boolean;
 }
 
 let current: ConvertSession | null = null;

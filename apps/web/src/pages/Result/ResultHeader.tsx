@@ -87,7 +87,7 @@ export interface ResultHeaderProps {
   onRedo(): void;
   /** The rules differ from the last saved (or learned) version: "Unsaved changes" sits next to the Save button. */
   unsaved?: boolean | undefined;
-  /** The header's primary action(s): "Save format and download", "Finish with the AI step", "Save changes", and the line under it. */
+  /** The header's primary action(s): "Save format" (and "Download the file" beside it), "Finish with the AI step", "Save changes", and the line under it. */
   actions: ReactNode;
 }
 

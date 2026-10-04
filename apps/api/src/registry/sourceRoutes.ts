@@ -7,10 +7,12 @@
 //   PATCH  /api/sources/:id              rename, and/or edit the structure: a new version, written to every conversion of it
 //   DELETE /api/sources/:id              only when it feeds no format (409 sourceInUse)
 //   POST   /api/sources/:id/aliases      a confirmed column mapping, saved once for every format the source feeds
+//   POST   /api/sources/:id/ignored-headers   file headers the user dismissed as "new column" (names only), remembered per source
 import { deepEqual, findSourceColumn, sourceHeaderKey } from '@formatai/engine';
 import {
   limits,
   type ApiErrorBody,
+  type IgnoreHeadersResponse,
   type SourceColumn,
   type SourceStructure,
   type UpdateSourceResponse,
@@ -19,11 +21,11 @@ import type { FastifyInstance } from 'fastify';
 import type { ObjectId } from 'mongodb';
 import type { AppDb } from '../db.js';
 import type { SourceDoc } from '../models.js';
-import { isRecord, nameKey, parseAlias, parseSourceUpdate } from './bodies.js';
+import { isRecord, nameKey, parseAlias, parseIgnoredHeaders, parseSourceUpdate } from './bodies.js';
 import { fail, type RegistryContext } from './context.js';
 import { sourceDetail, sourceSummary } from './present.js';
 import { structureOfDoc } from './sourceLogic.js';
-import { isDuplicateKey, propagateSource, renameSource, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
+import { addIgnoredHeaders, isDuplicateKey, propagateSource, renameSource, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
 
 /** Format id (hex) -> name, for the formats of `conversions`. */
 export async function formatNamesOf(d: AppDb, ownerId: ObjectId, conversions: readonly { formatId: ObjectId }[]): Promise<Map<string, string>> {
@@ -196,6 +198,23 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RegistryContext)
         columns: res.source.inputSignature.columns.map((c) => ({ header: c.header, aliases: c.aliases, type: c.type, required: c.required })),
       },
     });
+  });
+
+  // SPEC 8.15: "New column in this file" was dismissed. The headers (names only) are remembered on the source so the notice does not
+  // come back every month. Not an edit of the structure: no new version, no conversion touched; owner-scoped like every source route.
+  app.post('/api/sources/:id/ignored-headers', async (req, reply) => {
+    const g = guard(req, reply);
+    if (!g) return reply;
+    const { db: d, caller } = g;
+    const source = await ownedSource(d, caller, idParam(req));
+    if (!source) return fail(reply, 404, { error: 'notFound' });
+    const headers = isRecord(req.body) ? parseIgnoredHeaders(req.body) : null;
+    if (!headers) return fail(reply, 400, { error: 'invalidRequest' });
+
+    const ignoredHeaders = await addIgnoredHeaders(d, caller.ownerId, source._id!, headers);
+    if (!ignoredHeaders) return fail(reply, 404, { error: 'notFound' });
+    const body: IgnoreHeadersResponse = { ignoredHeaders };
+    return reply.send(body);
   });
 }
 

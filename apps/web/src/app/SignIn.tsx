@@ -9,7 +9,7 @@ import { useMe } from './Me';
 import { redirectTo } from './redirect';
 
 /** Why the wall opened: a plain "Sign in", "you ran into a limit", "finish with the AI step", or "see your formats". */
-export type SignInReason = 'save' | 'keepGoing' | 'ai' | 'formats';
+export type SignInReason = 'save' | 'download' | 'keepGoing' | 'ai' | 'formats';
 
 export interface SignInApi {
   /** Opens the sign-in wall (SPEC 5 E). Does nothing when someone is already signed in. */
@@ -34,6 +34,7 @@ export function useSignIn(): SignInApi {
 
 const REASON_TEXT: Record<SignInReason, MessageKey> = {
   save: 'signIn.save',
+  download: 'signIn.download',
   keepGoing: 'signIn.keepGoing',
   ai: 'signIn.ai',
   formats: 'signIn.formats',

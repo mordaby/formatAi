@@ -1,8 +1,8 @@
 // SPEC 11 (v3 rewrite, SPEC 21 "v3 changes" #3): free / registered / paid tiers.
 // All numbers here are starting placeholders (SPEC 20.4), to be tuned from
 // `limit_hit` event data. B2B is the business (SPEC 1); the public app's free and
-// registered tiers are a demand funnel, and batch conversion is a paid-only feature
-// (SPEC 21: "batch is paid only").
+// registered tiers are a demand funnel. One Run screen serves every tier that has saved formats
+// (SPEC 5 C/D, 21 v11): one file or several, and `filesPerRun` is how many it takes at once.
 
 export type Tier = 'anonymous' | 'registered' | 'paid';
 
@@ -23,7 +23,10 @@ export interface TierLimits {
   maxFileBytes: number;
   maxRowsPerFile: number;
   maxColumns: number;
-  /** SPEC 11 "Files per run": 1 for free/registered; paid can batch up to this many. */
+  /**
+   * SPEC 11 "Files per run": how many files the Run screen takes at once (1 = a single file; more = a batch). Free has no saved
+   * formats, so its one file is the rules it just learned, tried from the Result screen (nothing saved).
+   */
   filesPerRun: number;
   /** Rows shown on screen; `null` means the full result can be downloaded. */
   previewRows: number | null;
@@ -71,7 +74,7 @@ export const tiers: Record<Tier, TierLimits> = {
     maxFileBytes: 25 * 1024 * 1024,
     maxRowsPerFile: 5_000,
     maxColumns: 50,
-    filesPerRun: 1,
+    filesPerRun: 5,
     previewRows: null,
     fullDownload: true,
     savedFormats: 3,
@@ -85,7 +88,8 @@ export const tiers: Record<Tier, TierLimits> = {
     maxFileBytes: 100 * 1024 * 1024,
     maxRowsPerFile: 100_000,
     maxColumns: 150,
-    // SPEC 11 "Files per run": "batch, up to 50".
+    // DECISION: 50 stays the paid maximum. Every converted file is held in memory until the zip is made, so the limit follows
+    // what a browser tab can hold (100,000 rows per file is the worst case), not what the engine could process.
     filesPerRun: 50,
     previewRows: null,
     fullDownload: true,

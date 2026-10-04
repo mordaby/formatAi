@@ -1,7 +1,6 @@
 import { lazy, Suspense } from 'react';
-import { Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import AddSourcePage from '../pages/AddSource';
-import BatchPage from '../pages/Batch';
 import ConvertPage from '../pages/Convert';
 import FormatPage from '../pages/Format';
 import EditSourcePage from '../pages/Format/EditSource';
@@ -55,6 +54,12 @@ function ResultRoute() {
   return <ResultPage {...flow} />;
 }
 
+/** /batch was the paid-only batch page: batch is part of the Run screen now (SPEC 21 v11), so old links land there, query string and all (`?format=`). */
+function BatchRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={{ pathname: '/convert', search }} replace />;
+}
+
 export function App() {
   return (
     <MeProvider>
@@ -70,7 +75,7 @@ export function App() {
                 <Route path="/formats/:id/add-source" element={<AddSourcePage />} />
                 <Route path="/formats/:id/sources/:conversionId" element={<ResultRoute />} />
                 <Route path="/convert" element={<ConvertPage />} />
-                <Route path="/batch" element={<BatchPage />} />
+                <Route path="/batch" element={<BatchRedirect />} />
                 <Route path="/business" element={<PlaceholderPage title="footer.business" />} />
                 <Route path="/privacy" element={<PlaceholderPage title="footer.privacy" />} />
                 <Route path="/terms" element={<PlaceholderPage title="footer.terms" />} />
