@@ -2,7 +2,7 @@
 // the format's name. Leaving the screen (to read the privacy page, say) and coming back finds the edits where they
 // were, and opening the sign-in wall never touches them (SPEC 5 E: "the learned rules survive sign-in").
 import type { AiColumnNote } from '@formatai/shared';
-import { EditorStore, type EditableRules } from '../../editor';
+import { EditorStore, withOpenQuestion, type EditableRules } from '../../editor';
 import type { LearnOutput } from '../../worker/engineApi';
 
 /** Where a learn was saved (SPEC 8.12): from then on the screen is the editor of that source, and its address is the source's own. */
@@ -45,11 +45,23 @@ export function defaultFormatName(fileName: string | undefined, fallback: string
   return stem === '' ? fallback : stem;
 }
 
+/**
+ * The rules the screen starts from. The free engine's own result already has each ambiguous column built from its data reading with the check that
+ * marks the question as open. An answer of the AI step (a whole learn) wrote such a column its own way - the example fits that and the others
+ * just as well, and the AI step saw the same rows - so the same default is put in its place (SPEC 21 v12 item 11: the question is asked whether
+ * or not the AI step ran). Both readings fit every row, so the verification still holds. A column whose reading cannot be applied is left as it is.
+ */
+export function startingRules(result: LearnOutput): EditableRules {
+  let rules: EditableRules = result.rules!;
+  if (result.path === 'llm') for (const column of result.ambiguous ?? []) rules = withOpenQuestion(rules, column) ?? rules;
+  return rules;
+}
+
 export function getResultSession(result: LearnOutput, defaultName: string): ResultSession {
   let s = sessions.get(result);
   if (!s) {
     // The caller only shows the screen for a result with rules.
-    s = { store: new EditorStore(result.rules!), name: defaultName, ...(result.aiNotes && result.aiNotes.length > 0 ? { aiNotes: [...result.aiNotes] } : {}) };
+    s = { store: new EditorStore(startingRules(result)), name: defaultName, ...(result.aiNotes && result.aiNotes.length > 0 ? { aiNotes: [...result.aiNotes] } : {}) };
     sessions.set(result, s);
   }
   return s;

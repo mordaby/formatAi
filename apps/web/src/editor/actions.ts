@@ -531,8 +531,8 @@ function removeTable(rules: EditableRules, name: string): Out {
 
 // ---------- the dispatcher ----------
 
-/** Actions that change the rules. (markException / unmarkException / setAdvancedJson are handled by the model.) */
-export type RulesAction = Exclude<EditAction, { type: 'markException' | 'unmarkException' | 'setAdvancedJson' }>;
+/** Actions that change the rules. (markException / unmarkException / setAdvancedJson / replaceRules are handled by the model.) */
+export type RulesAction = Exclude<EditAction, { type: 'markException' | 'unmarkException' | 'setAdvancedJson' | 'replaceRules' }>;
 
 export function applyRulesAction(rules: EditableRules, a: RulesAction): Out {
   switch (a.type) {

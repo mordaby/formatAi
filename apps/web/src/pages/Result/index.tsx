@@ -10,6 +10,7 @@ import { aiLeftLabel } from '../../app/aiQuota';
 import { LeaveDialog } from '../../app/LeaveGuard';
 import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
+import { lineIds } from '../../editor';
 import { useSignIn } from '../../app/SignIn';
 import { Cell } from '../../components/Cell';
 import type { AiInfo } from '../../flow/learnFlow';
@@ -23,6 +24,7 @@ import { Versions } from '../Format/Versions';
 import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
 import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
+import { UnfinishedRows } from './UnfinishedRows';
 import { applyCompletionNotes, defaultFormatName, getResultSession, sourcePath, type SavedSource } from './session';
 import { TryAnotherFile } from './TryAnotherFile';
 import { useCompletion } from './useCompletion';
@@ -329,6 +331,11 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // click is not left looking like it did nothing. (With fields missing the AI step starts by itself, see `autoStart`.)
   const aiNotNeeded = session.deepAnalysis && me.user !== null && !source && !partial && !completed && result.path === 'local';
 
+  // The AI step could not finish (SPEC 21 v12 item 12): its best answer is on screen and not every row matches - the learning loop stopped (no
+  // progress, a cap, nothing more to send) or the answer was kept with differences for another reason. The rows that still differ are shown, per
+  // column, with the two ways forward (UnfinishedRows). A completion answer is only ever applied when it matches, so this is the whole learn's.
+  const unfinished = !source && !completed && result.path === 'llm' && result.verification?.verified === false;
+
   const banners = (info: WorkbenchInfo) => (
     <>
       {aiNotNeeded && (
@@ -358,6 +365,14 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
             else if (file) download.run(file, kept.store.getState().rules);
           }}
           downloading={download.status === 'busy'}
+        />
+      )}
+      {unfinished && (
+        <UnfinishedRows
+          rules={info.rules}
+          live={info.live}
+          onFix={(header) => info.openLine(lineIds.col(header))}
+          onLeave={(index) => void info.editor.apply({ type: 'setColumnMethod', index, method: { kind: 'empty' } })}
         />
       )}
       {match.format && !match.dismissed && (
@@ -406,6 +421,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         tier={me.tier}
         partial={partial}
         aiNotes={aiNotes}
+        ambiguous={result.ambiguous}
         analysing={analysing}
         verification={completed ? completed.verification : result.verification}
         name={name}

@@ -179,7 +179,12 @@ export type EditAction =
   | { type: 'markException'; row: number }
   | { type: 'unmarkException'; row: number }
   // Advanced view
-  | { type: 'setAdvancedJson'; text: string };
+  | { type: 'setAdvancedJson'; text: string }
+  /**
+   * Whole new rules built by code (an answer to the ambiguity question, `readings.ts`): checked like any edit (schema, references, types),
+   * one undo step. Never a user's own edit of the JSON: that is `setAdvancedJson`.
+   */
+  | { type: 'replaceRules'; rules: EditableRules };
 
 export type EditActionType = EditAction['type'];
 
