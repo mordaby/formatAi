@@ -1,11 +1,18 @@
 // Small pure helpers of the Result screen: which "please check" entries a line owns, what the example shows for a
 // column, and defaults for the things the map's "Add" buttons create.
+import type { AmbiguousColumn } from '@formatai/engine';
 import type { PayloadCell } from '@formatai/shared';
 import { effectiveEndSummaryRows, lineIds, sourceOptions, type EditableRules, type EditAction } from '../../editor';
 import { editorConfig } from '../../editor/config';
 import { outputColumnType } from '../../editor/rulesUtil';
 import type { Line } from '../../rulesText';
 import type { ColumnCheck, LiveCheckResult } from '../../worker/editorApi';
+
+/** The ambiguity questions on screen (SPEC 21 v12 items 11, 16): those of the completion's answer first, then the learn's own; one question per column. */
+export function questionsOf(...lists: (readonly AmbiguousColumn[] | undefined)[]): AmbiguousColumn[] | undefined {
+  const all = lists.flatMap((l) => l ?? []).filter((q, i, a) => a.findIndex((x) => x.header === q.header) === i);
+  return all.length > 0 ? all : undefined;
+}
 
 /** The rule for this column mostly fails against the example: fewer than `mostlyFailsBelow` of the counted rows match in it. */
 export function isFailingColumn(check: ColumnCheck | undefined): boolean {

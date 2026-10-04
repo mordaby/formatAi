@@ -6,6 +6,7 @@ import {
   ambiguousColumns,
   analyzePair,
   convertFile,
+  dayMonthQuestions,
   detectTable,
   isExternalColumn,
   learnFromExamples,
@@ -78,8 +79,10 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
   // The rules editor's live check (SPEC 8.11) re-runs rules on this example; it stays in the worker.
   // Its input's columns come with it: the editor offers the ones no rule uses yet (headers only; the file stays here).
   if (!analysis || !result.rules) return result;
-  // The columns the example fits more than one rule for are a question for the user, whatever path built the rules (the free engine's, or the AI step's).
-  const ambiguous = ambiguousColumns(analysis);
+  // The columns the example fits more than one rule for are a question for the user, whatever path built the rules (the free engine's, or the AI step's):
+  // a constant the input could write too, and - after an AI answer - the day/month order of a text date that no value settles (SPEC 21 v12 item 16).
+  // A column asks one question: the first one stands.
+  const ambiguous = [...ambiguousColumns(analysis), ...dayMonthQuestions(result.rules, result.ambiguities ?? [])].filter((q, i, all) => all.findIndex((x) => x.header === q.header) === i);
   return {
     ...result,
     exampleId: rememberExample(analysis, args.keepExampleId),

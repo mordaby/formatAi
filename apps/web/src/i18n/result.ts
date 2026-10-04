@@ -123,6 +123,10 @@ export const resultEn = {
   'ask.unsure': 'Not sure yet',
   'ask.kept': 'Not sure yet. For now: {rule}. We flag a row where {other} would give a different value.',
   'ask.reopen': 'Choose',
+  'ask.question.dayMonthOrder': '{column}: day/month or month/day?',
+  'ask.order.dayMonth': 'day/month',
+  'ask.order.monthDay': 'month/day',
+  'ask.kept.plain': 'Not sure yet. For now: {rule}.',
 
   // ----- what code filled in an AI answer from the example (SPEC 21 v12 item 16): one quiet line under the title -----
   'filled.lead': 'Completed from your example: {items}',
@@ -590,6 +594,10 @@ export const resultHe: Record<keyof typeof resultEn, string> = {
   'ask.unsure': 'עוד לא בטוחים',
   'ask.kept': 'עוד לא בטוחים. בינתיים: {rule}. נסמן שורה שבה {other} היה נותן ערך אחר.',
   'ask.reopen': 'לבחור',
+  'ask.question.dayMonthOrder': '{column}: יום/חודש או חודש/יום?',
+  'ask.order.dayMonth': 'יום/חודש',
+  'ask.order.monthDay': 'חודש/יום',
+  'ask.kept.plain': 'עוד לא בטוחים. בינתיים: {rule}.',
 
   // ----- מה הקוד השלים בתשובת ה-AI מתוך הדוגמה (SPEC 21 v12 item 16): שורה שקטה אחת מתחת לכותרת -----
   'filled.lead': 'הושלם מהדוגמה שלכם: {items}',

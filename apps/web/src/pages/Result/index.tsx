@@ -23,6 +23,7 @@ import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sou
 import { Versions } from '../Format/Versions';
 import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
 import { filledNote } from './filledNote';
+import { questionsOf } from './helpers';
 import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
 import { UnfinishedRows } from './UnfinishedRows';
@@ -104,6 +105,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // learn-v7: the notes of an applied answer go into the session (never into the rules): see `ResultSession.aiNotes`.
   const completion = useCompletion(kept.store, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
   const completed = completion.completed;
+  // The ambiguity questions (SPEC 21 v12 items 11, 16): the learn's own, and those of a completion's answer once one has been applied.
+  const questions = useMemo(() => questionsOf(completed?.ambiguous, result.ambiguous), [completed?.ambiguous, result.ambiguous]);
   const [confirmWhole, setConfirmWhole] = useState(false);
   // What the AI step reported for the answer on screen (the completion's, once one has been applied).
   const aiInfo = completed ? completed.ai : ai;
@@ -422,7 +425,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         tier={me.tier}
         partial={partial}
         aiNotes={aiNotes}
-        ambiguous={result.ambiguous}
+        ambiguous={questions}
         analysing={analysing}
         verification={completed ? completed.verification : result.verification}
         name={name}

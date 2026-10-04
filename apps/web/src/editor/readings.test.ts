@@ -1,6 +1,6 @@
 // Applying a reading to rules (SPEC 21 v12 item 11): the fragment is merged by HEADER (the rules' own ids may differ from the fragment's), ids
 // stay unique, the old rule's computed column goes when nothing reads it, and the question's marker (the check) is the question's state.
-import type { AmbiguousColumn } from '@formatai/engine';
+import { dayMonthQuestions, swapDayMonth, type AmbiguousColumn } from '@formatai/engine';
 import type { LearnResult, Validation } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { applyReading, isReadingCheck, questionOpen, withOpenQuestion } from './readings';
@@ -130,5 +130,104 @@ describe('isReadingCheck', () => {
     expect(isReadingCheck({ severity: 'flag', values: ['00'], rule: 'oneOf', column: 'Branch', on: 'output' }, COLUMN)).toBe(true);
     expect(isReadingCheck({ on: 'output', column: 'Branch', rule: 'oneOf', values: ['01'], severity: 'flag' }, COLUMN)).toBe(false);
     expect(isReadingCheck(CHECK, { check: null })).toBe(false);
+  });
+});
+
+// ---------- the day/month order (SPEC 21 v12 item 16): a question without a check, readings that only change the formats a date is read with ----------
+
+describe('a day/month question', () => {
+  const ambiguity = { kind: 'dayMonthOrder' as const, column: 'When', format: 'DD/MM/YYYY', other: 'MM/DD/YYYY' };
+  const base = (route: 'inputFormats' | 'toDate'): LearnResult => ({
+    schemaVersion: 1,
+    input: {
+      sheet: { pick: 'first' },
+      headerRow: 'auto',
+      columns: [
+        { id: 'id', header: 'Id', type: 'text' },
+        route === 'inputFormats' ? { id: 'when', header: 'When', type: 'date', inputFormats: ['DD/MM/YYYY', 'excelSerial'] } : { id: 'when', header: 'When', type: 'text' },
+      ],
+    },
+    transform: {
+      computed:
+        route === 'inputFormats'
+          ? []
+          : [
+              { id: 'month', type: 'integer', expr: { op: 'datePart', arg: { op: 'toDate', arg: { col: 'when' }, format: 'DD/MM/YYYY' }, part: 'month' } },
+              // (a toDate of ANOTHER column, with the same format: not this question's)
+              { id: 'other', type: 'text', expr: { op: 'toText', arg: { op: 'toDate', arg: { col: 'id' }, format: 'DD/MM/YYYY' } } },
+            ],
+      valueMaps: [],
+      sort: [],
+    },
+    output: {
+      sheetName: 'Out',
+      direction: 'ltr',
+      language: 'en',
+      titleRows: [],
+      columns: [
+        { header: 'Id', from: 'id' },
+        route === 'inputFormats' ? { header: 'When', from: 'when' } : { header: 'Month', from: 'month' },
+      ],
+    },
+    validations: [],
+    unsupported: [],
+    assumptions: [],
+  });
+
+  it('applying a reading changes the same places the engine\'s swapDayMonth does, and the other reading puts them back', () => {
+    for (const route of ['inputFormats', 'toDate'] as const) {
+      const rules = base(route);
+      const [question] = dayMonthQuestions(rules, [ambiguity]);
+      expect(question, route).toBeTruthy();
+      const swapped = applyReading(rules, question!, 1, false)!;
+      expect(swapped, route).toEqual(swapDayMonth(rules, ambiguity));
+      expect(swapped, route).not.toEqual(rules);
+      // (the toDate of ANOTHER column keeps its format)
+      if (route === 'toDate') expect(JSON.stringify(swapped.transform.computed[1])).toContain('DD/MM/YYYY');
+      expect(applyReading(swapped, question!, 0, false), route).toEqual(rules);
+      // the reading the rules already have is no change at all
+      expect(applyReading(rules, question!, 0, false), route).toEqual(rules);
+      expect(applyReading(swapped, question!, 1, false), route).toEqual(swapped);
+    }
+  });
+
+  it('is open while the rules read the format used, closed after the other order is applied, and open again when it is taken back', () => {
+    const rules = base('inputFormats');
+    const [question] = dayMonthQuestions(rules, [ambiguity]);
+    expect(question!.check).toBeNull();
+    expect(questionOpen(rules, question!)).toBe(true);
+    const swapped = applyReading(rules, question!, 1, false)!;
+    expect(questionOpen(swapped, question!)).toBe(false);
+    expect(questionOpen(applyReading(swapped, question!, 0, false)!, question!)).toBe(true);
+    // an AI answer's starting rules are left alone: the rules ARE the default
+    expect(withOpenQuestion(rules, question!)).toBe(rules);
+    expect(withOpenQuestion(rules, question!)!.validations).toEqual([]);
+  });
+
+  it('is not asked when the column no longer depends on the date column, or is gone', () => {
+    const rules = base('toDate');
+    const [question] = dayMonthQuestions(rules, [ambiguity]);
+    const constant = { ...rules, transform: { ...rules.transform, computed: [{ id: 'month', type: 'integer' as const, expr: { const: 3 } }, rules.transform.computed[1]!] } };
+    expect(questionOpen(constant, question!)).toBe(false);
+    expect(questionOpen({ ...rules, output: { ...rules.output, columns: rules.output.columns.slice(0, 1) } }, question!)).toBe(false);
+    expect(questionOpen({ ...rules, output: { ...rules.output, columns: rules.output.columns.map((c) => (c.header === 'Month' ? { ...c, from: null } : c)) } }, question!)).toBe(false);
+  });
+
+  it('an answer never moves the column to another source: a column the user has since rebuilt keeps what it reads', () => {
+    const rules = base('toDate');
+    const [question] = dayMonthQuestions(rules, [ambiguity]);
+    // the user made Month read another computed column (which also reads the date)
+    const rebuilt: LearnResult = {
+      ...rules,
+      transform: {
+        ...rules.transform,
+        computed: [...rules.transform.computed, { id: 'month2', type: 'integer', expr: { op: 'datePart', arg: { op: 'toDate', arg: { col: 'when' }, format: 'DD/MM/YYYY' }, part: 'month' } }],
+      },
+      output: { ...rules.output, columns: rules.output.columns.map((c) => (c.header === 'Month' ? { ...c, from: 'month2' } : c)) },
+    };
+    const swapped = applyReading(rebuilt, question!, 1, false)!;
+    expect(swapped.output.columns.find((c) => c.header === 'Month')!.from).toBe('month2');
+    expect(swapped.transform.computed.map((c) => c.id)).toEqual(['month', 'other', 'month2']);
+    expect(JSON.stringify(swapped.transform.computed.find((c) => c.id === 'month2'))).toContain('MM/DD/YYYY');
   });
 });
