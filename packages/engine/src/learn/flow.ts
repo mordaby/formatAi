@@ -502,7 +502,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     // DECISION: a rule that copies rows - one still to repair, or one code reported - never passes, and counts as wrong on every row of its
     // column when answers are compared: otherwise the copy (which hides the rows it copied) would beat the honest rule with those rows wrong,
     // and a reported column (not compared at all) would beat both.
-    const copied = overfit.length + rules.unsupported.filter((u) => u.reasonCode === OVERFIT_REASON).length;
+    // (Completion mode: a column of the user's own rules that code once reported stays theirs, and counts against no answer.)
+    const copied = overfit.length + rules.unsupported.filter((u) => u.reasonCode === OVERFIT_REASON && (askedHeaders === null || askedHeaders.has(u.outputColumn))).length;
     return {
       masked,
       rules,
