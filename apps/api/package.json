@@ -13,6 +13,7 @@
     "@anthropic-ai/sdk": "^0.129.0",
     "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^11.3.0",
+    "@fastify/static": "^10.1.5",
     "@formatai/engine": "workspace:*",
     "@formatai/shared": "workspace:*",
     "fastify": "^5.12.5",

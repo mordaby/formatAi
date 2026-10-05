@@ -12,6 +12,7 @@ import type { MemoryStore, ProtectionStore } from './protection/store.js';
 import { registerRegistryRoutes } from './registry/index.js';
 import { registerLearnRoutes } from './routes/learn.js';
 import { registerSessionRoute } from './routes/session.js';
+import { registerWebApp } from './web.js';
 
 export interface BuildServerOptions {
   env: Env;
@@ -31,6 +32,11 @@ export interface BuildServerOptions {
   identify?: (req: FastifyRequest) => Identity;
   /** Tests: sign-in providers / OIDC client / store overrides (see `auth/index.ts`). */
   auth?: AuthOptions;
+  /**
+   * The built web app (`apps/web/dist`) to serve from this process - one service, one origin (see `web.ts`). `index.ts` sets
+   * it in production, or when `WEB_DIST` is. Unset (development, tests): the API serves /api only; Vite serves the web on 5173.
+   */
+  webDist?: string;
 }
 
 /**
@@ -134,6 +140,9 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
 
   // SPEC 8.12 / 13: saved formats and their conversions (signed-in users only; needs the database).
   registerRegistryRoutes(app, { db, protection, identify: opts.identify });
+
+  // Last: the static files and the page-route fallback, once every /api route is in place.
+  if (opts.webDist) await registerWebApp(app, { dir: opts.webDist, hsts: new URL(env.WEB_ORIGIN).protocol === 'https:' });
 
   return app;
 }
