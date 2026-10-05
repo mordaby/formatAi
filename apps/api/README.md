@@ -70,9 +70,32 @@ learn too, and is never a learn of its own: however many rounds a learn takes, i
 first-party `anonId` cookie (httpOnly, SameSite=Lax, Secure in production) on first contact.
 
 Production (`NODE_ENV=production`) refuses to start without `TURNSTILE_SECRET_KEY`,
-`IP_HASH_SECRET` (or `SESSION_SECRET`) and `MONGODB_URI`. Behind a proxy or load balancer set
+`IP_HASH_SECRET` (or `SESSION_SECRET`) and `MONGODB_URI` (`buildServer` throws on these; see "Deployment" for
+the start check that lists everything at once). Behind a proxy or load balancer set
 `TRUST_PROXY` (number of hops, or `true`) so per-IP limits see the real client address. With no
 `MONGODB_URI`, limits, budgets and the cache are kept in memory (the registry needs the database).
+
+## Deployment (M4, SPEC 21 v13; the owner's checklist is `docs/deploy.md`)
+
+One service, one origin: in production (or when `WEB_DIST` is set) the API also serves the built web app (`src/web.ts`):
+static files with a year's cache for the hashed `/assets` and `no-cache` for `index.html`, pre-compressed `.br`/`.gz`
+copies written by the web build, a fallback to `index.html` for page routes (never for `/api/*` or a missing file),
+and the security headers (a Content-Security-Policy that allows only Turnstile, Google Fonts and the Google avatar,
+`nosniff`, `Referrer-Policy`, `frame-ancestors`, HSTS on https). Development is unchanged (Vite on 5173).
+`buildServer({ webDist })` turns it on; `index.ts` passes it.
+
+`PUBLIC_ORIGIN` (else Render's `RENDER_EXTERNAL_URL`) names the origin the browser sees and is the default of both
+`WEB_ORIGIN` and `API_PUBLIC_URL` (the OIDC redirect URIs are `<origin>/api/auth/<provider>/callback`).
+
+On start in production, `src/productionConfig.ts` checks the whole configuration before anything connects and
+exits with every missing or malformed setting listed by name (never a value): the database, both secrets (32+ characters),
+Turnstile's two keys, `LLM_PROVIDER` anthropic/openai with its key (not `claude-cli` or `fake`), one complete sign-in
+provider, an https public origin and the built web app. A missing `TRUST_PROXY` or admin list is a warning.
+
+```sh
+pnpm install --frozen-lockfile && pnpm build           # the web app (+ .br/.gz); shared and engine are used from source
+cd apps/api && node --import tsx src/index.ts          # what render.yaml runs
+```
 
 The learn cache (`learn_cache`) is keyed by a hash of the structure only and is only ever returned
 to the same owner (`user:<id>`) - see `src/protection/cache.ts`.

@@ -81,6 +81,10 @@ describe('checkProductionConfig', () => {
     expect(check({ MICROSOFT_CLIENT_ID: 'ms-id' }).problems.join()).toMatch(/MICROSOFT_CLIENT_SECRET is not set/);
     expect(check({ MICROSOFT_CLIENT_SECRET: 'ms-secret' }).problems.join()).toMatch(/MICROSOFT_CLIENT_ID is not set/);
     expect(check({ MICROSOFT_CLIENT_ID: 'ms-id', MICROSOFT_CLIENT_SECRET: 'ms-secret' }).problems).toEqual([]);
+    // The only provider is half there: one line about the missing half, not a second one saying "no provider".
+    const onlyHalf = check({ GOOGLE_CLIENT_SECRET: undefined }).problems;
+    expect(onlyHalf).toHaveLength(1);
+    expect(onlyHalf[0]).toMatch(/^GOOGLE_CLIENT_SECRET is not set/);
   });
 
   it('wants the public origin named, as https (this machine excepted)', () => {

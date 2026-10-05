@@ -17,8 +17,9 @@ services:
     plan: starter
     # One instance only: the per-IP request limiter is in memory (a second instance would double the allowance).
     numInstances: 1
-    # `--prod=false`: NODE_ENV=production would otherwise leave out the dev tools the build needs (vite, tsc). The shared and
-    # engine packages are used straight from their TypeScript source, so `pnpm build` builds the web app only (+ pre-compressed copies).
+    # `--prod=false`: the build needs the dev tools (vite, tsc) whatever NODE_ENV or the package manager's own production
+    # setting says (pnpm 10 installs them anyway; the flag keeps it that way). The shared and engine packages are used straight
+    # from their TypeScript source, so `pnpm build` builds the web app only (+ its pre-compressed copies).
     buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm build
     # The API runs its TypeScript source through tsx, as in development (tsx is a dependency of apps/api). `exec` so the
     # process receives Render's SIGTERM itself and shuts down cleanly.

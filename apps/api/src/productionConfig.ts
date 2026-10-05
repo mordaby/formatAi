@@ -71,16 +71,20 @@ export function checkProductionConfig(
 
   // Sign-in: at least one provider, and never half of one (a provider with only an id is silently not offered).
   let providers = 0;
+  let half = 0;
   for (const spec of Object.values(PROVIDER_TABLE)) {
     const idKey = `${spec.envPrefix}_CLIENT_ID`;
     const secretKey = `${spec.envPrefix}_CLIENT_SECRET`;
     const hasId = isSet(source[idKey]);
     const hasSecret = isSet(source[secretKey]);
     if (hasId && hasSecret) providers++;
-    else if (hasId) problems.push(`${secretKey} is not set (${idKey} is, so ${spec.label} sign-in would silently not be offered)`);
-    else if (hasSecret) problems.push(`${idKey} is not set (${secretKey} is, so ${spec.label} sign-in would silently not be offered)`);
+    else if (hasId || hasSecret) {
+      half++;
+      const [set, missing] = hasId ? [idKey, secretKey] : [secretKey, idKey];
+      problems.push(`${missing} is not set (${set} is, so ${spec.label} sign-in would silently not be offered)`);
+    }
   }
-  if (providers === 0) {
+  if (providers === 0 && half === 0) {
     problems.push('no sign-in provider is configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (and/or the MICROSOFT_ ones) - the AI step and saved formats need a signed-in user');
   }
 
