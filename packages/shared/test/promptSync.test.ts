@@ -6,6 +6,7 @@ import { E1_LINE_START, extractLearnPrompt, withoutE1 } from '../scripts/sync-pr
 import { learnPromptOf, LEARN_SYSTEM_PROMPT, REPAIR_INSTRUCTION, REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V7, REPAIR_INSTRUCTION_V8 } from '../src/prompts/index';
 import { LEARN_SYSTEM_PROMPT_V7 } from '../src/prompts/learnV7';
 import { LEARN_SYSTEM_PROMPT_V8, LEARN_SYSTEM_PROMPT_V8_NO_E1 } from '../src/prompts/learnV8';
+import { LEARN_SYSTEM_PROMPT_V8_1, LEARN_SYSTEM_PROMPT_V8_1_NO_E1 } from '../src/prompts/learnV81';
 import { PROMPT_VERSIONS, promptVersion } from '../src/config/prompts';
 import { limits } from '../src/config/limits';
 
@@ -13,7 +14,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
 const read = (file: string): string => readFileSync(path.join(here, '..', 'prompts', file), 'utf8').replace(/\r\n/g, '\n');
 
-describe('learn-v8 system prompt sync (the current version)', () => {
+describe('learn-v8.1 system prompt sync (the newest version, LEARN_PROMPT.md section 2)', () => {
   const expected = extractLearnPrompt(readFileSync(path.join(repoRoot, 'LEARN_PROMPT.md'), 'utf8'));
 
   it('is non-trivial (extraction actually found the fenced block)', () => {
@@ -21,43 +22,49 @@ describe('learn-v8 system prompt sync (the current version)', () => {
     expect(expected).toContain('You write rules files for a deterministic spreadsheet');
   });
 
-  it('matches prompts/learn-v8.txt', () => {
-    expect(read('learn-v8.txt')).toBe(expected);
-  });
-
-  it('matches the LEARN_SYSTEM_PROMPT_V8 TS constant', () => {
-    expect(LEARN_SYSTEM_PROMPT_V8).toBe(expected);
+  it('matches prompts/learn-v8.1.txt and the LEARN_SYSTEM_PROMPT_V8_1 TS constant', () => {
+    expect(read('learn-v8.1.txt')).toBe(expected);
+    expect(LEARN_SYSTEM_PROMPT_V8_1).toBe(expected);
   });
 });
 
 describe('the default prompt version (what every learn sends)', () => {
-  it('is learn-v7 again (2026-10-05: learn-v8 fitted rows at any cost on the eval); learn-v8 stays selectable', () => {
+  it('is learn-v7 again (2026-10-05: learn-v8 fitted rows at any cost on the eval); learn-v8 and learn-v8.1 stay selectable', () => {
     expect(promptVersion).toBe('learn-v7');
     expect(LEARN_SYSTEM_PROMPT).toBe(LEARN_SYSTEM_PROMPT_V7);
     expect(learnPromptOf()).toMatchObject({ version: 'learn-v7', alternatives: false });
     expect(learnPromptOf('learn-v8')).toMatchObject({ version: 'learn-v8', system: LEARN_SYSTEM_PROMPT_V8, alternatives: true });
+    expect(learnPromptOf('learn-v8.1')).toMatchObject({ version: 'learn-v8.1', system: LEARN_SYSTEM_PROMPT_V8_1, alternatives: true });
   });
 });
 
-describe('learn-v8-noE1: learn-v8 without its E1 line, made at build time (the eval\'s arm B)', () => {
-  it('prompts/learn-v8-noE1.txt and the constant are learn-v8 with exactly the one E1 line taken out', () => {
+describe('the noE1 variants: the version without its E1 line, made at build time (the eval\'s arm B)', () => {
+  it('prompts/learn-v8.1-noE1.txt and the constant are learn-v8.1 with exactly the one E1 line taken out', () => {
+    expect(read('learn-v8.1-noE1.txt')).toBe(LEARN_SYSTEM_PROMPT_V8_1_NO_E1);
+    expect(LEARN_SYSTEM_PROMPT_V8_1_NO_E1).toBe(withoutE1(LEARN_SYSTEM_PROMPT_V8_1));
+    const e1 = LEARN_SYSTEM_PROMPT_V8_1.split('\n').filter((line) => line.startsWith(E1_LINE_START));
+    expect(e1).toHaveLength(1);
+    expect(LEARN_SYSTEM_PROMPT_V8_1.replace(`${e1[0]}\n`, '')).toBe(LEARN_SYSTEM_PROMPT_V8_1_NO_E1);
+    expect(LEARN_SYSTEM_PROMPT_V8_1_NO_E1).not.toContain('Code completes the data parts');
+  });
+
+  it('learn-v8-noE1 stays frozen: prompts/learn-v8-noE1.txt and the constant are learn-v8 with the same line taken out', () => {
     expect(read('learn-v8-noE1.txt')).toBe(LEARN_SYSTEM_PROMPT_V8_NO_E1);
     expect(LEARN_SYSTEM_PROMPT_V8_NO_E1).toBe(withoutE1(LEARN_SYSTEM_PROMPT_V8));
-    const e1 = LEARN_SYSTEM_PROMPT_V8.split('\n').filter((line) => line.startsWith(E1_LINE_START));
-    expect(e1).toHaveLength(1);
-    expect(LEARN_SYSTEM_PROMPT_V8.replace(`${e1[0]}\n`, '')).toBe(LEARN_SYSTEM_PROMPT_V8_NO_E1);
-    expect(LEARN_SYSTEM_PROMPT_V8_NO_E1).not.toContain('Code completes the data parts');
   });
 
   it('the E1 line says what code completes from every row, and that it is no reason to give up', () => {
-    expect(LEARN_SYSTEM_PROMPT_V8).toContain('value map and lookup entries');
-    expect(LEARN_SYSTEM_PROMPT_V8).toContain('the day/month order of dates');
-    expect(LEARN_SYSTEM_PROMPT_V8).toContain('no reason to give up on a column');
+    for (const p of [LEARN_SYSTEM_PROMPT_V8, LEARN_SYSTEM_PROMPT_V8_1]) {
+      expect(p).toContain('value map and lookup entries');
+      expect(p).toContain('the day/month order of dates');
+      expect(p).toContain('no reason to give up on a column');
+    }
   });
 
-  it('is a prompt version of its own, with the same schema as learn-v8', () => {
-    expect(PROMPT_VERSIONS).toEqual(['learn-v7', 'learn-v8', 'learn-v8-noE1']);
+  it('each is a prompt version of its own, with the same schema as its version', () => {
+    expect(PROMPT_VERSIONS).toEqual(['learn-v7', 'learn-v8', 'learn-v8-noE1', 'learn-v8.1', 'learn-v8.1-noE1']);
     expect(learnPromptOf('learn-v8-noE1')).toMatchObject({ version: 'learn-v8-noE1', system: LEARN_SYSTEM_PROMPT_V8_NO_E1, alternatives: true });
+    expect(learnPromptOf('learn-v8.1-noE1')).toMatchObject({ version: 'learn-v8.1-noE1', system: LEARN_SYSTEM_PROMPT_V8_1_NO_E1, alternatives: true });
   });
 
   it('withoutE1 refuses a prompt without the line (a reworded E1 line must be renamed in the sync script too)', () => {
@@ -65,7 +72,68 @@ describe('learn-v8-noE1: learn-v8 without its E1 line, made at build time (the e
   });
 });
 
-describe('learn-v8 is the audited prompt (docs/proposals/prompt-audit-learn-v7.md section 4)', () => {
+describe('learn-v8.1 is learn-v8 with the F10 edits returned to learn-v7\'s meaning (LEARN_PROMPT.md "learn-v8.1 changes")', () => {
+  const v81 = LEARN_SYSTEM_PROMPT_V8_1;
+  const v8 = LEARN_SYSTEM_PROMPT_V8;
+  const v7 = LEARN_SYSTEM_PROMPT_V7;
+  const STEP2 = '2. Generalize.';
+  const AMBIGUOUS = '- ambiguous: ';
+  const APPROXIMATE = 'Still write correct rules for every other column.';
+  const SIMPLEST_BULLET = '   - When several rules fit every row you see, write the simplest and add an assumption';
+  const COPY_SENTENCE =
+    "Never write a condition on a row's position (such as rowNumber() = 1) or a long list of cases that copies the example's answers; when a column's values cannot be derived from the input, report it as unsupported with externalData.";
+
+  it('"Never approximate." is learn-v7\'s sentence again, without "(fitting every row you see is not approximating)"', () => {
+    expect(v81).toContain('Still write correct rules for every other column. Never approximate. A partial, correct rules file is much better than a complete, wrong one.');
+    expect(v7).toContain('Never approximate. A partial, correct rules file is much better than a complete, wrong one.');
+    expect(v81).not.toContain('fitting every row you see is not approximating');
+    expect(v8).toContain('fitting every row you see is not approximating');
+  });
+
+  it('the ambiguous reason is learn-v7\'s, word for word', () => {
+    const line = (p: string): string => p.split('\n').find((l) => l.startsWith(AMBIGUOUS))!;
+    expect(line(v81)).toBe(line(v7));
+    expect(line(v81)).toBe('- ambiguous: the samples fit several rules that give different results on new data, and a wrong choice would be harmful,');
+  });
+
+  it('has no "write the simplest when several fit" bullet; the alternatives bullet stays', () => {
+    expect(v81).not.toContain(SIMPLEST_BULLET);
+    expect(v81).not.toContain('write the simplest and add an assumption');
+    expect(v8).toContain(SIMPLEST_BULLET);
+    expect(v81).toContain('add it to alternatives too: {"outputColumn": its output header, "from": the id it reads, "computed": the new computed columns it needs, with ids used nowhere else}');
+  });
+
+  it('names the two shapes of copying rows in one sentence, beside "never branch on values of particular rows", and sends such a column to externalData', () => {
+    const step2 = v81.split('\n').find((l) => l.startsWith(STEP2))!;
+    expect(step2).toContain(`Never hard-code or branch on values that belong to particular rows (names, IDs, one row's amount or date). ${COPY_SENTENCE} Constants are for`);
+    expect(v8).not.toContain(COPY_SENTENCE);
+  });
+
+  it('is otherwise learn-v8 line for line: the masking update, F9, F12, the schema fixes, the alternatives and E1 are kept', () => {
+    const changed = (l: string): boolean => l.startsWith(STEP2) || l.startsWith(AMBIGUOUS) || l.startsWith(APPROXIMATE);
+    const v8Lines = v8.split('\n').filter((l) => !l.startsWith(SIMPLEST_BULLET));
+    const v81Lines = v81.split('\n');
+    expect(v81Lines).toHaveLength(v8Lines.length);
+    v81Lines.forEach((l, i) => {
+      if (changed(l)) expect(changed(v8Lines[i]!)).toBe(true);
+      else expect(l).toBe(v8Lines[i]);
+    });
+    expect(v81).toContain('Always real: numbers, dates (also dates written as text), month and weekday names');
+    expect(v81).toContain('Constants are for what is the same in every report: labels, fixed rates, thresholds');
+    expect(v81).toContain(E1_LINE_START);
+  });
+
+  it('is sent with learn-v8\'s schema and repair instruction', () => {
+    expect(learnPromptOf('learn-v8.1').repair).toBe(learnPromptOf('learn-v8').repair);
+    expect(learnPromptOf('learn-v8.1-noE1').repair).toBe(learnPromptOf('learn-v8-noE1').repair);
+  });
+});
+
+describe('learn-v8 (frozen) is the audited prompt (docs/proposals/prompt-audit-learn-v7.md section 4)', () => {
+  it('prompts/learn-v8.txt and the LEARN_SYSTEM_PROMPT_V8 constant agree', () => {
+    expect(read('learn-v8.txt')).toBe(LEARN_SYSTEM_PROMPT_V8);
+  });
+
   const v8 = LEARN_SYSTEM_PROMPT_V8;
 
   it('documents the alternatives field as built (outputColumn, from, computed), its caps and "not invented"', () => {

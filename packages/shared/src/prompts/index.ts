@@ -4,10 +4,12 @@
 import { promptVersion, type PromptVersion } from '../config/prompts';
 import { LEARN_SYSTEM_PROMPT_V7 } from './learnV7';
 import { LEARN_SYSTEM_PROMPT_V8, LEARN_SYSTEM_PROMPT_V8_NO_E1 } from './learnV8';
+import { LEARN_SYSTEM_PROMPT_V8_1, LEARN_SYSTEM_PROMPT_V8_1_NO_E1 } from './learnV81';
 import { REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V7, REPAIR_INSTRUCTION_V8 } from './repair';
 
 export { LEARN_SYSTEM_PROMPT_V7 } from './learnV7';
 export { LEARN_SYSTEM_PROMPT_V8, LEARN_SYSTEM_PROMPT_V8_NO_E1 } from './learnV8';
+export { LEARN_SYSTEM_PROMPT_V8_1, LEARN_SYSTEM_PROMPT_V8_1_NO_E1 } from './learnV81';
 export { REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V7, REPAIR_INSTRUCTION_V8 } from './repair';
 
 export interface LearnPrompt {
@@ -25,6 +27,9 @@ const PROMPTS: Record<PromptVersion, LearnPrompt> = {
   'learn-v8': { version: 'learn-v8', system: LEARN_SYSTEM_PROMPT_V8, alternatives: true, repair: `${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}` },
   // The eval's arm B: learn-v8 without its E1 line (`scripts/sync-prompt.ts`) and without the repair's E1 sentence, same schema.
   'learn-v8-noE1': { version: 'learn-v8-noE1', system: LEARN_SYSTEM_PROMPT_V8_NO_E1, alternatives: true, repair: REPAIR_INSTRUCTION_V8 },
+  // learn-v8.1 (LEARN_PROMPT.md "learn-v8.1 changes from learn-v8"): the system prompt changed; the schema and the repair instruction are learn-v8's.
+  'learn-v8.1': { version: 'learn-v8.1', system: LEARN_SYSTEM_PROMPT_V8_1, alternatives: true, repair: `${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}` },
+  'learn-v8.1-noE1': { version: 'learn-v8.1-noE1', system: LEARN_SYSTEM_PROMPT_V8_1_NO_E1, alternatives: true, repair: REPAIR_INSTRUCTION_V8 },
 };
 
 /** The prompt of a version (default: the current one, `promptVersion`). */

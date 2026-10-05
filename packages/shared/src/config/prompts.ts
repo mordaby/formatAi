@@ -3,15 +3,17 @@
 // changes, and re-run the eval harness (SPEC 10 "Regression").
 
 /**
- * The prompt versions the code can still send: the current one, the one before it (kept for the eval's `--prompt` comparison), and
- * learn-v8-noE1 - learn-v8 without its one "E1" line (code completes the data parts of the rules from every row), the prompt audit's
- * arm B (docs/proposals/prompt-audit-learn-v7.md section 5).
+ * The prompt versions the code can still send (the eval's `--prompt` compares them on the same code): learn-v7 (the default, below),
+ * learn-v8 (the prompt audit's), learn-v8.1 (learn-v8 with the audit's F10 edits returned to learn-v7's meaning and one sentence on the
+ * two shapes of copying rows - LEARN_PROMPT.md's newest block), and for each of the last two its "-noE1" variant: the same text without
+ * its one "E1" line (code completes the data parts of the rules from every row), the prompt audit's arm B
+ * (docs/proposals/prompt-audit-learn-v7.md section 5).
  *
  * DECISION: the E1 switch is a prompt version of its own, made at build time from the same LEARN_PROMPT.md block
- * (`scripts/sync-prompt.ts`), not a flag on learn-v8: every call logs `promptVersion`, and the structure cache and the ledger tell two
- * texts apart by it alone - a flag beside the version would make one version name two prompts. Only the eval sends learn-v8-noE1.
+ * (`scripts/sync-prompt.ts`), not a flag: every call logs `promptVersion`, and the structure cache and the ledger tell two texts apart
+ * by it alone - a flag beside the version would make one version name two prompts. Only the eval sends the noE1 variants.
  */
-export const PROMPT_VERSIONS = ['learn-v7', 'learn-v8', 'learn-v8-noE1'] as const;
+export const PROMPT_VERSIONS = ['learn-v7', 'learn-v8', 'learn-v8-noE1', 'learn-v8.1', 'learn-v8.1-noE1'] as const;
 export type PromptVersion = (typeof PROMPT_VERSIONS)[number];
 
 /**

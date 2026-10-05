@@ -208,9 +208,9 @@ describe('learn()', () => {
   });
 
   // Prompt audit F11: each version sends its own repair instruction, so `--prompt learn-v7` repairs exactly as learn-v7 did.
-  it('appends the repair instruction of the prompt version sent: learn-v8 (with its E1 sentence), learn-v8-noE1, learn-v7', async () => {
+  it('appends the repair instruction of the prompt version sent: learn-v8 and learn-v8.1 (with its E1 sentence), their noE1 variants, learn-v7', async () => {
     const sent: Record<string, string> = {};
-    for (const version of ['learn-v8', 'learn-v8-noE1', 'learn-v7'] as const) {
+    for (const version of ['learn-v8', 'learn-v8-noE1', 'learn-v8.1', 'learn-v8.1-noE1', 'learn-v7'] as const) {
       const fake = createFakeProvider();
       fake.enqueue({ json: schemaBrokenRulesJson() });
       fake.enqueue({ json: correctRulesWireJson() });
@@ -221,6 +221,8 @@ describe('learn()', () => {
     }
     expect(sent['learn-v8']!.endsWith(`${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}`)).toBe(true);
     expect(sent['learn-v8-noE1']!.endsWith(`\n${REPAIR_INSTRUCTION_V8}`)).toBe(true);
+    expect(sent['learn-v8.1']!.endsWith(`${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}`)).toBe(true);
+    expect(sent['learn-v8.1-noE1']!.endsWith(`\n${REPAIR_INSTRUCTION_V8}`)).toBe(true);
     expect(sent['learn-v7']!.endsWith('\nFix only what the problems require. Keep everything else identical.')).toBe(true);
   });
 });
