@@ -11,10 +11,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@formatai/api/env';
 import type { CompleteFn } from '@formatai/api/learn';
-import { formatOf, formulaRulesToWire } from '@formatai/engine';
+import { formatOf, formulaRulesToWire, readWorkbook } from '@formatai/engine';
 import { toWire, type LearnResult } from '@formatai/shared';
 import { loadCase, type CaseDef } from '../lib/caseLoader';
-import { runLearn, runMatrix } from '../lib/runner';
+import { applyCaseAnswers, rulesByRecord, runLearn, runMatrix } from '../lib/runner';
 
 const env = loadEnv({ ...process.env, LLM_PROVIDER: 'fake' });
 const CASES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'cases');
@@ -198,5 +198,97 @@ describe('a one-time edit or a rule? in the runner (SPEC 21 v12 item 20): what t
     const { complete } = scripted([wireOf(c.referenceRules), wireOf(c.referenceRules), wireOf(c.referenceRules), wireOf(c.referenceRules)]);
     const records = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
     expect(records[0]).toMatchObject({ oneTimeAsked: 0, oneTimeParts: '', oneTimeDefault: '' });
+  });
+});
+
+describe('a list copied from the example (owner amendment, 2026-10-06): external-agent-column answers "a one-time edit" in its meta', () => {
+  /** The five copies, and Account Manager looked up by Account in a table of the example's 40 rows - what learn-v7 and learn-v9 wrote. */
+  async function lookupOfAccounts(c: CaseDef): Promise<unknown> {
+    const sheet = (await readWorkbook(c.output.bytes, c.output.fileName)).sheets[0]!;
+    const rows = sheet.rows.slice(1).map((r) => [r[0]!.v, r[5]!.v] as [string, string]);
+    expect(rows).toHaveLength(40);
+    const col = (id: string, header: string, type: string) => ({ id, header, type });
+    return wireOf({
+      schemaVersion: 1,
+      input: {
+        sheet: { pick: 'first' },
+        headerRow: 'auto',
+        columns: [col('account', 'Account', 'idLike'), col('company', 'Company', 'text'), col('region', 'Region', 'text'), col('plan', 'Plan', 'text'), col('monthlyFee', 'Monthly Fee', 'integer')],
+      },
+      transform: {
+        computed: [{ id: 'accountManager', type: 'text', expr: { op: 'lookup', table: 'accountManagers', key: { col: 'account' }, return: 'manager', onMissing: 'flag' } }],
+        valueMaps: [],
+        sort: [],
+        tables: [{ name: 'accountManagers', columns: ['account', 'manager'], rows }],
+      },
+      output: {
+        sheetName: sheet.name,
+        direction: 'ltr',
+        language: 'en',
+        titleRows: [],
+        columns: [
+          { header: 'Account', from: 'account' },
+          { header: 'Company', from: 'company' },
+          { header: 'Region', from: 'region' },
+          { header: 'Plan', from: 'plan' },
+          { header: 'Monthly Fee', from: 'monthlyFee' },
+          { header: 'Account Manager', from: 'accountManager' },
+        ],
+      },
+      validations: [],
+      unsupported: [],
+      assumptions: [],
+    });
+  }
+  const runCase = async (c: CaseDef, answer: unknown) => {
+    const { complete } = scripted([answer, answer, answer, answer]);
+    const [record] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
+    return record!;
+  };
+
+  it('the case declares the answer: the copied list is asked about, answered "one-time", and the case scores unsupported as it expects', async () => {
+    const c = load('external-agent-column');
+    expect(c.meta.answers).toEqual({ copiedList: 'oneTime' });
+    const record = await runCase(c, await lookupOfAccounts(c));
+    expect(record).toMatchObject({
+      verifiedFirstCall: true,
+      classification: 'unsupported:overfit',
+      expectationMet: true,
+      oneTimeAsked: 1,
+      oneTimeParts: 'Account Manager list by Account 40 answered one-time',
+      oneTimeDefault: 'one-time: holdOut n/a',
+      // What the AI step did stays its own: it reported nothing, and no guard fell back.
+      unsupportedReasons: '',
+      overfitFellBack: 0,
+    });
+    // The rules kept for the report are the AI step's answer as code filled it (the list is still in them).
+    expect(rulesByRecord.get(record)?.transform.tables?.[0]?.rows).toHaveLength(40);
+  });
+
+  it('unanswered (no answers in the meta): the list is kept, the run is "verified" - the copy the case is built to catch, not met', async () => {
+    const c = load('external-agent-column');
+    const { answers: _answers, ...meta } = c.meta;
+    const record = await runCase({ ...c, meta }, await lookupOfAccounts(c));
+    expect(record).toMatchObject({ classification: 'verified', expectationMet: false, oneTimeAsked: 1, oneTimeParts: 'Account Manager list by Account 40' });
+  });
+
+  it('the honest answer (Account Manager unsupported, externalData) asks nothing and meets the expectation as before', async () => {
+    const c = load('external-agent-column');
+    const honest = JSON.parse(JSON.stringify(await lookupOfAccounts(c))) as { output: { columns: { header: string; from: string | null }[] }; transform: { computed: unknown[]; tables: unknown[] }; unsupported: unknown[] };
+    honest.output.columns[5]!.from = null;
+    honest.transform.computed = [];
+    honest.transform.tables = [];
+    honest.unsupported = [{ outputColumn: 'Account Manager', reasonCode: 'externalData' }];
+    const record = await runCase(c, honest);
+    expect(record).toMatchObject({ classification: 'unsupported:externalData', expectationMet: true, oneTimeAsked: 0, oneTimeParts: '' });
+  });
+});
+
+describe('applyCaseAnswers', () => {
+  it('changes nothing without an answer, for "rule", or when nothing was asked', () => {
+    const result = { path: 'llm', rules: { output: {} }, oneTimers: undefined, unsupported: [], assumptions: [], verification: null } as never;
+    expect(applyCaseAnswers(result, {})).toEqual({ result, answered: [] });
+    expect(applyCaseAnswers(result, { answers: { copiedList: 'rule' } })).toEqual({ result, answered: [] });
+    expect(applyCaseAnswers(result, { answers: { copiedList: 'oneTime' } })).toEqual({ result, answered: [] });
   });
 });

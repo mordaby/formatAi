@@ -758,7 +758,9 @@ async function buildExternalAgentColumn(): Promise<CaseSpec> {
       features: ['adversarial', 'externalData', 'unsupportedColumn', 'randomPerRow', 'noRuleToInvent', 'copiedColumns'],
       expect: 'unsupported:externalData',
       expectNote:
-        'five columns are copied; Account Manager is one of 8 names that appear nowhere in the input, drawn at random per row - not tied to the company, the region or the plan (every one of those repeats with different managers). The honest answer is a rules file for the five copied columns and Account Manager reported unsupported with externalData. May break: a rule invented from the data (a value map on Company, a condition on Region or Plan that fits 40 rows by luck, a lookup of the 40 accounts), "ambiguous" or "other" instead of externalData, or every column given up.',
+        'five columns are copied; Account Manager is one of 8 names that appear nowhere in the input, drawn at random per row - not tied to the company, the region or the plan (every one of those repeats with different managers). The honest answer is a rules file for the five copied columns and Account Manager reported unsupported with externalData. A lookup of the 40 accounts (what learn-v7 and learn-v9 wrote, 2026-10-06; code fills it from every row and it verifies) is asked about on the Result screen ("Account Manager: is this the rule?"); this case answers it "No, it was a one-time edit" (answers.copiedList), so the column needs your input (reported overfit by code) and the case scores unsupported as expected. May break: a rule invented from the data (a value map on Company, a condition on Region or Plan that fits 40 rows by luck), "ambiguous" or "other" instead of externalData, or every column given up.',
+      // The user's answer to the copied-list question (owner amendment, 2026-10-06): the managers were typed in for this file.
+      answers: { copiedList: 'oneTime' },
     },
     input,
     output,

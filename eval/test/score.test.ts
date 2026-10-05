@@ -245,6 +245,16 @@ describe('expectationMet: "unsupported:<code>"', () => {
     const r = unsupportedResult(['pivot']);
     expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(false);
   });
+  it('a column the case\'s own answer took out ("a one-time edit" to its copied list, reported overfit by code) is the expected report; the guards\' overfit is not', () => {
+    const r: LearnFromExamplesResult = { ...reportedExternalResult(), unsupported: [{ outputColumn: 'Assigned Warehouse', reasonCode: 'overfit' }] };
+    expect(classificationLabel(classify(r))).toBe('unsupported:overfit');
+    expect(expectationMet(metaUnsupported, false, r, classify(r), ['Assigned Warehouse'])).toBe(true);
+    expect(expectationMet(metaUnsupported, false, r, classify(r))).toBe(false);
+    expect(expectationMet(metaUnsupported, false, r, classify(r), ['Qty'])).toBe(false);
+    // ... and the rest must still match.
+    const wrong: LearnFromExamplesResult = { ...reportedExternalButWrongResult(), unsupported: r.unsupported };
+    expect(expectationMet(metaUnsupported, false, wrong, classify(wrong), ['Assigned Warehouse'])).toBe(false);
+  });
 });
 
 describe('expectationMet: the masking_on/masking_off object form', () => {

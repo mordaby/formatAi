@@ -21,6 +21,18 @@ export interface CaseMeta {
   /** Rows of `output.*` edited by hand: the reference rules differ from it in exactly this many (see `cases/README.md`); not used by the runner. */
   handEditedRows?: number;
   attachTo?: string;
+  /** What the user would answer on the Result screen; the runner applies it before scoring (`CaseAnswers`). Absent: nothing is answered. */
+  answers?: CaseAnswers;
+}
+
+/**
+ * A case's answers to the Result screen's questions (owner amendment, 2026-10-06), applied by the runner to the kept rules as the screen
+ * applies them, before the run is scored (`applyCaseAnswers`). `copiedList`: the answer to every copied-list question ("<column>: is this
+ * the rule?") - `oneTime` ("No, it was a one-time edit") takes the column's list out, so the column needs your input; `rule` keeps it, which
+ * is the same as no answer.
+ */
+export interface CaseAnswers {
+  copiedList?: 'oneTime' | 'rule';
 }
 
 export interface CaseFile {
