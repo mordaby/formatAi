@@ -29,6 +29,8 @@ describe('app shell', () => {
     expect(within(footer).getByRole('link', { name: 'Business' }).getAttribute('href')).toBe('/business');
     expect(within(footer).getByRole('link', { name: 'Privacy' }).getAttribute('href')).toBe('/privacy');
     expect(within(footer).getByRole('link', { name: 'Terms' }).getAttribute('href')).toBe('/terms');
+    expect(within(footer).getByRole('link', { name: 'Accessibility' }).getAttribute('href')).toBe('/accessibility');
+    expect(within(footer).getByRole('button', { name: 'Feedback' })).toBeTruthy();
   });
 
   it('flips direction and language with the toggle: the shell and <html> follow (SPEC 16.2)', () => {
@@ -74,9 +76,9 @@ describe('app shell', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('routes the placeholder pages, and sends unknown addresses and a bare /result home', async () => {
+  it('routes the public pages, and sends unknown addresses and a bare /result home', async () => {
     const { unmount } = renderApp({ route: '/privacy' });
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Privacy');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Privacy policy');
     unmount();
     renderApp({ route: '/result' });
     // (a moment is spent finding out whether a learn was kept across a sign-in; there was none)

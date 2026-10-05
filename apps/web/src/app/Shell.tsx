@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { LanguageToggle } from '../components/LanguageToggle';
 import { useI18n } from '../i18n';
 import { AccountMenu, AuthNoticeBar } from './AccountMenu';
+import { useDocumentTitle } from './documentTitle';
+import { FeedbackProvider, useFeedback } from './Feedback';
 import { useMe } from './Me';
 import { useReducedMotion } from './useReducedMotion';
 
@@ -12,9 +14,19 @@ import { useReducedMotion } from './useReducedMotion';
  * Screens render their own `<main id="main">`.
  */
 export function Shell({ children }: { children: ReactNode }) {
+  return (
+    <FeedbackProvider>
+      <ShellFrame>{children}</ShellFrame>
+    </FeedbackProvider>
+  );
+}
+
+function ShellFrame({ children }: { children: ReactNode }) {
   const { t, dir, lang } = useI18n();
   const { user } = useMe();
+  const feedback = useFeedback();
   const reduced = useReducedMotion();
+  useDocumentTitle();
 
   // Dialogs render in a portal outside this element, so the class also goes on <html>.
   useEffect(() => {
@@ -58,6 +70,10 @@ export function Shell({ children }: { children: ReactNode }) {
             <Link to="/business">{t('footer.business')}</Link>
             <Link to="/privacy">{t('footer.privacy')}</Link>
             <Link to="/terms">{t('footer.terms')}</Link>
+            <Link to="/accessibility">{t('footer.accessibility')}</Link>
+            <button type="button" className="app-footer__link" onClick={feedback.open}>
+              {t('footer.feedback')}
+            </button>
           </nav>
           <p className="app-footer__note">{t('app.tagline')}</p>
         </div>

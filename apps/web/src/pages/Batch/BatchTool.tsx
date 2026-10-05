@@ -22,7 +22,7 @@ export function AddNotice({ notice, tier }: { notice: AddResult | null; tier: Ti
           {/* A registered user is told, in one line, what the next plan runs (no payment code in the MVP: the Upgrade panel). */}
           {tier === 'registered' ? (
             <p className="muted">
-              {t('batch.paid.hint', { n: tiers.paid.filesPerRun })} <UpgradeButton variant="link" />
+              {t('batch.paid.hint', { n: tiers.paid.filesPerRun })} <UpgradeButton variant="link" trigger="batch" />
             </p>
           ) : null}
         </InlineMessage>
