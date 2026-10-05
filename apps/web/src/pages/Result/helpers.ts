@@ -2,7 +2,7 @@
 // column, and defaults for the things the map's "Add" buttons create.
 import type { AmbiguousColumn, OneTimeQuestion } from '@formatai/engine';
 import type { PayloadCell } from '@formatai/shared';
-import { effectiveEndSummaryRows, lineIds, sourceOptions, type EditableRules, type EditAction } from '../../editor';
+import { effectiveEndSummaryRows, lineIds, oneTimeKey, sourceOptions, type EditableRules, type EditAction } from '../../editor';
 import { editorConfig } from '../../editor/config';
 import { outputColumnType } from '../../editor/rulesUtil';
 import type { Line } from '../../rulesText';
@@ -14,9 +14,12 @@ export function questionsOf(...lists: (readonly AmbiguousColumn[] | undefined)[]
   return all.length > 0 ? all : undefined;
 }
 
-/** The one-time questions on screen (SPEC 21 v12 item 20): the completion's answer's first, then the learn's; one per row of a column. */
+/**
+ * The one-time questions on screen (SPEC 21 v12 item 20): the completion's answer's first, then the learn's; one per row of a column, and one
+ * per column about its list (owner amendment, 2026-10-06).
+ */
 export function oneTimeQuestionsOf(...lists: (readonly OneTimeQuestion[] | undefined)[]): OneTimeQuestion[] | undefined {
-  const all = lists.flatMap((l) => l ?? []).filter((q, i, a) => a.findIndex((x) => x.header === q.header && x.row === q.row) === i);
+  const all = lists.flatMap((l) => l ?? []).filter((q, i, a) => a.findIndex((x) => oneTimeKey(x) === oneTimeKey(q)) === i);
   return all.length > 0 ? all : undefined;
 }
 

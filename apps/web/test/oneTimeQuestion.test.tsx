@@ -3,6 +3,7 @@
 // its column's line, with the row's own values (nothing sent). "A one-time change" takes the part out (one undoable edit): the column's rule
 // applies to every row, and row 54 is listed as a row that doesn't follow the rule, not counted as a difference. "A rule" keeps it. "Not
 // sure" keeps it with a check that flags a later row it applies to. The live check is a fake that answers like the worker does.
+// The second kind (owner amendment, 2026-10-06): a list copied from the example - "Account Manager: is this the rule?" - with its two answers.
 import type { OneTimeQuestion } from '@formatai/engine';
 import type { Expr, LearnResult, Rules, Validation } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
@@ -232,5 +233,155 @@ describe('a one-time edit or a rule?', () => {
     const panel = await screen.findByTestId('unfinished-rows');
     expect(panel.textContent).toContain('שורות שלא לפי הכלל');
     expect(within(panel).getByTestId('one-time-rows').textContent).toBe('שורה 54 (Discount): בדוגמה שלכם 0.00; הכלל נותן 252.61');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A list copied from the example (owner amendment, 2026-10-06): Account Manager looked up by Account, a table code filled from the 40 rows
+// of external-agent-column. The same place, look and buttons' role; asked neutrally, with no value of the list.
+// ---------------------------------------------------------------------------
+
+const MANAGER_ROWS = 40;
+const lookupManager: Expr = { op: 'lookup', table: 'accountManagers', key: { col: 'account' }, return: 'manager', onMissing: 'flag' };
+const listed: LearnResult = {
+  schemaVersion: 1,
+  input: {
+    sheet: { pick: 'first' },
+    headerRow: 'auto',
+    columns: [
+      { id: 'account', header: 'Account', type: 'idLike' },
+      { id: 'company', header: 'Company', type: 'text' },
+    ],
+  },
+  transform: {
+    computed: [{ id: 'accountManager', type: 'text', expr: lookupManager }],
+    valueMaps: [],
+    sort: [],
+    tables: [{ name: 'accountManagers', columns: ['account', 'manager'], rows: Array.from({ length: MANAGER_ROWS }, (_, i) => [`ACC-${1001 + i}`, `Manager ${i % 8}`]) }],
+  },
+  output: {
+    sheetName: 'Accounts with manager',
+    direction: 'ltr',
+    language: 'en',
+    titleRows: [],
+    columns: [
+      { header: 'Account', from: 'account' },
+      { header: 'Company', from: 'company' },
+      { header: 'Account Manager', from: 'accountManager' },
+    ],
+  },
+  validations: [],
+  unsupported: [],
+  assumptions: [],
+};
+
+const listQuestion: OneTimeQuestion = {
+  kind: 'copiedList',
+  out: 2,
+  header: 'Account Manager',
+  keyColumn: 'Account',
+  entries: MANAGER_ROWS,
+  list: { kind: 'lookup', computed: 'accountManager', table: 'accountManagers' },
+};
+
+const listResult = (): LearnOutput =>
+  learnResult({
+    path: 'llm',
+    rules: listed,
+    exampleId: 'ex1',
+    loop: { rounds: 0, rowsSent: 0, end: 'verified' },
+    verification: { verified: true, matched: MANAGER_ROWS, total: MANAGER_ROWS, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] },
+    oneTimers: { questions: [listQuestion], handedOff: [] },
+  });
+
+/** The worker's check for these rules: every column that has a rule matches (a copied list reproduces its example by construction). */
+function listLive(rules: LearnResult | Rules) {
+  const headers = rules.output.columns.filter((c) => c.from !== null).map((c) => c.header);
+  return liveResult({
+    verified: true,
+    matched: MANAGER_ROWS,
+    total: MANAGER_ROWS,
+    differences: 0,
+    perColumn: headers.map((header) => ({ header, inExample: true, matched: MANAGER_ROWS, total: MANAGER_ROWS })),
+    checkedInputRows: MANAGER_ROWS,
+    totalInputRows: MANAGER_ROWS,
+  });
+}
+
+async function openList(lang: 'en' | 'he' = 'en') {
+  const liveCheck = vi.fn(async (_id: string, r: LearnResult | Rules) => listLive(r));
+  const fake = fakeEngine(async () => listResult(), undefined, { liveCheck, fullCheck: liveCheck });
+  const api = fakeApi({ user: USER });
+  renderApp({ engine: fake.engine, api, lang });
+  const en = lang === 'en';
+  fireEvent.change(screen.getByLabelText(en ? 'Example input' : 'דוגמת קלט'), { target: { files: [csv('accounts.csv')] } });
+  fireEvent.change(screen.getByLabelText(en ? 'Example output' : 'דוגמת פלט'), { target: { files: [csv('managers.csv')] } });
+  await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
+  const learnButton = screen.getByRole('button', { name: en ? /Learn the format/ : /ללמוד את הפורמט/ }) as HTMLButtonElement;
+  await waitFor(() => expect(learnButton.disabled).toBe(false));
+  await act(async () => void fireEvent.click(learnButton));
+  await screen.findByTestId('rules-map');
+  await waitFor(() => expect(liveCheck).toHaveBeenCalled());
+  return { ...fake, api, liveCheck };
+}
+
+const managerColumn = (r: LearnResult) => r.output.columns.find((c) => c.header === 'Account Manager');
+
+describe('a list copied from the example: is this the rule?', () => {
+  it('is asked on the column\'s line, neutrally: what was learned, the key column and the entry count - no value, nothing sent', async () => {
+    const { api, learn } = await openList();
+    const q = await screen.findByTestId('one-time-question');
+    expect(document.querySelector('[data-line-id="col:Account Manager"]')!.contains(q)).toBe(true);
+    expect(q.getAttribute('data-kind')).toBe('copiedList');
+    expect(q.querySelector('.map-line__ask-question')!.textContent).toBe('Account Manager: is this the rule?');
+    expect(within(q).getByTestId('one-time-values').textContent).toBe('We learned Account Manager as a list taken from your example: one value for each Account (40 entries).');
+    expect(within(q).getByRole('group', { name: 'Account Manager: the rule or a one-time edit' })).toBeTruthy();
+    expect(within(q).getAllByRole('button').map((b) => b.textContent)).toEqual(["Yes, that's the rule", 'No, it was a one-time edit']);
+    expect(q.textContent).not.toContain('Manager 0');
+    expect(learn).toHaveBeenCalledTimes(1);
+    expect(api.learn).not.toHaveBeenCalled();
+    expect(api.repair).not.toHaveBeenCalled();
+  });
+
+  it('"No, it was a one-time edit": the column needs your input - left empty, its list gone - in one undoable edit', async () => {
+    const { liveCheck } = await openList();
+    const q = await screen.findByTestId('one-time-question');
+    await act(async () => void fireEvent.click(within(q).getByRole('button', { name: 'No, it was a one-time edit' })));
+    await waitFor(() => expect(screen.queryByTestId('one-time-question')).toBeNull());
+    await waitFor(() => expect(managerColumn(lastCall(liveCheck).rules)?.from).toBeNull());
+    const { rules, oneTime } = lastCall(liveCheck);
+    expect(rules.unsupported).toEqual([{ outputColumn: 'Account Manager', reasonCode: 'overfit' }]);
+    expect([rules.transform.computed, rules.transform.tables]).toEqual([[], []]);
+    expect(oneTime).toEqual([]);
+    await waitFor(() => expect(badge()).toBe('1 column needs your input'));
+    // Undo: the list is back, and so is the question.
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Undo' })));
+    expect(await screen.findByTestId('one-time-question')).toBeTruthy();
+    await waitFor(() => expect(managerColumn(lastCall(liveCheck).rules)?.from).toBe('accountManager'));
+    expect(lastCall(liveCheck).rules.transform.tables).toEqual(listed.transform.tables);
+  });
+
+  it('"Yes, that\'s the rule" keeps the list as it is: the question goes, nothing changes (no undo step)', async () => {
+    const { liveCheck } = await openList();
+    const q = await screen.findByTestId('one-time-question');
+    const calls = liveCheck.mock.calls.length;
+    await act(async () => void fireEvent.click(within(q).getByRole('button', { name: "Yes, that's the rule" })));
+    await waitFor(() => expect(screen.queryByTestId('one-time-question')).toBeNull());
+    expect(lastCall(liveCheck).rules).toEqual(listed);
+    expect(liveCheck.mock.calls.length).toBe(calls);
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(badge()).toBe('Verified');
+  });
+
+  it('has its Hebrew copy', async () => {
+    const { liveCheck } = await openList('he');
+    const q = await screen.findByTestId('one-time-question');
+    expect(q.querySelector('.map-line__ask-question')!.textContent).toBe('Account Manager: זה הכלל?');
+    expect(within(q).getByTestId('one-time-values').textContent).toBe('למדנו את Account Manager כרשימה שנלקחה מהדוגמה שלכם: ערך אחד לכל Account (40 ערכים).');
+    expect(within(q).getByRole('group', { name: 'Account Manager: כלל או שינוי חד-פעמי' })).toBeTruthy();
+    expect(within(q).getAllByRole('button').map((b) => b.textContent)).toEqual(['כן, זה הכלל', 'לא, זה היה שינוי חד-פעמי']);
+    await act(async () => void fireEvent.click(within(q).getByRole('button', { name: 'לא, זה היה שינוי חד-פעמי' })));
+    await waitFor(() => expect(managerColumn(lastCall(liveCheck).rules)?.from).toBeNull());
+    expect(screen.queryByTestId('one-time-question')).toBeNull();
   });
 });
