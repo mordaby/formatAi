@@ -115,6 +115,9 @@ describe('POST /api/learn', () => {
       truncated: 0,
       // learn-v8: the answer's dropped alternatives (none here)
       invalidAlternative: 0,
+      // SPEC 9.2 layer 6: a rule that copies rows of the example - the repair it asks for, and the columns code reported after it (none here)
+      overfit: 0,
+      overfitFallback: 0,
     });
   });
 

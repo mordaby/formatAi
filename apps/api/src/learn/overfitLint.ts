@@ -3,6 +3,13 @@
 // code-added rather than LLM-written, so the rules map shows it as a "Please check"
 // line (SPEC 8.11) even though the LLM never wrote that assumption itself.
 //
+// DECISION (2026-10-05, the learn-v8 measurement): none of the four kinds below drives a repair. On the
+// kept rules of 26 eval cases x 2 runs each fired on correct rules as well - a one-row constant on an "N/A"
+// placeholder and on a threshold, one entry per sample on a real code-to-code map, an outlier size on a date
+// reader - so they stay "Please check" lines. The two shapes that ARE copies of rows (a condition on a row's
+// position, a long list of one-row cases) are the overfitting guards' (engine `learn/overfit.ts`, `checks.ts`
+// layer 6a), which ask for one repair and then report the column as unsupported.
+//
 // These are heuristics over the small sample the API sees (LEARN_PROMPT: at most 12
 // pairs / 6 families), not a full evaluator - SPEC 9.2 names four kinds of finding and
 // leaves the exact thresholds unspecified ("far larger than any other column's"), so
@@ -69,12 +76,26 @@ function countNodes(e: Expr): number {
   return n;
 }
 
+const CUTOFF_OPS: ReadonlySet<string> = new Set(['gt', 'gte', 'lt', 'lte']);
+
+/**
+ * A cut-off: one column compared with one constant by a range (`amount >= 5000`). DECISION (2026-10-05): its constant is never a finding.
+ * A threshold is a constant the prompt allows (prompt audit F9), code fits it from every row of the example (`fillParams`, SPEC 9.2 layer
+ * 8), and it lies between two neighbouring values of its column - so it often equals a value of one sample row, which made this lint flag a
+ * correct threshold rule in the browser.
+ */
+function isCutoff(e: Expr): boolean {
+  if (!('op' in e) || !CUTOFF_OPS.has(e.op)) return false;
+  const [a, b] = (e as { args: [Expr, Expr] }).args;
+  return ('col' in a && 'const' in b) || ('const' in a && 'col' in b);
+}
+
 function walkConsts(e: Expr, visit: (v: PayloadCell) => void): void {
   if ('const' in e) {
     visit(e.const as PayloadCell);
     return;
   }
-  if ('col' in e || 'param' in e) return;
+  if ('col' in e || 'param' in e || isCutoff(e)) return;
   if (e.op === 'switch') {
     for (const c of e.cases) {
       walkConsts(c.when, visit);
@@ -184,7 +205,7 @@ export function overfitLint(rules: LearnResult | Rules, payload: LearnPayload): 
   for (const f of rules.input.rowFilters ?? []) {
     if ('expr' in f) {
       lintConstants(ctx, f.expr, undefined);
-    } else if ('value' in f && f.value !== null) {
+    } else if ('value' in f && f.value !== null && !CUTOFF_OPS.has(f.op)) {
       const values = Array.isArray(f.value) ? f.value : [f.value];
       for (const v of values) {
         if (!isTrivialConst(v) && ctx.valueRowCounts.get(JSON.stringify(v)) === 1) {

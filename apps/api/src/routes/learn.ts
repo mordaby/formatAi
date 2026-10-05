@@ -88,6 +88,7 @@ interface RepairRequestBody {
   problems?: unknown;
   learnId?: unknown;
   rows?: unknown;
+  overfitRepaired?: unknown;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -348,6 +349,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
       verified: outcome.verified,
       problems: outcome.problems,
+      ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
       learnId,
       cached: false,
       counted: settled.counted,
@@ -415,6 +417,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
         env,
         complete,
         rows,
+        overfitRepaired: body.overfitRepaired === true,
       }),
       checked,
       owner,
@@ -438,6 +441,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
       verified: outcome.verified,
       problems: outcome.problems,
+      ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
       counted: settled.counted,
       failedAttempts: settled.failedAttempts,
       quota: await quotaState(store, ctx.quota),

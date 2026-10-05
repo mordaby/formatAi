@@ -6,12 +6,15 @@
 // because `runRules` itself refuses to execute rules `checkRules` (layer 2) rejects
 // (see `packages/engine/src/pipeline/runRules.ts`) - running it earlier would only
 // ever report a single generic rejection on top of the precise problems already
-// collected. Layer 6 (the overfitting lint) is never a gate: it always runs and always
-// appends its findings to the returned rules' `assumptions`, regardless of what else
-// failed, since it costs nothing and the caller may still show this attempt to a human.
+// collected. Layer 6 has two parts. The overfitting guards (6a: a condition on a row's position,
+// a long list of one-row cases) find a rule that copies rows of the example: an `overfit` problem
+// for one repair, or - once the learn had that repair - the column reported unsupported by code.
+// The overfitting lint (6b) is never a gate: it always runs and always appends its findings to
+// the returned rules' `assumptions`, regardless of what else failed, since it costs nothing and
+// the caller may still show this attempt to a human.
 // In completion mode an answer that broke the fixed lock has the fixed parts put back by code
 // first (`restoreFixed`), and every layer runs again on that.
-import { checkFixedLock, checkFormatLock, checkLimits, completionProduced, formulaRulesFromWire, printFormula, restoreFixed, typeCheck } from '@formatai/engine';
+import { checkFixedLock, checkFormatLock, checkLimits, completionProduced, formulaRulesFromWire, overfitFindings, overfitProblems, printFormula, restoreFixed, typeCheck, withOverfitFallback } from '@formatai/engine';
 import {
   checkRules,
   fromWire,
@@ -33,7 +36,7 @@ import {
 } from '@formatai/shared';
 import { dropInvalidNotes } from './notes.js';
 import { overfitLint } from './overfitLint.js';
-import { runOnSamples } from './sampleRun.js';
+import { buildSampleInputTable, runOnSamples } from './sampleRun.js';
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -86,6 +89,12 @@ export interface ChecksOptions {
   tier: Tier;
   /** Whether the answer may give `alternatives` (learn-v8 and later; default true). With false (learn-v7) any it gives is dropped. */
   alternatives?: boolean;
+  /**
+   * What a rule that copies particular rows of the example becomes (layer 6, the overfitting guards): `repair` (the default) - an `overfit`
+   * problem for the column, so a repair call is asked for a rule that holds for any row; `fallBack` - the learn already had its one repair
+   * for it (`learn.ts`), so code reports the column as unsupported (reason `overfit`, "needs your input") and the answer is checked without it.
+   */
+  overfit?: 'repair' | 'fallBack';
 }
 
 export interface ChecksResult {
@@ -98,6 +107,8 @@ export interface ChecksResult {
   alternatives: LearnAlternative[];
   /** How many alternatives the answer gave that were dropped (see `checkAlternatives`) - for the call record's `problemCounts`. */
   invalidAlternatives: number;
+  /** `overfit: 'fallBack'`: how many output columns code reported as unsupported because their rule copied rows - for `problemCounts`. */
+  overfitFallbacks: number;
 }
 
 /**
@@ -190,7 +201,9 @@ export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksO
   return { ...checked, ...checkAlternatives(alternatives, checked.rules, payload, opts) };
 }
 
-function checkAnswer(rawJson: unknown, payload: LearnPayload, opts: ChecksOptions): Pick<ChecksResult, 'problems' | 'rules'> {
+type Checked = Pick<ChecksResult, 'problems' | 'rules' | 'overfitFallbacks'>;
+
+function checkAnswer(rawJson: unknown, payload: LearnPayload, opts: ChecksOptions): Checked {
   // ----- Layer 0: formula text -> Expr trees (learn-v5) -----
   // `fromWire` (shared) turns the `{key,value}[]` pairs back into records; the four Expr
   // positions inside are still formula TEXT at that point (the wire schema never had an
@@ -208,7 +221,7 @@ function checkAnswer(rawJson: unknown, payload: LearnPayload, opts: ChecksOption
     promptOpsOnly: payload.complete === undefined,
   });
   if (formulaProblems.length > 0) {
-    return { problems: formulaProblems, rules: null };
+    return { problems: formulaProblems, rules: null, overfitFallbacks: 0 };
   }
 
   // ----- Layer 1: structure -----
@@ -221,7 +234,7 @@ function checkAnswer(rawJson: unknown, payload: LearnPayload, opts: ChecksOption
       path: issue.path.map(String).join('.'),
       message: issue.message,
     }));
-    return { problems, rules: null };
+    return { problems, rules: null, overfitFallbacks: 0 };
   }
 
   const first = checkParsed(parsed.data, payload, opts);
@@ -271,7 +284,8 @@ function staticProblems(rules: LearnResult, payload: LearnPayload, opts: ChecksO
 }
 
 /** SPEC 9.2 layers 2-7 on an answer that passed layers 0-1 (formula text, structure). */
-function checkParsed(rules: LearnResult, payload: LearnPayload, opts: ChecksOptions): Pick<ChecksResult, 'problems' | 'rules'> {
+function checkParsed(answer: LearnResult, payload: LearnPayload, opts: ChecksOptions): Checked {
+  let rules = answer;
   const problems: RepairProblem[] = staticProblems(rules, payload, opts);
 
   // ----- Layer 5: format lock (attach mode only; completion mode has its own, 5b below) -----
@@ -319,15 +333,33 @@ function checkParsed(rules: LearnResult, payload: LearnPayload, opts: ChecksOpti
     });
   }
 
+  const gatesClean = problems.length === 0;
+
+  // ----- Layer 6a: the overfitting guards (SPEC 9.2 layer 6, engine `learn/overfit.ts`) -----
+  // A rule that copies particular rows of the example - a condition on a row's position, a long list of one-row cases - is found whatever the
+  // prompt says. A position needs no row; a case list is counted on the samples (and a loop round's rows), so only once the rules can run.
+  // Completion mode: only the columns the AI step was asked for (the others are the user's own rules). `repair`: one `overfit` problem per
+  // column; `fallBack` (the learn's one repair for it was made): the column is reported as unsupported by code and checked no further.
+  let overfitFallbacks = 0;
+  const asked = payload.complete ? new Set(payload.output.columns.filter((c) => payload.complete!.columns.includes(c.i)).map((c) => c.header)) : null;
+  const findings = overfitFindings(rules, { table: gatesClean ? buildSampleInputTable(payload) : null }).filter((f) => asked === null || asked.has(f.outputColumn));
+  if (findings.length > 0 && opts.overfit === 'fallBack') {
+    rules = withOverfitFallback(rules, findings);
+    overfitFallbacks = new Set(findings.map((f) => f.outputColumn)).size;
+  } else {
+    problems.push(...overfitProblems(findings));
+  }
+
   // ----- Layer 5d: an honest "unsupported" is no mismatch - unless the app's own analysis found how the column is built -----
   // A hint for a column the answer gave up on (copy, template, composition, dependency, bands, window ...) is positive evidence that it can be
   // produced: one repair round to write the rule (SPEC 9.2). A column with no hint stays accepted. Not a gate: the sample run below
-  // still runs, so the same repair call also carries any diff on the columns that do have a rule.
-  const gatesClean = problems.length === 0;
+  // still runs, so the same repair call also carries any diff on the columns that do have a rule. (A column code reported above is never one.)
   problems.push(...unsupportedDespiteEvidence(rules, payload));
 
-  // ----- Layer 6: overfitting lint (never a rejection) -----
-  const lintAssumptions = overfitLint(rules, payload);
+  // ----- Layer 6b: overfitting lint (never a rejection: "Please check" lines) -----
+  // (An assumption the answer already carries - a repair copies the previous answer's - is not added twice.)
+  const has = new Set(rules.assumptions.map((a) => `${a.reasonCode}\u0000${a.outputColumn ?? ''}`));
+  const lintAssumptions = overfitLint(rules, payload).filter((a) => !has.has(`${a.reasonCode}\u0000${a.outputColumn ?? ''}`));
   const rulesWithLint: LearnResult =
     lintAssumptions.length > 0 ? { ...rules, assumptions: [...rules.assumptions, ...lintAssumptions] } : rules;
 
@@ -338,7 +370,7 @@ function checkParsed(rules: LearnResult, payload: LearnPayload, opts: ChecksOpti
     problems.push(...runOnSamples(rulesWithLint, payload));
   }
 
-  return { problems, rules: rulesWithLint };
+  return { problems, rules: rulesWithLint, overfitFallbacks };
 }
 
 // ---------- learn-v8: the answer's alternatives (owner decision 2026-10-04; SPEC 9.2, 21 v12 item 17) ----------

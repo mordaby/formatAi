@@ -70,12 +70,13 @@ export interface LlmCallRecord {
    * ledger alone. See `eval/lib`'s report for the human-readable version (which also
    * has the actual messages, via `LearnOptions.onAttempt` - a dev-only path this ledger
    * record deliberately doesn't carry). learn-v8: `invalidAlternative` counts the
-   * alternatives the answer gave that were dropped (`runChecks`; never a repair problem). */
+   * alternatives the answer gave that were dropped (`runChecks`; never a repair problem); `overfitFallback` the columns code
+   * reported as unsupported because their rule copied rows (SPEC 9.2 layer 6; never a repair problem either). */
   problemCounts: ProblemCounts;
 }
 
 /** Every `RepairProblem` kind, for `problemCounts` (SPEC 15: counts only, never text). */
-const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'fixedMismatch', 'diff', 'rowCount', 'layout', 'unsupportedDespiteEvidence', 'truncated'] as const;
+const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'fixedMismatch', 'diff', 'rowCount', 'layout', 'unsupportedDespiteEvidence', 'truncated', 'overfit'] as const;
 
 /** Prompt audit X2: the problem of an answer cut off at the output-token limit (no payload text: SPEC 15). */
 const TRUNCATED_PROBLEM: RepairProblem = {
@@ -83,13 +84,18 @@ const TRUNCATED_PROBLEM: RepairProblem = {
   message: 'The previous answer was cut off at the output limit before it was complete, so none of it could be read: write the whole answer again, shorter.',
 };
 
-/** The ledger's per-call counts: each `RepairProblem` kind, plus the answer's dropped alternatives (learn-v8). */
-export type ProblemCounts = Record<RepairProblem['kind'] | 'invalidAlternative', number>;
+/**
+ * The ledger's per-call counts: each `RepairProblem` kind, plus the answer's dropped alternatives (learn-v8) and the output columns code
+ * reported as unsupported because their rule still copied rows of the example after the learn's one repair for it (`overfitFallback`,
+ * SPEC 9.2 layer 6 - the `overfit` problems are the findings that asked for that repair).
+ */
+export type ProblemCounts = Record<RepairProblem['kind'] | 'invalidAlternative' | 'overfitFallback', number>;
 
-export function countProblems(problems: readonly RepairProblem[], invalidAlternatives = 0): ProblemCounts {
+export function countProblems(problems: readonly RepairProblem[], invalidAlternatives = 0, overfitFallbacks = 0): ProblemCounts {
   const counts = Object.fromEntries(REPAIR_PROBLEM_KINDS.map((k) => [k, 0])) as ProblemCounts;
   for (const p of problems) counts[p.kind] += 1;
   counts.invalidAlternative = invalidAlternatives;
+  counts.overfitFallback = overfitFallbacks;
   return counts;
 }
 
@@ -129,6 +135,12 @@ export interface LearnOptions {
    * the ledger.
    */
   onAttempt?: (problems: readonly RepairProblem[]) => void;
+  /**
+   * The learn already had its one repair for a rule that copies rows of the example (SPEC 9.2 layer 6): an `overfit` problem was sent in an
+   * earlier call of it - a server repair, or a loop round (`RepairRequest.overfitRepaired`). Every answer is then checked with `overfit:
+   * 'fallBack'`: such a rule is reported as unsupported by code, never sent back again.
+   */
+  overfitRepaired?: boolean;
 }
 
 export interface LearnOutcome {
@@ -141,6 +153,8 @@ export interface LearnOutcome {
   verified: boolean;
   problems: RepairProblem[];
   calls: LlmCallRecord[];
+  /** True once this learn had its one repair for a rule that copies rows (it was, or a call of this sequence sent an `overfit` problem). */
+  overfitRepaired?: boolean;
 }
 
 interface Attempt {
@@ -186,6 +200,7 @@ async function callAndCheck(
   prefixCache: PrefixCache,
   prompt: LearnPrompt,
   rows: readonly Sample[] = [],
+  overfit: 'repair' | 'fallBack' = 'repair',
 ): Promise<{ record: LlmCallRecord; attempt: Attempt }> {
   const schema = learnResultWireJsonSchema({ alternatives: prompt.alternatives });
   const promptVersion = prompt.version;
@@ -195,8 +210,8 @@ async function callAndCheck(
     // The learning loop: checked on the samples plus every row the browser sent (`withRows`); a problem on one of those rows names the row.
     // (A cut-off answer is not checked: there is nothing whole to check.)
     const checked = result.truncated
-      ? { problems: [TRUNCATED_PROBLEM], rules: null, alternatives: [], invalidAlternatives: 0 }
-      : runChecks(result.json, withRows(payload, rows), { tier, alternatives: prompt.alternatives });
+      ? { problems: [TRUNCATED_PROBLEM], rules: null, alternatives: [], invalidAlternatives: 0, overfitFallbacks: 0 }
+      : runChecks(result.json, withRows(payload, rows), { tier, alternatives: prompt.alternatives, overfit });
     const problems = rowsNamed(checked.problems, payload, rows);
     const { rules, alternatives } = checked;
     // The estimate counts the exact text sent (system prompt, schema, every content block) and received (the raw answer).
@@ -218,7 +233,7 @@ async function callAndCheck(
       estimate,
       latencyMs: result.latencyMs,
       outcome: result.truncated ? 'truncated' : outcomeOf(problems),
-      problemCounts: countProblems(problems, checked.invalidAlternatives),
+      problemCounts: countProblems(problems, checked.invalidAlternatives, checked.overfitFallbacks),
     };
     return { record, attempt: { raw: result.truncated ? null : result.json, problems, rules, alternatives } };
   } catch (err) {
@@ -293,14 +308,25 @@ function rowsNamed(problems: RepairProblem[], payload: LearnPayload, rows: reado
   });
 }
 
+/** Whether an attempt has a rule that copies rows of the example: an `overfit` problem, or a column code reported for it (reason `overfit`). */
+function copiesRows(a: Attempt): boolean {
+  return a.problems.some((p) => p.kind === 'overfit') || (a.rules?.unsupported.some((u) => u.reasonCode === 'overfit') ?? false);
+}
+
 /**
  * The attempt with the fewest problems (ties keep the earliest). DECISION (prompt audit X2): an attempt with no rules - a call that failed
  * or was cut off, an answer whose structure did not parse - never beats one with rules, whatever the counts: its one `truncated` or
  * "call failed" problem is not fewer mistakes than a real answer's two, and keeping it would lose that answer for the browser's loop.
+ * DECISION (SPEC 9.2 layer 6): next, an attempt whose rule copies rows of the example never beats one without: a rule that fits a
+ * hand-edited row by its position hides that row's difference, so counting problems would prefer it to the honest rule with the row wrong.
  */
 function bestOf(attempts: Attempt[]): Attempt {
   const worse = (a: Attempt, b: Attempt): boolean =>
-    (a.rules === null) !== (b.rules === null) ? a.rules === null : a.problems.length > b.problems.length;
+    (a.rules === null) !== (b.rules === null)
+      ? a.rules === null
+      : copiesRows(a) !== copiesRows(b)
+        ? copiesRows(a)
+        : a.problems.length > b.problems.length;
   let best = attempts[0]!;
   for (const a of attempts) {
     if (worse(best, a)) best = a;
@@ -323,13 +349,20 @@ interface CallContext {
   calls: LlmCallRecord[];
   attempts: Attempt[];
   opts: LearnOptions;
+  /** The learn's one repair for a rule that copies rows has been made (SPEC 9.2 layer 6): every answer from then on is checked with `fallBack`. */
+  overfitRepaired: boolean;
 }
+
+/** How an answer's rule that copies rows is checked: one repair per learn (`repair`), then the honest fallback. */
+const overfitMode = (ctx: Pick<CallContext, 'overfitRepaired'>): 'repair' | 'fallBack' => (ctx.overfitRepaired ? 'fallBack' : 'repair');
 
 /** SPEC 9.3: while `current` has problems, up to `limits.llm.serverRepairRounds` repair calls on the same model, each repairing the one before. */
 async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt> {
   let current = start;
   for (let round = 0; round < limits.llm.serverRepairRounds && current.problems.length > 0; round++) {
     if (ctx.opts.signal?.aborted) break;
+    // A repair that carries an `overfit` problem is the learn's one repair for it.
+    if (current.problems.some((p) => p.kind === 'overfit')) ctx.overfitRepaired = true;
     const repair = await callAndCheck(
       ctx.completeFn,
       ctx.env,
@@ -341,6 +374,7 @@ async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt>
       ctx.prefixCache,
       ctx.prompt,
       ctx.rows,
+      overfitMode(ctx),
     );
     ctx.calls.push(repair.record);
     ctx.attempts.push(repair.attempt);
@@ -350,14 +384,15 @@ async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt>
   return current;
 }
 
-function outcomeOfAttempts(attempts: Attempt[], calls: LlmCallRecord[]): LearnOutcome {
-  const best = bestOf(attempts);
+function outcomeOfAttempts(ctx: CallContext): LearnOutcome {
+  const best = bestOf(ctx.attempts);
   return {
     rules: best.rules,
     ...(best.rules !== null && best.alternatives.length > 0 ? { alternatives: best.alternatives } : {}),
     verified: best.rules !== null && best.problems.length === 0,
     problems: best.problems,
-    calls,
+    calls: ctx.calls,
+    ...(ctx.overfitRepaired ? { overfitRepaired: true } : {}),
   };
 }
 
@@ -382,9 +417,9 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
   const block = payloadBlock(payload);
   const firstTryModel = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
   const prompt = learnPromptOf(opts.prompt);
-  const ctx: CallContext = { completeFn, env, model: firstTryModel, block, payload, tier: opts.tier, prefixCache: new Set(), rows: [], prompt, calls: [], attempts: [], opts };
+  const ctx: CallContext = { completeFn, env, model: firstTryModel, block, payload, tier: opts.tier, prefixCache: new Set(), rows: [], prompt, calls: [], attempts: [], opts, overfitRepaired: opts.overfitRepaired === true };
 
-  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier, ctx.prefixCache, prompt);
+  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier, ctx.prefixCache, prompt, [], overfitMode(ctx));
   ctx.calls.push(first.record);
   ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);
@@ -393,13 +428,13 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
 
   if (current.problems.length > 0 && !opts.signal?.aborted && !opts.noEscalation) {
     const escalationModel = opts.models?.escalation ?? resolveModel(env, 'escalation');
-    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier, ctx.prefixCache, prompt);
+    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier, ctx.prefixCache, prompt, [], overfitMode(ctx));
     ctx.calls.push(escalated.record);
     ctx.attempts.push(escalated.attempt);
     opts.onAttempt?.(escalated.attempt.problems);
   }
 
-  return outcomeOfAttempts(ctx.attempts, ctx.calls);
+  return outcomeOfAttempts(ctx);
 }
 
 /** `repairFromBrowser`'s options: a learn's, plus the learning loop's rows. */
@@ -432,13 +467,15 @@ export async function repairFromBrowser(
   const model = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
   const prompt = learnPromptOf(opts.prompt);
   // DECISION: this call always comes after the learn's own first call on the same model, so the cached prefix is already there.
-  const ctx: CallContext = { completeFn, env, model, block, payload, tier: opts.tier, prefixCache: new Set([model]), rows: opts.rows ?? [], prompt, calls: [], attempts: [], opts };
+  // (A round whose problems carry an `overfit` problem is the learn's one repair for it: its answers are checked with `fallBack`.)
+  const overfitRepaired = opts.overfitRepaired === true || problems.some((p) => p.kind === 'overfit');
+  const ctx: CallContext = { completeFn, env, model, block, payload, tier: opts.tier, prefixCache: new Set([model]), rows: opts.rows ?? [], prompt, calls: [], attempts: [], opts, overfitRepaired };
 
-  const first = await callAndCheck(completeFn, env, 'repair', model, [block, repairContentBlock(previous, problems, prompt)], payload, opts.tier, ctx.prefixCache, prompt, ctx.rows);
+  const first = await callAndCheck(completeFn, env, 'repair', model, [block, repairContentBlock(previous, problems, prompt)], payload, opts.tier, ctx.prefixCache, prompt, ctx.rows, overfitMode(ctx));
   ctx.calls.push(first.record);
   ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);
 
   await serverRepairs(ctx, first.attempt);
-  return outcomeOfAttempts(ctx.attempts, ctx.calls);
+  return outcomeOfAttempts(ctx);
 }

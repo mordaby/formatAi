@@ -66,6 +66,11 @@ export interface LearnResponse {
   counted?: boolean;
   /** Failed AI attempts so far on this example pair, of `limits.learn.maxFailedAiAttempts`. */
   failedAttempts?: number;
+  /**
+   * True once this learn had its one repair for a rule that copies rows of the example (SPEC 9.2 layer 6: an `overfit` problem was sent).
+   * The browser says so in its later loop rounds (`RepairRequest.overfitRepaired`), so the learn never gets a second one.
+   */
+  overfitRepaired?: boolean;
 }
 
 /** SPEC 21 v5: what is left of a signed-in user's AI learns. */
@@ -91,6 +96,8 @@ export interface RepairRequest {
    * samples (`withRows`). The server checks the answer against the samples plus all of them. Absent: none.
    */
   rows?: Sample[];
+  /** The learn already had its one repair for a rule that copies rows (`LearnResponse.overfitRepaired`): such a rule is reported as unsupported now. */
+  overfitRepaired?: boolean;
 }
 
 /** POST /api/learn/repair 200 body. */
