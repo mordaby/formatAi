@@ -124,6 +124,7 @@ export function createEngineClient(options: CreateEngineClientOptions = {}): Eng
       call('learn', args, transfersOf(args.input, args.output), opts, {
         callLearn: host.callLearn,
         callRepair: host.callRepair,
+        callStep: host.callStep,
       } as unknown as HostFunctions),
     convert: (args, opts) => call('convert', args, transfersOf(args.file), opts),
     verify: (args, opts) => call('verify', args, transfersOf(args.input, args.output), opts),

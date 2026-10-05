@@ -106,6 +106,60 @@ describe('LearningProgress', () => {
     expect(screen.queryByTestId('loop-round')).toBeNull();
   });
 
+  it('says, while the AI checks an idea on the rows before it answers, which round of checks it is (AI code checks), in English and Hebrew', () => {
+    const steps: StepKey[] = ['reading', 'checking', 'learning'];
+    show({ status: 'learning', attempt: 'learn', checkRound: { n: 1, of: 3 }, sent: [] }, steps);
+    const line = screen.getByTestId('check-round');
+    expect(line.textContent).toBe('The AI is checking an idea on your rows (round 1 of 3).');
+    // Under the step that learns, inside the live region the progress already uses.
+    expect(line.closest('[data-state="active"]')!.textContent).toContain('Learning the format');
+    expect(line.closest('[aria-live="polite"]')).toBeTruthy();
+    cleanup();
+    show({ status: 'learning', attempt: 'learn', checkRound: { n: 2, of: 3 }, unexplained: ['Label'], sent: [] }, steps, 'he');
+    expect(screen.getByTestId('check-round').textContent).toBe('ה-AI בודק רעיון מול השורות שלכם (סבב 2 מתוך 3).');
+    expect(screen.getByTestId('unexplained-note')).toBeTruthy();
+    cleanup();
+    // No checks: no line (and never under the loop's step).
+    show({ status: 'learning', attempt: 'learn', sent: [] }, steps);
+    expect(screen.queryByTestId('check-round')).toBeNull();
+    cleanup();
+    show({ status: 'learning', attempt: 'repair', round: { n: 1, of: 3, rows: 1 }, sent: [] }, [...steps, 'verifying', 'learningRepair']);
+    expect(screen.queryByTestId('check-round')).toBeNull();
+  });
+
+  it('"See what we send" lists each step of AI code checks: the round, the rows its answers show, and the checks with their answers', () => {
+    const payload = { masking: true, samples: [{ in: ['s'], out: ['t'] }] };
+    const shown = { in: ['x'], out: ['y'] };
+    const round1 = { checks: [{ check: 'values', column: 'Size' }], answers: [{ rows: 10, distinct: 2, empty: 0, top: [{ value: 'Bxqz', rows: 6 }] }] };
+    const round2 = { checks: [{ check: 'rows', where: 'qty > 9', limit: 2 }], answers: [{ matched: 6, rows: [shown, payload.samples[0]] }] };
+    const sent = [
+      { kind: 'learn', bytes: 2048, payload },
+      { kind: 'step', bytes: 2300, payload, rounds: [round1], round: { n: 1, of: 3 } },
+      { kind: 'step', bytes: 2500, payload, rounds: [round1, round2], round: { n: 2, of: 3 } },
+    ] as never;
+    show({ status: 'learning', attempt: 'learn', checkRound: { n: 2, of: 3 }, sent }, ['reading', 'checking', 'learning']);
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    const records = screen.getAllByTestId('send-record');
+    expect(records.map((r) => r.querySelector('.send-record__head')!.textContent)).toEqual([
+      'Learn request · 2.0 KB',
+      "Answers to the AI's checks, round 1 of 3 · 2.2 KB",
+      "Answers to the AI's checks, round 2 of 3 · 2.4 KB",
+    ]);
+    // Counts only: no rows line. The second round shows one row the payload does not carry already.
+    expect(records[1]!.querySelectorAll('p.muted')).toHaveLength(0);
+    expect(records[2]!.textContent).toContain('Its answers show 1 row of your example (every row the checks showed so far).');
+    // The exact JSON: the payload and every round so far, the checks with their answers (never the learn's token).
+    const json = within(records[2]!).getByRole('region', { name: 'Data sent (JSON)' }).textContent!;
+    expect(json).toContain('"rounds"');
+    expect(json).toContain('"check": "rows"');
+    expect(json).toContain('"Bxqz"');
+    expect(json).not.toContain('token');
+    cleanup();
+    show({ status: 'learning', attempt: 'learn', sent }, ['reading', 'checking', 'learning'], 'he');
+    fireEvent.click(screen.getByRole('button', { name: 'מה אנחנו שולחים' }));
+    expect(screen.getAllByTestId('send-record')[2]!.textContent).toContain('תשובות לבדיקות של ה-AI, סבב 2 מתוך 3');
+  });
+
   it('"See what we send" lists every round, with the rows it carries, and says before anything is sent that rounds may follow', () => {
     const payload = { masking: true, samples: [] };
     const rows = [{ in: ['x'], out: ['y'] }, { in: ['z'], out: ['w'] }];
@@ -125,6 +179,7 @@ describe('LearningProgress', () => {
     show(checking(0.5), ['reading', 'checking']);
     fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
     expect(screen.getByText('If the rules then get rows of your example wrong: up to 3 more requests, each with some of those rows (at most 40 rows in all), sent like the sample rows.')).toBeTruthy();
+    expect(screen.getByText('If the AI asks to check an idea first, your computer answers with counts and ranges from your example, and at most a few more rows, sent like the sample rows (within the same 40 rows).')).toBeTruthy();
   });
 });
 

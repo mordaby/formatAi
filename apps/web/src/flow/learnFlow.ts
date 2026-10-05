@@ -7,30 +7,38 @@
 //                          |            +-> warn (continue past "unknown output columns")
 //                          +-> blocked | warn (Try anyway) | error
 //
+// `learning` may first go through rounds of AI code checks (learn-v9, at most 3, `checkRound`): code answers the AI step's checks on every
+// row and the next step (POST /api/learn/step) carries them, until the rules come.
+//
 // Real progress comes from the worker (`LearnProgress`); steps that don't happen are
 // simply never visited (the local fast path goes checking -> done, with no learning or
 // verifying). The HTTP calls are made HERE, on the main thread, on the worker's behalf.
-import { payloadBytes, withRows, type AiLearnQuotaState, type Format, type LearnAlternative, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type Sample, type Tier } from '@formatai/shared';
+import { limits, payloadBytes, stepBytes, withRows, type AiLearnQuotaState, type CheckRound, type Format, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type RepairResponse, type Sample, type Tier } from '@formatai/shared';
 import type { AnalysisStage, CompleteOptions, LearnCallResult, PreflightIssue } from '@formatai/engine';
 import type { Api } from '../api';
 import { webConfig } from '../config';
 import type { EngineClient } from '../worker/engineClient';
-import type { LearnArgs, LearnHost, LearnOutput, LearnProgress, LoopRoundInfo } from '../worker/engineApi';
+import type { CheckRoundInfo, LearnArgs, LearnHost, LearnOutput, LearnProgress, LoopRoundInfo } from '../worker/engineApi';
 import { isCancellation, toFlowError, type FlowError } from './errors';
 
-/** What the browser actually sent to the API ("See what we send", SPEC 15): the learn, then each round of the learning loop. */
+/**
+ * What the browser actually sent to the API ("See what we send", SPEC 15): the learn, each step of AI code checks (`step`: the checks the AI
+ * step asked and what code answered, every round so far), then each round of the learning loop.
+ */
 export interface SentRecord {
-  kind: 'learn' | 'repair';
+  kind: 'learn' | 'repair' | 'step';
   /** True when a learn was re-sent because a cached result failed full verification (the server has no `learnId` to repair). */
   fresh?: boolean;
   payload: LearnPayload;
   previousRules?: LearnResult;
   problems?: RepairProblem[];
-  /** A round of the learning loop: which one, of how many at most. */
+  /** A round of the learning loop, or of AI code checks (a step): which one, of how many at most. */
   round?: { n: number; of: number };
   /** A round of the learning loop: every row of the example sent so far, masked (the request's `rows`). */
   rows?: Sample[];
-  /** Size of the JSON request body's payload part, in bytes (SPEC 7.3 caps it at 48 KB). */
+  /** A step of AI code checks: every round so far, this one last - the checks and code's answers, masked like the samples (the request's `rounds`). */
+  rounds?: CheckRound[];
+  /** Size of the JSON request body's payload part (a step: the payload with its rounds), in bytes (SPEC 7.3 caps it at 48 KB). */
   bytes: number;
 }
 
@@ -65,6 +73,8 @@ export type LearnFlowState =
       unexplained?: string[];
       /** A round of the learning loop (a repair): its number, the most there may be, and how many rows the rules got wrong it sends. */
       round?: LoopRoundInfo;
+      /** A round of AI code checks (the first try): the AI step asked code to check ideas on every row - which round, of how many at most. */
+      checkRound?: CheckRoundInfo;
     } & Common)
   | ({ status: 'verifying' } & Common)
   /** Needs the user's go-ahead (SPEC 6.4 "rows couldn't be aligned"): `confirm()` tries anyway, `cancel()` stops. */
@@ -209,8 +219,8 @@ export class LearnFlow {
       if (!stale()) this.set(next);
     };
     const record = async (rec: Omit<SentRecord, 'bytes'>): Promise<void> => {
-      // (a loop round's rows count with the payload: the byte cap holds for the payload with every row sent added to it)
-      const full: SentRecord = { ...rec, bytes: payloadBytes(withRows(rec.payload, rec.rows ?? [])) };
+      // (a loop round's rows count with the payload: the byte cap holds for the payload with every row sent added to it; a step's rounds the same)
+      const full: SentRecord = { ...rec, bytes: rec.rounds ? stepBytes(rec.payload, rec.rounds) : payloadBytes(withRows(rec.payload, rec.rows ?? [])) };
       sent = [...sent, full];
       if (!stale()) this.set({ ...this.state, sent } as LearnFlowState);
       await this.deps.beforeSend?.(full);
@@ -244,7 +254,7 @@ export class LearnFlow {
           learnId = res.learnId;
           lastProblems = res.problems;
           ai = { learnId: res.learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, cached: res.cached };
-          return asCallResult(res.rules, res.problems, res.alternatives, res.overfitRepaired);
+          return asCallResult(res);
         } catch (e) {
           hostError = e;
           throw e;
@@ -273,7 +283,23 @@ export class LearnFlow {
             failedAttempts: res.failedAttempts,
             quota: res.quota ?? ai?.quota,
           };
-          return asCallResult(res.rules, res.problems, res.alternatives, res.overfitRepaired);
+          return asCallResult(res);
+        } catch (e) {
+          hostError = e;
+          throw e;
+        }
+      },
+      // AI code checks (learn-v9, SPEC 21 v14): the AI step asked checks; the worker answered them on every row (masked like the samples) and
+      // this sends every round so far under the learn's own id - which stays the learn's id for the later steps and for the loop's repairs.
+      callStep: async (payload, rounds) => {
+        try {
+          // (A checks answer always comes with a learnId: a cached answer is rules, never checks.)
+          if (learnId === undefined) throw new Error("A step of AI code checks needs the learn's id");
+          await record({ kind: 'step', payload, rounds, round: { n: rounds.length, of: limits.learn.checks.maxRounds } });
+          const res = await this.deps.api.step(learnId, payload, rounds, { signal: abort.signal });
+          lastProblems = res.problems;
+          ai = { ...ai, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota ?? ai?.quota };
+          return asCallResult(res);
         } catch (e) {
           hostError = e;
           throw e;
@@ -340,9 +366,21 @@ export class LearnFlow {
   }
 }
 
-/** What the engine's learn needs of an answer: the rules, the problems and (learn-v8) the alternatives, which it tests on every row. */
-function asCallResult(rules: LearnResult | null, problems: RepairProblem[], alternatives: LearnAlternative[] | undefined, overfitRepaired: boolean | undefined): LearnCallResult {
-  return { rules, problems, calls: [], ...(alternatives && alternatives.length > 0 ? { alternatives } : {}), ...(overfitRepaired ? { overfitRepaired: true } : {}) };
+/**
+ * What the engine's learn needs of an answer: the rules, the problems, (learn-v8) the alternatives, which it tests on every row, and (learn-v9)
+ * the checks the AI step asked instead of answering - present, even empty with `droppedChecks`, it is a checks answer the engine answers.
+ */
+function asCallResult(res: RepairResponse): LearnCallResult {
+  const { rules, problems, alternatives, overfitRepaired, checks, droppedChecks } = res;
+  return {
+    rules,
+    problems,
+    calls: [],
+    ...(alternatives && alternatives.length > 0 ? { alternatives } : {}),
+    ...(overfitRepaired ? { overfitRepaired: true } : {}),
+    ...(checks ? { checks } : {}),
+    ...(checks && droppedChecks && droppedChecks.length > 0 ? { droppedChecks } : {}),
+  };
 }
 
 function stateForProgress(p: LearnProgress, sent: readonly SentRecord[]): LearnFlowState {
@@ -352,7 +390,14 @@ function stateForProgress(p: LearnProgress, sent: readonly SentRecord[]): LearnF
     case 'checking':
       return { status: 'checking', stage: p.stage, fraction: p.fraction, sent };
     case 'learning':
-      return { status: 'learning', attempt: p.attempt, ...(p.unexplained && p.unexplained.length > 0 ? { unexplained: p.unexplained } : {}), ...(p.round ? { round: p.round } : {}), sent };
+      return {
+        status: 'learning',
+        attempt: p.attempt,
+        ...(p.unexplained && p.unexplained.length > 0 ? { unexplained: p.unexplained } : {}),
+        ...(p.round ? { round: p.round } : {}),
+        ...(p.checkRound ? { checkRound: p.checkRound } : {}),
+        sent,
+      };
     case 'verifying':
       return { status: 'verifying', sent };
   }

@@ -43,7 +43,7 @@ async function learned(engine: EngineClient, n: number): Promise<{ result: Learn
   const p = pair(n);
   const result = await engine.learn(
     { input: { name: 'in.csv', bytes: p.input }, output: { name: 'out.csv', bytes: p.output }, masking: false, tier: 'paid' },
-    { callLearn: vi.fn(), callRepair: vi.fn() },
+    { callLearn: vi.fn(), callRepair: vi.fn(), callStep: vi.fn() },
   );
   if (!result.rules || !result.exampleId) throw new Error(`the fast path did not solve the example: ${result.path}`);
   return { result, rules: result.rules, exampleId: result.exampleId };

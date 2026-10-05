@@ -11,7 +11,7 @@
 //     ground). Only edits that collide with the answer keep it out.
 import { isCompletable, type AiColumnNote, type AiStepPartCode, type LearnResult, type Rules } from '@formatai/shared';
 import type { AmbiguousColumn, FillSummary, OneTimeQuestion, VerifyResult } from '@formatai/engine';
-import type { LearnOutput, LoopRoundInfo } from '../../worker/engineApi';
+import type { CheckRoundInfo, LearnOutput, LoopRoundInfo } from '../../worker/engineApi';
 import { useEffect, useRef, useState } from 'react';
 import { useLearnSession } from '../../app/LearnSession';
 import { mergeRules, type EditableRules, type EditorStore } from '../../editor';
@@ -42,6 +42,8 @@ export interface UseCompletion {
   running: boolean;
   /** While it runs a round of the learning loop: which one, of how many, and how many rows the rules got wrong it sends. */
   round: LoopRoundInfo | null;
+  /** While the AI step checks ideas on the rows before it answers (AI code checks): which round, of how many at most. */
+  checkRound: CheckRoundInfo | null;
   /** How many output columns the run in progress was asked for. */
   columnsAsked: number;
   /** What the last run was asked for (headers and parts); null before the first. While `running`, these are the fields the analysis works on. */
@@ -131,6 +133,7 @@ export function useCompletion(store: EditorStore, exampleId: string | undefined,
   return {
     running: isRunning(state),
     round: state.status === 'learning' && state.round ? state.round : null,
+    checkRound: state.status === 'learning' && state.checkRound ? state.checkRound : null,
     columnsAsked,
     asked,
     outcome,

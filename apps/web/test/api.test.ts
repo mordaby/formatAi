@@ -66,6 +66,19 @@ describe('requests', () => {
     expect(sentBody(fetchMock, 1)).not.toHaveProperty('overfitRepaired');
   });
 
+  it('step(): POSTs the learn\'s id as the token, the payload and every round so far (AI code checks), and passes the abort signal', async () => {
+    const answer = { rules: null, checks: [{ check: 'values', column: 'Size' }], verified: false, problems: [], counted: false, failedAttempts: 0 };
+    const { api, fetchMock } = apiWith(() => json(answer));
+    const rounds = [{ checks: [{ check: 'values' as const, column: 'Size' }], answers: [{ rows: 10, distinct: 2, empty: 0, top: [] }] }];
+    const abort = new AbortController();
+    await expect(api.step('L1', payload, rounds, { signal: abort.signal })).resolves.toEqual(answer);
+    const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe('https://api.test/api/learn/step');
+    expect(init.method).toBe('POST');
+    expect(init.signal).toBe(abort.signal);
+    expect(sentBody(fetchMock)).toEqual({ token: 'L1', payload, rounds });
+  });
+
   it('only ever sends JSON: no method takes a File or Blob (SPEC 2/15)', async () => {
     const { api, fetchMock } = apiWith(() => json({ rules: null, verified: false, problems: [], cached: false }));
     await api.learn(payload);

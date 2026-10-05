@@ -5,7 +5,7 @@
 //
 // SPEC 2/15: the only bodies ever sent are JSON (the learn payload, rules, problems).
 // There is deliberately no method that takes a File or a Blob.
-import type { LearnPayload, LearnRequest, LearnResponse, LearnResult, RepairProblem, RepairRequest, RepairResponse, Sample, SessionResponse } from '@formatai/shared';
+import type { CheckRound, LearnPayload, LearnRequest, LearnResponse, LearnResult, RepairProblem, RepairRequest, RepairResponse, Sample, SessionResponse, StepRequest, StepResponse } from '@formatai/shared';
 import { createAdminApi, type AdminApi } from './api/admin';
 import { createAuthApi, type AuthApi } from './api/auth';
 import { createContactApi, type ContactApi } from './api/contact';
@@ -30,6 +30,11 @@ export interface Api {
     problems: RepairProblem[],
     opts?: { signal?: AbortSignal; rows?: Sample[] | undefined; overfitRepaired?: boolean | undefined },
   ): Promise<RepairResponse>;
+  /**
+   * POST /api/learn/step (AI code checks, SPEC 21 v14): one step of a learn whose AI step asked checks. `token` is the learn's `learnId` (the
+   * same one for every step and for the repairs after); `rounds` every round so far, this one last, the answers masked like the samples.
+   */
+  step(token: string, payload: LearnPayload, rounds: CheckRound[], opts?: { signal?: AbortSignal }): Promise<StepResponse>;
   /** Sign-in: providers, who is signed in, sign out, the saved language, linking, the AI quota. */
   auth: AuthApi;
   /** A signed-in user's formats and conversions, and the learn outcome report. */
@@ -60,6 +65,10 @@ export function createApi(options: CreateApiOptions = {}): Api {
     repair: (learnId, payload, previousRules, problems, opts = {}) => {
       const req: RepairRequest = { payload, previousRules, problems, learnId, ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}), ...(opts.overfitRepaired ? { overfitRepaired: true } : {}) };
       return request<RepairResponse>('POST', '/api/learn/repair', req, opts.signal);
+    },
+    step: (token, payload, rounds, opts = {}) => {
+      const req: StepRequest = { token, payload, rounds };
+      return request<StepResponse>('POST', '/api/learn/step', req, opts.signal);
     },
     auth: createAuthApi(request),
     registry: createRegistryApi(request),

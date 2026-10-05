@@ -238,7 +238,7 @@ export default function DevPage() {
               {rec.kind}
               {rec.fresh ? ' (fresh, uncached)' : ''} — {t('sendPanel.size', { kb: (rec.bytes / 1024).toFixed(1) })}
             </summary>
-            <pre dir="ltr">{JSON.stringify(rec.kind === 'learn' ? { payload: rec.payload } : { payload: rec.payload, previousRules: rec.previousRules, problems: rec.problems }, null, 2)}</pre>
+            <pre dir="ltr">{JSON.stringify(rec.kind === 'learn' ? { payload: rec.payload } : rec.kind === 'step' ? { payload: rec.payload, rounds: rec.rounds } : { payload: rec.payload, previousRules: rec.previousRules, problems: rec.problems }, null, 2)}</pre>
           </details>
         ))}
         <p>{t('masking.always')}</p>
