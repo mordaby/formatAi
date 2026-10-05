@@ -1,7 +1,6 @@
 // Issue #45: the schema every learn call really sends (`learnResultWireJsonSchema`), against OpenAI's strict-mode rules (the structured
 // outputs guide, "Supported schemas", checked 2026-10-05), and the round trip of an answer through what OpenAI would return for it.
 import { learnResultWireJsonSchema, learnStepWireJsonSchema, wireAnswerSchema, wireStepSchema } from '@formatai/shared';
-import type { ZodType } from 'zod';
 import { describe, expect, it } from 'vitest';
 import { stripOpenAiNulls, toOpenAiStrictSchema } from '../../src/llm/schema/toOpenAiStrictSchema.js';
 
@@ -127,7 +126,7 @@ function nodesOf(root: unknown, path = '$', depth = 0, out: { path: string; node
  * The schemas the API really sends: the rules answer (learn-v8 and later with `alternatives`, learn-v7 without) and the learn-v9 step answer
  * (`{ checks, rules }`, AI code checks - every call of a learn-v9 learn). `wrap` puts a rules answer where that schema has it.
  */
-const SCHEMAS: { label: string; original: JsonNode; zod: ZodType; wrap: (rules: JsonNode) => JsonNode; rulesOf: (answer: JsonNode) => JsonNode }[] = [
+const SCHEMAS: { label: string; original: JsonNode; zod: ReturnType<typeof wireStepSchema>; wrap: (rules: JsonNode) => JsonNode; rulesOf: (answer: JsonNode) => JsonNode }[] = [
   { label: 'alternatives: true', original: learnResultWireJsonSchema({ alternatives: true }), zod: wireAnswerSchema({ alternatives: true }), wrap: (r) => r, rulesOf: (a) => a },
   { label: 'alternatives: false', original: learnResultWireJsonSchema({ alternatives: false }), zod: wireAnswerSchema({ alternatives: false }), wrap: (r) => r, rulesOf: (a) => a },
   { label: 'learn-v9 step { checks, rules }', original: learnStepWireJsonSchema(), zod: wireStepSchema(), wrap: (r) => ({ checks: null, rules: r }), rulesOf: (a) => a.rules as JsonNode },

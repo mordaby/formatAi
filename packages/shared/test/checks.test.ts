@@ -110,7 +110,7 @@ describe('a step: the rounds the browser sends', () => {
     expect(stepFits(p, [two])).toBe(false);
     const big: CheckRound = { checks: [{ check: 'values', column: 'x'.repeat(200) }], answers: [{ error: 'e'.repeat(300) }] };
     const many = payload(2);
-    many.hints = ['x'.repeat(limits.payload.maxBytes - 1000)];
+    many.hints = ['x'.repeat(limits.payload.maxBytes - 1000) as never];
     expect(stepBytes(many, [])).toBeLessThan(limits.payload.maxBytes);
     expect(stepFits(many, [big, big, big])).toBe(false);
   });

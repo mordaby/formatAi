@@ -354,7 +354,7 @@ export const limits = {
        * The time one check may take in the browser's worker (or the eval). It is measured between the steps of the check (a check runs the
        * engine once on every row and cannot be stopped inside that run), and a check past it answers `{ error }` instead.
        */
-      timeBudgetMs: 2000,
+      timeBudgetMs: 5000,
       /**
        * Who gets learn-v9 in the app: `off` - nobody (learn-v7, as before); `admin` - the admin accounts only (`ADMIN_EMAILS` /
        * `MICROSOFT_ADMIN_OIDS`); `all` - every AI learn. The API's `LEARN_CHECKS` env var overrides it (`off|admin|all`). The eval turns it

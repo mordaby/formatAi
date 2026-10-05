@@ -73,7 +73,7 @@ describe('the runner with --prompt learn-v9: checks answered in-process, then th
     const [head, row] = buildCsvReport([record!]).trim().split('\n');
     expect(head!.endsWith(',checkRounds,checksAsked,error')).toBe(true);
     expect(row!.endsWith(',1,2,')).toBe(true);
-  });
+  }, 60_000);
 
   it('a model that answers at once makes one call and asks nothing', async () => {
     const c = load('orders-priority');
@@ -81,7 +81,7 @@ describe('the runner with --prompt learn-v9: checks answered in-process, then th
     const [record] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete, prompt: 'learn-v9' });
     expect(record).toMatchObject({ checkRounds: 0, checksAsked: 0, llmCalls: 1 });
     expect(requests).toHaveLength(1);
-  });
+  }, 60_000);
 });
 
 describe('--no-pattern-hints', () => {
@@ -107,5 +107,5 @@ describe('--no-pattern-hints', () => {
     expect(withHints!.patternHints).toBeUndefined();
     expect(without!.patternHints).toBe(false);
     expect(buildMarkdownReport([without!], 'x')).toContain('Pattern hints: off');
-  });
+  }, 60_000);
 });

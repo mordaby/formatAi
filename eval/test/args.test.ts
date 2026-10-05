@@ -7,7 +7,7 @@ import { loadCases } from '../lib/caseLoader.js';
 describe('parseArgs', () => {
   it('applies the documented defaults with no flags', () => {
     const args = parseArgs([]);
-    expect(args).toEqual({ masking: ['on', 'off'], runs: 1, noEscalation: false, modes: ['full'] });
+    expect(args).toEqual({ masking: ['on', 'off'], runs: 1, noEscalation: false, modes: ['full'], noPatternHints: false });
   });
 
   it('parses --models as a comma-separated list', () => {
@@ -72,7 +72,7 @@ describe('parseArgs', () => {
   });
 
   it('combines several flags in one call', () => {
-    const args = parseArgs(['--models', 'haiku,sonnet', '--masking', 'on', '--runs', '3', '--provider', 'fake', '--cases', 'crm', '--no-escalation', '--mode', 'full']);
+    const args = parseArgs(['--models', 'haiku,sonnet', '--masking', 'on', '--runs', '3', '--provider', 'fake', '--cases', 'crm', '--no-escalation', '--mode', 'full', '--no-pattern-hints', '--prompt', 'learn-v9']);
     expect(args).toEqual({
       models: ['haiku', 'sonnet'],
       masking: ['on'],
@@ -81,6 +81,8 @@ describe('parseArgs', () => {
       cases: 'crm',
       noEscalation: true,
       modes: ['full'],
+      noPatternHints: true,
+      prompt: 'learn-v9',
     });
   });
 
