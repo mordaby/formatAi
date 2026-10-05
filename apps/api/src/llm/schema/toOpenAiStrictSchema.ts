@@ -1,23 +1,29 @@
-// OpenAI structured-output "strict" mode requires every object's `properties` key to
-// appear in `required`; a field that was optional in the source schema is instead
-// made nullable (we use `anyOf: [original, {type: "null"}]`, which OpenAI accepts -
-// the generated LearnResult schema already uses `anyOf`/`oneOf` extensively for its
-// unions, so this is not a new shape). `$defs`/`$ref` recursion is supported by
-// OpenAI (confirmed against the current structured-outputs guide) and is used as-is
-// by the generated schema for its recursive expression AST, so we transform `$defs`
-// entries the same way as inline schemas and leave `$ref` untouched.
-//
-// KNOWN LIMITATION: OpenAI strict mode requires `additionalProperties: false` on
-// every object and does not support open-ended dictionaries (`additionalProperties`
-// as a schema rather than `false`). The generated LearnResult schema has a few
-// genuine open dictionaries by design (`valueMaps.map`, `expand.columnsToRows.labels`,
-// the `fixedFanOut` position set - see packages/shared/src/rules/jsonSchema.ts),
-// since they take arbitrary keys drawn from the user's own data. This transform
-// passes those nodes through unchanged (recursing only into the dictionary's value
-// schema), so building the request never throws, but OpenAI is expected to reject
-// `strict: true` for a schema containing one of these nodes at the API level. Until
-// those fields are restructured as arrays of `{ key, value }` pairs, the OpenAI
-// provider is not usable for LearnResult shapes that populate them.
+// The provider-side schema transformation for OpenAI's structured outputs with `strict: true` (issue #45). Checked against OpenAI's
+// "Structured model outputs" guide, section "Supported schemas", on 2026-10-05. Its rules, and what the wire schema the API sends
+// (`learnResultWireJsonSchema`, packages/shared/src/rules/wire.ts) does about each - every change keeps the schema's meaning exactly, and
+// `stripOpenAiNulls` maps the answer back so it parses with the same zod schema:
+//   1. "All fields must be required"; an optional field is emulated "by using a union type with null". The wire schema has optional fields
+//      (47; 48 with `alternatives`): each is listed in `required` and becomes `anyOf: [original, { type: "null" }]` (the guide's own
+//      recursive example uses this form). `stripOpenAiNulls` drops those nulls again.
+//   2. "additionalProperties: false must always be set in objects": the wire schema already has it on every object (its open dictionaries
+//      are `{ key, value }` pair lists on the wire). The API-side `learnResultJsonSchema` still has open dictionaries; this transform passes
+//      them through, so that schema cannot be sent to OpenAI - the wire schema is the one every call sends.
+//   3. Supported types and keywords: string `pattern` / `format`; number `minimum` / `maximum` / `exclusiveMinimum` / `exclusiveMaximum` /
+//      `multipleOf`; array `minItems` / `maxItems`; `enum`, `const`, `anyOf`, `$defs` / `$ref`. Not supported: `allOf`, `not`, `if` / `then`
+//      / `else`, `dependentRequired`, `dependentSchemas`. The wire schema uses none of the unsupported ones, but three things it has are not
+//      on the supported list:
+//      - `oneOf` (the discriminated unions: `input.sheet`, a row filter's comparison, `transform.expand`, `validations[]`). Every branch of
+//        each has a different `const` on the same key, so at most one branch can match and `anyOf` means the same: it becomes `anyOf`
+//        (a test asserts every `oneOf` of the wire schema is discriminated). A nested `anyOf` is flattened into its parent's.
+//      - `minLength` (the ids and names, `minLength: 1`). The guide lists only `pattern` and `format` for strings, and names `minLength` /
+//        `maxLength` among the keywords fine-tuned models "additionally" do not support. DECISION: rewritten as the equivalent `pattern`
+//        (`^[\s\S]{1,}$`), which the guide does list, rather than relying on a keyword it does not.
+//      - a type list of more than one non-null type (`["string", "number", "boolean", "null"]`, a filter's or a table's cell value). The
+//        guide shows only `["string", "null"]`: it becomes `anyOf` of single types.
+//   4. "Root objects must not be anyOf and must be an object": the wire root is an object. `$schema` (the draft's URL, a note, no
+//      constraint) is not on the list and is dropped.
+//   5. Limits: at most 5,000 object properties and 10 levels of nesting, 120,000 characters of names / enum and const values, 1,000 enum
+//      values. The wire schema has about 200 properties, 5 levels, 150 enum values (a test checks the limits on the real schema).
 
 type JsonSchemaNode = Record<string, unknown>;
 
@@ -29,9 +35,37 @@ function isSchemaNode(value: unknown): value is JsonSchemaNode {
   return isPlainObject(value);
 }
 
+/** Keywords whose value is data, not a schema: copied as they are, never walked. */
+const DATA_KEYWORDS = new Set(['const', 'enum', 'default', 'examples', 'pattern', 'format', 'description', 'title', '$ref']);
+
+/** Keywords the transform drops (see the file comment, rule 4). */
+const DROPPED_KEYWORDS = new Set(['$schema']);
+
 /** Recursively applies the strict-mode transform to every schema node reachable from `root`. */
 export function toOpenAiStrictSchema(schema: Record<string, unknown>): Record<string, unknown> {
   return transformNode(schema) as Record<string, unknown>;
+}
+
+/** A node that is nothing but a union (an `anyOf` and at most a description): its members can join its parent union. */
+function isBareUnion(node: unknown): node is { anyOf: unknown[] } {
+  return isSchemaNode(node) && Array.isArray(node.anyOf) && Object.keys(node).every((k) => k === 'anyOf' || k === 'description' || k === 'title');
+}
+
+/** `anyOf` members with every bare nested union spliced in (`anyOf[anyOf[a, b], c]` means `anyOf[a, b, c]`). */
+function flattenUnion(members: unknown[]): unknown[] {
+  return members.flatMap((m) => (isBareUnion(m) ? flattenUnion(m.anyOf) : [m]));
+}
+
+/** An originally optional field, made required and nullable (rule 1). */
+function nullable(schema: unknown): JsonSchemaNode {
+  return { anyOf: flattenUnion([schema, { type: 'null' }]) };
+}
+
+/** A string's length bounds as the equivalent `pattern` (rule 3); `[\s\S]` is any character, a line break included. */
+function lengthPattern(min: unknown, max: unknown): string {
+  const lo = typeof min === 'number' ? min : 0;
+  const hi = typeof max === 'number' ? String(max) : '';
+  return `^[\\s\\S]{${lo},${hi}}$`;
 }
 
 function transformNode(node: unknown): unknown {
@@ -42,17 +76,42 @@ function transformNode(node: unknown): unknown {
     return node;
   }
 
+  // Rule 3: a type list with more than one non-null type -> anyOf of single types (only when nothing else on the node would need to be
+  // shared out among them; the wire schema's are bare).
+  if (Array.isArray(node.type)) {
+    const types = node.type as unknown[];
+    const nonNull = types.filter((t) => t !== 'null');
+    const bare = Object.keys(node).every((k) => k === 'type' || k === 'description' || k === 'title');
+    if (nonNull.length > 1 && bare) {
+      const { type: _type, ...rest } = node;
+      return { ...rest, anyOf: types.map((t) => ({ type: t })) };
+    }
+  }
+
   const out: JsonSchemaNode = {};
   for (const [key, value] of Object.entries(node)) {
-    if (key === 'properties' && isSchemaNode(value)) {
-      // handled below together with `required`, once we've copied everything else
-      continue;
+    if (key === 'properties' && isSchemaNode(value)) continue; // handled below, together with `required`
+    if (key === 'required') continue; // handled below
+    if (DROPPED_KEYWORDS.has(key)) continue;
+    if (key === 'minLength' || key === 'maxLength') continue; // handled below (rule 3)
+    if (DATA_KEYWORDS.has(key)) {
+      out[key] = value;
+    } else if (key === 'anyOf' || key === 'oneOf') {
+      // Rule 3: `oneOf` -> `anyOf` (every one in the wire schema is discriminated); nested unions flattened.
+      const members = flattenUnion(Array.isArray(value) ? (value.map(transformNode) as unknown[]) : []);
+      out.anyOf = Array.isArray(out.anyOf) ? [...(out.anyOf as unknown[]), ...members] : members;
+    } else if ((key === '$defs' || key === 'definitions') && isSchemaNode(value)) {
+      out[key] = Object.fromEntries(Object.entries(value).map(([name, def]) => [name, transformNode(def)]));
+    } else {
+      out[key] = transformNode(value);
     }
-    if (key === 'required') {
-      // handled below
-      continue;
-    }
-    out[key] = transformNode(value);
+  }
+
+  // Rule 3: a string's length bounds -> the equivalent pattern. A node that already has a pattern keeps it (two patterns cannot be joined
+  // without a lookahead, which OpenAI's regex does not have); the API's own check (`LearnResultSchema`) still enforces the length.
+  if ('minLength' in node || 'maxLength' in node) {
+    const isString = node.type === 'string' || (Array.isArray(node.type) && node.type.includes('string'));
+    if (isString && out.pattern === undefined) out.pattern = lengthPattern(node.minLength, node.maxLength);
   }
 
   const properties = node.properties;
@@ -63,10 +122,7 @@ function transformNode(node: unknown): unknown {
 
     for (const [propName, propSchema] of Object.entries(properties)) {
       const transformedProp = transformNode(propSchema);
-      const wasRequired = originalRequired.has(propName);
-      newProperties[propName] = wasRequired
-        ? transformedProp
-        : { anyOf: [transformedProp, { type: 'null' }] };
+      newProperties[propName] = originalRequired.has(propName) ? transformedProp : nullable(transformedProp);
       newRequired.push(propName);
     }
 
@@ -116,10 +172,15 @@ function resolve(schema: unknown, root: JsonSchemaNode): JsonSchemaNode | undefi
   return schema;
 }
 
-function candidatesOf(schema: JsonSchemaNode): unknown[] | undefined {
-  if (Array.isArray(schema.anyOf)) return schema.anyOf;
-  if (Array.isArray(schema.oneOf)) return schema.oneOf;
-  return undefined;
+/** A union's members, with every nested union's members spliced in (a row filter is `anyOf[oneOf[comparisons], expr]`). */
+function candidatesOf(schema: JsonSchemaNode, root: JsonSchemaNode): unknown[] | undefined {
+  const members = Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : undefined;
+  if (!members) return undefined;
+  return members.flatMap((m) => {
+    const resolved = resolve(m, root);
+    const nested = resolved && !isSchemaNode(resolved.properties) ? candidatesOf(resolved, root) : undefined;
+    return nested ?? [m];
+  });
 }
 
 /** Picks whichever union member's shape matches `value` (see the doc comment above). */
@@ -127,8 +188,12 @@ function pickCandidate(candidates: unknown[], value: unknown, root: JsonSchemaNo
   if (value === null) {
     return candidates.map((c) => resolve(c, root)).find((c) => c?.type === 'null');
   }
+  if (Array.isArray(value)) {
+    // An array may hold objects with optional-field nulls: walk it with the union's array member.
+    return candidates.map((c) => resolve(c, root)).find((c) => c?.type === 'array');
+  }
   if (!isPlainObject(value)) {
-    // Primitive/array value: nothing here to disambiguate for our purposes, since
+    // Primitive value: nothing here to disambiguate for our purposes, since
     // only object nodes carry the optional-field nulls this function strips.
     return undefined;
   }
@@ -169,7 +234,7 @@ function strip(schemaIn: unknown, value: unknown, root: JsonSchemaNode): unknown
   const schema = resolve(schemaIn, root);
   if (!schema) return value;
 
-  const candidates = candidatesOf(schema);
+  const candidates = candidatesOf(schema, root);
   if (candidates) {
     const match = pickCandidate(candidates, value, root);
     return match ? strip(match, value, root) : value;

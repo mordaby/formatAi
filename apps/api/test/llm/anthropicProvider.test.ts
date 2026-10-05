@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { limits, models, prices } from '@formatai/shared';
 import { describe, expect, it, vi } from 'vitest';
-import { createAnthropicProvider } from '../../src/llm/providers/anthropic.js';
+import { createAnthropicProvider, mapAnthropicError } from '../../src/llm/providers/anthropic.js';
 import type { CompleteRequest } from '../../src/llm/types.js';
 
 function fakeMessage(overrides: Partial<Anthropic.Message> = {}): Anthropic.Message {
@@ -254,6 +254,38 @@ describe('anthropic provider - error mapping', () => {
     const provider = createAnthropicProvider({ client: mockClient(create) });
 
     await expect(provider.complete(baseRequest())).rejects.toMatchObject({ kind: 'providerError' });
+  });
+
+  it('SPEC 9.6: marks exactly the provider-level failures as unavailable (the fail-over triggers)', () => {
+    const h = new Headers();
+    const overloadedBody = { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } };
+    const cases: [unknown, string | undefined][] = [
+      [new Anthropic.APIConnectionError({ message: 'ECONNRESET' }), 'network'],
+      [new Anthropic.APIConnectionTimeoutError({ message: 'timed out' }), 'timeout'],
+      [new Anthropic.RateLimitError(429, {}, 'rate limited', h), 'rateLimited'],
+      [Anthropic.APIError.generate(529, overloadedBody, 'Overloaded', h), 'overloaded'],
+      [new Anthropic.InternalServerError(500, { type: 'error', error: { type: 'api_error' } }, 'boom', h), 'serverError'],
+      [new Anthropic.InternalServerError(503, {}, 'unavailable', h), 'serverError'],
+      [new Anthropic.AuthenticationError(401, {}, 'bad key', h), 'auth'],
+      [new Anthropic.PermissionDeniedError(403, {}, 'no access', h), 'auth'],
+      // the request's fault (our bug) or not an outage: never a fail-over
+      [new Anthropic.BadRequestError(400, { type: 'error', error: { type: 'invalid_request_error' } }, 'bad', h), undefined],
+      [new Anthropic.NotFoundError(404, {}, 'no such model', h), undefined],
+      [Anthropic.APIError.generate(413, {}, 'too large', h), undefined],
+      [new Anthropic.APIUserAbortError(), undefined],
+      [new Error('a bug'), undefined],
+    ];
+    for (const [err, unavailable] of cases) {
+      expect(mapAnthropicError(err).unavailable, String(err)).toBe(unavailable);
+    }
+    expect(mapAnthropicError(Anthropic.APIError.generate(529, overloadedBody, 'Overloaded', h)).message).toContain('overloaded');
+  });
+
+  it('a refusal (stop_reason "refusal") is not a fail-over trigger', async () => {
+    const create = vi.fn().mockResolvedValue(fakeMessage({ stop_reason: 'refusal', content: [] }));
+    const err = await createAnthropicProvider({ client: mockClient(create) }).complete(baseRequest()).catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: 'refused' });
+    expect((err as { unavailable?: string }).unavailable).toBeUndefined();
   });
 
   it('never includes payload text in a thrown error message (SPEC 15)', async () => {

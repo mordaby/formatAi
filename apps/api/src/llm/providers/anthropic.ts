@@ -10,6 +10,10 @@ export interface CreateAnthropicProviderOptions {
   apiKey?: string;
   /** Dependency injection for tests: an already-constructed (or mocked) client. */
   client?: Anthropic;
+  /** The SDK client's timeout per attempt (default: the SDK's, 10 minutes); set for a primary that has a fallback (`limits.llm.fallback`). */
+  timeoutMs?: number;
+  /** The SDK client's own retries (default: the SDK's, 2); set for a primary that has a fallback. */
+  maxRetries?: number;
 }
 
 // SPEC 9.1: "temperature 0 if the model supports it." Per the current Anthropic API
@@ -74,7 +78,13 @@ export function thinkingParamsOf(model: string, maxTokens?: number): { thinking?
 const TRUNCATED_STOP_REASONS: readonly (Anthropic.StopReason | null)[] = ['max_tokens', 'model_context_window_exceeded'];
 
 export function createAnthropicProvider(opts: CreateAnthropicProviderOptions = {}): LlmProvider {
-  const client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
+  const client =
+    opts.client ??
+    new Anthropic({
+      apiKey: opts.apiKey,
+      ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+      ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+    });
 
   return {
     name: 'anthropic',
@@ -150,19 +160,32 @@ export function createAnthropicProvider(opts: CreateAnthropicProviderOptions = {
   };
 }
 
-function mapAnthropicError(err: unknown): LlmError {
+/**
+ * The SDK's error -> our `LlmError`. SPEC 9.6 "Fallback": `unavailable` marks the failures a call fails over on - the request never got an
+ * answer (`network`, `timeout`), or the API could not serve it (429, Anthropic's `overloaded_error` = HTTP 529, any other 5xx, and a key it
+ * refused: 401 / 403). Every other HTTP error (400 invalid request, 404 unknown model, 413 too large ...) is the request's fault - our bug -
+ * and has none: it fails loudly, never quietly on the fallback. The SDK has already retried what it retries (429, 5xx, connection errors).
+ * A cancelled request (`APIUserAbortError`) is not an outage either.
+ */
+export function mapAnthropicError(err: unknown): LlmError {
   if (err instanceof Anthropic.RateLimitError) {
-    return new LlmError('rateLimited', 'anthropic', 'rate limited', { cause: err });
+    return new LlmError('rateLimited', 'anthropic', 'rate limited', { cause: err, unavailable: 'rateLimited' });
   }
   if (err instanceof Anthropic.APIConnectionTimeoutError) {
-    return new LlmError('timeout', 'anthropic', 'request timed out', { cause: err });
+    return new LlmError('timeout', 'anthropic', 'request timed out', { cause: err, unavailable: 'timeout' });
+  }
+  if (err instanceof Anthropic.APIConnectionError) {
+    return new LlmError('providerError', 'anthropic', 'could not reach the anthropic API (connection error)', { cause: err, unavailable: 'network' });
   }
   if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
-    return new LlmError('refused', 'anthropic', 'authentication or permission error', { cause: err });
+    return new LlmError('refused', 'anthropic', `authentication or permission error (status ${err.status})`, { cause: err, unavailable: 'auth' });
   }
-  if (err instanceof Anthropic.APIError) {
-    return new LlmError('providerError', 'anthropic', `anthropic API error (status ${err.status ?? 'unknown'})`, {
+  if (err instanceof Anthropic.APIError && !(err instanceof Anthropic.APIUserAbortError)) {
+    const overloaded = err.status === 529 || err.type === 'overloaded_error';
+    const unavailable = overloaded ? 'overloaded' : typeof err.status === 'number' && err.status >= 500 ? 'serverError' : undefined;
+    return new LlmError('providerError', 'anthropic', `anthropic API error (status ${err.status ?? 'unknown'}${overloaded ? ', overloaded' : ''})`, {
       cause: err,
+      ...(unavailable ? { unavailable } : {}),
     });
   }
   return new LlmError('providerError', 'anthropic', 'unexpected anthropic provider error', { cause: err });
