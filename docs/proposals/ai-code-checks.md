@@ -1,6 +1,6 @@
 # Proposal: the AI checks its ideas with code before it answers
 
-Status: **proposal, for the owner's review** (2026-10-05). Nothing built. It is the after-MVP item "the AI asks code for rows" of
+Status: **approved, being built** (2026-10-05). The owner took every recommendation of section 9 (the bold options), all five checks from the start, an end-to-end test on adversarial cases with Claude via the CLI, and only a small one with gpt-5-mini. It is the after-MVP item "the AI asks code for rows" of
 `learning-loop.md` (7.4), made concrete. Decisions to take are in section 9, my recommendation in bold.
 
 **In one paragraph.** Today the AI gets one fixed picture of the example - about 12 masked rows plus the hints code chose for it -
