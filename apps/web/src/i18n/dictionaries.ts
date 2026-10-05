@@ -12,12 +12,14 @@
 
 import { convertEn, convertHe } from './convert';
 import { accountEn, accountHe } from './account';
+import { adminEn, adminHe } from './admin';
 import { formatsEn, formatsHe } from './formats';
 import { resultEn, resultHe } from './result';
 
 export const en = {
   ...resultEn,
   ...accountEn,
+  ...adminEn,
   ...formatsEn,
   ...convertEn,
   'app.name': 'formatAI',
@@ -204,6 +206,7 @@ export type MessageKey = keyof typeof en;
 export const he: Record<MessageKey, string> = {
   ...resultHe,
   ...accountHe,
+  ...adminHe,
   ...formatsHe,
   ...convertHe,
   'app.name': 'formatAI',

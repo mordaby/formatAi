@@ -23,6 +23,9 @@ import { TurnstileProvider } from './Turnstile';
 const showDevPage = import.meta.env.DEV || import.meta.env.VITE_DEV_PAGE === 'true';
 const DevPage = showDevPage ? lazy(() => import('../pages/DevPage')) : null;
 
+// The admin view (SPEC 14.2): its own chunk - only an admin ever opens it.
+const AdminPage = lazy(() => import('../pages/Admin'));
+
 /**
  * /result: only meaningful once a learn has finished; a reload (or a typed address) goes home. Coming back from a sign-in it waits for
  * the kept learn to be put back (SPEC 5 E) instead of going home.
@@ -76,6 +79,14 @@ export function App() {
                 <Route path="/formats/:id/sources/:conversionId" element={<ResultRoute />} />
                 <Route path="/convert" element={<ConvertPage />} />
                 <Route path="/batch" element={<BatchRedirect />} />
+                <Route
+                  path="/admin"
+                  element={
+                    <Suspense fallback={null}>
+                      <AdminPage />
+                    </Suspense>
+                  }
+                />
                 <Route path="/business" element={<PlaceholderPage title="footer.business" />} />
                 <Route path="/privacy" element={<PlaceholderPage title="footer.privacy" />} />
                 <Route path="/terms" element={<PlaceholderPage title="footer.terms" />} />

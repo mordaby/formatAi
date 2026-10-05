@@ -83,6 +83,40 @@ export const limits = {
     maxAnonIds: 50,
   },
   /**
+   * SPEC 14.2 (M4): the admin view at /admin. DECISION: placeholder numbers (SPEC 20.4); the admin is a handful of people.
+   */
+  admin: {
+    /** The time ranges the overview can show, in days (SPEC 14.2), and the one it opens on. */
+    periodsDays: [7, 30, 90],
+    defaultPeriodDays: 30,
+    /** Requests one IP may send to the admin routes per `protection.rateLimitWindowMs`: far above what the page needs, far below a scraper. */
+    requestsPerIpPerMinute: 60,
+    /** Users per page of the users list (and the most a caller may ask for), and the longest search text. */
+    usersPageSize: 25,
+    maxUsersPageSize: 100,
+    maxSearchChars: 100,
+    /**
+     * `users.limitOverrides` keys an admin may set. Only keys some code reads belong here (`aiLearns`: `aiQuotaOf` in the API), so an
+     * override is never a promise nothing keeps. A key added here needs the code that reads it.
+     */
+    overrideKeys: ['aiLearns'],
+    /** The largest value of one override. */
+    maxOverride: 100_000,
+    /** Rows of the admin audit log, of the leads and feedback lists, and of the function-request list one call returns. */
+    auditListed: 50,
+    contactsListed: 100,
+    functionRequestsListed: 200,
+    /** A lead's or feedback's message is cut at this many characters in the list. */
+    maxContactMessageChars: 2_000,
+    /** Problem kinds the overview lists (the most frequent first). */
+    topProblemKinds: 8,
+    /**
+     * Where "Open GitHub issue" goes: a new-issue form the admin submits herself, pre-filled with the value-free request. No token, no API
+     * call from here (issue #41 builds approved functions through a gated PR).
+     */
+    githubNewIssueUrl: 'https://github.com/mordaby/formatAi/issues/new',
+  },
+  /**
    * SPEC 8.3/8.14/21 (v3): limits on the rules language itself, checked by
    * `checkRules` (maxExprDepth only) and by the engine's `checkLimits` (the rest -
    * node budgets after expanding calls, function/table counts, table row counts;
@@ -193,6 +227,12 @@ export const limits = {
     /** The API's `function_requests` collection (SPEC 13): how many distinct (hashed) owners one request remembers; past it `distinctOwners` stops growing. */
     functionRequests: {
       maxOwnerHashes: 1000,
+      /**
+       * The admin view (SPEC 14.2, M4) offers "Open GitHub issue" for a function request once this many DIFFERENT (hashed) owners have asked
+       * for it. DECISION: distinct owners, not `count`: one person who learns the same file five times asks once, and the issue is a demand
+       * signal. 5 is a placeholder (SPEC 20.4), tuned from the requests the admin sees.
+       */
+      issueThreshold: 5,
     },
     /**
      * The learning loop (SPEC 9.3, docs/proposals/learning-loop.md 3.2; owner decision 2026-10-04): after the full verification the

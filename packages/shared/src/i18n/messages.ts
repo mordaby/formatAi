@@ -312,6 +312,10 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
     en: 'Saving is not available right now. Please try again later.',
     he: 'השמירה לא זמינה כרגע. אנא נסו שוב מאוחר יותר.',
   },
+  forbidden: {
+    en: 'This page is for admins only.',
+    he: 'הדף הזה מיועד למנהלים בלבד.',
+  },
 };
 
 // SPEC 21 v5 item 3: what the user is told when the failed-attempt cap is reached. `counted` = this answer

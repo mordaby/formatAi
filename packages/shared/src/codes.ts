@@ -154,6 +154,9 @@ export const API_ERROR_CODES = [
   'versionConflict',
   // 503: the registry needs the database, which is not configured.
   'unavailable',
+  // ---- admin (M4, SPEC 14.2) ----
+  // 403: signed in, but not an admin (the admin routes check `isAdmin` on the server; the 401 above is for a visitor).
+  'forbidden',
 ] as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 

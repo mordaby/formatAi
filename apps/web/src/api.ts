@@ -6,6 +6,7 @@
 // SPEC 2/15: the only bodies ever sent are JSON (the learn payload, rules, problems).
 // There is deliberately no method that takes a File or a Blob.
 import type { LearnPayload, LearnRequest, LearnResponse, LearnResult, RepairProblem, RepairRequest, RepairResponse, Sample, SessionResponse } from '@formatai/shared';
+import { createAdminApi, type AdminApi } from './api/admin';
 import { createAuthApi, type AuthApi } from './api/auth';
 import { createHttp, type CreateHttpOptions } from './api/http';
 import { createRegistryApi, type RegistryApi } from './api/registry';
@@ -32,6 +33,8 @@ export interface Api {
   auth: AuthApi;
   /** A signed-in user's formats and conversions, and the learn outcome report. */
   registry: RegistryApi;
+  /** The admin view (SPEC 14.2): admins only, enforced by the server. */
+  admin: AdminApi;
   /** The API's base URL ('' = same origin): where the sign-in buttons navigate to. */
   baseUrl: string;
 }
@@ -57,6 +60,7 @@ export function createApi(options: CreateApiOptions = {}): Api {
     },
     auth: createAuthApi(request),
     registry: createRegistryApi(request),
+    admin: createAdminApi(request),
     baseUrl,
   };
 }

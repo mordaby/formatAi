@@ -2,6 +2,7 @@ import { limits } from '@formatai/shared';
 import { MongoClient, type Collection, type Db, type UpdateFilter } from 'mongodb';
 import type { Env } from './env.js';
 import type {
+  AdminAuditDoc,
   BudgetDoc,
   EventDoc,
   FeedbackDoc,
@@ -32,6 +33,7 @@ export interface AppDb {
   budgets: Collection<BudgetDoc>;
   learnCache: Collection<LearnCacheDoc>;
   functionRequests: Collection<FunctionRequestDoc>;
+  adminAudit: Collection<AdminAuditDoc>;
   leads: Collection<LeadDoc>;
   waitlist: Collection<WaitlistDoc>;
   feedback: Collection<FeedbackDoc>;
@@ -65,6 +67,7 @@ export async function connectDb(env: Env): Promise<AppDb | null> {
     budgets: db.collection<BudgetDoc>('budgets'),
     learnCache: db.collection<LearnCacheDoc>('learn_cache'),
     functionRequests: db.collection<FunctionRequestDoc>('function_requests'),
+    adminAudit: db.collection<AdminAuditDoc>('admin_audit'),
     leads: db.collection<LeadDoc>('leads'),
     waitlist: db.collection<WaitlistDoc>('waitlist'),
     feedback: db.collection<FeedbackDoc>('feedback'),
@@ -111,6 +114,8 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
     appDb.functionRequests.createIndex({ key: 1 }, { unique: true, name: 'function_requests_key_unique' }),
     appDb.functionRequests.createIndex({ status: 1, distinctOwners: -1, count: -1 }, { name: 'function_requests_status_owners_count' }),
     appDb.functionRequests.createIndex({ topic: 1, distinctOwners: -1 }, { name: 'function_requests_topic_owners' }),
+    // SPEC 13 / 14.2: the admin audit log is read newest first.
+    appDb.adminAudit.createIndex({ ts: -1 }, { name: 'admin_audit_ts' }),
     appDb.leads.createIndex({ ts: 1 }, { name: 'leads_ts' }),
     appDb.waitlist.createIndex({ userId: 1 }, { name: 'waitlist_userId' }),
     appDb.feedback.createIndex({ ts: 1 }, { name: 'feedback_ts' }),
