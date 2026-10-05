@@ -6,7 +6,7 @@
  * from one owner's data, so it is owner-scoped and TTL-expired - see `LearnCacheDoc`.
  */
 import type { ObjectId } from 'mongodb';
-import type { RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, TokenEstimate, Validation, ValueType } from '@formatai/shared';
+import type { AdminAuditAction, RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, TokenEstimate, Validation, ValueType } from '@formatai/shared';
 
 export type AuthProvider = 'google' | 'microsoft';
 
@@ -261,7 +261,24 @@ export interface LearnCacheDoc {
   createdAt: Date;
 }
 
-/** Where a recorded function request stands. Only `new` is written today (the M4 admin adds the others: a threshold or a click turns a request into a GitHub issue). */
+/**
+ * SPEC 13 `admin_audit` (M4): one document per change an admin made - who, when, what. Written only by the admin routes, never
+ * edited or deleted. Ids and the changed values only (a tier, numbers, a request's status): no names, no emails of the target (they are
+ * read from the target when the log is shown), nothing from any user's data. `adminEmail` is the admin's own, as it was then.
+ */
+export interface AdminAuditDoc {
+  _id?: ObjectId;
+  ts: Date;
+  adminId: ObjectId;
+  adminEmail?: string;
+  action: AdminAuditAction;
+  targetKind: 'user' | 'functionRequest';
+  targetId: ObjectId;
+  before: unknown;
+  after: unknown;
+}
+
+/** Where a recorded function request stands: written `new` by the learn route; the admin view moves it to `issueOpened` (and back); `approved` / `declined` belong to issue #41's pipeline. */
 export type FunctionRequestStatus = 'new' | 'issueOpened' | 'approved' | 'declined';
 
 /**
