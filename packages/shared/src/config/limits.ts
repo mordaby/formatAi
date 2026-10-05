@@ -40,6 +40,30 @@ export const limits = {
      * 2026-10-04: 3 rounds; it was 1 before the loop). The server refuses a fourth under the same learnId.
      */
     browserRepairCalls: 3,
+    /**
+     * SPEC 9.6 "Fallback" (owner request 2026-10-05): when `LLM_FALLBACK_PROVIDER` is set, a call the primary provider cannot serve (a
+     * network error, a timeout, HTTP 429 / 5xx / 401 / 403, Anthropic's overloaded error) is made once more, at once, on the fallback.
+     * `apps/api/src/llm/fallback.ts`. DECISION: placeholder numbers (SPEC 20.4); tune from the ledger's `fallback` calls.
+     */
+    fallback: {
+      /** The circuit breaker trips after this many consecutive primary failures ... */
+      tripAfter: 3,
+      /** ... each within this long of the latest (a failure older than that no longer counts toward a trip). */
+      windowMs: 300_000,
+      /** While tripped, every call goes straight to the fallback for this long; then the primary is tried again (one failure re-trips). */
+      coolDownMs: 300_000,
+      /**
+       * The primary SDK client's timeout per attempt while a fallback is configured (the SDKs' default is 10 minutes, and they retry it).
+       * DECISION: 2 minutes. A learn answer (at most `maxTokens`, 4,000 output tokens, thinking off) takes well under one minute; a model
+       * that thinks up to `maxTokensThinking` would need more - raise this with it.
+       */
+      primaryTimeoutMs: 120_000,
+      /**
+       * The primary SDK client's own retries (429, 5xx, connection errors, timeouts) while a fallback is configured; the SDKs' default is 2.
+       * DECISION: 1 - a blip is still retried once by the SDK, and a real outage reaches the fallback after two attempts, not three.
+       */
+      primaryMaxRetries: 1,
+    },
   },
   /**
    * SPEC 9.5: a daily anonymous budget and a daily overall budget, in USD.

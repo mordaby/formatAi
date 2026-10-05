@@ -6,7 +6,8 @@
  * from one owner's data, so it is owner-scoped and TTL-expired - see `LearnCacheDoc`.
  */
 import type { ObjectId } from 'mongodb';
-import type { AdminAuditAction, RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, TokenEstimate, Validation, ValueType } from '@formatai/shared';
+import type { AdminAuditAction, LlmProviderName, RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, TokenEstimate, Validation, ValueType } from '@formatai/shared';
+import type { FallbackReason } from './llm/errors.js';
 
 export type AuthProvider = 'google' | 'microsoft';
 
@@ -205,7 +206,14 @@ export interface LlmCallDoc {
   anonId?: string;
   learnId: string;
   purpose: LlmCallPurpose;
+  /** The model that answered (a failed call: the one tried last). `cache` on a structure-cache hit. */
   model: string;
+  /** SPEC 9.6: the provider that answered (or was tried last). Absent on a cache hit and on documents written before it existed. */
+  provider?: LlmProviderName;
+  /** SPEC 9.6 "Fallback": the fallback provider made this call because the primary could not serve it. Absent otherwise. */
+  fallback?: true;
+  /** Why it failed over: the primary's failure (`network`, `timeout`, `rateLimited`, `overloaded`, `serverError`, `auth`) or `circuitOpen`. */
+  fallbackReason?: FallbackReason;
   promptVersion: string;
   masking: boolean;
   tokensIn: number;

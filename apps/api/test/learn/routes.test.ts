@@ -81,6 +81,8 @@ describe('POST /api/learn', () => {
     expect(doc).toMatchObject({
       purpose: 'learn',
       model: models.fake.firstTry,
+      // SPEC 9.6: the provider that answered; a call the primary served has no fallback fields
+      provider: 'fake',
       outcome: 'verified',
       tokensIn: 100,
       tokensOut: 50,
@@ -92,6 +94,8 @@ describe('POST /api/learn', () => {
       // `cacheHit` is the structure cache (SPEC 9.5); prompt-cache tokens are in `tokensCached`.
       cacheHit: false,
     });
+    expect('fallback' in doc).toBe(false);
+    expect('fallbackReason' in doc).toBe(false);
     expect(doc.learnId).toEqual(expect.any(String));
     expect(doc.ts).toBeInstanceOf(Date);
     // Our own token estimate: counts and a price only (the fake provider's model has no price, so no cost).
