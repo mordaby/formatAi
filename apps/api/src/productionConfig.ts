@@ -26,6 +26,13 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 const isSet = (value: string | undefined): boolean => value !== undefined && value.trim() !== '';
 
+/** The API key variable of each API provider (the dev CLI and the fake need none). */
+const API_KEY_NAMES = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY' } as const;
+
+function apiKeyOf(env: Env, provider: keyof typeof API_KEY_NAMES): string | undefined {
+  return env[API_KEY_NAMES[provider]];
+}
+
 /**
  * What is wrong with `env` for a production process (empty when nothing). `source` is the raw process environment: it
  * tells whether the origin was named (`PUBLIC_ORIGIN`, Render's `RENDER_EXTERNAL_URL`, or both of `WEB_ORIGIN` and
@@ -63,10 +70,15 @@ export function checkProductionConfig(
   // The AI step: the dev CLI and the fake provider exist for a developer's machine.
   if (env.LLM_PROVIDER === 'claude-cli' || env.LLM_PROVIDER === 'fake') {
     problems.push(`LLM_PROVIDER=${env.LLM_PROVIDER} is for development: set LLM_PROVIDER=anthropic (or openai) in production`);
-  } else if (env.LLM_PROVIDER === 'anthropic' && !env.ANTHROPIC_API_KEY) {
-    problems.push('ANTHROPIC_API_KEY is not set (LLM_PROVIDER=anthropic)');
-  } else if (env.LLM_PROVIDER === 'openai' && !env.OPENAI_API_KEY) {
-    problems.push('OPENAI_API_KEY is not set (LLM_PROVIDER=openai)');
+  } else if (!apiKeyOf(env, env.LLM_PROVIDER)) {
+    problems.push(`${API_KEY_NAMES[env.LLM_PROVIDER]} is not set (LLM_PROVIDER=${env.LLM_PROVIDER})`);
+  }
+  // The fallback (SPEC 9.6), when one is set: an API provider, with its own key. Unset is fine: no fallback.
+  const fallback = env.LLM_FALLBACK_PROVIDER;
+  if (fallback === 'claude-cli' || fallback === 'fake') {
+    problems.push(`LLM_FALLBACK_PROVIDER=${fallback} is for development: set LLM_FALLBACK_PROVIDER=openai (or anthropic) in production, or remove it for no fallback`);
+  } else if (fallback && !apiKeyOf(env, fallback)) {
+    problems.push(`${API_KEY_NAMES[fallback]} is not set (LLM_FALLBACK_PROVIDER=${fallback}; remove LLM_FALLBACK_PROVIDER for no fallback)`);
   }
 
   // Sign-in: at least one provider, and never half of one (a provider with only an id is silently not offered).

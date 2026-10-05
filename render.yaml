@@ -40,6 +40,11 @@ services:
       # The production LLM is the Anthropic API (the dev "claude-cli" provider cannot run here, and the start check refuses it).
       - key: LLM_PROVIDER
         value: anthropic
+      # The fallback (SPEC 9.6, owner request 2026-10-05): a call Anthropic cannot serve (an outage, a timeout, a rate limit, its
+      # overloaded error, a rejected key) is made once more on OpenAI's gpt-5-mini / gpt-5. It needs OPENAI_API_KEY (asked for below; the
+      # start check refuses to start without it). To turn the fallback off, delete this variable in the dashboard (docs/deploy.md).
+      - key: LLM_FALLBACK_PROVIDER
+        value: openai
       # Render's load balancer is in front of the process: without this every visitor looks like the proxy to the per-IP limits.
       # (Render appends to X-Forwarded-For; see docs/deploy.md "Known limit" about "true" versus a hop count.)
       - key: TRUST_PROXY
@@ -62,6 +67,9 @@ services:
       - key: MONGODB_URI
         sync: false
       - key: ANTHROPIC_API_KEY
+        sync: false
+      # The fallback provider's key (LLM_FALLBACK_PROVIDER=openai above): a key made for this app, with a monthly budget (docs/deploy.md step 2b).
+      - key: OPENAI_API_KEY
         sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
