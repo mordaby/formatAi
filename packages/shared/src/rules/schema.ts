@@ -4,6 +4,7 @@
 // which by design take arbitrary keys taken from the user's own data.
 import { z } from 'zod';
 import {
+  AI_UNSUPPORTED_REASON_CODES,
   ASSUMPTION_REASON_CODES,
   UNSUPPORTED_REASON_CODES,
   type AssumptionReasonCode,
@@ -1189,10 +1190,14 @@ export interface Unsupported {
   /** learn-v7: one short plain-language description of the rule the AI sees, in the output headers' language (a guess; in-session only, never stored). */
   explanation?: string;
 }
+/**
+ * `constrained: false` is the wire form (see `buildFunctionRequestSchema`), which also offers only the reason codes the AI step may write:
+ * `overfit` is code's alone (SPEC 9.2 layer 6), like the `cutoffRange` / `sameAs` checks.
+ */
 export function buildUnsupportedSchema(constrained: boolean): z.ZodType<Unsupported> {
   return z.strictObject({
     outputColumn: z.string(),
-    reasonCode: z.enum(UNSUPPORTED_REASON_CODES),
+    reasonCode: constrained ? z.enum(UNSUPPORTED_REASON_CODES) : z.enum(AI_UNSUPPORTED_REASON_CODES),
     functionRequest: buildFunctionRequestSchema(constrained).optional(),
     explanation: (constrained ? z.string().max(FUNCTION_REQUEST_LIMITS.maxExplanationChars) : z.string()).optional(),
   }) as unknown as z.ZodType<Unsupported>;

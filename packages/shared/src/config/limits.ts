@@ -208,6 +208,19 @@ export const limits = {
     fill: {
       maxConditions: 24,
     },
+    /**
+     * The overfitting guards (SPEC 9.2 layer 6, 21 v12 item 19; engine `learn/overfit.ts`): a computed column that is a chain of at least
+     * `minCases` cases, each giving a constant to the rows an equality or range of input columns picks (two input columns or more in all),
+     * and each the one taken for at most `maxRowsPerCase` of the rows code can see, copies the example's answers instead of stating a rule.
+     * DECISION: 6 and 2, from the learn-v8 measurement (2026-10-05): the memorized warehouse list (the kept answer) had 13 cases, each the
+     * one taken for one or two of the example's 20 rows, while no other kept rules file of that measurement (90 distinct: learn-v7 and
+     * learn-v8, both modes, the noE1 arm) has a chain of more than 4 cases (the longest, a status rule, takes 5 to 117 rows per case).
+     * A band table or a value map written as a `switch` reads one column and is never counted.
+     */
+    overfit: {
+      minCases: 6,
+      maxRowsPerCase: 2,
+    },
   },
   /**
    * SPEC 8.11 / 8.12 / 11 / 13: the registry (saved formats and their conversions).

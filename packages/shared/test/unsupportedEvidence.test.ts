@@ -35,6 +35,12 @@ describe('unsupportedDespiteEvidence', () => {
     ]);
   });
 
+  it('never a column CODE reported as unsupported (reason overfit: its rule only copied rows, even after its one repair)', () => {
+    const hints: Hint[] = [{ rel: 'copy', in: [0], out: 0, coverage: 1 }, { rel: 'dependsOn', in: [2], out: 2, coverage: 1 }];
+    const byCode = { ...answer(['Unit Price', 'Warehouse']), unsupported: [{ outputColumn: 'Unit Price', reasonCode: 'overfit' as const }, { outputColumn: 'Warehouse', reasonCode: 'externalData' as const }] } as LearnResult;
+    expect(unsupportedDespiteEvidence(byCode, payload(hints)).map((p) => p.kind === 'unsupportedDespiteEvidence' && p.out)).toEqual([2]);
+  });
+
   it('a column with no hint stays an honest unsupported: no problem', () => {
     const hints: Hint[] = [{ rel: 'copy', in: [0], out: 0, coverage: 1 }];
     expect(unsupportedDespiteEvidence(answer(['Warehouse']), payload(hints))).toEqual([]);

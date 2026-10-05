@@ -46,6 +46,10 @@ export const unsupportedMessages: Record<UnsupportedReasonCode, Localized> = {
     en: "We couldn't figure out how to build this column.",
     he: 'לא הצלחנו להבין איך לבנות את העמודה הזו.',
   },
+  overfit: {
+    en: 'The only rule we found for this column copies particular rows of your example, so it would be wrong on your next file. Please set this column yourself.',
+    he: 'הכלל היחיד שמצאנו לעמודה הזו מעתיק שורות מסוימות מהדוגמה שלך, ולכן הוא יטעה בקובץ הבא. אנא הגדירו את העמודה הזו בעצמכם.',
+  },
 };
 
 export const assumptionMessages: Record<AssumptionReasonCode, Localized> = {

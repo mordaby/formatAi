@@ -109,6 +109,20 @@ describe('the wire JSON Schema carries the two notes', () => {
   });
 });
 
+// SPEC 9.2 layer 6: `overfit` is the reason code CODE writes for a column whose only rule copied rows of the example. Rules may hold it (they are
+// saved and run like any other), but it is never offered to the AI step - like the code-only checks.
+describe('the code-only unsupported reason `overfit`', () => {
+  it('rules may hold it; the wire schema the AI step is sent never offers it', () => {
+    expect(LearnResultSchema.safeParse(withUnsupported([{ outputColumn: 'שם יום', reasonCode: 'overfit' }])).success).toBe(true);
+    for (const alternatives of [true, false]) {
+      const reasons = JSON.stringify((learnResultWireJsonSchema({ alternatives }) as { properties: { unsupported: unknown } }).properties.unsupported);
+      expect(reasons).toContain('"externalData"');
+      expect(reasons).not.toContain('"overfit"');
+    }
+    expect(JSON.stringify(learnResultJsonSchema())).toContain('"overfit"');
+  });
+});
+
 describe('generated/learn-result.schema.json', () => {
   it('is in sync with the zod schema (re-run scripts/gen-json-schema.ts after a schema change), and has the new fields', () => {
     const file = JSON.parse(readFileSync(path.join(here, '..', 'generated', 'learn-result.schema.json'), 'utf8')) as unknown;

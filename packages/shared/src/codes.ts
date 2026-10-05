@@ -5,7 +5,8 @@
 
 // ---------- SPEC 8.10: unsupported ----------
 
-export const UNSUPPORTED_REASON_CODES = [
+/** The reason codes the AI step may write (the wire schema, LEARN_PROMPT §2 "When you can't do something"): every one but `overfit`. */
+export const AI_UNSUPPORTED_REASON_CODES = [
   'externalData',
   'pivot',
   'rowExpansion',
@@ -13,6 +14,14 @@ export const UNSUPPORTED_REASON_CODES = [
   'hiddenByMasking',
   'ambiguous',
   'other',
+] as const;
+
+export const UNSUPPORTED_REASON_CODES = [
+  ...AI_UNSUPPORTED_REASON_CODES,
+  // Code only (SPEC 9.2 layer 6, 21 v12 item 19): the only rule the AI step found for the column copies particular rows of the example
+  // (a condition on a row's position, a long list of one-row cases), and it still did after its one repair - so code reports the column
+  // as "needs your input" rather than count a copy of the example as a rule. Never offered to the AI step.
+  'overfit',
 ] as const;
 export type UnsupportedReasonCode = (typeof UNSUPPORTED_REASON_CODES)[number];
 

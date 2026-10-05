@@ -61,14 +61,17 @@ const quoted = (names: readonly string[]): string => names.map((n) => `"${n}"`).
 
 /**
  * One `unsupportedDespiteEvidence` problem for every output column that `rules` reports as unsupported (`from: null` plus an entry, any reason
- * code) although `payload.hints` hold evidence for it. Completion mode: only the columns the AI step was asked for (`complete.columns`) - an
- * unsupported entry of the user's own rules is theirs, the answer must copy it.
+ * code the AI step writes) although `payload.hints` hold evidence for it. Completion mode: only the columns the AI step was asked for
+ * (`complete.columns`) - an unsupported entry of the user's own rules is theirs, the answer must copy it. A column CODE reported as
+ * unsupported (reason `overfit`: its rule only copied rows of the example, even after its one repair - SPEC 9.2 layer 6) is never one: it was
+ * given its chance to be written, and asking again would only bring the copy back.
  */
 export function unsupportedDespiteEvidence(
   rules: LearnResult | Rules,
   payload: Pick<LearnPayload, 'input' | 'output' | 'hints' | 'complete'>,
 ): RepairProblem[] {
-  const reported = columnsReportedUnsupported(rules);
+  const byCode = new Set(rules.unsupported.filter((u) => u.reasonCode === 'overfit').map((u) => u.outputColumn));
+  const reported = columnsReportedUnsupported(rules).filter((i) => !byCode.has(rules.output.columns[i]!.header));
   if (reported.length === 0) return [];
   const evidence = evidenceByOutput(payload.hints);
   if (evidence.size === 0) return [];
