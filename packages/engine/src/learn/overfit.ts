@@ -25,7 +25,7 @@
 // row it explains may be one edited by hand once, and the user is asked (SPEC 21 v12 item 20, `oneTimers.ts`).
 //
 // Pure and synchronous, like the rest of this package.
-import { limits, type Computed, type Expr, type ExprNode, type LearnResult, type RepairProblem, type Rules } from '@formatai/shared';
+import { limits, withColumnsTakenOut, type Computed, type Expr, type ExprNode, type LearnResult, type RepairProblem, type Rules } from '@formatai/shared';
 import { runRules } from '../pipeline/runRules';
 import { exprChildren } from '../pipeline/v1/expr';
 import type { InputTable } from '../types';
@@ -336,45 +336,19 @@ export function overfitProblems(findings: readonly OverfitFinding[]): RepairProb
   }));
 }
 
-/** Every id the rules mention outside the computed column `id` itself (its readers, filters, sort, group, validations, output ...). */
-function referencedElsewhere(rules: AnyRules, id: string): boolean {
-  const rest = { ...rules, transform: { ...rules.transform, computed: rules.transform.computed.filter((c) => c.id !== id) } };
-  const text = JSON.stringify(rest);
-  return text.includes(JSON.stringify(id));
-}
-
 /**
  * The honest fallback: every output column with a finding is reported as unsupported by code (`from: null`, reason `overfit`: "needs your
  * input", like an `externalData` column the AI step reports itself), and the computed columns nothing reads any more are taken out, so the
- * rows the rule copied are never shown or saved as a rule. Everything else is kept as it is. The rules themselves when there is no finding.
+ * rows the rule copied are never shown or saved as a rule - and so are the lookup tables nothing looks up any more (a table of the example's
+ * amounts holds this file's rows). Everything else is kept as it is. The rules themselves when there is no finding. (`withColumnsTakenOut`,
+ * shared: the answer "a one-time edit" to a copied-list question takes a column out the same way.)
  */
 export function withOverfitFallback<R extends AnyRules>(rules: R, findings: readonly OverfitFinding[]): R {
   if (findings.length === 0) return rules;
-  const headers = new Set(findings.map((f) => f.outputColumn));
-  const columns = rules.output.columns.map((c) => (headers.has(c.header) ? { ...c, from: null } : c));
-  const unsupported = [
-    ...rules.unsupported,
-    ...[...headers].filter((h) => !rules.unsupported.some((u) => u.outputColumn === h)).map((outputColumn) => ({ outputColumn, reasonCode: OVERFIT_REASON })),
-  ];
-  let next = { ...rules, output: { ...rules.output, columns }, unsupported } as R;
-  // The computed columns the dropped rules read, when nothing else reads them now (one at a time: a helper may free another).
-  const candidates = new Set(findings.map((f) => f.id));
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const c of next.transform.computed) {
-      if (!candidates.has(c.id) || referencedElsewhere(next, c.id)) continue;
-      for (const id of idsRead(c.expr, new Set())) candidates.add(id);
-      next = { ...next, transform: { ...next.transform, computed: next.transform.computed.filter((x) => x.id !== c.id) } } as R;
-      changed = true;
-      break;
-    }
-  }
-  // ... and the lookup tables nothing looks up any more (a table of the example's amounts holds this file's rows).
-  const tables = next.transform.tables;
-  if (tables && tables.length > 0) {
-    const text = JSON.stringify({ ...next, transform: { ...next.transform, tables: [] } });
-    const used = tables.filter((t) => text.includes(`"table":${JSON.stringify(t.name)}`));
-    if (used.length < tables.length) next = { ...next, transform: { ...next.transform, tables: used } } as R;
-  }
-  return next;
+  return withColumnsTakenOut(
+    rules,
+    new Set(findings.map((f) => f.outputColumn)),
+    OVERFIT_REASON,
+    findings.map((f) => f.id),
+  );
 }

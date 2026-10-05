@@ -24,6 +24,14 @@
 // a part asked here (the row-position branch: `if(rowNumber() = 54, 0, ...)` - the user decides, no repair is spent on it). The API leaves a
 // position condition that names exact rows to the browser (`OverfitFinding.rowExact`): only every row of the example can tell.
 //
+// The second kind of question (owner amendment, 2026-10-06: "a list copied from the example is a question"): a column whose value comes
+// from a lookup table or a value map keyed on a column that takes a different value on every row the list applies to. Code's fill completes
+// such a list from every row, and a copied list always reproduces the example it was copied from - the guards catch one keyed on an amount
+// (`measureKey`), not one keyed on an account or an order number. Such a list is sometimes exactly right (recurring customers) and
+// sometimes useless (order numbers); code cannot tell which, so it asks, neutrally: "Account Manager: is this the rule?" (`copiedLists`).
+// "Yes" keeps it as it is (a new key is flagged at run time, as for any lookup); "a one-time edit" takes the column's rule out - the column
+// needs the user's input (`withoutCopiedList`, shared).
+//
 // Real values (the question shows the row's own values) - this runs in the browser and the eval, never on the server, and nothing here is
 // ever sent. Pure and synchronous, like the rest of this package.
 import {
@@ -31,16 +39,19 @@ import {
   limits,
   withoutRulePart,
   type ColumnType,
+  type CopiedListRule,
   type Expr,
   type ExprConstValue,
   type ExprNode,
   type LearnResult,
   type PayloadCell,
   type RulePart,
+  type Rules,
   type TableCellValue,
   type Validation,
 } from '@formatai/shared';
 import { typeCheck } from '../check/typeCheck';
+import { deepEqual } from '../registry/deepEqual';
 import { exprChildren } from '../pipeline/v1/expr';
 import { mapHeaders } from '../pipeline/v1/normalize';
 import { normText } from '../pipeline/v1/values';
@@ -74,8 +85,12 @@ export interface PartSupport {
   byColumn?: string;
 }
 
-/** A question: "Row N: <column> is <value> instead of <the rest of its rule>. A one-time change, or a rule we missed?" */
-export interface OneTimeQuestion {
+/**
+ * A question: "Row N: <column> is <value> instead of <the rest of its rule>. A one-time change, or a rule we missed?" (the first kind;
+ * DECISION: `kind` is left out, so a question reads exactly as before the second kind came).
+ */
+export interface OneTimeRowQuestion {
+  kind?: 'row';
   /** The output column: position and header. */
   out: number;
   header: string;
@@ -98,6 +113,25 @@ export interface OneTimeQuestion {
   check: Validation | null;
 }
 
+/**
+ * The second kind (owner amendment, 2026-10-06): "<column>: is this the rule?" - "We learned <column> as a list taken from your example: one
+ * value for each <key column> (<entries> entries)." What the screen needs, and no cell value.
+ */
+export interface CopiedListQuestion {
+  kind: 'copiedList';
+  /** The output column: position and header. */
+  out: number;
+  header: string;
+  /** The input column (header) the list is keyed on: a different value on every row of the example the list applies to. */
+  keyColumn: string;
+  /** The entries of the list the example's rows use: one per row (no key repeats), each giving that row's value. */
+  entries: number;
+  /** The list, for the answer "a one-time edit" (`withoutCopiedList`, shared). */
+  list: CopiedListRule;
+}
+
+export type OneTimeQuestion = OneTimeRowQuestion | CopiedListQuestion;
+
 export interface OneTimeResult {
   questions: OneTimeQuestion[];
   /** Columns with one-row parts that were not asked: more than the questions left (left to the overfitting guards). */
@@ -107,8 +141,12 @@ export interface OneTimeResult {
 export interface OneTimeOptions {
   /** Completion mode: only these output columns (the ones the AI step was asked for; the rest are the user's own rules). */
   columns?: ReadonlySet<string>;
+  /** Completion mode: the user's own rules - a lookup or a value map they wrote (its table, its computed column, its map) is never asked about. */
+  fixed?: LearnResult | Rules;
   /** Default `limits.learn.oneTimer.maxQuestions`. */
   maxQuestions?: number;
+  /** A copied list is asked about from this many entries. Default `limits.learn.overfit.minCases`. */
+  minListEntries?: number;
 }
 
 const MEASURES: ReadonlySet<ColumnType> = new Set(['decimal', 'currency', 'percent']);
@@ -475,10 +513,12 @@ function payloadOf(cell: OutCell | undefined): PayloadCell {
 /**
  * The questions to ask about the rules (call it on the rules as applied, after `fillParams`): the parts that explain exactly one row of the
  * example, singled out by something unique to it, at most `maxQuestions`, column by column in output order; a column with more than fit is
- * handed off (no question). A part whose row the rest of the rule gives the same value is not asked (nothing would change).
+ * handed off (no question). A part whose row the rest of the rule gives the same value is not asked (nothing would change). Then the copied
+ * lists (`copiedLists`), one per column at most, whose entries are no row question of their own; all in output order.
  */
 export function oneTimeQuestions(rules: LearnResult, analysis: PairAnalysis, opts: OneTimeOptions = {}): OneTimeResult {
-  const askable = oneTimeParts(rules, analysis, opts);
+  const lists = copiedLists(rules, analysis, opts);
+  const askable = oneTimeParts(rules, analysis, opts, lists);
   const src = mapHeaders(rules.input.columns, analysis.input.headers).src;
   /** The input cell of column `header` (as the rules declare it) in input row `inRow`, as the example has it. */
   const inputCell = (header: string, inRow: number): PayloadCell => {
@@ -488,7 +528,7 @@ export function oneTimeQuestions(rules: LearnResult, analysis: PairAnalysis, opt
     if (typeof cell.v === 'number' && cell.isDate) return isoOfSerial(Math.trunc(cell.v) + (analysis.input.date1904 ? 1462 : 0));
     return cell.v;
   };
-  const questions = askable.asked.map((s): OneTimeQuestion => {
+  const rows = askable.asked.map((s): OneTimeQuestion => {
     const k = s.explains[0]!;
     const aligned = analysis.alignment.rows[k]!;
     return {
@@ -504,21 +544,37 @@ export function oneTimeQuestions(rules: LearnResult, analysis: PairAnalysis, opt
       check: oneTimeCheck(rules, s),
     };
   });
+  // (A stable sort: the row questions keep their order, a column's list question comes after its row questions.)
+  const questions = [...rows, ...lists].sort((a, b) => a.out - b.out);
   return { questions, handedOff: askable.handedOff };
+}
+
+/** Whether a part is an entry of one of the copied lists asked about (that question covers it). */
+function inCopiedList(part: RulePart, lists: readonly CopiedListQuestion[]): boolean {
+  return lists.some((l) =>
+    l.list.kind === 'lookup' ? part.kind === 'lookupEntry' && part.table === l.list.table : part.kind === 'valueMapEntry' && part.column === l.list.column,
+  );
 }
 
 /**
  * The parts to ask about: those that explain one row singled out by something unique to it, column by column in output order while
  * questions are left (a column with more than fit is handed off whole), and only where the rest of the column's rule gives that row another
  * value (one run of the rules without the part, each: `rest`). The learn flow uses this to decide which `position` findings a question replaces.
+ * The entries of a copied list asked about (`lists`) are not parts here: the list's own question covers them.
  */
-export function oneTimeParts(rules: LearnResult, analysis: PairAnalysis, opts: OneTimeOptions = {}): { asked: (PartSupport & { rest: PayloadCell })[]; handedOff: OneTimeResult['handedOff'] } {
+export function oneTimeParts(
+  rules: LearnResult,
+  analysis: PairAnalysis,
+  opts: OneTimeOptions = {},
+  lists: readonly CopiedListQuestion[] = [],
+): { asked: (PartSupport & { rest: PayloadCell })[]; handedOff: OneTimeResult['handedOff'] } {
   const max = opts.maxQuestions ?? limits.learn.oneTimer.maxQuestions;
   // DECISION: one question per row of a column - a branch that applies to that row alone over the value of its own list that names it
   // (`if(oneOf(rowNumber(), 54, 99), ...)` with no row 99: the branch is the part; taken out, nothing of it is left for a later file).
   const seenRow = new Set<string>();
   const single = partSupport(rules, analysis).filter((s) => {
     if (s.by === undefined || (opts.columns !== undefined && !opts.columns.has(s.header))) return false;
+    if (inCopiedList(s.part, lists)) return false;
     const key = `${s.out}\u0000${s.explains[0]}`;
     if (seenRow.has(key)) return false;
     seenRow.add(key);
@@ -567,6 +623,96 @@ export function questionedPositions(rules: LearnResult, analysis: PairAnalysis, 
     waived.add(header);
   }
   return waived;
+}
+
+// ---------------------------------------------------------------------------
+// A list copied from the example (owner amendment, 2026-10-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * The copied lists to ask about (call it on the rules as applied, after `fillParams`): for each output column whose value comes from a lookup
+ * table or a value map (one code filled or the AI step wrote), on every row of the example the list applies to (its branch taken, a key on
+ * the row), the key column takes a different value on each row - no key repeats - and at least `minListEntries` of those rows are the list's
+ * entries, each giving that row's value of the example. One question per column at most (its list with the most entries), in output order.
+ *
+ * DECISIONS (conservative: code asks only what it can say plainly):
+ *  - the key is a plain input column of the rules (the question names it); a key worked out by an expression is not asked about;
+ *  - a key that is an amount (a decimal, currency or percent column) is the guards' (`measureKey`: one repair, then "needs your input");
+ *  - completion mode: only the columns the AI step was asked for (`columns`), and never a lookup or a value map the user wrote (`fixed`: the
+ *    same computed column, a table of the same name, a value map on the same column);
+ *  - the threshold is the case list's (`limits.learn.overfit.minCases`, 6): a handful of rows each with its own key is no list to speak of,
+ *    and the same number of one-row cases makes a memorized case list;
+ *  - not counted against `limits.learn.oneTimer.maxQuestions` (that budget is for the one-row parts; a list is one question for a whole
+ *    column), and the list's entries are no one-row parts of their own (`oneTimeParts`).
+ * Empty for a summary output (one row per group), or when the rules cannot run.
+ */
+export function copiedLists(rules: LearnResult, analysis: PairAnalysis, opts: OneTimeOptions = {}): CopiedListQuestion[] {
+  if (rules.transform.group !== undefined && !rules.transform.group.showDetailRows) return [];
+  if (analysis.alignment.rows.length === 0) return [];
+  const min = opts.minListEntries ?? limits.learn.overfit.minCases;
+  const fixed = opts.fixed;
+  const tables = new Map((rules.transform.tables ?? []).map((t) => [t.name, t] as const));
+  const theirs = (s: Extract<Site, { kind: 'lookup' | 'valueMap' }>): boolean => {
+    if (!fixed) return false;
+    if (s.kind === 'valueMap') return fixed.transform.valueMaps.some((m) => m.column === s.column);
+    const mine = rules.transform.computed.find((c) => c.id === s.computed);
+    return (fixed.transform.tables ?? []).some((t) => t.name === s.table) || fixed.transform.computed.some((c) => c.id === s.computed && deepEqual(c.expr, mine?.expr));
+  };
+  const candidates = sitesOf(rules).flatMap((s) => {
+    if (s.kind !== 'lookup' && s.kind !== 'valueMap') return [];
+    const header = rules.output.columns[s.out]?.header ?? '';
+    if (opts.columns !== undefined && !opts.columns.has(header)) return [];
+    const keyExpr: Expr = s.kind === 'lookup' ? s.key : { col: s.column };
+    const key = inputColumnOf(rules, keyExpr);
+    if (!key || MEASURES.has(key.type) || theirs(s)) return [];
+    // The keys the list holds, as the engine compares them (a value-map entry that writes the value it reads changes nothing: no entry).
+    const entries = new Set<string>();
+    if (s.kind === 'lookup') {
+      for (const r of tables.get(s.table)?.rows ?? []) {
+        const t = textKey(r[0]);
+        if (t !== null) entries.add(t);
+      }
+    } else {
+      for (const [from, to] of Object.entries(s.map)) {
+        const t = textKey(from);
+        if (t !== null && t !== textKey(to)) entries.add(t);
+      }
+    }
+    if (entries.size < min) return [];
+    const list: CopiedListRule = s.kind === 'lookup' ? { kind: 'lookup', computed: s.computed, table: s.table } : { kind: 'valueMap', column: s.column };
+    return [{ s, header, keyExpr, keyColumn: key.header, entries, list }];
+  });
+  if (candidates.length === 0) return [];
+
+  const last = rules.transform.computed[rules.transform.computed.length - 1]?.id ?? null;
+  const probes = new Probes(last);
+  const plan = candidates.map((c) => ({
+    c,
+    path: (c.s.kind === 'lookup' ? c.s.path : []).map((st) => ({ at: probes.add(st.expr, st.want === 'empty' ? 'text' : 'boolean'), want: st.want })),
+    key: probes.add(c.keyExpr, 'text'),
+  }));
+  const run = runWithProbes(rules, analysis, probes.list);
+  if (!run) return [];
+
+  const best = new Map<number, CopiedListQuestion>();
+  for (const { c, path, key } of plan) {
+    const seen = new Set<string>();
+    let repeats = false;
+    let explained = 0;
+    run.rows.forEach((row, k) => {
+      if (!row || repeats || !path.every((st) => stepHolds(run, k, st))) return;
+      const t = probeKey(run, k, key);
+      if (t === null) return;
+      if (seen.has(t)) repeats = true;
+      seen.add(t);
+      if (c.entries.has(t) && cellMatchesExample(analysis, k, c.s.out, row.cells[c.s.out])) explained += 1;
+    });
+    if (repeats || explained < min) continue;
+    const known = best.get(c.s.out);
+    if (known && known.entries >= explained) continue;
+    best.set(c.s.out, { kind: 'copiedList', out: c.s.out, header: c.header, keyColumn: c.keyColumn, entries: explained, list: c.list });
+  }
+  return [...best.values()].sort((a, b) => a.out - b.out);
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ export * from './rules/jsonSchema';
 export * from './rules/wire';
 export * from './rules/aiNotes';
 export * from './rules/ruleParts';
+export * from './rules/copiedList';
 export * from './format';
 export * from './source';
 export * from './sourceName';

@@ -261,7 +261,9 @@ export interface LearnFromExamplesResult<Call = unknown> {
    * Path 'llm' with rules: a one-time edit or a rule? (SPEC 21 v12 item 20, `oneTimers.ts`) - the parts of the kept answer that explain exactly
    * one row of the example, singled out by something unique to it (its ID, an exact amount or date, its position), for the Result screen's
    * question (at most `limits.learn.oneTimer.maxQuestions`; completion mode: the asked columns only), and the columns that had more such parts
-   * than fit (handed to the overfitting guards, not asked). Real values: the browser's and the eval's only. Absent when there is neither.
+   * than fit (handed to the overfitting guards, not asked). With them (owner amendment, 2026-10-06), `kind: 'copiedList'`: a column whose
+   * lookup table or value map is keyed on a column that is different on every row of the example ("<column>: is this the rule?"; no cell
+   * value). Real values: the browser's and the eval's only. Absent when there is neither.
    */
   oneTimers?: OneTimeResult;
 }
@@ -659,8 +661,10 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   stages.verifiedAfterRepair = kept.passes;
   const loopSummary: LoopSummary = { rounds: loop.rounds, rowsSent: loop.sent.length + loop.named.length, end: decided.step.kind === 'stop' ? decided.step.reason : 'verified' };
 
-  // A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of the kept answer that explain one row of the example only, for the user.
-  const oneTimers = oneTimeQuestions(rules, analysis, askedHeaders ? { columns: askedHeaders } : {});
+  // A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of the kept answer that explain one row of the example only, for the user -
+  // and (owner amendment, 2026-10-06) the lists copied from the example, keyed on a column that is different on every row. Completion mode:
+  // the asked columns only, never a lookup or a value map of the user's own rules.
+  const oneTimers = oneTimeQuestions(rules, analysis, askedHeaders && complete ? { columns: askedHeaders, fixed: complete.fixedRules } : {});
 
   // learn-v7: the notes leave the rules here (SPEC 15): the answer the caller works with has none, and they travel beside it.
   const aiNotes = aiNotesOf(rules);
