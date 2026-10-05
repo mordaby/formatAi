@@ -1,6 +1,6 @@
 // The typed main-thread facade over the engine worker: learn / convert / verify.
 // Owns the RpcClient and the default (real) Worker factory; tests inject a fake.
-import type { LearnResult, Rules } from '@formatai/shared';
+import { limits, type LearnResult, type Rules } from '@formatai/shared';
 import { webConfig } from '../config';
 import type { OneTimeCell } from '../editor/types';
 import type {
@@ -90,6 +90,28 @@ export function createRealWorker(): WorkerHandle {
 export interface CreateEngineClientOptions {
   createWorker?: () => WorkerHandle;
   timeouts?: Partial<Record<EngineMethodName, number>>;
+  /** Worker-busy time each round of AI code checks adds to the learn's timeout (default `CHECK_ROUND_ALLOWANCE_MS`). */
+  checkRoundAllowanceMs?: number;
+}
+
+/**
+ * AI code checks (learn-v9, SPEC 21 v14): the worker answers each round of checks on every row of the example, between two host calls, so
+ * that time would count toward the learn's timeout like the analysis does. DECISION: each round grants the learn this much more busy time,
+ * once, when it starts (the worker's progress `checkRound` with a new round number) - the most a round may take by its own caps, every check
+ * of the round at its time budget. A hung worker still times out: the allowance is bounded, and nothing else extends the learn.
+ */
+export const CHECK_ROUND_ALLOWANCE_MS = limits.learn.checks.timeBudgetMs * limits.learn.checks.maxChecksPerRound;
+
+/** The busy time a learn's progress event grants: the allowance, once for each new round of AI code checks. */
+function checkRoundAllowance(allowanceMs: number): (progress: unknown) => number {
+  let granted = 0;
+  return (progress) => {
+    const p = progress as LearnProgress;
+    const n = p.phase === 'learning' ? (p.checkRound?.n ?? 0) : 0;
+    if (n <= granted) return 0;
+    granted = n;
+    return allowanceMs;
+  };
 }
 
 function transfersOf(...files: { bytes: ArrayBuffer }[]): Transferable[] {
@@ -109,6 +131,7 @@ export function createEngineClient(options: CreateEngineClientOptions = {}): Eng
     transfer: Transferable[],
     opts: EngineCallOptions<EngineMethodMap[M]['progress']> | undefined,
     host?: HostFunctions,
+    extraTimeOn?: (progress: unknown) => number,
   ): Promise<EngineMethodMap[M]['result']> {
     return rpc.call(method, args, {
       transfer,
@@ -116,16 +139,20 @@ export function createEngineClient(options: CreateEngineClientOptions = {}): Eng
       ...(opts?.signal ? { signal: opts.signal } : {}),
       ...(opts?.onProgress ? { onProgress: (p: unknown) => opts.onProgress?.(p as EngineMethodMap[M]['progress']) } : {}),
       ...(host ? { host } : {}),
+      ...(extraTimeOn ? { extraTimeOn } : {}),
     });
   }
 
   return {
     learn: (args, host, opts) =>
-      call('learn', args, transfersOf(args.input, args.output), opts, {
-        callLearn: host.callLearn,
-        callRepair: host.callRepair,
-        callStep: host.callStep,
-      } as unknown as HostFunctions),
+      call(
+        'learn',
+        args,
+        transfersOf(args.input, args.output),
+        opts,
+        { callLearn: host.callLearn, callRepair: host.callRepair, callStep: host.callStep } as unknown as HostFunctions,
+        checkRoundAllowance(options.checkRoundAllowanceMs ?? CHECK_ROUND_ALLOWANCE_MS),
+      ),
     convert: (args, opts) => call('convert', args, transfersOf(args.file), opts),
     verify: (args, opts) => call('verify', args, transfersOf(args.input, args.output), opts),
     inspect: (args, opts) => call('inspect', args, transfersOf(args.file), opts),

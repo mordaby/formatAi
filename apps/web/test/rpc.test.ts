@@ -229,6 +229,45 @@ describe('RpcClient protocol', () => {
       expect(await caught).toBeInstanceOf(RpcTimeoutError);
       expect(w.terminated).toBe(true);
     });
+
+    it('a progress event may grant more busy time (`extraTimeOn`): added to what is left, asked of every event', async () => {
+      const { client, workers } = setup(1000);
+      const extraTimeOn = vi.fn((p: unknown) => (p as { grant?: number }).grant ?? 0);
+      const onProgress = vi.fn();
+      const caught = client.call('learn', null, { extraTimeOn, onProgress }).catch((e: unknown) => e);
+      const w = workers[0]!;
+      const id = w.calls[0]!.id;
+
+      await vi.advanceTimersByTimeAsync(600);
+      w.emit({ type: 'progress', id, progress: { grant: 2000 } }); // 400 left + 2000
+      w.emit({ type: 'progress', id, progress: { step: 'no grant' } });
+      expect(extraTimeOn).toHaveBeenCalledTimes(2);
+      expect(onProgress).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(2300); // 2900 busy of 3000
+      expect(w.terminated).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(await caught).toBeInstanceOf(RpcTimeoutError);
+    });
+
+    it('a grant that arrives while a host call is in flight is there when the timer resumes', async () => {
+      const { client, workers } = setup(1000);
+      let releaseHost!: () => void;
+      const hostDone = new Promise<void>((r) => (releaseHost = r));
+      const caught = client
+        .call('learn', null, { host: { callLearn: () => hostDone }, extraTimeOn: (p) => (p as { grant?: number }).grant ?? 0 })
+        .catch((e: unknown) => e);
+      const w = workers[0]!;
+      const id = w.calls[0]!.id;
+      await vi.advanceTimersByTimeAsync(800);
+      w.emit({ type: 'host', id, cbId: 1, name: 'callLearn', args: [] });
+      w.emit({ type: 'progress', id, progress: { grant: 1000 } });
+      await vi.advanceTimersByTimeAsync(10_000); // waiting on the host: not counted
+      releaseHost();
+      await vi.advanceTimersByTimeAsync(1100); // 200 left + 1000 granted
+      expect(w.terminated).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(await caught).toBeInstanceOf(RpcTimeoutError);
+    });
   });
 
   it('abort: rejects with RpcAbortedError, terminates the worker, and works again afterwards', async () => {

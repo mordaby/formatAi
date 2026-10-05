@@ -4,13 +4,15 @@
 // `limits.learn.checks.maxRounds` rounds. The progress says which round it is, "See what we send" lists each step, and a refused step is an
 // error like any other API error.
 import { limitMessages, limits, type Check, type CheckRound, type LearnPayload, type LearnResult, type StepResponse } from '@formatai/shared';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type Api } from '../src/api';
 import { errorView } from '../src/app/messages';
 import { LearnFlow, type FileLike, type LearnFlowState } from '../src/flow/learnFlow';
 import { codeText, translate, type I18n } from '../src/i18n';
-import { createEngineClient, type EngineClient } from '../src/worker/engineClient';
-import type { LearnOutput } from '../src/worker/engineApi';
+import { CHECK_ROUND_ALLOWANCE_MS, createEngineClient, type EngineClient } from '../src/worker/engineClient';
+import type { LearnOutput, LearnProgress } from '../src/worker/engineApi';
+import { RpcTimeoutError } from '../src/worker/rpcClient';
+import type { MethodContext } from '../src/worker/runtime';
 import { engineMethods } from '../src/worker/engineMethods';
 import { loopbackWorker } from './helpers/loopback';
 
@@ -227,5 +229,63 @@ describe('LearnFlow with the real engine: the AI step asks code to check ideas f
     await done;
     expect(signal?.aborted).toBe(true);
     expect(flow.getState().status).toBe('idle');
+  });
+});
+
+describe("the learn's timeout: the worker's time answering a round of checks is not counted as a hang", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const TIMEOUT = 1000;
+  const ALLOWANCE = 5000;
+  const bytes = () => ({ name: 'x.csv', bytes: new ArrayBuffer(1) });
+  const round = (n: number): LearnProgress => ({ phase: 'learning', attempt: 'learn', checkRound: { n, of: 3 } });
+  const busy = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /** The real engine client over a fake worker `learn`, which reports rounds of checks like the real one and then works for `workMs` per round. */
+  function learnWith(rounds: number, workMs: number) {
+    const learn = async (_args: unknown, ctx: MethodContext) => {
+      await ctx.host('callLearn', {});
+      for (let n = 1; n <= rounds; n++) {
+        ctx.progress(round(n)); // the answer asked checks: the worker answers round n now
+        await busy(workMs);
+        ctx.progress(round(n)); // (the step's own progress, the same round again: no second allowance)
+        await ctx.host('callStep', {}, []);
+      }
+      return { path: 'llm', rules: null };
+    };
+    const engine = createEngineClient({ createWorker: () => loopbackWorker({ learn }), timeouts: { learn: TIMEOUT }, checkRoundAllowanceMs: ALLOWANCE });
+    const host = { callLearn: async () => ({ rules: null, problems: [], calls: [], checks: [] }), callRepair: noAi, callStep: async () => ({ rules: null, problems: [], calls: [] }) };
+    return engine.learn({ input: bytes(), output: bytes(), masking: false, tier: 'paid' }, host).catch((e: unknown) => e);
+  }
+
+  it('each round of checks adds the allowance once, when it starts', async () => {
+    // two rounds of 5.5 s of work each: 11 s of busy time, within 1 s + 2 x 5 s
+    const done = learnWith(2, 5500);
+    await vi.advanceTimersByTimeAsync(11_500);
+    expect(await done).toMatchObject({ path: 'llm' });
+  });
+
+  it('a round that works past its allowance still times out (a hung worker is still caught)', async () => {
+    const done = learnWith(1, TIMEOUT + ALLOWANCE + 100);
+    await vi.advanceTimersByTimeAsync(TIMEOUT + ALLOWANCE + 200);
+    expect(await done).toBeInstanceOf(RpcTimeoutError);
+  });
+
+  it('without checks nothing is added: the learn times out as before', async () => {
+    const done = (async () => {
+      const learn = async () => {
+        await busy(TIMEOUT + 100);
+        return { path: 'llm', rules: null };
+      };
+      const engine = createEngineClient({ createWorker: () => loopbackWorker({ learn }), timeouts: { learn: TIMEOUT }, checkRoundAllowanceMs: ALLOWANCE });
+      return engine.learn({ input: bytes(), output: bytes(), masking: false, tier: 'paid' }, { callLearn: noAi, callRepair: noAi, callStep: noAi }).catch((e: unknown) => e);
+    })();
+    await vi.advanceTimersByTimeAsync(TIMEOUT + 200);
+    expect(await done).toBeInstanceOf(RpcTimeoutError);
+  });
+
+  it('the allowance of a round is every check of it at its time budget', () => {
+    expect(CHECK_ROUND_ALLOWANCE_MS).toBe(limits.learn.checks.timeBudgetMs * limits.learn.checks.maxChecksPerRound);
   });
 });
