@@ -140,7 +140,7 @@ export function PreviewGrid({ live, rules, flags, limit, uiDir, onFixRule, onSig
       )}
 
       <SheetDirection direction={direction} className="pv__scroll">
-        <table className="pv" data-testid="preview-table">
+        <table className="pv" data-testid="preview-table" aria-label={t('preview.title')}>
           <thead>
             <tr>
               <th scope="col" className="pv__n">
