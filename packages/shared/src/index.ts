@@ -26,3 +26,4 @@ export * from './tokenEstimate';
 export * from './completion';
 export * from './unsupportedEvidence';
 export * from './api';
+export * from './contact';

@@ -3,6 +3,8 @@ import cors from '@fastify/cors';
 import { limits } from '@formatai/shared';
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from 'fastify';
 import { registerAuth, type AuthOptions } from './auth/index.js';
+import { registerContactRoutes } from './contact/routes.js';
+import { createMemoryContactStore, createMongoContactStore, type ContactStore } from './contact/store.js';
 import type { AppDb } from './db.js';
 import type { Env } from './env.js';
 import type { CompleteFn } from './learn/index.js';
@@ -23,6 +25,8 @@ export interface BuildServerOptions {
   /** Tests: replaces the store behind limits, budgets, cache and ledger (default: MongoDB from `db`,
    * or in memory when there is no database outside production). */
   store?: ProtectionStore;
+  /** Tests: replaces where the public forms (leads, waitlist, feedback) are kept (default: MongoDB from `db`, or in memory when there is no database). */
+  contactStore?: ContactStore;
   /** Tests: replaces the global `fetch` used to call Cloudflare Turnstile's siteverify endpoint. */
   fetch?: typeof fetch;
   /** Tests: the clock (UTC day/month keys, budgets, cache and learnId expiry). */
@@ -134,6 +138,14 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
 
   // SPEC 8.12 / 13: saved formats and their conversions (signed-in users only; needs the database).
   registerRegistryRoutes(app, { db, protection, identify: opts.identify });
+
+  // SPEC 16.1 screen 7, 11, 13 (v13 M4): the public forms - the business lead form, the paid waitlist, feedback. Open to visitors
+  // (Turnstile + rate limits), so they exist in every environment; they need no sign-in.
+  registerContactRoutes(app, {
+    protection,
+    store: opts.contactStore ?? (db ? createMongoContactStore(db) : createMemoryContactStore()),
+    identify: opts.identify,
+  });
 
   return app;
 }
