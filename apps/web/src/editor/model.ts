@@ -8,7 +8,7 @@ import { editorConfig } from './config';
 import { editedLines, formatFingerprint, inputSideChanged } from './lines';
 import { fail, isProblems } from './problems';
 import { availableInputs, isStored, referencedIds, sameContent, withInputColumns } from './rulesUtil';
-import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, EditProblem, ExampleInputColumn, FormatInfo, Snapshot, SourceInfo } from './types';
+import type { ActionResult, EditableRules, EditAction, EditorOptions, EditorState, EditProblem, ExampleInputColumn, FormatInfo, OneTimeCell, Snapshot, SourceInfo } from './types';
 import { validateEdit } from './validate';
 
 export * from './types';
@@ -24,15 +24,27 @@ function normalizeExceptions(rows: readonly number[]): number[] {
   return [...new Set(rows.filter((r) => Number.isInteger(r) && r >= 1))].sort((a, b) => a - b);
 }
 
+/** One-time cells: each once, by row then column. */
+function normalizeOneTime(cells: readonly OneTimeCell[]): OneTimeCell[] {
+  const seen = new Map<string, OneTimeCell>();
+  for (const c of cells) if (Number.isInteger(c.exampleRow) && c.exampleRow >= 1) seen.set(`${c.exampleRow}\u0000${c.column}`, { exampleRow: c.exampleRow, column: c.column });
+  return [...seen.values()].sort((a, b) => a.exampleRow - b.exampleRow || (a.column < b.column ? -1 : a.column > b.column ? 1 : 0));
+}
+
 // ---------- deriving the flags ----------
 
-function sameSnapshot(a: Snapshot, b: Snapshot): boolean {
+/**
+ * Whether two snapshots hold the same. DECISION: the one-time cells count for an edit (an answer that changes only them is still one undo
+ * step) but not for "unsaved changes": they are never saved, so they never differ from what is.
+ */
+function sameSnapshot(a: Snapshot, b: Snapshot, oneTime = true): boolean {
   if (a.exceptions.length !== b.exceptions.length || a.exceptions.some((r, i) => r !== b.exceptions[i])) return false;
+  if (oneTime && (a.oneTime.length !== b.oneTime.length || a.oneTime.some((c, i) => c.exampleRow !== b.oneTime[i]!.exampleRow || c.column !== b.oneTime[i]!.column))) return false;
   return sameContent(a.rules, b.rules);
 }
 
-/** Everything in a state that follows from (rules, exceptions): edited lines, format change, dirty. */
-function derive(state: EditorState, rules: EditableRules, exceptions: number[]): EditorState {
+/** Everything in a state that follows from (rules, exceptions, one-time cells): edited lines, format change, dirty. */
+function derive(state: EditorState, rules: EditableRules, exceptions: number[], oneTime: OneTimeCell[]): EditorState {
   const edited = new Set<string>(state.baseEdited);
   for (const id of editedLines(state.baseline, rules)) edited.add(id);
   const formatChange = state.format !== null && formatFingerprint(rules) !== formatFingerprint(state.saved.rules);
@@ -41,10 +53,11 @@ function derive(state: EditorState, rules: EditableRules, exceptions: number[]):
     ...state,
     rules,
     exceptions,
+    oneTime,
     edited,
     formatChange,
     sourceChange,
-    dirty: !sameSnapshot({ rules, exceptions }, state.saved),
+    dirty: !sameSnapshot({ rules, exceptions, oneTime }, state.saved, false),
     rev: state.rev + 1,
   };
 }
@@ -55,12 +68,14 @@ export function createEditorState(rules: EditableRules, options: EditorOptions =
   const format: FormatInfo | null =
     options.format !== undefined ? options.format : isStored(rules) && rules.meta.formatId !== undefined ? { sourceCount: 1 } : null;
   const exceptions = normalizeExceptions(options.exceptions ?? []);
+  const oneTime = normalizeOneTime(options.oneTime ?? []);
   const base = options.edited ?? [];
   return {
     rules,
     history: { past: [], future: [] },
     edited: new Set(base),
     exceptions,
+    oneTime,
     dirty: false,
     formatChange: false,
     format,
@@ -69,7 +84,7 @@ export function createEditorState(rules: EditableRules, options: EditorOptions =
     rev: 0,
     baseline: rules,
     baseEdited: base,
-    saved: { rules, exceptions },
+    saved: { rules, exceptions, oneTime },
     historyCap: options.historyCap ?? editorConfig.historyCap,
   };
 }
@@ -92,7 +107,7 @@ export interface EditOutcome {
 }
 
 function pushPast(state: EditorState): Snapshot[] {
-  const past = [...state.history.past, { rules: state.rules, exceptions: state.exceptions }];
+  const past = [...state.history.past, { rules: state.rules, exceptions: state.exceptions, oneTime: state.oneTime }];
   return past.length > state.historyCap ? past.slice(past.length - state.historyCap) : past;
 }
 
@@ -129,7 +144,8 @@ function stepDeclaring(
   return problems.length > 0 ? problems : next;
 }
 
-function nextRules(state: EditorState, action: EditAction, available?: readonly ExampleInputColumn[]): { rules: EditableRules; exceptions: number[] } | EditProblem[] {
+function nextRules(state: EditorState, action: EditAction, available?: readonly ExampleInputColumn[]): Snapshot | EditProblem[] {
+  const keep = { exceptions: state.exceptions, oneTime: state.oneTime };
   switch (action.type) {
     case 'markException':
     case 'unmarkException': {
@@ -139,33 +155,36 @@ function nextRules(state: EditorState, action: EditAction, available?: readonly 
       const has = state.exceptions.includes(action.row);
       const exceptions =
         action.type === 'markException' ? (has ? state.exceptions : normalizeExceptions([...state.exceptions, action.row])) : state.exceptions.filter((r) => r !== action.row);
-      return { rules: state.rules, exceptions };
+      return { rules: state.rules, exceptions, oneTime: state.oneTime };
     }
     case 'setAdvancedJson': {
       const parsed = parseAdvancedJson(action.text, state.rules);
-      return isProblems(parsed) ? parsed : { rules: parsed, exceptions: state.exceptions };
+      return isProblems(parsed) ? parsed : { rules: parsed, ...keep };
     }
     case 'replaceRules': {
       const problems = validateEdit(state.rules, action.rules);
-      return problems.length > 0 ? problems : { rules: action.rules, exceptions: state.exceptions };
+      if (problems.length > 0) return problems;
+      return { rules: action.rules, exceptions: state.exceptions, oneTime: action.oneTime ? normalizeOneTime(action.oneTime) : state.oneTime };
     }
     default: {
       let out = stepAndValidate(state.rules, action);
       if (isProblems(out) && available && available.length > 0) out = stepDeclaring(state.rules, action, available, out);
-      return isProblems(out) ? out : { rules: out, exceptions: state.exceptions };
+      return isProblems(out) ? out : { rules: out, ...keep };
     }
   }
 }
+
+const snapshotOf = (state: EditorState): Snapshot => ({ rules: state.rules, exceptions: state.exceptions, oneTime: state.oneTime });
 
 /** Applies one edit. Problems leave the state untouched; an edit that changes nothing adds no undo step. */
 export function applyEdit(state: EditorState, action: EditAction, options: ApplyOptions = {}): EditOutcome {
   const next = nextRules(state, action, options.available);
   if (isProblems(next)) return { state, result: { ok: false, problems: next } };
-  const changed = !sameSnapshot({ rules: next.rules, exceptions: next.exceptions }, { rules: state.rules, exceptions: state.exceptions });
+  const changed = !sameSnapshot(next, snapshotOf(state));
   if (!changed) return { state, result: { ok: true, changed: false } };
   const history = options.merge && state.history.past.length > 0 ? { past: state.history.past, future: [] } : { past: pushPast(state), future: [] };
   const base: EditorState = { ...state, history };
-  return { state: derive(base, next.rules, next.exceptions), result: { ok: true, changed: true } };
+  return { state: derive(base, next.rules, next.exceptions, next.oneTime), result: { ok: true, changed: true } };
 }
 
 // ---------- undo / redo ----------
@@ -177,25 +196,25 @@ export function undo(state: EditorState): EditorState {
   const past = state.history.past;
   const prev = past[past.length - 1];
   if (!prev) return state;
-  const future = [{ rules: state.rules, exceptions: state.exceptions }, ...state.history.future];
+  const future = [snapshotOf(state), ...state.history.future];
   const base: EditorState = { ...state, history: { past: past.slice(0, -1), future } };
-  return derive(base, prev.rules, prev.exceptions);
+  return derive(base, prev.rules, prev.exceptions, prev.oneTime);
 }
 
 export function redo(state: EditorState): EditorState {
   const [next, ...rest] = state.history.future;
   if (!next) return state;
   const base: EditorState = { ...state, history: { past: pushPast(state), future: rest } };
-  return derive(base, next.rules, next.exceptions);
+  return derive(base, next.rules, next.exceptions, next.oneTime);
 }
 
 // ---------- saving ----------
 
 /** The current rules and exceptions are what is saved now: not dirty, and the format change has been written out. */
 export function markSaved(state: EditorState, rules: EditableRules = state.rules): EditorState {
-  const saved: Snapshot = { rules, exceptions: state.exceptions };
+  const saved: Snapshot = { rules, exceptions: state.exceptions, oneTime: state.oneTime };
   const base: EditorState = { ...state, saved };
-  return { ...derive(base, rules, state.exceptions), rev: state.rev };
+  return { ...derive(base, rules, state.exceptions, state.oneTime), rev: state.rev };
 }
 
 /** The conversion belongs to a format (or no longer does): the format-change flag follows. Not an edit: `rev` and the history stay. */

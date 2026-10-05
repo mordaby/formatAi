@@ -11,18 +11,20 @@ import type { Format, SourceStructure, Tier } from '@formatai/shared';
 import { editorConfig } from './config';
 import type { LiveCheckResult, StaticCheckOptions, StaticProblem } from '../worker/editorApi';
 import type { EngineCallOptions, LiveCheckOptions } from '../worker/engineClient';
-import type { EditableRules } from './types';
+import type { EditableRules, OneTimeCell } from './types';
 
 /** The part of the engine client the scheduler needs (a fake in tests). */
 export interface CheckEngine {
   liveCheck(exampleId: string, rules: EditableRules, options?: LiveCheckOptions, opts?: EngineCallOptions): Promise<LiveCheckResult>;
-  fullCheck(exampleId: string, rules: EditableRules, options?: { exceptions?: number[]; onlyColumns?: number[] }, opts?: EngineCallOptions): Promise<LiveCheckResult>;
+  fullCheck(exampleId: string, rules: EditableRules, options?: Omit<LiveCheckOptions, 'subset'>, opts?: EngineCallOptions): Promise<LiveCheckResult>;
   staticChecks(rules: EditableRules, options: StaticCheckOptions, opts?: EngineCallOptions): Promise<StaticProblem[]>;
 }
 
 export interface CheckInput {
   rules: EditableRules;
   exceptions: number[];
+  /** SPEC 21 v12 item 20: the cells the user said were a one-time change (not compared in their column). */
+  oneTime?: OneTimeCell[];
   /** `EditorState.rev`: which version of the rules this is. */
   rev: number;
   /** SPEC 21 v5 item 1: compare only these output columns (the local partial result). Undefined = every column. */
@@ -172,7 +174,10 @@ export class LiveCheckScheduler {
     this.waiters = [];
     const { engine, exampleId, tier, format, source } = this.options;
     const exceptions = input.exceptions;
-    const only = input.onlyColumns ? { onlyColumns: input.onlyColumns } : {};
+    const only = {
+      ...(input.onlyColumns ? { onlyColumns: input.onlyColumns } : {}),
+      ...(input.oneTime && input.oneTime.length > 0 ? { oneTime: input.oneTime } : {}),
+    };
     this.set({ status: 'checking' });
 
     const [check, stat] = await Promise.allSettled([

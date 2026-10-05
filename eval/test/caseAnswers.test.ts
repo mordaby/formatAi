@@ -151,3 +151,52 @@ describe('the learning loop in the runner: the same rounds the browser makes, re
     expect(records[0]).toMatchObject({ loopRounds: 1, loopRowsSent: 4, loopEnd: 'noProgress', llmCalls: 3, verifiedAfterRepair: false });
   });
 });
+
+describe('a one-time edit or a rule? in the runner (SPEC 21 v12 item 20): what the kept answer would ask, and what "one-time" would do', () => {
+  /** The case's reference rules (Discount = 10% of Amount) with the three hand-edited rows named by their Order ID, as a loop round might write it. */
+  const byOrderId = (c: CaseDef): unknown => {
+    const json = JSON.stringify(c.referenceRules);
+    const tenth = '{"op":"round","digits":2,"arg":{"op":"mul","args":[{"col":"amount"},{"const":0.1}]}}';
+    if (!json.includes(tenth)) throw new Error('discount-hand-edited: the reference rules changed');
+    const id = (order: string, value: number): string => `{"when":{"op":"eq","args":[{"col":"orderId"},{"const":"${order}"}]},"then":{"const":${value}}}`;
+    return wireOf(JSON.parse(json.replace(tenth, `{"op":"switch","cases":[${id('ORD-03053', 0)},${id('ORD-03098', 170.02)},${id('ORD-03132', 25)}],"else":${tenth}}`)));
+  };
+
+  it('discount-hand-edited: three questions by Order ID (next month brings new IDs, so the kept rules pass the hold-out too)', async () => {
+    const c = load('discount-hand-edited');
+    const { complete } = scripted([byOrderId(c)]);
+    const records = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
+    expect(records[0]).toMatchObject({
+      verifiedFirstCall: true,
+      holdOut: 'pass',
+      oneTimeAsked: 3,
+      oneTimeParts: 'Discount r54 id, Discount r99 id, Discount r133 id',
+      oneTimeDefault: 'one-time: holdOut pass',
+    });
+  });
+
+  it('the same three rows by their position: the API leaves them to the browser, which asks - kept, next month\'s rows 53 and 98 go wrong; answered "one-time", they pass', async () => {
+    const c = load('discount-hand-edited');
+    const tenth = '{"op":"round","digits":2,"arg":{"op":"mul","args":[{"col":"amount"},{"const":0.1}]}}';
+    const at = (row: number, value: number): string => `{"when":{"op":"eq","args":[{"op":"window","fn":"rowNumber"},{"const":${row}}]},"then":{"const":${value}}}`;
+    const json = JSON.stringify(c.referenceRules).replace(tenth, `{"op":"switch","cases":[${at(53, 0)},${at(98, 170.02)},${at(132, 25)}],"else":${tenth}}`);
+    const { complete, requests } = scripted([wireOf(JSON.parse(json))]);
+    const records = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
+    expect(requests).toHaveLength(1); // no overfit repair: neither the API nor the browser asked the AI step about it
+    expect(records[0]).toMatchObject({
+      verifiedFirstCall: true,
+      overfitFound: 0,
+      holdOut: 'fail',
+      oneTimeAsked: 3,
+      oneTimeParts: 'Discount r54 position, Discount r99 position, Discount r133 position',
+      oneTimeDefault: 'one-time: holdOut pass',
+    });
+  });
+
+  it('the honest rule (the three rows wrong) asks nothing', async () => {
+    const c = load('discount-hand-edited');
+    const { complete } = scripted([wireOf(c.referenceRules), wireOf(c.referenceRules), wireOf(c.referenceRules), wireOf(c.referenceRules)]);
+    const records = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
+    expect(records[0]).toMatchObject({ oneTimeAsked: 0, oneTimeParts: '', oneTimeDefault: '' });
+  });
+});

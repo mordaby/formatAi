@@ -117,6 +117,31 @@ describe('checkExample', () => {
     expect(some.preview.every((p) => ![2, 3, 4].includes(p.exampleRow))).toBe(true);
   });
 
+  it('leaves a one-time cell out of its column only (SPEC 21 v12 item 20): no difference, listed apart, "this rule" still shows what the rule gives', async () => {
+    const { analysis, rules } = await exampleOf(30);
+    const qty = rules.output.columns.find((c) => c.header === 'Qty')!.from!;
+    const item = rules.input.columns.find((c) => c.header === 'Item')!.id;
+    // The rule gets row 6 (SKU-00005) wrong in Qty, as a rule whose one-row part was taken out does.
+    const odd: LearnResult = {
+      ...rules,
+      transform: { ...rules.transform, computed: [...rules.transform.computed, { id: 'qtyOdd', type: 'integer', expr: { op: 'if', cond: { op: 'eq', args: [{ col: item }, { const: 'SKU-00005' }] }, then: { const: 999 }, else: { col: qty } } }] },
+      output: { ...rules.output, columns: rules.output.columns.map((c) => (c.header === 'Qty' ? { ...c, from: 'qtyOdd' } : c)) },
+    };
+    expect(checkExample(analysis, odd).differences).toBe(1);
+    const r = checkExample(analysis, odd, { oneTime: [{ exampleRow: 6, column: 'Qty' }] });
+    expect([r.verified, r.matched, r.total, r.differences, r.mismatchCount]).toEqual([true, 30, 30, 0, 0]);
+    expect(r.perColumn.find((c) => c.header === 'Qty')).toMatchObject({ matched: 30, total: 30 });
+    // (a csv example: its cells are text)
+    expect(r.oneTime).toEqual([{ exampleRow: 6, column: 'Qty', columnIndex: 2, expected: '29', actual: 999 }]);
+    const row = r.preview.find((p) => p.exampleRow === 6)!;
+    expect([row.ok, row.expected[2], row.actual[2]]).toEqual([true, '29', 999]);
+    // Another column of that row is still compared.
+    const alsoWrong: LearnResult = { ...odd, output: { ...odd.output, columns: odd.output.columns.map((c) => (c.header === 'Supplier' ? { ...c, from: item } : c)) } };
+    expect(checkExample(analysis, alsoWrong, { oneTime: [{ exampleRow: 6, column: 'Qty' }] }).mismatches.some((m) => m.exampleRow === 6 && m.column === 'Supplier')).toBe(true);
+    // Without any, nothing is listed.
+    expect(checkExample(analysis, rules).oneTime).toBeUndefined();
+  });
+
   it('says so when a column has no counterpart in the example', async () => {
     const { analysis, rules } = await exampleOf(30);
     const extra: LearnResult = { ...rules, output: { ...rules.output, columns: [...rules.output.columns, { header: 'Note', from: null }] } };

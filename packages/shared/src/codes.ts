@@ -101,6 +101,7 @@ export const FLAG_MESSAGE_KEYS = [
   'flag.validation.dateRange', // params: { from, to }
   'flag.validation.cutoffRange', // params: { low, high, value } (numbers, or ISO dates)
   'flag.validation.sameAs', // params: { other } (the value the other rule of an open question gives here)
+  'flag.validation.sameAs.oneTime', // params: { other } (what the column's rule gives here without the part the example had on one row only)
 ] as const;
 
 export type FlagMessageKey = (typeof FLAG_MESSAGE_KEYS)[number];

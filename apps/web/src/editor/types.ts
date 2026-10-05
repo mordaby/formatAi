@@ -183,18 +183,30 @@ export type EditAction =
   // Advanced view
   | { type: 'setAdvancedJson'; text: string }
   /**
-   * Whole new rules built by code (an answer to the ambiguity question, `readings.ts`): checked like any edit (schema, references, types),
-   * one undo step. Never a user's own edit of the JSON: that is `setAdvancedJson`.
+   * Whole new rules built by code (an answer to the ambiguity question, `readings.ts`; to a one-time question, `oneTimers.ts`): checked like
+   * any edit (schema, references, types), one undo step. Never a user's own edit of the JSON: that is `setAdvancedJson`.
+   * `oneTime`: the one-time cells after the edit ("a one-time change" adds its row), in the same undo step.
    */
-  | { type: 'replaceRules'; rules: EditableRules };
+  | { type: 'replaceRules'; rules: EditableRules; oneTime?: OneTimeCell[] };
 
 export type EditActionType = EditAction['type'];
 
 // ---------- State ----------
 
+/**
+ * A cell of the example the user said was changed by hand once (SPEC 21 v12 item 20, "a one-time change"): the example output's row (1-based,
+ * as `exceptions`) in one output column (its header). The example comparison leaves it out of that column only, and the screen lists it as a
+ * row that doesn't follow the rule. Nothing about it is saved: it lives in the session's editor, beside the rules.
+ */
+export interface OneTimeCell {
+  exampleRow: number;
+  column: string;
+}
+
 export interface Snapshot {
   rules: EditableRules;
   exceptions: number[];
+  oneTime: OneTimeCell[];
 }
 
 export interface FormatInfo {
@@ -215,6 +227,8 @@ export interface EditorState {
   edited: ReadonlySet<LineId>;
   /** 1-based example-output rows marked "fixed by hand". They only affect checking the example. */
   exceptions: number[];
+  /** Cells of the example the user said were a one-time change (one column each). They only affect checking the example; never saved. */
+  oneTime: OneTimeCell[];
   /** Differs from what was last saved (or opened). */
   dirty: boolean;
   /** The conversion belongs to a format and the output side has changed (SPEC 8.12). */
@@ -239,6 +253,8 @@ export interface EditorState {
 
 export interface EditorOptions {
   exceptions?: number[];
+  /** One-time cells of an earlier state of the same session (a completion answer applied over them). */
+  oneTime?: OneTimeCell[];
   /** The format this conversion belongs to. Default: `{ sourceCount: 1 }` when `rules.meta.formatId` is set, else none. */
   format?: FormatInfo | null;
   /** The source this conversion reads (SPEC 8.15). Default: none known. */

@@ -54,10 +54,10 @@ export function useLiveCheck(options: UseLiveCheckOptions): UseLiveCheck {
   // Every revision of the rules or exceptions is one update; the first one runs at once.
   useEffect(() => {
     scheduler.update(
-      { rules: editor.rules, exceptions: editor.exceptions, rev: editor.rev, ...(onlyColumns ? { onlyColumns } : {}) },
+      { rules: editor.rules, exceptions: editor.exceptions, rev: editor.rev, ...(editor.oneTime.length > 0 ? { oneTime: editor.oneTime } : {}), ...(onlyColumns ? { onlyColumns } : {}) },
       { immediate: scheduler.getState().latestRev === null },
     );
-  }, [scheduler, editor.rev, editor.rules, editor.exceptions, onlyColumns]);
+  }, [scheduler, editor.rev, editor.rules, editor.exceptions, editor.oneTime, onlyColumns]);
 
   return useMemo(() => {
     const staticCurrent = state.staticRev === editor.rev ? state.staticProblems : null;

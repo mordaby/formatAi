@@ -20,7 +20,7 @@ import {
 import type { Format, LearnResult, PayloadCell, Rules, SourceStructure } from '@formatai/shared';
 import { checkRules, LearnResultSchema, RulesSchema } from '@formatai/shared';
 import { editorConfig } from '../editor/config';
-import type { ExampleInputColumn } from '../editor/types';
+import type { ExampleInputColumn, OneTimeCell } from '../editor/types';
 import type { LiveCheckResult, PreviewRow, StaticCheckOptions, StaticProblem } from './editorApi';
 
 // ---------- the example kept in worker memory ----------
@@ -125,6 +125,9 @@ function buildPreview(a: PairAnalysis, rules: LearnResult | Rules, v: VerifyResu
     if (list) list.push(m);
     else bad.set(m.exampleRow, [m]);
   }
+  // A one-time cell (SPEC 21 v12 item 20) is no mismatch, but "this rule" still shows what the rule gives there.
+  const oneTime = new Map<number, typeof v.mismatches>();
+  for (const m of v.oneTime ?? []) oneTime.set(m.exampleRow, [...(oneTime.get(m.exampleRow) ?? []), m]);
 
   const byRow = new Map<number, number>(); // example row -> input row index
   for (const r of a.alignment.rows) {
@@ -137,6 +140,10 @@ function buildPreview(a: PairAnalysis, rules: LearnResult | Rules, v: VerifyResu
     const expected: PayloadCell[] = [];
     for (let c = 0; c < a.output.columnCount; c++) expected.push(cellValue(a.output.sheet.rows[sheetRow]?.[c]));
     const actual = [...expected];
+    for (const m of oneTime.get(exampleRow) ?? []) {
+      const c = headers.get(m.column);
+      if (c !== undefined) actual[c] = m.actual;
+    }
     const badColumns: number[] = [];
     for (const m of bad.get(exampleRow) ?? []) {
       const c = headers.get(m.column);
@@ -175,6 +182,8 @@ function buildPreview(a: PairAnalysis, rules: LearnResult | Rules, v: VerifyResu
 export interface CheckExampleOptions {
   /** 1-based rows of the example output marked "fixed by hand": left out of every count. */
   exceptions?: number[];
+  /** SPEC 21 v12 item 20: cells the user said were a one-time change - not compared in that column, listed apart (`LiveCheckResult.oneTime`). */
+  oneTime?: OneTimeCell[];
   /** Allow the subset above `fullCheckAboveRows` rows (default true). `false` checks every row. */
   subset?: boolean;
   /** SPEC 21 v5 item 1: the local partial result compares only the columns code built (0-based positions in `rules.output.columns`). */
@@ -188,7 +197,8 @@ export function checkExample(analysis: PairAnalysis, rules: LearnResult | Rules,
   const partial = opts.subset !== false && rowsInExample > editorConfig.fullCheckAboveRows;
   const target = partial ? subsetAnalysis(analysis, editorConfig.subsetRows) : analysis;
 
-  const v = verifyAgainstExample(rules, target, { exceptions, ...(opts.onlyColumns ? { onlyColumns: opts.onlyColumns } : {}) });
+  const oneTime = opts.oneTime && opts.oneTime.length > 0 ? opts.oneTime : undefined;
+  const v = verifyAgainstExample(rules, target, { exceptions, ...(oneTime ? { oneTime } : {}), ...(opts.onlyColumns ? { onlyColumns: opts.onlyColumns } : {}) });
 
   // Per column: every aligned row is compared on every example column, so a column's misses are its mismatches.
   const missesByHeader = new Map<string, number>();
@@ -218,6 +228,7 @@ export function checkExample(analysis: PairAnalysis, rules: LearnResult | Rules,
     perColumn,
     mismatches: v.mismatches.slice(0, editorConfig.maxMismatches).map((m) => ({ ...m, columnIndex: columnIndexOf(rules, analysis, m.column) })),
     mismatchCount: v.mismatches.length,
+    ...(v.oneTime ? { oneTime: v.oneTime.map((m) => ({ ...m, columnIndex: columnIndexOf(rules, analysis, m.column) })) } : {}),
     preview,
     layoutProblems,
     layoutIssues,

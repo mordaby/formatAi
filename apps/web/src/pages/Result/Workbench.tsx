@@ -3,10 +3,10 @@
 // format, or a saved source opened for editing - or what "save" means there: the caller passes the header's actions, banners
 // and (when there is no example in memory) what replaces the preview.
 import { missingParts, type AiColumnNote, type AiStepPartCode, type Format, type SourceStructure, type Tier } from '@formatai/shared';
-import type { AmbiguousColumn, PartialInfo } from '@formatai/engine';
+import type { AmbiguousColumn, OneTimeQuestion as OneTimeQuestionData, PartialInfo } from '@formatai/engine';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LeaveGuard } from '../../app/LeaveGuard';
-import { applyReading, availableInputs, lineIds, lockProblem, questionOpen, useEditor, useLiveCheck, metaStatusOf, differencesOf, type ApplyActionOptions, type EditLock, type EditableRules, type EditAction, type EditorStore, type ExampleInputColumn, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';
+import { answerOneTime, answerRule, answerUnsure, applyReading, availableInputs, lineIds, lockProblem, oneTimeKey, oneTimeState, questionOpen, useEditor, useLiveCheck, metaStatusOf, differencesOf, type ApplyActionOptions, type EditLock, type EditableRules, type EditAction, type EditorStore, type ExampleInputColumn, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';
 import { normalizeHeader } from '../../editor/rulesUtil';
 import { useI18n } from '../../i18n';
 import { describeRules, type Line, type VerificationLike } from '../../rulesText';
@@ -19,6 +19,7 @@ import { FlagsList } from './FlagsList';
 import { assumptionIndexes, columnMismatches, columnsWithoutRule, planAdd, type AddKind } from './helpers';
 import { LiveCheckStrip } from './LiveCheckStrip';
 import { PreviewGrid } from './PreviewGrid';
+import { OneTimeQuestion } from './OneTimeQuestion';
 import { ReadingQuestion } from './ReadingQuestion';
 import { ResultHeader, StatusBadge } from './ResultHeader';
 import { RulesMap } from './RulesMap';
@@ -90,6 +91,11 @@ export interface WorkbenchProps {
    * is asked on its line in the map. Undefined / empty: no question.
    */
   ambiguous?: readonly AmbiguousColumn[] | undefined;
+  /**
+   * A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of the rules that explain one row of the example only, after an AI learn. Each
+   * one whose part is still in the rules is asked on its column's line. Undefined / empty: no question.
+   */
+  oneTimers?: readonly OneTimeQuestionData[] | undefined;
   name: string;
   onRename?: ((name: string) => void) | undefined;
   learnedNote: string;
@@ -262,9 +268,22 @@ export function Workbench(props: WorkbenchProps) {
   // they already have changes nothing, so that answer closes it here (`settled`: this screen only - an undo of an answer that changed the rules opens it again).
   const [unsure, setUnsure] = useState<ReadonlySet<string>>(new Set());
   const [settled, setSettled] = useState<ReadonlySet<string>>(new Set());
+  // A one-time edit or a rule? (SPEC 21 v12 item 20): "a rule" with no check to take out changes nothing, so it closes the question for this
+  // screen only (`ruleSaid`); "Not sure" folds it - marked by its check in the rules, or (a question with no check) here only (`unsureSaid`);
+  // `reopened`: a folded question opened again.
+  const [ruleSaid, setRuleSaid] = useState<ReadonlySet<string>>(new Set());
+  const [unsureSaid, setUnsureSaid] = useState<ReadonlySet<string>>(new Set());
+  const [reopened, setReopened] = useState<ReadonlySet<string>>(new Set());
   const ask = useMemo(() => {
     const open = (props.ambiguous ?? []).filter((c) => questionOpen(rules, c) && !(c.check === null && settled.has(c.header)));
-    if (open.length === 0) return undefined;
+    const once = (props.oneTimers ?? []).flatMap((q) => {
+      const key = oneTimeKey(q);
+      const state = oneTimeState(rules, q, ruleSaid.has(key));
+      if (state === 'closed') return [];
+      const folded = (state === 'unsure' || unsureSaid.has(key)) && !reopened.has(key);
+      return [{ q, key, state: folded ? ('unsure' as const) : ('open' as const) }];
+    });
+    if (open.length === 0 && once.length === 0) return undefined;
     const answer = (column: AmbiguousColumn, index: number): void => {
       const next = applyReading(editor.store.getState().rules, column, index, false);
       if (!next) return;
@@ -278,22 +297,69 @@ export function Workbench(props: WorkbenchProps) {
         else next.delete(header);
         return next;
       });
+    const toggle = (set: (f: (prev: ReadonlySet<string>) => ReadonlySet<string>) => void, key: string, on: boolean): void =>
+      set((prev) => {
+        const next = new Set(prev);
+        if (on) next.add(key);
+        else next.delete(key);
+        return next;
+      });
+    // Each answer is one undoable edit of the rules on screen as they are now (the part is found by its content).
+    const answerOnce = (q: OneTimeQuestionData, key: string): void => {
+      const s = editor.store.getState();
+      const next = answerOneTime(s.rules, q, s.oneTime);
+      if (next) editor.apply({ type: 'replaceRules', rules: next.rules, oneTime: next.oneTime });
+      toggle(setReopened, key, false);
+    };
+    const rule = (q: OneTimeQuestionData, key: string): void => {
+      const current = editor.store.getState().rules;
+      const next = answerRule(current, q);
+      if (next !== current) editor.apply({ type: 'replaceRules', rules: next });
+      toggle(setRuleSaid, key, true);
+      toggle(setUnsureSaid, key, false);
+      toggle(setReopened, key, false);
+    };
+    const notSure = (q: OneTimeQuestionData, key: string): void => {
+      const current = editor.store.getState().rules;
+      const next = answerUnsure(current, q);
+      if (next && next !== current) editor.apply({ type: 'replaceRules', rules: next });
+      else if (!next) toggle(setUnsureSaid, key, true);
+      toggle(setReopened, key, false);
+    };
     return (header: string): ReactNode => {
       const column = open.find((c) => c.header === header);
-      if (!column) return null;
+      const mine = once.filter((o) => o.q.header === header);
+      if (!column && mine.length === 0) return null;
       return (
-        <ReadingQuestion
-          column={column}
-          rules={rules}
-          unsure={unsure.has(header)}
-          disabled={lock !== null}
-          onAnswer={(index) => answer(column, index)}
-          onUnsure={() => fold(header, true)}
-          onReopen={() => fold(header, false)}
-        />
+        <>
+          {column ? (
+            <ReadingQuestion
+              column={column}
+              rules={rules}
+              unsure={unsure.has(header)}
+              disabled={lock !== null}
+              onAnswer={(index) => answer(column, index)}
+              onUnsure={() => fold(header, true)}
+              onReopen={() => fold(header, false)}
+            />
+          ) : null}
+          {mine.map(({ q, key, state }) => (
+            <OneTimeQuestion
+              key={key}
+              question={q}
+              rules={rules}
+              state={state}
+              disabled={lock !== null}
+              onOnce={() => answerOnce(q, key)}
+              onRule={() => rule(q, key)}
+              onUnsure={() => notSure(q, key)}
+              onReopen={() => toggle(setReopened, key, true)}
+            />
+          ))}
+        </>
       );
     };
-  }, [props.ambiguous, rules, unsure, settled, lock, editor]);
+  }, [props.ambiguous, props.oneTimers, rules, unsure, settled, ruleSaid, unsureSaid, reopened, lock, editor]);
   const keep = (line: Line): void => {
     // From the last to the first, so the indexes still mean what they meant.
     for (const index of assumptionIndexes(rules, line).reverse()) editor.apply({ type: 'dismissAssumption', index });

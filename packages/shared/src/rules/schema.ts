@@ -1060,6 +1060,13 @@ const CutoffRangeValidationSchema = z.strictObject({
  * never part of the source or the format (`sourceOf`), and it runs where input checks run: after the computed columns and value maps, before
  * the sort. Severity is always `flag`. Only code writes it, never the AI step (the wire schema does not offer it), and it holds the
  * alternative's constants: it is never sent (completion mode leaves it out of `complete.fixed` and puts it back, like `cutoffRange`).
+ *
+ * `oneTime` (SPEC 21 v12 item 20): the same check, for the answer "Not sure" to "a one-time change, or a rule we missed?" - a part of the
+ * column's rule explains one row of the example only, the user kept it, and `expr` is the column's rule WITHOUT that part: a run-time row
+ * where the part gives another value than the rest of the rule would is flagged, so the user sees when it applies again. It changes only the
+ * words (the flag and the rules map say "a part of the rule your example has on one row only", never "your example fits two rules"; the
+ * flag's key is `flag.validation.sameAs.oneTime`). DECISION: an optional field on `sameAs` is the smallest backward-compatible addition -
+ * the check itself is exactly `sameAs` (a column compared with an expression), and every file without the field reads as before.
  */
 export interface SameAsValidation {
   on?: 'input';
@@ -1067,6 +1074,7 @@ export interface SameAsValidation {
   rule: 'sameAs';
   expr: Expr;
   severity: ValidationSeverity;
+  oneTime?: true;
 }
 
 const SameAsValidationSchema = z.strictObject({
@@ -1075,6 +1083,7 @@ const SameAsValidationSchema = z.strictObject({
   rule: z.literal('sameAs'),
   expr: ExprSchema,
   severity: SeveritySchema,
+  oneTime: z.literal(true).optional(),
 });
 
 /** The validation kinds the AI step may write (the wire schema, LEARN_PROMPT §5): every kind but `cutoffRange` and `sameAs`, which only code writes. */

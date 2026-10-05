@@ -46,6 +46,9 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     overfitSuspected: 0,
     overfitFound: 0,
     overfitFellBack: 0,
+    oneTimeAsked: 0,
+    oneTimeParts: '',
+    oneTimeDefault: '',
     formulaErrorCount: 0,
     firstCallFormulaErrors: 0,
     formulaFixedByRepair: false,
@@ -337,6 +340,20 @@ describe('token usage and cost (our own estimate)', () => {
     expect(md).toContain('"Copies rows"');
     const [, row] = buildCsvReport([learn]).trim().split('\n');
     expect(row).toContain(',0,overfit 1,overfit 1,0,,0,1,1,');
+  });
+
+  it('a one-time edit or a rule? (SPEC 21 v12 item 20): what would be asked and what answering "one-time" does, per learn, in the CSV and on stdout', () => {
+    const learn = aiLearn({ case: 'discount-hand-edited', oneTimeAsked: 2, oneTimeParts: 'Discount r54 id, Discount r99 id', oneTimeDefault: 'one-time: holdOut pass' });
+    const md = buildMarkdownReport([learn, aiLearn({ case: 'b' })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| - | Discount r54 id, Discount r99 id; one-time: holdOut pass |');
+    expect(md).toContain('"One-time"');
+    const [head, row] = buildCsvReport([learn]).trim().split('\n');
+    const cols = head!.split(',');
+    expect(cols.slice(cols.indexOf('overfitFellBack') + 1, cols.indexOf('overfitFellBack') + 4)).toEqual(['oneTimeAsked', 'oneTimeParts', 'oneTimeDefault']);
+    expect(row).toContain(',2,"Discount r54 id, Discount r99 id",one-time: holdOut pass,');
+    const lines: string[] = [];
+    printSummary([learn], (l) => lines.push(l));
+    expect(lines.some((l) => l.includes('one-time questions: 2 in 1 learn(s) - discount-hand-edited: Discount r54 id, Discount r99 id (one-time: holdOut pass)'))).toBe(true);
   });
 
   it('callsOf: counts from the call records and the kept answer only - never a message or a value', () => {

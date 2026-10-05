@@ -7,7 +7,7 @@ import { completionPlan, formatOf, learnFromExamples, type FillSummary, type Lea
 import { learn, repairFromBrowser, type CompleteFn, type LearnOptions, type LearnOutcome, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
-import { promptVersion, sumEstimates, type Format, type LearnResult, type LlmProviderName, type PromptVersion, type Rules, type Tier } from '@formatai/shared';
+import { promptVersion, sumEstimates, withoutRulePart, type Format, type LearnResult, type LlmProviderName, type PromptVersion, type Rules, type Tier } from '@formatai/shared';
 import type { CaseDef } from './caseLoader.js';
 import type { EvalMode } from './args.js';
 import { checkHoldOut } from './holdout.js';
@@ -100,6 +100,19 @@ export interface RunRecord {
   overfitFound: number;
   /** The kept answer's columns code reported as unsupported because their rule still copied rows after that repair (reason `overfit`). */
   overfitFellBack: number;
+  /**
+   * A one-time edit or a rule? (SPEC 21 v12 item 20, `result.oneTimers`): the questions the Result screen would ask about the kept answer - a
+   * part that explains one row of the example only, singled out by its ID, an exact amount or date, or its position. 0 when none.
+   */
+  oneTimeAsked: number;
+  /** What they ask, then the columns handed to the guards: "Discount r54 id, Discount r99 position; handed off Discount 150" ('' when none). */
+  oneTimeParts: string;
+  /**
+   * What the default answer would do. DECISION: the eval answers every question "a one-time change" (an eval case's single-row exceptions
+   * are hand edits by construction): the hold-out with every asked part taken out ("one-time: holdOut pass"); the kept rules as they are
+   * (the answer "a rule", or no answer) are the record's own `holdOut`. '' when nothing was asked.
+   */
+  oneTimeDefault: string;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
    * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
    * run's LLM calls produced, across the learn call and every repair/escalation call. */
@@ -330,6 +343,7 @@ async function toRunRecord(
     const h = await checkHoldOut(result.rules, caseDef.next);
     holdOut = h.ok ? 'pass' : 'fail';
   }
+  const oneTime = await oneTimeOf(result, caseDef);
 
   const record: RunRecord = {
     case: caseDef.name,
@@ -358,6 +372,7 @@ async function toRunRecord(
     prompt,
     ...alternativesOf(result),
     ...callsOf(result),
+    ...oneTime,
     ...formula,
     ...(tagMode
       ? {
@@ -412,9 +427,36 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     overfitSuspected: 0,
     overfitFound: 0,
     overfitFellBack: 0,
+    oneTimeAsked: 0,
+    oneTimeParts: '',
+    oneTimeDefault: '',
     ...formulaStats([]),
     error,
   };
+}
+
+/**
+ * A one-time edit or a rule? (SPEC 21 v12 item 20): the questions the kept answer would ask (`result.oneTimers`), said by column, row and what
+ * singles the row out (no value), the columns handed to the guards, and what answering every one "a one-time change" would do to the hold-out.
+ */
+export async function oneTimeOf(
+  result: Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'rules' | 'oneTimers'>,
+  caseDef: Pick<CaseDef, 'next'>,
+): Promise<Pick<RunRecord, 'oneTimeAsked' | 'oneTimeParts' | 'oneTimeDefault'>> {
+  const found = result.path === 'llm' ? result.oneTimers : undefined;
+  const questions = found?.questions ?? [];
+  const parts = [
+    questions.map((q) => `${q.header} r${q.row} ${q.by}`).join(', '),
+    found && found.handedOff.length > 0 ? `handed off ${found.handedOff.map((h) => `${h.header} ${h.parts}`).join(', ')}` : '',
+  ].filter((s) => s !== '');
+  let oneTimeDefault = '';
+  if (questions.length > 0 && result.rules) {
+    let answered: LearnResult = result.rules;
+    for (const q of questions) answered = withoutRulePart(answered, q.part) ?? answered;
+    const h = caseDef.next ? await checkHoldOut(answered, caseDef.next) : null;
+    oneTimeDefault = `one-time: holdOut ${h ? (h.ok ? 'pass' : 'fail') : 'n/a'}`;
+  }
+  return { oneTimeAsked: questions.length, oneTimeParts: parts.join('; '), oneTimeDefault };
 }
 
 /** "a 2, b 1": counts, most common first (ties by name); '' when none. */

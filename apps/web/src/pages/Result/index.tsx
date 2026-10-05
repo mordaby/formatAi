@@ -23,7 +23,7 @@ import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sou
 import { Versions } from '../Format/Versions';
 import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
 import { filledNote } from './filledNote';
-import { questionsOf } from './helpers';
+import { oneTimeQuestionsOf, questionsOf } from './helpers';
 import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
 import { UnfinishedRows } from './UnfinishedRows';
@@ -107,6 +107,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   const completed = completion.completed;
   // The ambiguity questions (SPEC 21 v12 items 11, 16): the learn's own, and those of a completion's answer once one has been applied.
   const questions = useMemo(() => questionsOf(completed?.ambiguous, result.ambiguous), [completed?.ambiguous, result.ambiguous]);
+  // A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of an AI answer that explain one row only - the completion's, then the learn's.
+  const oneTimers = useMemo(() => oneTimeQuestionsOf(completed?.oneTimers, result.path === 'llm' ? result.oneTimers?.questions : undefined), [completed?.oneTimers, result]);
   const [confirmWhole, setConfirmWhole] = useState(false);
   // What the AI step reported for the answer on screen (the completion's, once one has been applied).
   const aiInfo = completed ? completed.ai : ai;
@@ -371,10 +373,12 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           downloading={download.status === 'busy'}
         />
       )}
-      {unfinished && (
+      {/* ... and the rows the user called a one-time change (SPEC 21 v12 item 20), until the first save. */}
+      {(unfinished || (!source && (info.live?.oneTime?.length ?? 0) > 0)) && (
         <UnfinishedRows
           rules={info.rules}
           live={info.live}
+          unfinished={unfinished}
           onFix={(header) => info.openLine(lineIds.col(header))}
           onLeave={(index) => void info.editor.apply({ type: 'setColumnMethod', index, method: { kind: 'empty' } })}
         />
@@ -426,6 +430,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         partial={partial}
         aiNotes={aiNotes}
         ambiguous={questions}
+        oneTimers={oneTimers}
         analysing={analysing}
         verification={completed ? completed.verification : result.verification}
         name={name}

@@ -294,13 +294,14 @@ function describeValidation(v: Validation, ctx: Ctx): Part[] {
       break;
     }
     case 'sameAs': {
-      // The marker of an open question (SPEC 8.8, 21 v12 item 17): the other rule the example fits for the column, as a formula.
+      // The marker of an open question (SPEC 8.8, 21 v12 item 17): the other rule the example fits for the column, as a formula. Kept by
+      // "Not sure" on a one-time question (21 v12 item 20, `oneTime`): the column's rule without the part the example had on one row only.
       const pieces = formulaPieces(v.expr, ctx);
-      rule = t('check.sameAs', { col, other: pieces ? [formulaPart(mergeText(pieces))] : [val('…')] });
+      rule = t(v.oneTime ? 'check.sameAs.oneTime' : 'check.sameAs', { col, other: pieces ? [formulaPart(mergeText(pieces))] : [val('…')] });
       break;
     }
   }
-  const line = v.rule === 'cutoffRange' ? 'check.cutoff.line' : v.rule === 'sameAs' ? 'check.sameAs.line' : 'check.line';
+  const line = v.rule === 'cutoffRange' ? 'check.cutoff.line' : v.rule === 'sameAs' ? (v.oneTime ? 'check.sameAs.oneTime.line' : 'check.sameAs.line') : 'check.line';
   return t(line, { rule, severity: t(v.severity === 'flag' ? 'check.severity.flag' : 'check.severity.block') });
 }
 

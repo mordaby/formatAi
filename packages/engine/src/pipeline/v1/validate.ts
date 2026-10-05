@@ -158,7 +158,8 @@ function runChecks(
 
   for (const val of validations) {
     const slot = slotOf(val);
-    const messageKey = `flag.validation.${val.rule}`;
+    // (The check kept by "Not sure" on a one-time question is a `sameAs` too, in its own words: SPEC 21 v12 item 20.)
+    const messageKey = val.rule === 'sameAs' && val.oneTime === true ? 'flag.validation.sameAs.oneTime' : `flag.validation.${val.rule}`;
     let check: (v: Val, origin: Origin, row: Row) => Failure | null;
     if (val.rule === 'sameAs') {
       check = sameAsCheck(ctx, val, slot);

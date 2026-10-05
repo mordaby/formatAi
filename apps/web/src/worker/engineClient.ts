@@ -2,6 +2,7 @@
 // Owns the RpcClient and the default (real) Worker factory; tests inject a fake.
 import type { LearnResult, Rules } from '@formatai/shared';
 import { webConfig } from '../config';
+import type { OneTimeCell } from '../editor/types';
 import type {
   BatchArgs,
   BatchOutput,
@@ -36,6 +37,8 @@ import { handleFromWorker, RpcClient, type HostFunctions, type WorkerHandle } fr
 /** `exceptions`: 1-based example rows marked "fixed by hand". `subset`: false checks every row. */
 export interface LiveCheckOptions {
   exceptions?: number[];
+  /** SPEC 21 v12 item 20: cells the user said were a one-time change (one column each): not compared, listed apart. */
+  oneTime?: OneTimeCell[];
   subset?: boolean;
   /** SPEC 21 v5 item 1: compare only these output columns (the local partial result). */
   onlyColumns?: number[];
@@ -62,7 +65,7 @@ export interface EngineClient {
   /** Runs the rules on the example: the live check (a subset above 5,000 rows unless `options.subset` is false). */
   liveCheck(exampleId: string, rules: LearnResult | Rules, options?: LiveCheckOptions, opts?: EngineCallOptions): Promise<LiveCheckResult>;
   /** The same check on every row (the editor's Apply). */
-  fullCheck(exampleId: string, rules: LearnResult | Rules, options?: { exceptions?: number[]; onlyColumns?: number[] }, opts?: EngineCallOptions): Promise<LiveCheckResult>;
+  fullCheck(exampleId: string, rules: LearnResult | Rules, options?: Omit<LiveCheckOptions, 'subset'>, opts?: EngineCallOptions): Promise<LiveCheckResult>;
   /** SPEC 9.2 layers 1-5 on the rules: structure, references, types, limits and (inside a format) the format lock. */
   staticChecks(rules: LearnResult | Rules, options: StaticCheckOptions, opts?: EngineCallOptions): Promise<StaticProblem[]>;
   /** Flow C (SPEC 5): the headers of a file's table. */
@@ -127,9 +130,9 @@ export function createEngineClient(options: CreateEngineClientOptions = {}): Eng
     inspect: (args, opts) => call('inspect', args, transfersOf(args.file), opts),
     loadExample: (args, opts) => call('loadExample', args, transfersOf(args.input, args.output), opts),
     liveCheck: (exampleId, rules, options, opts) =>
-      call('liveCheck', { exampleId, rules, ...(options?.exceptions ? { exceptions: options.exceptions } : {}), ...(options?.onlyColumns ? { onlyColumns: options.onlyColumns } : {}), ...(options?.subset === undefined ? {} : { subset: options.subset }) }, [], opts),
+      call('liveCheck', { exampleId, rules, ...(options?.exceptions ? { exceptions: options.exceptions } : {}), ...(options?.oneTime && options.oneTime.length > 0 ? { oneTime: options.oneTime } : {}), ...(options?.onlyColumns ? { onlyColumns: options.onlyColumns } : {}), ...(options?.subset === undefined ? {} : { subset: options.subset }) }, [], opts),
     fullCheck: (exampleId, rules, options, opts) =>
-      call('fullCheck', { exampleId, rules, ...(options?.exceptions ? { exceptions: options.exceptions } : {}), ...(options?.onlyColumns ? { onlyColumns: options.onlyColumns } : {}) }, [], opts),
+      call('fullCheck', { exampleId, rules, ...(options?.exceptions ? { exceptions: options.exceptions } : {}), ...(options?.oneTime && options.oneTime.length > 0 ? { oneTime: options.oneTime } : {}), ...(options?.onlyColumns ? { onlyColumns: options.onlyColumns } : {}) }, [], opts),
     staticChecks: (rules, options, opts) => call('staticChecks', { rules, ...options }, [], opts),
     readHeaders: (args, opts) => call('readHeaders', args, transfersOf(args.file), opts),
     matchFile: (args, opts) => call('matchFile', args, transfersOf(args.file), opts),
