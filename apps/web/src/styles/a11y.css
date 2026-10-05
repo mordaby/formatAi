@@ -148,6 +148,41 @@ html.a11y-text-2 {
   --text-scale: 1.5;
 }
 
+/* Reflow (WCAG 1.4.10): a button keeps its label on one line where it fits, but never runs past the screen - on a narrow
+   screen and at the larger text sizes a long label ("Join the paid waitlist" in Hebrew) wraps instead of making the page
+   scroll sideways (found in the browser at 285 px). */
+@media (max-width: 480px) {
+  .btn {
+    white-space: normal;
+    max-inline-size: 100%;
+  }
+}
+html.a11y-text-1 .btn,
+html.a11y-text-2 .btn {
+  white-space: normal;
+  max-inline-size: 100%;
+}
+.upgrade {
+  max-inline-size: 100%;
+}
+/* The header's actions (language, sign-in / account) move under the logo when the larger text sizes don't fit one line. */
+html.a11y-text-1 .app-header__inner,
+html.a11y-text-2 .app-header__inner {
+  flex-wrap: wrap;
+  padding-block: var(--s-2);
+}
+html.a11y-text-1 .app-header__actions,
+html.a11y-text-2 .app-header__actions {
+  flex-wrap: wrap;
+  min-inline-size: 0;
+}
+/* The progress steps (Upload - Learn - Use) wrap at the larger sizes instead of running off a phone screen. */
+html.a11y-text-1 .stepper,
+html.a11y-text-2 .stepper {
+  flex-wrap: wrap;
+  row-gap: var(--s-2);
+}
+
 /* ---------- High contrast: the same colour roles, pushed to the ends ---------- */
 html.a11y-contrast {
   --paper: #ffffff;
