@@ -5,7 +5,7 @@
 //
 //   pnpm eval --models <a>,<b> --masking on,off --runs 3 [--provider anthropic|openai|claude-cli|fake]
 //             [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]
-//             [--prompt learn-v7|learn-v8|learn-v8-noE1|learn-v8.1|learn-v8.1-noE1]
+//             [--prompt learn-v7|learn-v8|learn-v8-noE1|learn-v8.1|learn-v8.1-noE1|learn-v9] [--no-pattern-hints]
 //
 // Defaults: provider from env (LLM_PROVIDER / .env, see apps/api/src/env.ts), models =
 // the provider's configured firstTry model, masking on and off, runs 1, mode full.
@@ -14,6 +14,9 @@
 // --prompt sends another prompt version than the current one (with the wire schema it was written for), to compare two on the same code;
 // learn-v8-noE1 / learn-v8.1-noE1 are learn-v8 / learn-v8.1 without the E1 line (code completes the data parts from every row), the prompt
 // audit's arm B. The default (no --prompt) is `promptVersion`, learn-v7 since 2026-10-05.
+// --prompt learn-v9 turns on the AI code checks (docs/proposals/ai-code-checks.md): the AI step may ask code to check ideas on every row
+// before it answers; the harness answers them in-process (the same engine code as the browser). --no-pattern-hints leaves the pattern hints
+// (bands, dependsOn, contains) out of the payload, to measure the checks against them.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,7 +47,8 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   const modeNote = args.modes.length === 1 && args.modes[0] === 'full' ? '' : ` x mode ${args.modes.join('+')}`;
-  console.log(`Running ${cases.length} case(s) x ${models.length} model(s) x ${maskingModes.length} masking mode(s) x ${args.runs} run(s)${modeNote}, provider=${provider}, prompt=${args.prompt ?? promptVersion}.`);
+  const hintsNote = args.noPatternHints ? ', pattern hints off' : '';
+  console.log(`Running ${cases.length} case(s) x ${models.length} model(s) x ${maskingModes.length} masking mode(s) x ${args.runs} run(s)${modeNote}, provider=${provider}, prompt=${args.prompt ?? promptVersion}${hintsNote}.`);
 
   const startedAt = new Date();
   const records = await runMatrix({
@@ -56,6 +60,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     noEscalation: args.noEscalation,
     modes: args.modes,
     ...(args.prompt ? { prompt: args.prompt } : {}),
+    ...(args.noPatternHints ? { patternHints: false } : {}),
     onProgress: (line) => console.log(`  ${line}`),
   });
 

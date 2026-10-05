@@ -67,6 +67,9 @@ interface UsageTotals {
   /** The prompt audit's plan: output columns given up on despite a hint (`RunRecord.unsupportedDespiteEvidence`), and calls cut off (X2). */
   gaveUpHinted: number;
   truncatedCalls: number;
+  /** AI code checks (learn-v9): rounds of checks and checks asked, over these learns. */
+  checkRounds: number;
+  checksAsked: number;
 }
 
 /** Totals over the learns that made an LLM call (an average is the total over `learns`). */
@@ -90,6 +93,8 @@ function usageOf(records: readonly RunRecord[]): UsageTotals {
     holdOutPass: holdOutEligible.filter((r) => r.holdOut === 'pass').length,
     gaveUpHinted: rs.reduce((n, r) => n + (r.unsupportedDespiteEvidence ?? 0), 0),
     truncatedCalls: rs.reduce((n, r) => n + (r.truncatedCalls ?? 0), 0),
+    checkRounds: rs.reduce((n, r) => n + (r.checkRounds ?? 0), 0),
+    checksAsked: rs.reduce((n, r) => n + (r.checksAsked ?? 0), 0),
   };
 }
 
@@ -335,16 +340,16 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
     '',
   );
   lines.push(
-    '"Gave up on hinted cols" (the prompt audit\'s plan): output columns an answer reported unsupported although the payload had a hint for them, summed over every call of the learn (each sends the answer back for a repair). "Cut-off calls": answers cut off at the output-token limit (X2).',
+    '"Gave up on hinted cols" (the prompt audit\'s plan): output columns an answer reported unsupported although the payload had a hint for them, summed over every call of the learn (each sends the answer back for a repair). "Cut-off calls": answers cut off at the output-token limit (X2). "Check rounds" / "Checks asked" (AI code checks, learn-v9): the rounds of checks the AI step asked code before it answered, and the checks in them.',
     '',
   );
-  const head = ['Model', 'Masking', ...(tagged ? ['Mode'] : []), 'Basis', 'AI learns', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop ends', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out pass', 'Gave up on hinted cols', 'Cut-off calls'];
+  const head = ['Model', 'Masking', ...(tagged ? ['Mode'] : []), 'Basis', 'AI learns', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop ends', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out pass', 'Gave up on hinted cols', 'Cut-off calls', 'Check rounds', 'Checks asked'];
   const rows: (string | number)[][] = [];
   for (const g of shown) {
     const u = g.usage;
     const lead = [g.model, g.masking ? 'on' : 'off', ...(tagged ? [g.mode ?? 'full'] : [])];
-    rows.push([...lead, 'total', u.learns, u.calls, u.rounds, u.rowsSent, u.ends, u.inTokens, u.cachedTokens, u.cacheWriteTokens, u.outTokens, usd(u.costUsd), secondsOf(u.latencyMs), `${u.verified} of ${u.learns}`, `${u.holdOutPass} of ${u.holdOutEligible}`, u.gaveUpHinted, u.truncatedCalls]);
-    rows.push([...lead, 'average per learn', '', (u.calls / u.learns).toFixed(2), (u.rounds / u.learns).toFixed(2), (u.rowsSent / u.learns).toFixed(1), '', (u.inTokens / u.learns).toFixed(0), (u.cachedTokens / u.learns).toFixed(0), (u.cacheWriteTokens / u.learns).toFixed(0), (u.outTokens / u.learns).toFixed(0), usd(u.costUsd === null ? null : u.costUsd / u.learns), secondsOf(u.latencyMs / u.learns), pct(u.verified, u.learns), pct(u.holdOutPass, u.holdOutEligible), (u.gaveUpHinted / u.learns).toFixed(2), (u.truncatedCalls / u.learns).toFixed(2)]);
+    rows.push([...lead, 'total', u.learns, u.calls, u.rounds, u.rowsSent, u.ends, u.inTokens, u.cachedTokens, u.cacheWriteTokens, u.outTokens, usd(u.costUsd), secondsOf(u.latencyMs), `${u.verified} of ${u.learns}`, `${u.holdOutPass} of ${u.holdOutEligible}`, u.gaveUpHinted, u.truncatedCalls, u.checkRounds, u.checksAsked]);
+    rows.push([...lead, 'average per learn', '', (u.calls / u.learns).toFixed(2), (u.rounds / u.learns).toFixed(2), (u.rowsSent / u.learns).toFixed(1), '', (u.inTokens / u.learns).toFixed(0), (u.cachedTokens / u.learns).toFixed(0), (u.cacheWriteTokens / u.learns).toFixed(0), (u.outTokens / u.learns).toFixed(0), usd(u.costUsd === null ? null : u.costUsd / u.learns), secondsOf(u.latencyMs / u.learns), pct(u.verified, u.learns), pct(u.holdOutPass, u.holdOutEligible), (u.gaveUpHinted / u.learns).toFixed(2), (u.truncatedCalls / u.learns).toFixed(2), (u.checkRounds / u.learns).toFixed(2), (u.checksAsked / u.learns).toFixed(2)]);
   }
   lines.push(markdownTable(head, rows), '');
 
@@ -359,7 +364,7 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
   const learns = aiLearns(records).sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model) || Number(a.masking) - Number(b.masking) || a.run - b.run || (a.mode ?? '').localeCompare(b.mode ?? ''));
   lines.push(
     markdownTable(
-      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit', 'Copies rows', 'One-time'],
+      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit', 'Copies rows', 'One-time', 'Check rounds', 'Checks asked'],
       learns.map((r) => [
         r.case,
         ...(tagged ? [r.mode ?? 'full'] : []),
@@ -388,6 +393,8 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
         r.overfitSuspected ?? 0,
         (r.overfitFound ?? 0) + (r.overfitFellBack ?? 0) > 0 ? `found ${r.overfitFound ?? 0}, fell back ${r.overfitFellBack ?? 0}` : '-',
         r.oneTimeParts ? [r.oneTimeParts, r.oneTimeDefault].filter((s) => s).join('; ') : '-',
+        r.checkRounds ?? 0,
+        r.checksAsked ?? 0,
       ]),
     ),
     '',
@@ -406,7 +413,8 @@ function expectNotesSection(records: readonly RunRecord[]): string[] {
 export function buildMarkdownReport(records: RunRecord[], generatedAt: string): string {
   const lines: string[] = [];
   const prompts = [...new Set(records.map((r) => r.prompt).filter((p) => p !== undefined && p !== ''))];
-  lines.push('# Model evaluation report (SPEC 10)', '', `Generated: ${generatedAt}`, `Total runs: ${records.length}`, ...(prompts.length > 0 ? [`Prompt: ${prompts.join(', ')}`] : []), '');
+  const hintsOff = records.some((r) => r.patternHints === false);
+  lines.push('# Model evaluation report (SPEC 10)', '', `Generated: ${generatedAt}`, `Total runs: ${records.length}`, ...(prompts.length > 0 ? [`Prompt: ${prompts.join(', ')}`] : []), ...(hintsOff ? ['Pattern hints: off (--no-pattern-hints: no bands, dependsOn or contains hints in the payload)'] : []), '');
 
   lines.push('## Per model x masking', '');
   const groups = groupSummaries(records);
@@ -542,6 +550,8 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'formulaErrorCount',
   'firstCallFormulaErrors',
   'formulaFixedByRepair',
+  'checkRounds',
+  'checksAsked',
   'error',
 ];
 

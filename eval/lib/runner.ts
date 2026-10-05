@@ -3,11 +3,15 @@
 // `learn()` and `callRepair` = `repairFromBrowser` (one round of the learning loop, with
 // the rows the loop sent), called in-process (no HTTP), plus the hold-out check and
 // scoring. This is the one place that actually spends tokens.
+//
+// AI code checks (`--prompt learn-v9`, docs/proposals/ai-code-checks.md): `callStep` = the API's `learn()` with the rounds so far, in-process;
+// the checks themselves are answered by `learnFromExamples` (Node has the whole example: the same engine code the browser runs).
+// `--no-pattern-hints` builds the payload without the pattern hints (bands, dependsOn, contains), to measure the checks against them.
 import { completionPlan, formatOf, learnFromExamples, type FillSummary, type LearnFromExamplesResult } from '@formatai/engine';
 import { learn, repairFromBrowser, type CompleteFn, type LearnOptions, type LearnOutcome, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
-import { promptVersion, sumEstimates, withoutRulePart, type Format, type LearnResult, type LlmProviderName, type PromptVersion, type Rules, type Tier } from '@formatai/shared';
+import { learnPromptOf, promptVersion, sumEstimates, withoutRulePart, type CheckRound, type Format, type LearnPayload, type LearnResult, type LlmProviderName, type PromptVersion, type Rules, type Tier } from '@formatai/shared';
 import type { CaseDef } from './caseLoader.js';
 import type { EvalMode } from './args.js';
 import { checkHoldOut } from './holdout.js';
@@ -62,6 +66,14 @@ export interface RunRecord {
   loopRounds: number;
   loopRowsSent: number;
   loopEnd: string;
+  /**
+   * AI code checks (learn-v9, `result.checks`): the rounds of checks the AI step asked before it answered (steps made), and the checks over
+   * all of them. 0 / 0 when it asked none (and with any other prompt version).
+   */
+  checkRounds: number;
+  checksAsked: number;
+  /** `--no-pattern-hints`: the payload carried no pattern hints (bands, dependsOn, contains). Absent: it did, as always. */
+  patternHints?: false;
   /** What code filled in the kept answer from every row of the example (`result.filled`, learning-loop proposal 7.1): kinds and counts,
    * never a value - e.g. "lookup 47, cutoff 1, 1 check". '' when nothing was filled (or no AI answer). */
   filledByCode: string;
@@ -221,6 +233,8 @@ export interface RunOneOptions {
   onLearnOutcome?: (outcome: LearnOutcome) => void;
   /** `--prompt`: the prompt version to send (default: the current one). */
   prompt?: PromptVersion;
+  /** `--no-pattern-hints`: false leaves the pattern hints out of the payload (default true). */
+  patternHints?: boolean;
 }
 
 export interface RunLearnResult {
@@ -263,6 +277,7 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     masking: opts.masking,
     ...(opts.masking ? { key: evalMaskingKey(opts.caseDef.name, opts.model, opts.run) } : {}),
     tier: EVAL_TIER,
+    ...(opts.patternHints === false ? { patternHints: false } : {}),
   };
   const callLearn = async (payload: Parameters<typeof learn>[0]) => {
     if (payloadBytes === 0) payloadBytes = new TextEncoder().encode(JSON.stringify(payload)).length;
@@ -278,9 +293,20 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     return outcome;
   };
 
+  // AI code checks (learn-v9): one step, exactly as the API's /api/learn/step runs it - `learn()` with every round so far. Only for a prompt
+  // version that asks checks (any other never does, and the flow is then exactly as before).
+  const callStep = learnPromptOf(opts.prompt).checks
+    ? async (payload: LearnPayload, rounds: CheckRound[]) => {
+        const outcome = await learn(payload, { ...learnOpts, rounds });
+        opts.onLearnOutcome?.(outcome);
+        return outcome;
+      }
+    : undefined;
+  const calls = { callLearn, callRepair, ...(callStep ? { callStep } : {}) };
+
   const wantsComplete = opts.mode === 'complete' && !opts.target;
   if (!wantsComplete) {
-    const result = await learnFromExamples<LlmCallRecord>({ ...common, ...(opts.target ? { target: opts.target } : {}), callLearn, callRepair });
+    const result = await learnFromExamples<LlmCallRecord>({ ...common, ...(opts.target ? { target: opts.target } : {}), ...calls });
     // (an attach case asked to run in complete mode is still counted under it, with the note that it ran full)
     return {
       result,
@@ -311,14 +337,13 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
   if (plan.columns.length === 0 && plan.parts.length === 0) {
     // The local rules cover every column and part, yet the strict fast path would not accept them (rows that change shape go to the AI
     // step, SPEC 6.5): there is nothing to complete, so - exactly as on the Result screen - the AI step runs as a full learn.
-    const result = await learnFromExamples<LlmCallRecord>({ ...common, callLearn, callRepair });
+    const result = await learnFromExamples<LlmCallRecord>({ ...common, ...calls });
     return { result, mode: 'complete', payloadBytes, formulaErrorMessages, completion: { fixedColumns, missingColumns: 0, missingParts: 0, skipped: 'nothingMissing (ran full)' } };
   }
   const result = await learnFromExamples<LlmCallRecord>({
     ...common,
     complete: { fixedRules: rules, columns: plan.columns, parts: plan.parts },
-    callLearn,
-    callRepair,
+    ...calls,
   });
   return { result, mode: 'complete', payloadBytes, formulaErrorMessages, completion: { fixedColumns, missingColumns: plan.columns.length, missingParts: plan.parts.length } };
 }
@@ -332,6 +357,7 @@ async function toRunRecord(
   /** Set when the matrix ran more than one mode: every record then says which one it was. */
   tagMode: boolean,
   prompt: PromptVersion = promptVersion,
+  patternHints = true,
 ): Promise<RunRecord> {
   const { result, formulaErrorMessages } = ran;
   const classification = classify(result);
@@ -367,6 +393,9 @@ async function toRunRecord(
     loopRounds: result.loop?.rounds ?? 0,
     loopRowsSent: result.loop?.rowsSent ?? 0,
     loopEnd: result.loop?.end ?? '',
+    checkRounds: result.checks?.rounds ?? 0,
+    checksAsked: result.checks?.asked ?? 0,
+    ...(patternHints ? {} : { patternHints: false as const }),
     filledByCode: filledLabel(result.filled),
     ambiguities: (result.ambiguities ?? []).map((a) => a.kind).join(' '),
     prompt,
@@ -414,6 +443,8 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     loopRounds: 0,
     loopRowsSent: 0,
     loopEnd: '',
+    checkRounds: 0,
+    checksAsked: 0,
     filledByCode: '',
     ambiguities: '',
     prompt: promptVersion,
@@ -532,6 +563,8 @@ export interface RunMatrixOptions {
   complete?: CompleteFn;
   /** `--prompt`: the prompt version to send (default: the current one). */
   prompt?: PromptVersion;
+  /** `--no-pattern-hints`: false leaves the pattern hints (bands, dependsOn, contains) out of every payload (default true). */
+  patternHints?: boolean;
 }
 
 /**
@@ -553,6 +586,11 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
   const modes: EvalMode[] = opts.modes && opts.modes.length > 0 ? opts.modes : ['full'];
   // Every record says which mode it ran only when the matrix ran a mode other than plain 'full' (a full-only report stays as it always was).
   const tagMode = modes.some((m) => m !== 'full');
+  const extra = {
+    ...(opts.complete ? { complete: opts.complete } : {}),
+    ...(opts.prompt ? { prompt: opts.prompt } : {}),
+    ...(opts.patternHints === false ? { patternHints: false } : {}),
+  };
 
   for (const model of opts.models) {
     for (const masking of opts.maskingModes) {
@@ -563,9 +601,9 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
 
           for (const caseDef of baseCases) {
             opts.onProgress?.(`${label}: ${caseDef.name}`);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode, ...(opts.complete ? { complete: opts.complete } : {}), ...(opts.prompt ? { prompt: opts.prompt } : {}) });
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode, ...extra });
             baseResults.set(caseDef.name, ran.result);
-            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt));
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt, opts.patternHints !== false));
           }
 
           for (const caseDef of attachedCases) {
@@ -583,8 +621,8 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
               continue;
             }
             const target: Format = formatOf(baseRules);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode, ...(opts.complete ? { complete: opts.complete } : {}), ...(opts.prompt ? { prompt: opts.prompt } : {}) });
-            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt));
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode, ...extra });
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt, opts.patternHints !== false));
           }
         }
       }
