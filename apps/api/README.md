@@ -97,8 +97,18 @@ and the security headers (a Content-Security-Policy that allows only Turnstile, 
 
 On start in production, `src/productionConfig.ts` checks the whole configuration before anything connects and
 exits with every missing or malformed setting listed by name (never a value): the database, both secrets (32+ characters),
-Turnstile's two keys, `LLM_PROVIDER` anthropic/openai with its key (not `claude-cli` or `fake`), one complete sign-in
-provider, an https public origin and the built web app. A missing `TRUST_PROXY` or admin list is a warning.
+Turnstile's two keys, `LLM_PROVIDER` anthropic/openai with its key (not `claude-cli` or `fake`), the fallback's key when
+`LLM_FALLBACK_PROVIDER` is set, one complete sign-in provider, an https public origin and the built web app. A missing
+`TRUST_PROXY` or admin list is a warning.
+
+The LLM fallback (SPEC 9.6, `src/llm/fallback.ts`): with `LLM_FALLBACK_PROVIDER=openai`, a call Anthropic cannot serve
+(network error, timeout, 429, 5xx, overloaded, 401/403) is made once more on OpenAI in the same slot; a circuit breaker keeps
+calls there for 5 minutes after 3 failures in a row. To check a provider's key and parameters with ONE real call (a bundled
+synthetic case, masking on; the key is never printed):
+
+```sh
+pnpm --filter @formatai/api llm-check -- --provider anthropic     # or openai; --escalation, --model <id>
+```
 
 ```sh
 pnpm install --frozen-lockfile && pnpm build           # the web app (+ .br/.gz); shared and engine are used from source
