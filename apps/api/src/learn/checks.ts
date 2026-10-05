@@ -345,7 +345,11 @@ function checkParsed(answer: LearnResult, payload: LearnPayload, opts: ChecksOpt
   // DECISION (SPEC 21 v12 item 20): a position condition that names exact rows (`rowNumber() = 54`, `rowExact`) is left to the browser, which
   // sees every row of the example: a row it explains alone may have been edited by hand once - the user is asked "a one-time change, or a
   // rule we missed?" - and otherwise the browser's own guard makes the one repair and then falls back. The samples can tell neither.
-  const findings = overfitFindings(rules, { table: gatesClean ? buildSampleInputTable(payload) : null }).filter((f) => (asked === null || asked.has(f.outputColumn)) && !(f.kind === 'position' && f.rowExact));
+  // DECISION (owner amendment, 2026-10-06): likewise a case list only its atoms show (`atoms`: an `or` of 20 IDs is one case of 20 rows,
+  // 20 atoms of one row each) - on the dozen sample rows a real list of categories names rows one by one too; every row of the example tells.
+  const findings = overfitFindings(rules, { table: gatesClean ? buildSampleInputTable(payload) : null }).filter(
+    (f) => (asked === null || asked.has(f.outputColumn)) && !(f.kind === 'position' && f.rowExact) && !(f.kind === 'caseList' && f.atoms !== undefined),
+  );
   if (findings.length > 0 && opts.overfit === 'fallBack') {
     rules = withOverfitFallback(rules, findings);
     overfitFallbacks = new Set(findings.map((f) => f.outputColumn)).size;
