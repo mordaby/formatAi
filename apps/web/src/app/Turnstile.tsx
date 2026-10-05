@@ -8,6 +8,10 @@ export interface TurnstileApi {
   getToken(): Promise<string | undefined>;
   /** Set once `/api/session` has answered and reported a site key. */
   controller: TurnstileController | undefined;
+  /** The site key `/api/session` reported (undefined: Turnstile is off, or the session has not answered yet): what a form's own widget is made from (see `useFormTurnstile`). */
+  siteKey: string | undefined;
+  /** Settles once `/api/session` has answered (or failed): a form waits for it before it asks for a token. Stable identity. */
+  sessionKnown(): Promise<void>;
 }
 
 const TurnstileContext = createContext<TurnstileApi | null>(null);
@@ -16,6 +20,11 @@ export function useTurnstile(): TurnstileApi {
   const ctx = useContext(TurnstileContext);
   if (!ctx) throw new Error('useTurnstile must be used inside <TurnstileProvider>');
   return ctx;
+}
+
+/** Like `useTurnstile`, but `null` outside a provider: a form shown in a partial tree (a test) simply has no widget. */
+export function useOptionalTurnstile(): TurnstileApi | null {
+  return useContext(TurnstileContext);
 }
 
 /**
@@ -30,6 +39,7 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
   langRef.current = lang;
 
   const [controller, setController] = useState<TurnstileController | undefined>(undefined);
+  const [siteKey, setSiteKey] = useState<string | undefined>(undefined);
   const controllerRef = useRef<TurnstileController | undefined>(undefined);
   const sessionRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -43,6 +53,7 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
         const next = key ? new TurnstileController({ siteKey: key, getLanguage: () => langRef.current }) : undefined;
         controllerRef.current = next;
         setController(next);
+        setSiteKey(key || undefined);
       })
       // The API being unreachable is reported where it matters: when the learn itself is sent.
       .catch(() => undefined);
@@ -56,7 +67,9 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
     return controllerRef.current?.getToken();
   }, []);
 
-  const value = useMemo<TurnstileApi>(() => ({ getToken, controller }), [getToken, controller]);
+  const sessionKnown = useCallback(() => sessionRef.current, []);
+
+  const value = useMemo<TurnstileApi>(() => ({ getToken, controller, siteKey, sessionKnown }), [getToken, controller, siteKey, sessionKnown]);
   return <TurnstileContext.Provider value={value}>{children}</TurnstileContext.Provider>;
 }
 

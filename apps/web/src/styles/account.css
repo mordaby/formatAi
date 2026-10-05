@@ -27,7 +27,7 @@
   min-block-size: 34px;
   padding-block: 0;
   padding-inline: var(--s-2) var(--s-3);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--control-line);
   border-radius: 999px;
   background: var(--surface);
   color: var(--ink);
@@ -62,7 +62,7 @@
   place-items: center;
   background: var(--brand-tint);
   color: var(--on-brand-tint);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   font-weight: 500;
 }
 .account__panel {

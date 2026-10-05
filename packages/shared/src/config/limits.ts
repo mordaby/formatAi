@@ -67,6 +67,25 @@ export const limits = {
     /** Lifetime of the first-party `anonId` cookie (SPEC 12). */
     anonCookieMaxAgeDays: 365,
   },
+  /**
+   * SPEC 16.1 screen 7, 13 (v13, M4): the public forms - the business lead form, the paid waitlist and feedback. Character caps are counted
+   * in characters (code points), after trimming; the API refuses what is over them and the web checks the same numbers before sending.
+   * DECISION: placeholder numbers (SPEC 20.4); the rate limits are per IP (the window is `protection.rateLimitWindowMs`).
+   */
+  contact: {
+    nameMaxChars: 120,
+    emailMaxChars: 254,
+    companyMaxChars: 160,
+    leadMessageMaxChars: 4000,
+    waitlistMessageMaxChars: 1000,
+    feedbackMessageMaxChars: 2000,
+    /** The page path a form was sent from (`/formats/<id>`): a path only, never a query or a fragment. */
+    pageMaxChars: 200,
+    /** In-memory limit: one IP may send this many form requests (of any of the three) in one window. */
+    perIpPerWindow: 5,
+    /** Durable limit, on a keyed hash of the IP (never the IP itself): form submissions that were stored, per UTC day. */
+    perIpPerDay: 20,
+  },
   /** SPEC 9.5 "Cache": saved rules for a structure the same owner already learned. */
   cache: {
     ttlDays: 30,

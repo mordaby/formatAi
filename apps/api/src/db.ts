@@ -16,7 +16,6 @@ import type {
   SourceDoc,
   UsageCounterDoc,
   UserDoc,
-  WaitlistDoc,
 } from './models.js';
 
 export interface AppDb {
@@ -35,7 +34,6 @@ export interface AppDb {
   functionRequests: Collection<FunctionRequestDoc>;
   adminAudit: Collection<AdminAuditDoc>;
   leads: Collection<LeadDoc>;
-  waitlist: Collection<WaitlistDoc>;
   feedback: Collection<FeedbackDoc>;
 }
 
@@ -69,7 +67,6 @@ export async function connectDb(env: Env): Promise<AppDb | null> {
     functionRequests: db.collection<FunctionRequestDoc>('function_requests'),
     adminAudit: db.collection<AdminAuditDoc>('admin_audit'),
     leads: db.collection<LeadDoc>('leads'),
-    waitlist: db.collection<WaitlistDoc>('waitlist'),
     feedback: db.collection<FeedbackDoc>('feedback'),
   };
 }
@@ -116,9 +113,10 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
     appDb.functionRequests.createIndex({ topic: 1, distinctOwners: -1 }, { name: 'function_requests_topic_owners' }),
     // SPEC 13 / 14.2: the admin audit log is read newest first.
     appDb.adminAudit.createIndex({ ts: -1 }, { name: 'admin_audit_ts' }),
-    appDb.leads.createIndex({ ts: 1 }, { name: 'leads_ts' }),
-    appDb.waitlist.createIndex({ userId: 1 }, { name: 'waitlist_userId' }),
-    appDb.feedback.createIndex({ ts: 1 }, { name: 'feedback_ts' }),
+    // SPEC 13 (v13): public forms. `leads` holds both kinds (`lead`, `waitlist`); the admin lists the newest first, per kind.
+    appDb.leads.createIndex({ createdAt: -1 }, { name: 'leads_createdAt' }),
+    appDb.leads.createIndex({ kind: 1, createdAt: -1 }, { name: 'leads_kind_createdAt' }),
+    appDb.feedback.createIndex({ createdAt: -1 }, { name: 'feedback_createdAt' }),
   ]);
 }
 

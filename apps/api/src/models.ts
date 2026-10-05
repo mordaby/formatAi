@@ -310,31 +310,39 @@ export interface FunctionRequestDoc {
   status: FunctionRequestStatus;
 }
 
+/**
+ * SPEC 13 `leads` (v13, M4): what a visitor sent through a public form. Two kinds share the collection: `lead` (the "For business" form:
+ * name, email, company, message) and `waitlist` (the paid waitlist: email, message, and `trigger` - the limit or the hint it was opened from).
+ * Only what was typed into the form, the path of the page it was sent from, and who sent it (`anonId` always when there is a cookie; `userId`
+ * on the waitlist when signed in). NEVER an IP (the per-IP limits keep a keyed hash in `usage_counters`, not here), a file name, a rule or a value.
+ */
 export interface LeadDoc {
   _id?: ObjectId;
-  name: string;
+  createdAt: Date;
+  kind: 'lead' | 'waitlist';
   email: string;
+  /** `lead` only. */
+  name?: string;
+  /** `lead` only, when given. */
   company?: string;
-  role?: string;
   message?: string;
-  language?: string;
-  ts: Date;
-}
-
-export interface WaitlistDoc {
-  _id?: ObjectId;
+  /** `waitlist` only: a limit code (SPEC 11 `upgrade_intent { trigger }`), `batch` or `other`. */
+  trigger?: string;
+  /** The page path the form was sent from (a pathname, no query). */
+  page: string;
+  /** `waitlist`, when signed in. */
   userId?: ObjectId;
-  email: string;
-  trigger: string;
-  message?: string;
-  ts: Date;
+  anonId?: string;
 }
 
+/** SPEC 13 `feedback` (v13, M4): a short message from the footer / account-menu form. Page path only - never file data or rules. */
 export interface FeedbackDoc {
   _id?: ObjectId;
-  formatId?: ObjectId;
+  createdAt: Date;
+  kind: 'feedback';
+  message: string;
+  /** Only when the sender wants an answer. */
+  email?: string;
+  page: string;
   userId?: ObjectId;
-  rating: number;
-  text?: string;
-  ts: Date;
 }

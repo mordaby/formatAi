@@ -10,6 +10,8 @@
   --surface: #ffffff;
   --line: #ece9e1;
   --line-strong: #b9b4a6;
+  /* the outline of a control the eye must find (a field, a switch, a chip): 3.5:1 on the paper, which --line-strong (2:1) is not (WCAG 1.4.11) */
+  --control-line: #8a8575;
 
   /* text */
   --ink: #1f2328;
@@ -41,11 +43,13 @@
   /* type: IBM Plex Sans Hebrew covers Hebrew and Latin; weights 400 and 500 only */
   --font: 'IBM Plex Sans Hebrew', system-ui, -apple-system, 'Segoe UI', 'Noto Sans Hebrew', Arial, sans-serif;
   --mono: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, 'Liberation Mono', monospace;
-  --fs-small: 13px;
-  --fs-body: 15px;
-  --fs-section: 18px;
-  --fs-title: clamp(22px, 1.4vw + 18px, 28px);
+  --fs-small: calc(13px * var(--text-scale, 1));
+  --fs-body: calc(15px * var(--text-scale, 1));
+  --fs-section: calc(18px * var(--text-scale, 1));
+  --fs-title: calc(clamp(22px, 1.4vw + 18px, 28px) * var(--text-scale, 1));
   --lh: 1.55;
+  /* the accessibility panel's text size (styles/a11y.css): every font size above and in the sheets is multiplied by it */
+  --text-scale: 1;
 
   /* space, radius, motion */
   --s-1: 4px;
@@ -73,6 +77,7 @@
     --surface: #1b1f23;
     --line: #2a2f35;
     --line-strong: #4d535a;
+    --control-line: #737b84;
 
     --ink: #ece9e2;
     --ink-2: #a6a49c;

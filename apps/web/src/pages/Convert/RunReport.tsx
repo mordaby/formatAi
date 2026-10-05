@@ -120,7 +120,7 @@ function OutputPreview({ sheet, total }: { sheet: OutputSheet; total: number }) 
     <section className="preview" aria-label={t('conv.done.preview.title')} data-testid="run-preview">
       <h3 className="preview__title">{t('conv.done.preview.title')}</h3>
       <SheetDirection direction={sheet.direction} className="pv__scroll">
-        <table className="pv">
+        <table className="pv" aria-label={t('conv.done.preview.title')}>
           <tbody>
             {rows.map((row, r) => (
               <tr key={r} className={row.kind === 'data' ? 'pv__row' : 'pv__row pv__row--meta'} data-kind={row.kind}>

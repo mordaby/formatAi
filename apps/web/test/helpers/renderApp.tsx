@@ -6,6 +6,7 @@ import { vi } from 'vitest';
 import { App } from '../../src/app/App';
 import type { Api } from '../../src/api';
 import type { AuthApi } from '../../src/api/auth';
+import type { ContactApi } from '../../src/api/contact';
 import type { RegistryApi } from '../../src/api/registry';
 import { I18nProvider, type Lang } from '../../src/i18n';
 import { ServicesProvider } from '../../src/services';
@@ -97,14 +98,15 @@ export type FakeApi = Api & {
   session: ReturnType<typeof vi.fn>;
   auth: { [K in keyof AuthApi]: ReturnType<typeof vi.fn> };
   registry: { [K in keyof RegistryApi]: ReturnType<typeof vi.fn> };
+  contact: { [K in keyof ContactApi]: ReturnType<typeof vi.fn> };
 };
 
 /**
  * A fake API: an anonymous visitor on a server with both providers, and an empty registry. Override any call
  * (`auth` and `registry` are merged one level deep); `user` makes GET /api/me answer with that user.
  */
-export function fakeApi(over: Partial<Omit<Api, 'auth' | 'registry'>> & { auth?: Partial<AuthApi>; registry?: Partial<RegistryApi>; user?: MeUser | null } = {}): FakeApi {
-  const { auth, registry, user, ...rest } = over;
+export function fakeApi(over: Partial<Omit<Api, 'auth' | 'registry' | 'contact'>> & { auth?: Partial<AuthApi>; registry?: Partial<RegistryApi>; contact?: Partial<ContactApi>; user?: MeUser | null } = {}): FakeApi {
+  const { auth, registry, contact, user, ...rest } = over;
   return {
     session: vi.fn(async () => ({ anonId: true, tier: 'free', limits: tiers.anonymous })),
     learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false })),
@@ -138,6 +140,13 @@ export function fakeApi(over: Partial<Omit<Api, 'auth' | 'registry'>> & { auth?:
       restore: vi.fn(),
       learnOutcome: vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' }, failedAttempts: 0, exhausted: false })),
       ...registry,
+    },
+    // The public forms (lead, waitlist, feedback): every send works unless a test says otherwise.
+    contact: {
+      lead: vi.fn(async () => undefined),
+      waitlist: vi.fn(async () => undefined),
+      feedback: vi.fn(async () => undefined),
+      ...contact,
     },
     ...rest,
   } as unknown as FakeApi;

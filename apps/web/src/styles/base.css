@@ -139,7 +139,10 @@ bdi {
 }
 .reduce-motion *,
 .reduce-motion *::before,
-.reduce-motion *::after {
+.reduce-motion *::after,
+.a11y-motion *,
+.a11y-motion *::before,
+.a11y-motion *::after {
   animation-duration: 0.001ms !important;
   animation-delay: 0ms !important;
   animation-iteration-count: 1 !important;
