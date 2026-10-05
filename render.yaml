@@ -21,7 +21,11 @@ services:
     # `--prod=false`: the build needs the dev tools (vite, tsc) whatever NODE_ENV or the package manager's own production
     # setting says (pnpm 10 installs them anyway; the flag keeps it that way). The shared and engine packages are used straight
     # from their TypeScript source, so `pnpm build` builds the web app only (+ its pre-compressed copies).
-    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm build
+    # pnpm itself: the exact version of package.json's `packageManager` (keep the two in step), installed with npm into the
+    # project's own `.tools` folder and put first on PATH, so every pnpm in the build (also inside our scripts) is that one.
+    # Not `corepack enable`: it links into /usr/bin, which is read-only on Render ("EROFS ... unlink '/usr/bin/pnpm'",
+    # first deploy 2026-10-05). npm puts the command in `.tools/bin` on Linux (Render) and in `.tools` on Windows.
+    buildCommand: npm install --global --prefix "$PWD/.tools" pnpm@10.34.6 && export PATH="$PWD/.tools/bin:$PWD/.tools:$PATH" && pnpm --version && pnpm install --frozen-lockfile --prod=false && pnpm build
     # The API runs its TypeScript source through tsx, as in development (tsx is a dependency of apps/api). `exec` so the
     # process receives Render's SIGTERM itself and shuts down cleanly.
     startCommand: cd apps/api && exec node --import tsx src/index.ts

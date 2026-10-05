@@ -48,3 +48,6 @@ Thumbs.db
 # owner sample files for local diagnosis (never committed)
 local-samples/
 .claude/worktrees/
+
+# pnpm installed by the Render build (render.yaml)
+.tools/
