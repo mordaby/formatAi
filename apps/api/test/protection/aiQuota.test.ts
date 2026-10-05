@@ -178,12 +178,13 @@ function defineQuotaSuite(kit: StoreKit): void {
       expect((await h.learn({ payload: { not: 'a payload' } })).statusCode).toBe(400);
       expect(await used(h)).toBe(0);
 
-      expect((await h.learn({})).statusCode).toBe(200); // caches the verified rules
+      const masked = { payload: basicPayload({ masking: true }) }; // only masking-ON rules are cached
+      expect((await h.learn(masked)).statusCode).toBe(200); // caches the verified rules
       await h.learn({ noCache: true });
       await h.learn({ noCache: true });
       expect((await h.learn({ noCache: true })).statusCode).toBe(429);
 
-      const hit = await h.learn({});
+      const hit = await h.learn(masked);
       expect(hit.statusCode).toBe(200);
       expect(hit.json()).toMatchObject({ cached: true, verified: true });
       expect(await used(h)).toBe(3);
@@ -242,11 +243,12 @@ function defineQuotaSuite(kit: StoreKit): void {
     it('never serves a result from the cache once the browser reported it failed', async () => {
       const llm = makeComplete();
       const h = await setup(llm.fn);
-      const { learnId } = (await h.learn({})).json();
+      const masked = { payload: basicPayload({ masking: true }) }; // only masking-ON rules are cached
+      const { learnId } = (await h.learn(masked)).json();
       expect(await h.handle.cacheEntryCount()).toBe(1);
       await outcome(h, learnId, 'failed');
       expect(await h.handle.cacheEntryCount()).toBe(0);
-      const again = await h.learn({});
+      const again = await h.learn(masked);
       expect(again.json().cached).toBe(false);
       expect(llm.calls).toHaveLength(2);
     });

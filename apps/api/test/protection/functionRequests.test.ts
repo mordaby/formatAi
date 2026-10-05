@@ -235,7 +235,8 @@ function defineSuite(kit: StoreKit): void {
 
   describe('the explanation (and the request) never reach the cache, the ledger, a cache hit or the registry', () => {
     it('is not in the structure cache, not in the ledger, and not on a later cache hit', async () => {
-      const { h, body } = await setup(answerWith({ functionRequest: REQUEST, explanation: EXPLANATION }));
+      // Masking ON: only masking-ON rules are cached, and these have no text constants.
+      const { h, body } = await setup(answerWith({ functionRequest: REQUEST, explanation: EXPLANATION }), { masking: true });
       const cookie = anonCookie(await h.get('/api/session'));
       const first = (await h.learn({ ...body, noCache: false }, { cookie })).json();
       expect(first.verified).toBe(true);

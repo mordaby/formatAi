@@ -131,7 +131,8 @@ describe('POST /api/learn', () => {
     fake.enqueue({ json: { ...(correctRulesWireJson() as object), alternatives: [alternative, { outputColumn: 'Nope', from: 'id', computed: [] }] } });
     const store = createMemoryStore();
     app = await buildServer({ env: devEnv(), db: null, logger: false, store, identify: asUser, complete: (req: CompleteRequest) => fake.complete(req) });
-    const send = () => app!.inject({ method: 'POST', url: '/api/learn', payload: JSON.stringify({ payload: basicPayload() }), headers: { 'content-type': 'application/json' } });
+    // Masking ON: with masking OFF nothing is cached at all, so a "never in the cache" check would pass for the wrong reason.
+    const send = () => app!.inject({ method: 'POST', url: '/api/learn', payload: JSON.stringify({ payload: basicPayload({ masking: true }) }), headers: { 'content-type': 'application/json' } });
 
     const body = (await send()).json();
     expect(body.verified).toBe(true);
