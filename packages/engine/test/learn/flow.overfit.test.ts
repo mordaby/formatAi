@@ -100,6 +100,26 @@ describe('discount-hand-edited: the row-position answer learn-v8 wrote', () => {
   });
 });
 
+describe('discount-hand-edited: the lookup keyed on the amount learn-v8.1 wrote (its first real learn, 2026-10-05)', () => {
+  const v81 = (JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'learnV81Discount.json'), 'utf8')) as { rules: LearnResult }).rules;
+  const reference = caseFiles('discount-hand-edited').reference();
+
+  it('it matches every row, yet it is not verified: the round asks for a rule that holds for any row, and the honest rule is kept', async () => {
+    const ai = aiStep(v81, [reference]);
+    const result = await run('discount-hand-edited', ai);
+    expect(ai.rounds[0]!.problems.filter((p) => p.kind === 'overfit').map((p) => p.message)).toEqual([expect.stringContaining('it looks values up by an amount')]);
+    expect(result.stages.verifiedFirstCall).toBe(false);
+    expect(result.rules?.transform.tables ?? []).toEqual([]);
+    expect(result.unsupported).toEqual([]);
+  });
+
+  it('the same lookup again: Discount "needs your input", with no table of the example\'s amounts left in the rules', async () => {
+    const result = await run('discount-hand-edited', aiStep(v81, [v81]));
+    expect(result.unsupported).toEqual([{ outputColumn: 'Discount', reasonCode: 'overfit' }]);
+    expect(result.rules?.transform.tables ?? []).toEqual([]);
+  });
+});
+
 describe('fulfillment-external-column: the memorized warehouse list learn-v8 wrote (completion mode, kept as a plain answer here)', () => {
   const caseList = keptFrom('cmp-learn-v8-complete/fulfillment-external-column.complete');
   const honest = keptFrom('cmp-learn-v7/fulfillment-external-column.full');

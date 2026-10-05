@@ -84,6 +84,16 @@ describe('runChecks: layer 6a, the overfitting guards', () => {
     expect(overfitFallbacks).toBe(1);
   });
 
+  it('a lookup keyed on the amount (what learn-v8.1 wrote for this case) is one too; the fallback takes its table out', () => {
+    const byAmount = discountRules('coalesce(lookup("discountTable", amount, "discountAmount"), round(amount * 0.1, 2))');
+    byAmount.transform.tables = [{ name: 'discountTable', columns: ['amount', 'discountAmount'], rows: [[3200, 0], [450, 45], [1200, 120], [80, 8]] }];
+    const repair = runChecks(wire(byAmount), discountPayload(), { tier: 'registered' });
+    expect(repair.problems).toEqual([{ kind: 'overfit', out: 1, message: expect.stringContaining('it looks values up by an amount') }]);
+    const fallBack = runChecks(wire(byAmount), discountPayload(), { tier: 'registered', overfit: 'fallBack' });
+    expect(fallBack.problems).toEqual([]);
+    expect(fallBack.rules?.transform.tables).toEqual([]);
+  });
+
   it('a column code reported (reason overfit) is never sent back as "unsupported despite evidence", even with a hint for it', () => {
     const p: LearnPayload = { ...discountPayload(), hints: [{ out: 1, rel: 'mulConst', in: [1], const: 0.1, round: 2, coverage: 0.75, failsOn: [0] }] };
     const { problems } = runChecks(wire(discountRules(BY_POSITION)), p, { tier: 'registered', overfit: 'fallBack' });

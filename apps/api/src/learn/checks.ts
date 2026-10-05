@@ -7,7 +7,7 @@
 // (see `packages/engine/src/pipeline/runRules.ts`) - running it earlier would only
 // ever report a single generic rejection on top of the precise problems already
 // collected. Layer 6 has two parts. The overfitting guards (6a: a condition on a row's position,
-// a long list of one-row cases) find a rule that copies rows of the example: an `overfit` problem
+// a long list of one-row cases, a lookup keyed on an amount) find a rule that copies rows of the example: an `overfit` problem
 // for one repair, or - once the learn had that repair - the column reported unsupported by code.
 // The overfitting lint (6b) is never a gate: it always runs and always appends its findings to
 // the returned rules' `assumptions`, regardless of what else failed, since it costs nothing and
@@ -336,8 +336,8 @@ function checkParsed(answer: LearnResult, payload: LearnPayload, opts: ChecksOpt
   const gatesClean = problems.length === 0;
 
   // ----- Layer 6a: the overfitting guards (SPEC 9.2 layer 6, engine `learn/overfit.ts`) -----
-  // A rule that copies particular rows of the example - a condition on a row's position, a long list of one-row cases - is found whatever the
-  // prompt says. A position needs no row; a case list is counted on the samples (and a loop round's rows), so only once the rules can run.
+  // A rule that copies particular rows of the example - a condition on a row's position, a long list of one-row cases, a lookup keyed on an
+  // amount - is found whatever the prompt says. A position or a lookup needs no row; a case list is counted on the samples (and a loop round's rows), so only once the rules can run.
   // Completion mode: only the columns the AI step was asked for (the others are the user's own rules). `repair`: one `overfit` problem per
   // column; `fallBack` (the learn's one repair for it was made): the column is reported as unsupported by code and checked no further.
   let overfitFallbacks = 0;

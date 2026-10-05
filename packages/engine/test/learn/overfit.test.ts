@@ -187,6 +187,33 @@ describe('caseList: a long chain of cases, each giving a constant to one or two 
   });
 });
 
+describe('measureKey: a lookup keyed on an amount', () => {
+  const V81 = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'learnV81Discount.json'), 'utf8')) as { rules: LearnResult };
+
+  it('finds the real learn-v8.1 answer for discount-hand-edited: coalesce(lookup("discountTable", amount, ...), round(amount * 0.1, 2))', async () => {
+    const v = await viewsOf('discount-hand-edited');
+    expect(label(overfitFindings(V81.rules, { table: v.all }))).toEqual(['measureKey:Discount']);
+    expect(label(overfitFindings(V81.rules, { table: null }))).toEqual(['measureKey:Discount']);
+    expect(overfitProblems(overfitFindings(V81.rules, { table: null }))[0]).toMatchObject({ kind: 'overfit', message: expect.stringContaining('it looks values up by an amount') });
+  });
+
+  it('the fallback takes the table of amounts out with the rule', () => {
+    const fallback = withOverfitFallback(V81.rules, overfitFindings(V81.rules, { table: null }));
+    expect(V81.rules.transform.tables?.map((t) => t.name)).toEqual(['discountTable']);
+    expect(fallback.transform.tables).toEqual([]);
+    expect(fallback.transform.computed).toEqual([]);
+    expect(fallback.unsupported).toEqual([{ outputColumn: 'Discount', reasonCode: 'overfit' }]);
+  });
+
+  it('not a lookup keyed on a code or a category (text, an integer code); one keyed on a decimal amount is', () => {
+    const tables = [{ name: 't', columns: ['k', 'v'], rows: [[1, 'a']] }];
+    const withTable = (r: LearnResult): LearnResult => ({ ...r, transform: { ...r.transform, tables } });
+    expect(overfitFindings(withTable(rulesWith('toText(lookup("t", item, "v"))')), { table: null })).toEqual([]);
+    expect(overfitFindings(withTable(rulesWith('toText(lookup("t", qty, "v"))')), { table: null })).toEqual([]);
+    expect(label(overfitFindings(withTable(rulesWith('toText(lookup("t", amount, "v"))')), { table: null }))).toEqual(['measureKey:Value']);
+  });
+});
+
 describe('every kept rules file of the measurement (learn-v7 and learn-v8, both modes, the noE1 arm, the MVP runs)', () => {
   const found: Record<string, string[]> = {};
   beforeAll(async () => {

@@ -316,8 +316,8 @@ export type RepairProblem =
   | { kind: 'unsupportedDespiteEvidence'; out: number; message: string }
   /**
    * The rule for output column `out` copies particular rows of the example instead of stating a rule (the overfitting guards, SPEC 9.2
-   * layer 6, engine `learn/overfit.ts`): a condition on a row's position, or a long list of cases that each give a constant to one or two
-   * rows. Sent at most once per learn; an answer that still has it gets the column reported as unsupported by code (reason `overfit`). The
+   * layer 6, engine `learn/overfit.ts`): a condition on a row's position, a long list of cases that each give a constant to one or two
+   * rows, or a lookup keyed on an amount. Sent at most once per learn; an answer that still has it gets the column reported as unsupported by code (reason `overfit`). The
    * message names the column and the shape found, never a value.
    */
   | { kind: 'overfit'; out: number; message: string }

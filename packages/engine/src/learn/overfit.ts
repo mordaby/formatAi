@@ -1,4 +1,4 @@
-// The overfitting guards (SPEC 9.2 layer 6, 21 v12 item 19): two shapes of rule that copy particular rows of the example instead of
+// The overfitting guards (SPEC 9.2 layer 6, 21 v12 item 19): three shapes of rule that copy particular rows of the example instead of
 // stating a rule, found in code whatever the prompt says. The learn-v8 measurement (2026-10-05) showed the model fitting every row at any
 // cost - `if(rowNumber() = 1, 0, ...)` for one hand-edited row, a 3,269-character `switch` of supplier + item mapped to warehouse codes for
 // a column whose values come from elsewhere - and both passed every check, because they DO reproduce the rows they were written from.
@@ -11,6 +11,12 @@
 //     the rows an equality or range of input columns picks, and each case picking at most a couple of the rows code can see. A real
 //     mapping is a value map or a lookup table (code fills those from every row and flags a new key at run time); a case list like this
 //     only repeats the example's answers. See `limits.learn.overfit` for the thresholds.
+//   - measureKey: a lookup table keyed on a measure - a decimal, currency or percent column, an amount (`lookup("t", amount, "x")`). An
+//     amount is no category: next month's file brings new ones, so a table of amounts only holds this file's rows (and code's fill, which
+//     completes a lookup from every row, would copy every one of them). learn-v8.1 wrote exactly this for a hand-edited row in its first
+//     real learn (2026-10-05): `coalesce(lookup("discountTable", amount, "discountAmount"), round(amount * 0.1, 2))`, filled to 150
+//     entries, verified, wrong the next month. DECISION: lookups only, and a plain column as the key - no kept rules file of the
+//     measurement keys one on a measure; an integer key may be a code (a branch number), and a date a calendar (holidays).
 //
 // A finding becomes one `overfit` repair problem per column (`overfitProblems`), at most once per learn; an answer that still has it after
 // that repair gets the column reported as unsupported by code (`withOverfitFallback`, reason `overfit`: "needs your input"), so a rule that
@@ -23,7 +29,7 @@ import { runRules } from '../pipeline/runRules';
 import { exprChildren } from '../pipeline/v1/expr';
 import type { InputTable } from '../types';
 
-export type OverfitKind = 'position' | 'caseList';
+export type OverfitKind = 'position' | 'caseList' | 'measureKey';
 
 export interface OverfitFinding {
   kind: OverfitKind;
@@ -183,6 +189,19 @@ function caseCounts(rules: AnyRules, cases: readonly Case[], table: InputTable):
 }
 
 // ---------------------------------------------------------------------------
+// measureKey
+// ---------------------------------------------------------------------------
+
+const MEASURE_TYPES: ReadonlySet<string> = new Set(['decimal', 'currency', 'percent']);
+
+/** Whether `e` looks a value up in a table by a measure column (`lookup("t", amount, "x")`). */
+function looksUpByMeasure(e: Expr, measureIds: ReadonlySet<string>): boolean {
+  if (!isNode(e)) return false;
+  if (e.op === 'lookup' && 'col' in e.key && measureIds.has(e.key.col)) return true;
+  return exprChildren(e).some((c) => looksUpByMeasure(c, measureIds));
+}
+
+// ---------------------------------------------------------------------------
 // The findings
 // ---------------------------------------------------------------------------
 
@@ -233,6 +252,7 @@ export interface OverfitOptions {
  */
 export function overfitFindings(rules: AnyRules, opts: OverfitOptions): OverfitFinding[] {
   const inputIds = new Set(rules.input.columns.map((c) => c.id));
+  const measureIds = new Set([...rules.input.columns, ...rules.transform.computed].filter((c) => MEASURE_TYPES.has(c.type)).map((c) => c.id));
   const positionIds = positionColumns(rules.transform.computed);
   const reached = outputsReached(rules);
   const findings: OverfitFinding[] = [];
@@ -247,6 +267,7 @@ export function overfitFindings(rules: AnyRules, opts: OverfitOptions): OverfitF
   };
   for (const c of rules.transform.computed) {
     if (comparesPosition(c.expr, positionIds)) add('position', c.id);
+    if (looksUpByMeasure(c.expr, measureIds)) add('measureKey', c.id);
     const cases = caseListShape(c.expr, inputIds);
     if (cases && opts.table) {
       const counts = caseCounts(rules, cases, opts.table);
@@ -262,9 +283,14 @@ export function overfitFindings(rules: AnyRules, opts: OverfitOptions): OverfitF
 
 /** The part of the problem message that says what was found (no value of any row: the guards' own words only). */
 function whatWasFound(f: OverfitFinding): string {
-  return f.kind === 'position'
-    ? 'it compares a row position (rowNumber or rank) with a constant'
-    : `it is a list of ${f.cases ?? 'many'} cases, each giving a constant to one or two rows; a real mapping is a value map or a lookup table`;
+  switch (f.kind) {
+    case 'position':
+      return 'it compares a row position (rowNumber or rank) with a constant';
+    case 'caseList':
+      return `it is a list of ${f.cases ?? 'many'} cases, each giving a constant to one or two rows; a real mapping is a value map or a lookup table`;
+    case 'measureKey':
+      return 'it looks values up by an amount, and the next file brings new amounts; a real mapping is keyed on a code or a category';
+  }
 }
 
 /**
@@ -313,6 +339,13 @@ export function withOverfitFallback<R extends AnyRules>(rules: R, findings: read
       changed = true;
       break;
     }
+  }
+  // ... and the lookup tables nothing looks up any more (a table of the example's amounts holds this file's rows).
+  const tables = next.transform.tables;
+  if (tables && tables.length > 0) {
+    const text = JSON.stringify({ ...next, transform: { ...next.transform, tables: [] } });
+    const used = tables.filter((t) => text.includes(`"table":${JSON.stringify(t.name)}`));
+    if (used.length < tables.length) next = { ...next, transform: { ...next.transform, tables: used } } as R;
   }
   return next;
 }

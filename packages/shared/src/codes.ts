@@ -19,7 +19,7 @@ export const AI_UNSUPPORTED_REASON_CODES = [
 export const UNSUPPORTED_REASON_CODES = [
   ...AI_UNSUPPORTED_REASON_CODES,
   // Code only (SPEC 9.2 layer 6, 21 v12 item 19): the only rule the AI step found for the column copies particular rows of the example
-  // (a condition on a row's position, a long list of one-row cases), and it still did after its one repair - so code reports the column
+  // (a condition on a row's position, a long list of one-row cases, a lookup keyed on an amount), and it still did after its one repair - so code reports the column
   // as "needs your input" rather than count a copy of the example as a rule. Never offered to the AI step.
   'overfit',
 ] as const;
