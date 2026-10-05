@@ -175,3 +175,38 @@ describe('completion planning and readiness', () => {
     expect(aiReadiness(a, pf).ready).toBe(true);
   });
 });
+
+// Owner concern 2026-10-05 (SPEC amendment "bands must beat chance"): a wrong hint misleads the AI step. Before the permutation test a
+// column of RANDOM values got a bands hint on up to 29% of small examples; now luck has to beat 1% of 200 shuffles.
+describe('bands must beat chance', () => {
+  /** `n` rows: Ref, Qty, Price -> Ref, Qty, Price, Total (= Qty * Price), Label (random, or a real 3-band rule by Total). */
+  function labelPair(n: number, seed: number, real: boolean): { input: V[][]; output: V[][] } {
+    const r = rng(seed);
+    const input: V[][] = [['Ref', 'Qty', 'Price']];
+    const output: V[][] = [['Ref', 'Qty', 'Price', 'Total', 'Label']];
+    for (let i = 0; i < n; i++) {
+      const qty = 1 + Math.floor(r() * 20);
+      const cents = 500 + Math.floor(r() * 59500);
+      const total = (qty * cents) / 100;
+      input.push([`R-${i}`, qty, cents / 100]);
+      output.push([`R-${i}`, qty, cents / 100, total, real ? classOf(total) : pick(r, ['Alpha', 'Bravo'])]);
+    }
+    return { input, output };
+  }
+  const banded = (n: number, seed: number, real: boolean): boolean => {
+    const { input, output } = labelPair(n, seed, real);
+    return analyzeOk(xlsx(input), xlsx(output)).columns[4]!.derived?.kind === 'bands';
+  };
+
+  it('random values on 12-row examples almost never get a bands hint (was about 29%)', () => {
+    let hinted = 0;
+    for (let seed = 1; seed <= 40; seed++) if (banded(12, seed, false)) hinted++;
+    expect(hinted).toBeLessThanOrEqual(2);
+  });
+
+  it('a real 3-band rule on 30 rows still does, nearly always', () => {
+    let hinted = 0;
+    for (let seed = 1; seed <= 20; seed++) if (banded(30, 1000 + seed, true)) hinted++;
+    expect(hinted).toBeGreaterThanOrEqual(16);
+  });
+});
