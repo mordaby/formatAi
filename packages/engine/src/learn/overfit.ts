@@ -68,14 +68,14 @@ function isPosition(e: Expr, positionIds: ReadonlySet<string>): boolean {
 }
 
 /** The computed columns whose value is a whole-file position (directly, or a copy of one), in rules order. */
-function positionColumns(computed: readonly Computed[]): Set<string> {
+export function positionColumns(computed: readonly Computed[]): Set<string> {
   const ids = new Set<string>();
   for (const c of computed) if (isPosition(c.expr, ids)) ids.add(c.id);
   return ids;
 }
 
 /** Whether `e` holds a comparison of a whole-file position with a constant (`rowNumber() = 1`, `rank(order: x) <= 3`, `oneOf(rowNumber(), 1, 2)`). */
-function comparesPosition(e: Expr, positionIds: ReadonlySet<string>): boolean {
+export function comparesPosition(e: Expr, positionIds: ReadonlySet<string>): boolean {
   if (!isNode(e)) return false;
   if (COMPARISONS.has(e.op)) {
     const [a, b] = (e as { args: [Expr, Expr] }).args;

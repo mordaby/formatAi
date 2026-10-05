@@ -227,6 +227,15 @@ export const limits = {
       minCases: 6,
       maxRowsPerCase: 2,
     },
+    /**
+     * A one-time edit or a rule? (SPEC 8.11, 21 v12 item 20; owner decision 2026-10-05; engine `learn/oneTimers.ts`): after an AI learn, a part
+     * of a rule that explains exactly one row of the example, singled out by something unique to it (an ID, an exact amount or date no other
+     * row has, its position), is a question for the user. At most `maxQuestions` per learn; a column with more such parts than that is not a
+     * few one-time edits - it is left to the overfitting guards, and asks nothing.
+     */
+    oneTimer: {
+      maxQuestions: 3,
+    },
   },
   /**
    * SPEC 8.11 / 8.12 / 11 / 13: the registry (saved formats and their conversions).

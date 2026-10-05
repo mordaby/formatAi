@@ -1090,3 +1090,7 @@ function replaceNode(e: Expr, target: ExprNode, by: Expr): Expr {
 function withComputedExpr(rules: LearnResult, ci: number, expr: Expr): LearnResult {
   return { ...rules, transform: { ...rules.transform, computed: rules.transform.computed.map((c, i) => (i === ci ? { ...c, expr } : c)) } };
 }
+
+// The row-by-row runs above, for the support count of a one-time question (`oneTimers.ts`): the same probes, the same reading of a cell.
+export type { Probe as RunProbe, Run as ProbedRun, ListSite as ValueListSite };
+export { runOn as runWithProbes, cellValue as probeCellValue, truthyCell as probeTruthy, keyText as probeKeyText, listSiteOf as valueListOf };

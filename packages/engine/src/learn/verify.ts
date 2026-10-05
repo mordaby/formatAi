@@ -40,6 +40,12 @@ export interface VerifyOptions {
    * own Excel row number, matching `Flag.rowNumber`'s convention) the user marked
    * "fixed by hand". Excluded from the count and never reported as mismatches. */
   exceptions?: number[];
+  /**
+   * SPEC 21 v12 item 20 ("a one-time change"): cells of the example the user said were edited by hand once - the example row (1-based, as
+   * `exceptions`) in ONE output column (its header). That cell is not compared, so it is never a mismatch (the row still counts, and its
+   * other columns are compared as usual); where it differs it is listed in `VerifyResult.oneTime` instead, for the screen to show.
+   */
+  oneTime?: { exampleRow: number; column: string }[];
   /** SPEC 7.2/9.3: when given, every cell value carried in a `repairProblems` diff - its `row`, `made`, `expected` and `actual` (never the
    * UI-facing `mismatches`) - is masked with it, so a browser-triggered repair call never sends real data when masking is on. */
   masker?: Masker;
@@ -101,6 +107,8 @@ export interface VerifyResult {
   repairProblems: RepairProblem[];
   /** Only with `VerifyOptions.wrongRows`: every input row whose output the rules got wrong, in file order (real values). */
   wrongRows?: WrongRow[];
+  /** Only with `VerifyOptions.oneTime`: the cells left out that differ from the example (the rows that don't follow the rule, by the user's word). */
+  oneTime?: Mismatch[];
 }
 
 /** One cell of the example the rules got wrong (the learning loop's counterexamples, `learn/loop.ts`). Real values: never sent as they are. */
@@ -429,6 +437,8 @@ export function cellMatchesExample(analysis: PairAnalysis, k: number, c: number,
 
 export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairAnalysis, opts: VerifyOptions = {}): VerifyResult {
   const exceptions = new Set(opts.exceptions ?? []);
+  const oneTimeCells = opts.oneTime ? new Set(opts.oneTime.map((c) => `${c.exampleRow}\u0000${c.column}`)) : null;
+  const oneTime: Mismatch[] = [];
   const masker = opts.masker;
   const only = opts.onlyColumns !== undefined ? new Set(opts.onlyColumns) : null;
 
@@ -528,8 +538,12 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
         const expected = expectedCells[c] ?? null;
         const actual = actualCellValue(actualRow?.cells[c]);
         if (!cellsMatch(expectedSeen(expectedRaw?.[c]), actualSeen(actualRow?.cells[c]), delimited)) {
-          rowOk = false;
           const header = rules.output.columns[c]?.header ?? analysis.output.headers[c] ?? `column${c + 1}`;
+          if (oneTimeCells?.has(`${exampleRow}\u0000${header}`)) {
+            oneTime.push({ exampleRow, column: header, expected, actual });
+            continue;
+          }
+          rowOk = false;
           mismatches.push({ exampleRow, column: header, expected, actual });
           wrong = wrongRowOf(inRow, wrong);
           wrong?.cells.push({ out: c, outRow: outIdx, expected, actual });
@@ -600,5 +614,15 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   const layoutProblems = layoutIssues.map((i) => i.message);
   const verified = layoutProblems.length === 0 && repairProblems.length === 0 && matched === total;
 
-  return { verified, matched, total, mismatches, layoutProblems, layoutIssues, repairProblems, ...(wrongRows ? { wrongRows: wrongRows.sort((a, b) => a.inRow - b.inRow) } : {}) };
+  return {
+    verified,
+    matched,
+    total,
+    mismatches,
+    layoutProblems,
+    layoutIssues,
+    repairProblems,
+    ...(wrongRows ? { wrongRows: wrongRows.sort((a, b) => a.inRow - b.inRow) } : {}),
+    ...(oneTimeCells ? { oneTime } : {}),
+  };
 }
