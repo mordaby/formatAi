@@ -2,7 +2,10 @@ import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import { limits } from '@formatai/shared';
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from 'fastify';
+import { registerAdminRoutes } from './admin/index.js';
 import { registerAuth, type AuthOptions } from './auth/index.js';
+import { registerContactRoutes } from './contact/routes.js';
+import { createMemoryContactStore, createMongoContactStore, type ContactStore } from './contact/store.js';
 import type { AppDb } from './db.js';
 import type { Env } from './env.js';
 import type { CompleteFn } from './learn/index.js';
@@ -12,6 +15,7 @@ import type { MemoryStore, ProtectionStore } from './protection/store.js';
 import { registerRegistryRoutes } from './registry/index.js';
 import { registerLearnRoutes } from './routes/learn.js';
 import { registerSessionRoute } from './routes/session.js';
+import { registerWebApp } from './web.js';
 
 export interface BuildServerOptions {
   env: Env;
@@ -23,6 +27,8 @@ export interface BuildServerOptions {
   /** Tests: replaces the store behind limits, budgets, cache and ledger (default: MongoDB from `db`,
    * or in memory when there is no database outside production). */
   store?: ProtectionStore;
+  /** Tests: replaces where the public forms (leads, waitlist, feedback) are kept (default: MongoDB from `db`, or in memory when there is no database). */
+  contactStore?: ContactStore;
   /** Tests: replaces the global `fetch` used to call Cloudflare Turnstile's siteverify endpoint. */
   fetch?: typeof fetch;
   /** Tests: the clock (UTC day/month keys, budgets, cache and learnId expiry). */
@@ -31,6 +37,11 @@ export interface BuildServerOptions {
   identify?: (req: FastifyRequest) => Identity;
   /** Tests: sign-in providers / OIDC client / store overrides (see `auth/index.ts`). */
   auth?: AuthOptions;
+  /**
+   * The built web app (`apps/web/dist`) to serve from this process - one service, one origin (see `web.ts`). `index.ts` sets
+   * it in production, or when `WEB_DIST` is. Unset (development, tests): the API serves /api only; Vite serves the web on 5173.
+   */
+  webDist?: string;
 }
 
 /**
@@ -134,6 +145,20 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
 
   // SPEC 8.12 / 13: saved formats and their conversions (signed-in users only; needs the database).
   registerRegistryRoutes(app, { db, protection, identify: opts.identify });
+
+  // SPEC 14.2: the admin view's API (/api/admin/*), admins only - checked here on the server, whatever the web app shows.
+  registerAdminRoutes(app, { db, env, protection, identify: opts.identify });
+
+  // SPEC 16.1 screen 7, 11, 13 (v13 M4): the public forms - the business lead form, the paid waitlist, feedback. Open to visitors
+  // (Turnstile + rate limits), so they exist in every environment; they need no sign-in.
+  registerContactRoutes(app, {
+    protection,
+    store: opts.contactStore ?? (db ? createMongoContactStore(db) : createMemoryContactStore()),
+    identify: opts.identify,
+  });
+
+  // Last: the static files and the page-route fallback, once every /api route is in place.
+  if (opts.webDist) await registerWebApp(app, { dir: opts.webDist, hsts: new URL(env.WEB_ORIGIN).protocol === 'https:' });
 
   return app;
 }

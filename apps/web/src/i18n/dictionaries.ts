@@ -12,14 +12,18 @@
 
 import { convertEn, convertHe } from './convert';
 import { accountEn, accountHe } from './account';
+import { adminEn, adminHe } from './admin';
 import { formatsEn, formatsHe } from './formats';
+import { pagesEn, pagesHe } from './pages';
 import { resultEn, resultHe } from './result';
 
 export const en = {
   ...resultEn,
   ...accountEn,
+  ...adminEn,
   ...formatsEn,
   ...convertEn,
+  ...pagesEn,
   'app.name': 'formatAI',
   'app.tagline': 'Teach a format once. Use it every month.',
 
@@ -88,7 +92,6 @@ export const en = {
   'footer.business': 'Business',
   'footer.privacy': 'Privacy',
   'footer.terms': 'Terms',
-  'page.comingSoon': 'This page is coming soon.',
   'page.backHome': 'Back to the start',
 
   // SPEC 5 E: the sign-in wall
@@ -204,8 +207,10 @@ export type MessageKey = keyof typeof en;
 export const he: Record<MessageKey, string> = {
   ...resultHe,
   ...accountHe,
+  ...adminHe,
   ...formatsHe,
   ...convertHe,
+  ...pagesHe,
   'app.name': 'formatAI',
   'app.tagline': 'מלמדים פורמט פעם אחת. משתמשים בו כל חודש.',
 
@@ -271,7 +276,6 @@ export const he: Record<MessageKey, string> = {
   'footer.business': 'לעסקים',
   'footer.privacy': 'פרטיות',
   'footer.terms': 'תנאי שימוש',
-  'page.comingSoon': 'הדף הזה יעלה בקרוב.',
   'page.backHome': 'חזרה להתחלה',
 
   'signIn.title': 'התחברות',

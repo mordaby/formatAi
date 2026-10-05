@@ -64,6 +64,15 @@ describe('columns', () => {
     expect(line(model, 'col:מתי')).toBe('מתי ← תאריך, מוצג בתבנית DD/MM/YYYY');
   });
 
+  it('reads a date from text in plain words, also when the column mixes formats', () => {
+    const toDate = (format: string): Expr => ({ op: 'toDate', arg: col('c_date'), format });
+    expect(calc(toDate('YYYY-MM-DD'))).toBe('תוצאה ← תאריך נקרא כתאריך שנה-חודש-יום');
+    expect(calc({ op: 'dateFormat', arg: col('c_date'), format: 'DD/MM/YYYY' })).toBe('תוצאה ← תאריך בתבנית יום/חודש/שנה');
+    expect(calc({ op: 'if', cond: { op: 'contains', arg: col('c_date'), text: '-' }, then: toDate('YYYY-MM-DD'), else: toDate('DD/MM/YYYY') })).toBe(
+      "תוצאה ← תאריך נקרא כתאריך שנה-חודש-יום כשהוא כולל '-', ואחרת יום/חודש/שנה",
+    );
+  });
+
   it('writes calculations', () => {
     expect(calc({ op: 'round', digits: 2, arg: mul(col('c_cost'), num(1.18)) }, 'מחיר')).toBe('מחיר ← עלות × 1.18, מעוגל ל-2 ספרות אחרי הנקודה');
     expect(calc({ op: 'round', digits: 1, arg: col('c_cost') })).toBe('תוצאה ← עלות, מעוגל לספרה אחת אחרי הנקודה');

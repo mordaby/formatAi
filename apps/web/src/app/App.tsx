@@ -1,13 +1,14 @@
 import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import AddSourcePage from '../pages/AddSource';
+import BusinessPage from '../pages/Business';
 import ConvertPage from '../pages/Convert';
 import FormatPage from '../pages/Format';
 import EditSourcePage from '../pages/Format/EditSource';
 import FormatsPage from '../pages/Formats';
 import Home from '../pages/Home';
 import { useI18n } from '../i18n';
-import { PlaceholderPage } from '../pages/PlaceholderPage';
+import { LegalPage } from '../pages/Legal/LegalPage';
 import { ResultPage } from '../pages/Result';
 import { peekResultSession } from '../pages/Result/session';
 import { Spinner } from '../ui';
@@ -22,6 +23,9 @@ import { TurnstileProvider } from './Turnstile';
 // so the page and everything only it imports are dropped from the bundle.
 const showDevPage = import.meta.env.DEV || import.meta.env.VITE_DEV_PAGE === 'true';
 const DevPage = showDevPage ? lazy(() => import('../pages/DevPage')) : null;
+
+// The admin view (SPEC 14.2): its own chunk - only an admin ever opens it.
+const AdminPage = lazy(() => import('../pages/Admin'));
 
 /**
  * /result: only meaningful once a learn has finished; a reload (or a typed address) goes home. Coming back from a sign-in it waits for
@@ -76,9 +80,19 @@ export function App() {
                 <Route path="/formats/:id/sources/:conversionId" element={<ResultRoute />} />
                 <Route path="/convert" element={<ConvertPage />} />
                 <Route path="/batch" element={<BatchRedirect />} />
-                <Route path="/business" element={<PlaceholderPage title="footer.business" />} />
-                <Route path="/privacy" element={<PlaceholderPage title="footer.privacy" />} />
-                <Route path="/terms" element={<PlaceholderPage title="footer.terms" />} />
+                <Route
+                  path="/admin"
+                  element={
+                    <Suspense fallback={null}>
+                      <AdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route path="/business" element={<BusinessPage />} />
+                {/* v13 M4: the legal pages (drafts: the owner or a lawyer reviews them - see i18n/legal.ts) and the accessibility statement. */}
+                <Route path="/privacy" element={<LegalPage id="privacy" />} />
+                <Route path="/terms" element={<LegalPage id="terms" />} />
+                <Route path="/accessibility" element={<LegalPage id="accessibility" />} />
                 {DevPage && (
                   <Route
                     path="/dev"

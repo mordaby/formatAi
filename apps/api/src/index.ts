@@ -1,15 +1,31 @@
 import { connectDb, ensureIndexes } from './db.js';
 import { loadEnv } from './env.js';
+import { checkProductionConfig, formatProductionProblems, webDistDir } from './productionConfig.js';
 import { buildServer } from './server.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
+  const production = env.NODE_ENV === 'production';
+
+  // Production: every missing setting in one message, before anything connects (never a value, only names).
+  if (production) {
+    const { problems, warnings } = checkProductionConfig(env);
+    const message = formatProductionProblems(problems);
+    if (message) {
+      console.error(message);
+      process.exit(1);
+    }
+    for (const warning of warnings) console.warn(`warning: ${warning}`);
+  }
+
   const db = await connectDb(env);
   if (db) {
     await ensureIndexes(db);
   }
 
-  const app = await buildServer({ env, db });
+  // One service, one origin: production (or an explicit WEB_DIST) serves the built web app too. Development keeps Vite on 5173.
+  const webDist = production || env.WEB_DIST ? webDistDir(env) : undefined;
+  const app = await buildServer({ env, db, webDist });
 
   await app.listen({ host: '0.0.0.0', port: env.PORT });
 

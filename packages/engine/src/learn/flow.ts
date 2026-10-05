@@ -12,7 +12,8 @@
 import { aiNotesOf, isCodeCheck, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnAlternative, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
 import { deepEqual } from '../registry/deepEqual';
 import { columnVerifier, resolveAlternatives, type AlternativeResult } from './alternatives';
-import { fillParams, type FillAmbiguity, type FillSummary } from './fillParams';
+import { fillParams, type FillAmbiguity, type FillResult, type FillSummary } from './fillParams';
+import { oneTimeQuestions, questionedPositions, type OneTimeResult } from './oneTimers';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
@@ -226,6 +227,13 @@ export interface LearnFromExamplesResult<Call = unknown> {
    * the AI's `format`; answering "the other way" is `swapDayMonth(rules, ambiguity)`. Absent when there is none.
    */
   ambiguities?: FillAmbiguity[];
+  /**
+   * Path 'llm' with rules: a one-time edit or a rule? (SPEC 21 v12 item 20, `oneTimers.ts`) - the parts of the kept answer that explain exactly
+   * one row of the example, singled out by something unique to it (its ID, an exact amount or date, its position), for the Result screen's
+   * question (at most `limits.learn.oneTimer.maxQuestions`; completion mode: the asked columns only), and the columns that had more such parts
+   * than fit (handed to the overfitting guards, not asked). Real values: the browser's and the eval's only. Absent when there is neither.
+   */
+  oneTimers?: OneTimeResult;
 }
 
 /** Like the diff problems (LEARN_PROMPT §4: "At most 10 diff problems are sent"), a repair call needs enough fixed-lock findings to fix the pattern, not all of them. */
@@ -453,7 +461,12 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   let overfitRepaired = learned.overfitRepaired === true;
   const allRows = exampleTable(analysis);
   // Completion mode: only the columns the AI step was asked for (the others are the user's own rules).
-  const askedHeaders = complete ? new Set(complete.columns.map((i) => complete.fixedRules.output.columns[i]?.header)) : null;
+  const askedHeaders: ReadonlySet<string> | null = complete
+    ? new Set(complete.columns.flatMap((i) => {
+        const header = complete.fixedRules.output.columns[i]?.header;
+        return header === undefined ? [] : [header];
+      }))
+    : null;
   /** How much a rule that copies rows weighs when answers are compared: every row of its column wrong (it holds for none but these). */
   const copyWeight = Math.max(1, analysis.alignment.rows.length);
   const judge = (answer: LearnResult, alternatives: readonly LearnAlternative[] = [], fallBack = false): Judged => {
@@ -470,20 +483,33 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     // The overfitting guards, on the answer as the AI wrote it (before code fills anything) and every row of the example: an `overfit` problem
     // for the next round while the learn's one repair for it is unused; after it - or for the answer kept at the end (`fallBack`) - the
     // column is reported as unsupported by code, in both vocabularies, and the answer is checked without it.
-    const findings = overfitFindings(rules, { table: allRows }).filter((f) => askedHeaders === null || askedHeaders.has(f.outputColumn));
-    let overfit: RepairProblem[] = [];
-    if (findings.length > 0 && (overfitRepaired || fallBack)) {
-      masked = withOverfitFallback(masked, findings);
-      rules = withOverfitFallback(rules, findings);
-      fixedProblems = fixedLock(rules);
-    } else {
-      overfit = overfitProblems(findings);
-    }
     // Code fills the data parameters from every row (`fillParams`, proposal 7.1), on the REAL rules: lookup tables, value maps and lists,
     // cut-offs, the day/month order, the duplicate kept, the values a filter drops. `masked` - what a repair round sends back - stays the
     // answer as the AI wrote it, so nothing filled is ever sent. DECISION: a cut-off check is code's alone; one the answer wrote is dropped
     // (and so is a `sameAs` one, which the wire schema does not even offer).
-    const filled = fillParams(withoutCodeChecks(rules), analysis, complete ? { fixed: learnResultOf(complete.fixedRules) } : {});
+    const fillOf = (r: LearnResult): FillResult => fillParams(withoutCodeChecks(r), analysis, complete ? { fixed: learnResultOf(complete.fixedRules) } : {});
+    let findings = overfitFindings(rules, { table: allRows }).filter((f) => askedHeaders === null || askedHeaders.has(f.outputColumn));
+    // A one-time edit or a rule? (SPEC 21 v12 item 20, `oneTimers.ts`): a row-position condition that is a part the user will be asked about -
+    // it explains one row of the example and nothing else - is the user's question, not a repair (the AI step cannot know whether that row was
+    // edited by hand). DECISION: only `position` findings, and only for a column whose every one of them goes once its asked parts are taken out;
+    // a case list or a table of amounts is never a few one-time edits (it has more single-row parts than are asked, or none that is).
+    let early: FillResult | undefined;
+    if (findings.some((f) => f.kind === 'position')) {
+      early = fillOf(rules);
+      const waived = questionedPositions(early.rules, analysis, findings, askedHeaders);
+      if (waived.size > 0) findings = findings.filter((f) => !waived.has(f.outputColumn));
+    }
+    let overfit: RepairProblem[] = [];
+    let fellBack = false;
+    if (findings.length > 0 && (overfitRepaired || fallBack)) {
+      masked = withOverfitFallback(masked, findings);
+      rules = withOverfitFallback(rules, findings);
+      fixedProblems = fixedLock(rules);
+      fellBack = true;
+    } else {
+      overfit = overfitProblems(findings);
+    }
+    const filled = early && !fellBack ? early : fillOf(rules);
     rules = filled.rules;
     fixedProblems = fixedLock(rules);
     const fill = { summary: { filled: filled.filled, checks: filled.checks }, ambiguities: filled.ambiguities };
@@ -578,6 +604,9 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   stages.verifiedAfterRepair = kept.passes;
   const loopSummary: LoopSummary = { rounds: loop.rounds, rowsSent: loop.sent.length + loop.named.length, end: decided.step.kind === 'stop' ? decided.step.reason : 'verified' };
 
+  // A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of the kept answer that explain one row of the example only, for the user.
+  const oneTimers = oneTimeQuestions(rules, analysis, askedHeaders ? { columns: askedHeaders } : {});
+
   // learn-v7: the notes leave the rules here (SPEC 15): the answer the caller works with has none, and they travel beside it.
   const aiNotes = aiNotesOf(rules);
   const stripped = stripAiNotes(rules);
@@ -599,6 +628,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     filled: kept.fill.summary,
     ...(kept.fill.ambiguities.length > 0 ? { ambiguities: kept.fill.ambiguities } : {}),
     ...(kept.alternatives.length > 0 ? { alternatives: kept.alternatives } : {}),
+    ...(oneTimers.questions.length > 0 || oneTimers.handedOff.length > 0 ? { oneTimers } : {}),
     ...(aiNotes.length > 0 ? { aiNotes } : {}),
     ...(complete ? { completion: { columns: [...complete.columns], parts: [...complete.parts], fixedProblems, matches: matchesExample(kept.verification, rules), produced: completionProduced(rules, complete.fixedRules, complete) } } : {}),
   };

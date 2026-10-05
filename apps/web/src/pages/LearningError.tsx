@@ -35,7 +35,7 @@ export function LearningError({ error, onRetry, onChangeFiles, onSignIn }: Learn
             {t('header.signIn')}
           </Button>
         )}
-        {view.action === 'upgrade' && <UpgradeButton variant="primary" />}
+        {view.action === 'upgrade' && <UpgradeButton variant="primary" trigger={error.kind === 'api' && error.limit ? error.limit : 'other'} />}
         {view.action === 'tryAgain' && (
           <Button variant="primary" onClick={onRetry}>
             {t('error.tryAgain')}

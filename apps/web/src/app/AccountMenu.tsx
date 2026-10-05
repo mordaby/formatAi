@@ -5,6 +5,7 @@ import { Cell } from '../components/Cell';
 import { useI18n } from '../i18n';
 import { Badge, Button, Icon, InlineMessage } from '../ui';
 import { aiLeftLabel } from './aiQuota';
+import { useFeedback } from './Feedback';
 import { useMe } from './Me';
 import { useSignIn } from './SignIn';
 
@@ -31,10 +32,12 @@ export function AccountMenu() {
   const { t } = useI18n();
   const me = useMe();
   const signIn = useSignIn();
+  const feedback = useFeedback();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [problem, setProblem] = useState<'signOut' | 'link' | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const panelId = useId();
   const user = me.user;
 
@@ -82,6 +85,7 @@ export function AccountMenu() {
       <button
         type="button"
         className="account__button"
+        ref={trigger}
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         aria-label={t('account.menuLabel', { name })}
@@ -116,6 +120,13 @@ export function AccountMenu() {
                 {t('account.myFormats')}
               </Link>
             </li>
+            {user.isAdmin ? (
+              <li>
+                <Link className="account__item" to="/admin" onClick={() => setOpen(false)}>
+                  {t('admin.nav')}
+                </Link>
+              </li>
+            ) : null}
             {otherProviders.map((provider) => (
               <li key={provider}>
                 <button type="button" className="account__item" onClick={() => void link(provider)}>
@@ -123,6 +134,20 @@ export function AccountMenu() {
                 </button>
               </li>
             ))}
+            <li>
+              <button
+                type="button"
+                className="account__item"
+                onClick={() => {
+                  // The menu closes, so its item is gone: the focus goes back to the menu button first, and that is where the dialog returns it.
+                  setOpen(false);
+                  trigger.current?.focus();
+                  feedback.open();
+                }}
+              >
+                {t('footer.feedback')}
+              </button>
+            </li>
             <li>
               <button type="button" className="account__item" onClick={() => void signOut()}>
                 {t('account.signOut')}

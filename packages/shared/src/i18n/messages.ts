@@ -210,6 +210,10 @@ export const flagMessages: Record<FlagMessageKey, Localized> = {
     en: 'Your example fits two rules for this column, and here they differ: the other rule gives {other}. Please check it.',
     he: 'הדוגמה שלך מתאימה לשני כללים בעמודה הזו, וכאן הם שונים: הכלל השני נותן {other}. כדאי לבדוק.',
   },
+  'flag.validation.sameAs.oneTime': {
+    en: 'This row gets a part of the rule that your example had on one row only; without it the rule gives {other}. Please check it.',
+    he: 'השורה הזו מקבלת חלק מהכלל שהיה בדוגמה שלך בשורה אחת בלבד; בלעדיו הכלל נותן {other}. כדאי לבדוק.',
+  },
 };
 
 // API error messages (SPEC 9.5, 11). The API returns only codes; the web shows this text.
@@ -311,6 +315,10 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
   unavailable: {
     en: 'Saving is not available right now. Please try again later.',
     he: 'השמירה לא זמינה כרגע. אנא נסו שוב מאוחר יותר.',
+  },
+  forbidden: {
+    en: 'This page is for admins only.',
+    he: 'הדף הזה מיועד למנהלים בלבד.',
   },
 };
 

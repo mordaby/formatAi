@@ -13,14 +13,13 @@
     "@anthropic-ai/sdk": "^0.129.0",
     "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^11.3.0",
+    "@fastify/static": "^10.1.5",
     "@formatai/engine": "workspace:*",
     "@formatai/shared": "workspace:*",
     "fastify": "^5.12.5",
     "mongodb": "^7.7.0",
     "openai": "^7.23.0",
-    "openid-client": "^6.8.8"
-  },
-  "devDependencies": {
+    "openid-client": "^6.8.8",
     "tsx": "^4.23.15"
   },
   "exports": {

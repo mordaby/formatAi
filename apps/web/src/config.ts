@@ -3,7 +3,10 @@
 // packages/shared/src/config; move them there if the API or eval ever needs them
 // (the max file size in particular is "per tier" in SPEC 6.1 and has no shared entry yet).
 
-import { tiers } from '@formatai/shared';
+import { tiers, type Localized } from '@formatai/shared';
+
+/** Placeholder address until the owner has a real one (the legal pages, the Upgrade panel's fallback link). */
+const contactEmail = 'hello@formatai.example';
 
 export const webConfig = {
   /**
@@ -46,8 +49,30 @@ export const webConfig = {
    * after an hour (or once it is restored).
    */
   pendingLearn: { maxAgeMs: 60 * 60 * 1000, dbName: 'formatai', storeName: 'pending', key: 'learn', /** A browser whose IndexedDB never answers must not hold the Result screen back. */ loadTimeoutMs: 3000 },
-  /** Where the "Upgrade" panel points until paid plans have a real sign-up (M4): a placeholder address. */
-  contactHref: 'mailto:hello@formatai.example',
+  /** The fallback under the paid-waitlist form (the "Upgrade" panel): write to us. A placeholder address until the owner has one. */
+  contactHref: `mailto:${contactEmail}`,
+  /**
+   * The public legal pages (privacy, terms, accessibility statement; v13 M4). EVERY value in square brackets is a placeholder the OWNER must
+   * replace before launch, and the retention numbers are PROPOSALS (see the header of i18n/legal.ts: the whole text needs the owner's or a
+   * lawyer's review).
+   */
+  legal: {
+    /** When the three texts last changed (ISO date): shown at the top of each page. Change it whenever the text changes. */
+    updated: '2026-10-05',
+    contactEmail,
+    operator: { en: '[Company name and address - to be completed by the owner]', he: '[שם החברה וכתובתה - להשלמה על ידי הבעלים]' } satisfies Localized,
+    /** "Disputes will be decided only by ..." (the terms). */
+    jurisdiction: { en: '[the competent courts of Tel Aviv-Jaffa, Israel - to be confirmed]', he: '[בתי המשפט המוסמכים בתל אביב-יפו - לאישור]' } satisfies Localized,
+    hosting: { en: '[hosting and database providers - to be completed by the owner]', he: '[ספקי האחסון ומסד הנתונים - להשלמה על ידי הבעלים]' } satisfies Localized,
+    /** The accessibility coordinator the statement names (Israeli accessibility regulations, 2013). */
+    accessibility: {
+      coordinator: { en: '[Accessibility coordinator name - to be completed]', he: '[שם רכז הנגישות - להשלמה]' } satisfies Localized,
+      email: '[accessibility email - to be completed]',
+      phone: { en: '[phone - to be completed]', he: '[טלפון - להשלמה]' } satisfies Localized,
+    },
+    /** How long the privacy policy says records are kept. PROPOSALS: no job deletes old documents yet. */
+    retentionMonths: { aiCallRecords: 12, forms: 24 },
+  },
   /** SPEC 16.2: the UI-language cookie. */
   languageCookie: { name: 'lang', maxAgeSeconds: 365 * 24 * 60 * 60 },
   /** Base URL of the API. Empty = same origin (the Vite dev server proxies /api). */

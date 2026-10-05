@@ -1,0 +1,291 @@
+/* Accessibility (v13 M4; IS 5568 / WCAG 2.1 AA): the floating button and its panel, and what each setting does. A setting is a class on <html>
+   (see app/a11y/prefs.ts); this file is the only place that says what it means. Logical properties only, both themes, both languages. */
+
+/* ---------- The floating button and its panel ---------- */
+.a11y {
+  position: fixed;
+  inset-block-end: var(--s-4);
+  inset-inline-end: var(--s-4);
+  z-index: 30; /* above the page, below the editor sheet (40) and every dialog (60) */
+}
+.a11y__button {
+  display: grid;
+  place-items: center;
+  inline-size: 48px;
+  block-size: 48px;
+  padding: 0;
+  border: 2px solid var(--paper);
+  border-radius: 50%;
+  background: var(--brand);
+  color: var(--on-brand);
+  box-shadow: var(--shadow);
+  transition: background-color var(--dur-1) var(--ease);
+}
+.a11y__button:hover {
+  background: var(--brand-strong);
+}
+.a11y__button:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
+.a11y__panel {
+  position: absolute;
+  inset-block-end: calc(100% + var(--s-2));
+  inset-inline-end: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  inline-size: min(340px, calc(100vw - 2 * var(--s-4)));
+  max-block-size: calc(100dvh - 96px);
+  overflow: auto;
+  padding: var(--s-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  animation: a11y-in var(--dur-2) var(--ease) both;
+}
+.a11y__panel:focus {
+  outline: none;
+}
+@keyframes a11y-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.a11y__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.a11y__sizes {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.a11y__sizes legend {
+  padding: 0;
+  margin-block-end: var(--s-2);
+  font-weight: 500;
+}
+.a11y__segments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius-sm);
+}
+.a11y__size {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-block-size: 44px;
+  padding-inline: var(--s-2);
+  border-inline-start: 1px solid var(--line-strong);
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+}
+.a11y__size:first-child {
+  border-inline-start: 0;
+}
+.a11y__size[data-size='0'] .a11y__size-label {
+  font-size: 0.9em;
+}
+.a11y__size[data-size='2'] .a11y__size-label {
+  font-size: 1.15em;
+}
+/* the real radio fills its label (a click anywhere on it works) and is not drawn; the checked one is the filled segment */
+.a11y__radio {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.a11y__size:has(.a11y__radio:checked) {
+  background: var(--brand);
+  color: var(--on-brand);
+}
+.a11y__size:has(.a11y__radio:focus-visible) {
+  box-shadow:
+    inset 0 0 0 3px var(--paper),
+    inset 0 0 0 5px var(--ink);
+}
+.a11y__toggles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.a11y__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+/* The button must never cover the end of the page: the footer keeps room under its last line. */
+.app-footer {
+  padding-block-end: calc(48px + var(--s-4));
+}
+
+/* ---------- Text size: every font size in the app is "N px x --text-scale" (tokens.css) ---------- */
+html.a11y-text-1 {
+  --text-scale: 1.25;
+}
+html.a11y-text-2 {
+  --text-scale: 1.5;
+}
+
+/* Reflow (WCAG 1.4.10): a button keeps its label on one line where it fits, but never runs past the screen - on a narrow
+   screen and at the larger text sizes a long label ("Join the paid waitlist" in Hebrew) wraps instead of making the page
+   scroll sideways (found in the browser at 285 px). */
+@media (max-width: 480px) {
+  .btn {
+    white-space: normal;
+    max-inline-size: 100%;
+  }
+}
+html.a11y-text-1 .btn,
+html.a11y-text-2 .btn {
+  white-space: normal;
+  max-inline-size: 100%;
+}
+.upgrade {
+  max-inline-size: 100%;
+}
+/* The header's actions (language, sign-in / account) move under the logo when the larger text sizes don't fit one line. */
+html.a11y-text-1 .app-header__inner,
+html.a11y-text-2 .app-header__inner {
+  flex-wrap: wrap;
+  padding-block: var(--s-2);
+}
+html.a11y-text-1 .app-header__actions,
+html.a11y-text-2 .app-header__actions {
+  flex-wrap: wrap;
+  min-inline-size: 0;
+}
+/* The progress steps (Upload - Learn - Use) wrap at the larger sizes instead of running off a phone screen. */
+html.a11y-text-1 .stepper,
+html.a11y-text-2 .stepper {
+  flex-wrap: wrap;
+  row-gap: var(--s-2);
+}
+
+/* ---------- High contrast: the same colour roles, pushed to the ends ---------- */
+html.a11y-contrast {
+  --paper: #ffffff;
+  --surface: #ffffff;
+  --line: #000000;
+  --line-strong: #000000;
+  --control-line: #000000;
+  --ink: #000000;
+  --ink-2: #1a1a1a;
+  --brand: #004a46;
+  --brand-strong: #00302d;
+  --on-brand: #ffffff;
+  --brand-tint: #d9f0ed;
+  --on-brand-tint: #002b28;
+  --diff: #8f4a00;
+  --diff-icon: #7a3f00;
+  --diff-tint: #ffedc7;
+  --diff-tint-strong: #ffd98a;
+  --on-diff-tint: #3a1d00;
+  --danger: #8a0e07;
+  --danger-tint: #ffe3e0;
+  --on-danger-tint: #5a0a05;
+  --focus: #000000;
+  --scrim: rgb(0 0 0 / 0.75);
+}
+@media (prefers-color-scheme: dark) {
+  html.a11y-contrast {
+    --paper: #000000;
+    --surface: #000000;
+    --line: #ffffff;
+    --line-strong: #ffffff;
+    --control-line: #ffffff;
+    --ink: #ffffff;
+    --ink-2: #f2f2f2;
+    --brand: #7ff0e6;
+    --brand-strong: #b8fff9;
+    --on-brand: #000000;
+    --brand-tint: #003733;
+    --on-brand-tint: #e0fffc;
+    --diff: #ffc04d;
+    --diff-icon: #ffc04d;
+    --diff-tint: #3a2600;
+    --diff-tint-strong: #5c3d00;
+    --on-diff-tint: #fff0d0;
+    --danger: #ff9d94;
+    --danger-tint: #4a0f0b;
+    --on-danger-tint: #ffe3e0;
+    --focus: #ffffff;
+    --scrim: rgb(0 0 0 / 0.85);
+  }
+}
+/* borders carry meaning at high contrast: a control is its outline */
+html.a11y-contrast .input,
+html.a11y-contrast .btn--secondary,
+html.a11y-contrast .dz__target,
+html.a11y-contrast .account__button {
+  border-width: 2px;
+}
+
+/* ---------- Underlined links ---------- */
+html.a11y-links a:not(.btn):not(.wordmark),
+html.a11y-links .btn--link {
+  text-decoration: underline !important;
+  text-decoration-thickness: 2px !important;
+  text-underline-offset: 3px;
+}
+
+/* ---------- A readable font ---------- */
+html.a11y-font {
+  --font: Arial, 'Segoe UI', Helvetica, 'Noto Sans Hebrew', 'Liberation Sans', sans-serif;
+}
+
+/* ---------- Spacing between lines, letters and words (WCAG 1.4.12) ---------- */
+html.a11y-spacing {
+  --lh: 1.9;
+}
+html.a11y-spacing body {
+  letter-spacing: 0.04em;
+  word-spacing: 0.12em;
+}
+html.a11y-spacing :is(p, li, dt, dd, td, th, label, h1, h2, h3, h4, .btn) {
+  line-height: 1.8;
+}
+
+/* ---------- A strong focus ring: thick, with a gap in the page colour, so it shows on any background ---------- */
+html.a11y-focus :focus,
+html.a11y-focus :focus-visible {
+  outline: 4px solid var(--ink);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--paper);
+}
+/* controls whose real input is not drawn: the ring goes on what is drawn */
+html.a11y-focus .switch__input:focus-visible + .switch__track,
+html.a11y-focus .dz:has(.dz__input:focus-visible) .dz__target {
+  outline: 4px solid var(--ink);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--paper);
+}
+html.a11y-focus .switch__input:focus-visible,
+html.a11y-focus .dz__input:focus-visible,
+html.a11y-focus .a11y__radio:focus-visible,
+html.a11y-focus .page:focus,
+html.a11y-focus .a11y__panel:focus {
+  outline: none;
+  box-shadow: none;
+}

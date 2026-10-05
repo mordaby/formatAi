@@ -53,3 +53,38 @@ describe('loadEnv - LLM config (SPEC 9.6)', () => {
     expect(env.CLAUDE_CLI_PATH).toBe('/usr/local/bin/claude');
   });
 });
+
+describe('loadEnv - the public origin (one service, one origin)', () => {
+  const clean = { ...process.env, WEB_ORIGIN: undefined, API_PUBLIC_URL: undefined, PUBLIC_ORIGIN: undefined, RENDER_EXTERNAL_URL: undefined };
+
+  it('keeps the development defaults when nothing names an origin', () => {
+    const env = loadEnv(clean);
+    expect(env.WEB_ORIGIN).toBe('http://localhost:5173');
+    expect(env.API_PUBLIC_URL).toBeUndefined();
+  });
+
+  it('PUBLIC_ORIGIN is the default for both the web origin and the API public URL (a trailing slash or path is dropped)', () => {
+    const env = loadEnv({ ...clean, PUBLIC_ORIGIN: 'https://formatai.example.com/' });
+    expect(env.WEB_ORIGIN).toBe('https://formatai.example.com');
+    expect(env.API_PUBLIC_URL).toBe('https://formatai.example.com');
+  });
+
+  it("falls back to Render's own RENDER_EXTERNAL_URL, which PUBLIC_ORIGIN overrides", () => {
+    expect(loadEnv({ ...clean, RENDER_EXTERNAL_URL: 'https://formatai-abcd.onrender.com' }).WEB_ORIGIN).toBe('https://formatai-abcd.onrender.com');
+    const both = loadEnv({ ...clean, RENDER_EXTERNAL_URL: 'https://formatai-abcd.onrender.com', PUBLIC_ORIGIN: 'https://formatai.example.com' });
+    expect(both.WEB_ORIGIN).toBe('https://formatai.example.com');
+    expect(both.API_PUBLIC_URL).toBe('https://formatai.example.com');
+  });
+
+  it('an explicit WEB_ORIGIN or API_PUBLIC_URL still wins (development: the web on 5173, the API on 8787)', () => {
+    const env = loadEnv({ ...clean, PUBLIC_ORIGIN: 'https://formatai.example.com', WEB_ORIGIN: 'http://localhost:5173', API_PUBLIC_URL: 'http://localhost:8787' });
+    expect(env.WEB_ORIGIN).toBe('http://localhost:5173');
+    expect(env.API_PUBLIC_URL).toBe('http://localhost:8787');
+  });
+
+  it('refuses an origin that is not a URL, naming the variable and not echoing it back', () => {
+    expect(() => loadEnv({ ...clean, PUBLIC_ORIGIN: 'formatai.example.com' })).toThrow(/Invalid PUBLIC_ORIGIN/);
+    expect(() => loadEnv({ ...clean, RENDER_EXTERNAL_URL: 'ftp://x.example.com' })).toThrow(/Invalid RENDER_EXTERNAL_URL/);
+    expect(() => loadEnv({ ...clean, PUBLIC_ORIGIN: 'not a url with a secret' })).toThrow(/^(?!.*secret)/s);
+  });
+});

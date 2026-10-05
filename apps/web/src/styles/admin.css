@@ -1,0 +1,256 @@
+/* The admin view (/admin, SPEC 14.2): tabs, plain tables, one small chart. Same tokens as the rest of the app; logical properties only. */
+
+.page--admin {
+  max-inline-size: 1200px;
+}
+
+/* ---------- tabs ---------- */
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  border-block-end: 1px solid var(--line);
+}
+.admin-tabs__item {
+  margin-block-end: -1px;
+  padding: var(--s-2) var(--s-3);
+  border: 0;
+  border-block-end: 2px solid transparent;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease);
+}
+.admin-tabs__item:hover {
+  color: var(--brand);
+}
+.admin-tabs__item[aria-current='page'] {
+  color: var(--ink);
+  border-block-end-color: var(--brand);
+}
+
+/* ---------- panels and blocks ---------- */
+.admin-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  min-inline-size: 0;
+}
+.admin-panel__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.admin-panel__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3) var(--s-4);
+}
+.admin-seg {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.admin-seg__item {
+  padding: 7px 14px;
+  border: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  cursor: pointer;
+}
+.admin-seg__item + .admin-seg__item {
+  border-inline-start: 1px solid var(--line-strong);
+}
+.admin-seg__item[aria-pressed='true'] {
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+}
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: var(--s-5) var(--s-6);
+}
+.admin-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-inline-size: 0;
+}
+.admin-block__title {
+  font-size: var(--fs-section);
+}
+.admin-block__sub {
+  margin-block-start: var(--s-2);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+.admin-note {
+  margin: 0;
+}
+.admin-details summary {
+  cursor: pointer;
+  color: var(--brand);
+  font-size: var(--fs-small);
+}
+.admin-details[open] summary {
+  margin-block-end: var(--s-2);
+}
+
+/* ---------- tables ---------- */
+.admin-scroll {
+  overflow-x: auto;
+}
+.admin-table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-small);
+}
+.admin-table th,
+.admin-table td {
+  padding: 8px 10px;
+  border-block-end: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+}
+.admin-table thead th {
+  color: var(--ink-2);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.admin-table tbody th {
+  font-weight: 400;
+}
+.admin-table .num {
+  text-align: end;
+}
+.admin-table--rows th {
+  color: var(--ink);
+}
+.admin-table__sub th {
+  padding-inline-start: var(--s-5);
+  color: var(--ink-2);
+}
+.admin-table--wide {
+  min-inline-size: 760px;
+}
+.admin-code {
+  font-family: var(--mono);
+  font-size: calc(12.5px * var(--text-scale, 1));
+}
+.admin-table th.admin-code {
+  white-space: nowrap;
+}
+.admin-fn__box {
+  /* Narrow enough that the whole cell, actions included, fits a phone before the table scrolls sideways (a table cell grows to fill a wide
+     table, so the limit is on what is inside it). */
+  max-inline-size: 300px;
+}
+.admin-fn__purpose {
+  display: block;
+}
+.admin-fn .btn,
+.admin-fn .admin-actions {
+  margin-block-start: var(--s-2);
+}
+.admin-message {
+  max-inline-size: 60ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.admin-actions__hint {
+  flex-basis: 100%;
+  max-inline-size: 38ch;
+}
+
+/* ---------- users ---------- */
+.admin-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s-3);
+}
+.admin-search__field {
+  flex: 1 1 260px;
+  max-inline-size: 420px;
+}
+.admin-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.admin-editor-cell {
+  background: var(--paper);
+}
+.admin-editor {
+  /* The editor spans the whole (sideways-scrolling) table; it stays at the start edge, as wide as the screen allows. */
+  position: sticky;
+  inset-inline-start: 0;
+  inline-size: min(560px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding-block: var(--s-3);
+}
+.admin-editor__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+}
+.admin-audit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-small);
+}
+
+/* ---------- the chart: estimated AI cost per day ---------- */
+.chart {
+  max-inline-size: 420px;
+}
+.chart__svg {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+}
+.chart__bar {
+  fill: var(--brand);
+}
+.chart__day:hover .chart__bar {
+  fill: var(--brand-strong);
+}
+.chart__hit {
+  fill: transparent;
+}
+.chart__axis {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.chart__text {
+  fill: var(--ink-2);
+  font-family: var(--font);
+  font-size: calc(11px * var(--text-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .page--admin {
+    padding-inline: var(--s-4);
+  }
+}

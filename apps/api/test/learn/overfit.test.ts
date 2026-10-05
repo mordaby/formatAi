@@ -55,9 +55,11 @@ function discountRules(formula: string): LearnResult {
   };
 }
 
-/** The learn-v8 answer: the hand-edited row fitted by its position. (Over the sample rows a window column is never compared, so nothing else
- * would ever have caught it here.) */
-const BY_POSITION = 'if(rowNumber() = 1, 0, round(amount * 0.1, 2))';
+/** The hand-edited row fitted by its position, as a range: the API's own finding. (Over the sample rows a window column is never compared, so
+ * nothing else would ever have caught it here.) The exact form learn-v8 wrote, owNumber() = 1, is the browser's (SPEC 21 v12 item 20). */
+const BY_POSITION = 'if(rowNumber() <= 1, 0, round(amount * 0.1, 2))';
+/** learn-v8's own answer: the row named exactly. */
+const BY_EXACT_POSITION = 'if(rowNumber() = 1, 0, round(amount * 0.1, 2))';
 /** The honest rule: wrong on the hand-edited row, right on every other. */
 const HONEST = 'round(amount * 0.1, 2)';
 
@@ -92,6 +94,18 @@ describe('runChecks: layer 6a, the overfitting guards', () => {
     const fallBack = runChecks(wire(byAmount), discountPayload(), { tier: 'registered', overfit: 'fallBack' });
     expect(fallBack.problems).toEqual([]);
     expect(fallBack.rules?.transform.tables).toEqual([]);
+  });
+
+  it("a position condition that names exact rows (learn-v8's rowNumber() = 1) is left to the browser: a question for the user, or the browser's guard (SPEC 21 v12 item 20)", () => {
+    for (const overfit of ['repair', 'fallBack'] as const) {
+      const { problems, rules, overfitFallbacks } = runChecks(wire(discountRules(BY_EXACT_POSITION)), discountPayload(), { tier: 'registered', overfit });
+      expect(problems.some((p) => p.kind === 'overfit')).toBe(false);
+      expect(rules?.output.columns[1]).toEqual({ header: 'Discount', from: 'discount' });
+      expect(overfitFallbacks).toBe(0);
+    }
+    // ... and so is a list of exact rows; a range, or "every row but one", stays the API's.
+    expect(runChecks(wire(discountRules('if(oneOf(rowNumber(), 1, 3), 0, round(amount * 0.1, 2))')), discountPayload(), { tier: 'registered' }).problems.some((p) => p.kind === 'overfit')).toBe(false);
+    expect(runChecks(wire(discountRules('if(rowNumber() <> 1, round(amount * 0.1, 2), 0)')), discountPayload(), { tier: 'registered' }).problems.map((p) => p.kind)).toContain('overfit');
   });
 
   it('a column code reported (reason overfit) is never sent back as "unsupported despite evidence", even with a hint for it', () => {

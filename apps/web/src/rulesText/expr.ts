@@ -9,7 +9,7 @@ import { printFormula } from '@formatai/engine/formula';
 import type { Expr, ExprConstValue, ExprLeaf, ExprNode } from '@formatai/shared';
 import type { Names } from './names';
 import { joinWith, nm, normalize, partsText, quoted, txt, val } from './parts';
-import type { Phrasebook } from './phrases';
+import type { PhraseKey, Phrasebook } from './phrases';
 import type { Part, SimplePart } from './types';
 
 export interface Ctx {
@@ -339,6 +339,74 @@ export function conditionParts(e: Expr, ctx: Ctx, nested = false): Part[] {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Dates read from text and written as text (SPEC 8.3 `toDate`, `dateFormat`): the format in words
+// ---------------------------------------------------------------------------
+
+/** The format tokens (SPEC 8.3 "Date format tokens"), longest first, and the word each one is. */
+const DATE_TOKENS: readonly (readonly [string, PhraseKey])[] = [
+  ['YYYY', 'date.year'],
+  ['YY', 'date.year2'],
+  ['MMMM', 'date.monthName'],
+  ['MMM', 'date.monthShort'],
+  ['MM', 'date.month'],
+  ['M', 'date.month'],
+  ['DD', 'date.day'],
+  ['D', 'date.day'],
+  ['dddd', 'date.weekday'],
+  ['ddd', 'date.weekdayShort'],
+];
+
+/**
+ * A date format in plain words, its separators as they are: "YYYY-MM-DD" is "year-month-day", "DD/MM/YYYY" "day/month/year", "MMMM YYYY"
+ * "month name year". DECISION: words only, no example date - a month name would have to pick a language, and the order is what the user checks.
+ */
+export function dateFormatWords(format: string, ctx: Ctx): SimplePart {
+  let out = '';
+  for (let i = 0; i < format.length; ) {
+    const token = DATE_TOKENS.find(([tok]) => format.startsWith(tok, i));
+    if (token) {
+      out += ctx.book.raw(token[1]);
+      i += token[0].length;
+    } else {
+      out += format.charAt(i);
+      i++;
+    }
+  }
+  return txt(out);
+}
+
+/**
+ * The shape the AI step writes for a text date column that mixes formats: `if(contains(x, "-"), toDate(x, "YYYY-MM-DD"), toDate(x, "DD/MM/YYYY"))`
+ * (and longer chains of `if`, or a `switch`, on the same column) - "Order Date read as year-month-day when it contains '-', otherwise as
+ * day/month/year". Undefined for anything else.
+ */
+function toDateByContents(e: Expr, ctx: Ctx): Part[] | undefined {
+  const same = (a: Expr, b: Expr): boolean => JSON.stringify(a) === JSON.stringify(b);
+  const cases: { text: string; format: string }[] = [];
+  let x: Expr | undefined;
+  const take = (when: Expr, then: Expr): boolean => {
+    if (!isNode(when) || when.op !== 'contains' || !isNode(then) || then.op !== 'toDate' || !same(then.arg, when.arg)) return false;
+    if (x !== undefined && !same(x, when.arg)) return false;
+    x = when.arg;
+    cases.push({ text: when.text, format: then.format });
+    return true;
+  };
+  let at: Expr = e;
+  for (;;) {
+    if (isNode(at) && at.op === 'if' && take(at.cond, at.then)) at = at.else;
+    else if (isNode(at) && at.op === 'switch' && at.cases.every((c) => take(c.when, c.then))) at = at.else;
+    else break;
+  }
+  if (x === undefined || cases.length === 0 || !isNode(at) || at.op !== 'toDate' || !same(at.arg, x)) return undefined;
+  const { t } = ctx.book;
+  return t('expr.toDateEither', {
+    x: operand(x, ctx),
+    cases: joinWith(cases.map((c) => t('expr.toDateWhen', { f: dateFormatWords(c.format, ctx), s: textOf(c.text) })), ', '),
+    f: dateFormatWords(at.format, ctx),
+  });
+}
+
 const WINDOW_GROUP_FNS: ReadonlySet<string> = new Set(['groupSum', 'groupAvg', 'groupMin', 'groupMax', 'groupCount']);
 
 /**
@@ -433,7 +501,9 @@ function prose(e: Expr, ctx: Ctx, top: boolean): Part[] {
     case 'datePart':
       return t(`expr.datePart.${e.part}`, { x: operand(e.arg, ctx) });
     case 'dateFormat':
-      return t('expr.dateFormat', { x: operand(e.arg, ctx), f: val(e.format) });
+      return t('expr.dateFormat', { x: operand(e.arg, ctx), f: dateFormatWords(e.format, ctx) });
+    case 'toDate':
+      return t('expr.toDate', { x: operand(e.arg, ctx), f: dateFormatWords(e.format, ctx) });
     case 'dateAdd': {
       const unit = e.days !== undefined ? 'days' : e.months !== undefined ? 'months' : 'years';
       const amount = e.days ?? e.months ?? e.years ?? 0;
@@ -450,13 +520,18 @@ function prose(e: Expr, ctx: Ctx, top: boolean): Part[] {
       });
     case 'endOfMonth':
       return t('expr.endOfMonth', { x: operand(e.arg, ctx) });
-    case 'if':
+    case 'if': {
+      const dates = toDateByContents(e, ctx);
+      if (dates) return dates;
       return t('expr.if', {
         then: operand(e.then, ctx, true),
         cond: conditionParts(e.cond, ctx),
         else: operand(e.else, ctx, true),
       });
+    }
     case 'switch': {
+      const dates = toDateByContents(e, ctx);
+      if (dates) return dates;
       const cases = e.cases.map((c) => t('expr.case', { then: operand(c.then, ctx, true), when: conditionParts(c.when, ctx) }));
       return joinWith([...cases, t('expr.otherwise', { else: operand(e.else, ctx, true) })], '; ');
     }

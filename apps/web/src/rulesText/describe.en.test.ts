@@ -187,11 +187,29 @@ describe('calculations', () => {
 
   it('describes dates', () => {
     expect(calc({ op: 'datePart', arg: col('c_date'), part: 'month' })).toBe('Result ← the month of Date');
-    expect(calc({ op: 'dateFormat', arg: col('c_date'), format: 'MMMM YYYY' })).toBe('Result ← Date written as MMMM YYYY');
+    expect(calc({ op: 'dateFormat', arg: col('c_date'), format: 'MMMM YYYY' })).toBe('Result ← Date written as month name year');
+    expect(calc({ op: 'dateFormat', arg: col('c_date'), format: 'DD/MM/YY' })).toBe('Result ← Date written as day/month/two-digit year');
+    expect(calc({ op: 'dateFormat', arg: col('c_date'), format: 'dddd D.M' })).toBe('Result ← Date written as weekday name day.month');
     expect(calc({ op: 'dateAdd', arg: col('c_date'), days: 30 })).toBe('Result ← Date plus 30 days');
     expect(calc({ op: 'dateAdd', arg: col('c_date'), months: -1 })).toBe('Result ← Date minus 1 month');
     expect(calc({ op: 'dateDiff', args: [col('c_date'), col('c_date')], unit: 'days' })).toBe('Result ← the number of days between Date and Date');
     expect(calc({ op: 'endOfMonth', arg: col('c_date') })).toBe('Result ← the last day of the month of Date');
+  });
+
+  it('describes a date read from text in plain words, also the AI step\'s "if it contains \'-\'" for a column that mixes formats', () => {
+    const toDate = (format: string): Expr => ({ op: 'toDate', arg: col('c_date'), format });
+    expect(calc(toDate('YYYY-MM-DD'))).toBe('Result ← Date read as year-month-day');
+    expect(calc({ op: 'datePart', arg: toDate('DD/MM/YYYY'), part: 'month' })).toBe('Result ← the month of (Date read as day/month/year)');
+    expect(calc({ op: 'dateFormat', arg: toDate('MMMM YYYY'), format: 'MM/YYYY' })).toBe('Result ← (Date read as month name year) written as month/year');
+    const contains = (text: string): Expr => ({ op: 'contains', arg: col('c_date'), text });
+    expect(calc({ op: 'if', cond: contains('-'), then: toDate('YYYY-MM-DD'), else: toDate('DD/MM/YYYY') })).toBe(
+      "Result ← Date read as year-month-day when it contains '-', otherwise as day/month/year",
+    );
+    expect(calc({ op: 'switch', cases: [{ when: contains('-'), then: toDate('YYYY-MM-DD') }, { when: contains('/'), then: toDate('DD/MM/YYYY') }], else: toDate('D MMMM YYYY') })).toBe(
+      "Result ← Date read as year-month-day when it contains '-', day/month/year when it contains '/', otherwise as day month name year",
+    );
+    // Another column in a branch is no such pattern: the plain if.
+    expect(calc({ op: 'if', cond: contains('-'), then: toDate('YYYY-MM-DD'), else: col('c_name') })).toBe("Result ← (Date read as year-month-day) if Date contains '-', otherwise Name");
   });
 
   it('describes splitting text and lookups', () => {
@@ -478,6 +496,12 @@ describe('checks', () => {
   it('says the other rule an open question is about (SPEC 8.8 sameAs), as a formula', () => {
     expect(v({ column: 'c_amount', rule: 'sameAs', expr: { op: 'round', arg: { col: 'c_amount' }, digits: 0 }, severity: 'flag' })).toBe(
       'Check: your example also fits round(Amount, 0) for Amount. A row where it gives a different value: flag',
+    );
+  });
+
+  it('says the check "Not sure" keeps on a one-time question (sameAs, oneTime): never "your example also fits"', () => {
+    expect(v({ column: 'c_amount', rule: 'sameAs', expr: { op: 'round', arg: { col: 'c_amount' }, digits: 0 }, severity: 'flag', oneTime: true })).toBe(
+      'Check: the rule for Amount has a part your example had on one row only; without it, round(Amount, 0). A row where that part applies: flag',
     );
   });
 

@@ -6,7 +6,7 @@
  * from one owner's data, so it is owner-scoped and TTL-expired - see `LearnCacheDoc`.
  */
 import type { ObjectId } from 'mongodb';
-import type { RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, TokenEstimate, Validation, ValueType } from '@formatai/shared';
+import type { AdminAuditAction, RepairProblem, SourceInputReading, SourceInputSignature, SourceStructure, Tier, TokenEstimate, Validation, ValueType } from '@formatai/shared';
 
 export type AuthProvider = 'google' | 'microsoft';
 
@@ -261,7 +261,24 @@ export interface LearnCacheDoc {
   createdAt: Date;
 }
 
-/** Where a recorded function request stands. Only `new` is written today (the M4 admin adds the others: a threshold or a click turns a request into a GitHub issue). */
+/**
+ * SPEC 13 `admin_audit` (M4): one document per change an admin made - who, when, what. Written only by the admin routes, never
+ * edited or deleted. Ids and the changed values only (a tier, numbers, a request's status): no names, no emails of the target (they are
+ * read from the target when the log is shown), nothing from any user's data. `adminEmail` is the admin's own, as it was then.
+ */
+export interface AdminAuditDoc {
+  _id?: ObjectId;
+  ts: Date;
+  adminId: ObjectId;
+  adminEmail?: string;
+  action: AdminAuditAction;
+  targetKind: 'user' | 'functionRequest';
+  targetId: ObjectId;
+  before: unknown;
+  after: unknown;
+}
+
+/** Where a recorded function request stands: written `new` by the learn route; the admin view moves it to `issueOpened` (and back); `approved` / `declined` belong to issue #41's pipeline. */
 export type FunctionRequestStatus = 'new' | 'issueOpened' | 'approved' | 'declined';
 
 /**
@@ -293,31 +310,39 @@ export interface FunctionRequestDoc {
   status: FunctionRequestStatus;
 }
 
+/**
+ * SPEC 13 `leads` (v13, M4): what a visitor sent through a public form. Two kinds share the collection: `lead` (the "For business" form:
+ * name, email, company, message) and `waitlist` (the paid waitlist: email, message, and `trigger` - the limit or the hint it was opened from).
+ * Only what was typed into the form, the path of the page it was sent from, and who sent it (`anonId` always when there is a cookie; `userId`
+ * on the waitlist when signed in). NEVER an IP (the per-IP limits keep a keyed hash in `usage_counters`, not here), a file name, a rule or a value.
+ */
 export interface LeadDoc {
   _id?: ObjectId;
-  name: string;
+  createdAt: Date;
+  kind: 'lead' | 'waitlist';
   email: string;
+  /** `lead` only. */
+  name?: string;
+  /** `lead` only, when given. */
   company?: string;
-  role?: string;
   message?: string;
-  language?: string;
-  ts: Date;
-}
-
-export interface WaitlistDoc {
-  _id?: ObjectId;
+  /** `waitlist` only: a limit code (SPEC 11 `upgrade_intent { trigger }`), `batch` or `other`. */
+  trigger?: string;
+  /** The page path the form was sent from (a pathname, no query). */
+  page: string;
+  /** `waitlist`, when signed in. */
   userId?: ObjectId;
-  email: string;
-  trigger: string;
-  message?: string;
-  ts: Date;
+  anonId?: string;
 }
 
+/** SPEC 13 `feedback` (v13, M4): a short message from the footer / account-menu form. Page path only - never file data or rules. */
 export interface FeedbackDoc {
   _id?: ObjectId;
-  formatId?: ObjectId;
+  createdAt: Date;
+  kind: 'feedback';
+  message: string;
+  /** Only when the sender wants an answer. */
+  email?: string;
+  page: string;
   userId?: ObjectId;
-  rating: number;
-  text?: string;
-  ts: Date;
 }

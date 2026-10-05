@@ -1,0 +1,239 @@
+/* The public pages and forms (v13 M4): For business, the legal pages and the accessibility statement, the forms (lead, waitlist, feedback)
+   and the footer's extra links. Logical properties only. */
+
+/* ---------- Forms ---------- */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.form__row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-4);
+}
+.form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+.field__optional {
+  font-weight: 400;
+}
+.field__error {
+  color: var(--on-diff-tint);
+  font-size: var(--fs-small);
+  font-weight: 500;
+}
+.field .input[aria-invalid='true'] {
+  border-width: 2px;
+}
+.sent {
+  padding: var(--s-4) var(--s-5);
+  border: 1px solid var(--brand);
+  border-inline-start-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+}
+.sent__title {
+  margin-block-end: var(--s-1);
+}
+@media (max-width: 640px) {
+  .form__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .form__actions .btn {
+    inline-size: 100%;
+  }
+}
+.upgrade .panel {
+  margin-block-start: var(--s-3);
+}
+
+/* ---------- For business ---------- */
+.biz .view {
+  gap: var(--s-7);
+}
+.biz__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.biz__section > p {
+  max-inline-size: 68ch;
+}
+.biz__section > p,
+.biz__section li p {
+  color: var(--ink-2);
+}
+.how--biz {
+  margin-block-start: 0;
+}
+.biz__different {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-5) var(--s-6);
+  margin-block-start: var(--s-2);
+}
+.biz__different li {
+  padding-block-start: var(--s-3);
+  border-block-start: 1px solid var(--line);
+}
+.biz__different h3 {
+  margin-block-end: var(--s-1);
+}
+.biz__contact {
+  padding-block-start: var(--s-6);
+  border-block-start: 1px solid var(--line);
+  scroll-margin-block-start: var(--s-5);
+}
+.biz__contact .form {
+  max-inline-size: 640px;
+}
+.biz .btn {
+  text-decoration: none;
+}
+@media (max-width: 720px) {
+  .biz .view {
+    gap: var(--s-6);
+  }
+  .biz__different {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-4);
+  }
+}
+
+/* The plans: a table where there is room, one block per plan on a phone. */
+.plans {
+  inline-size: 100%;
+  border-collapse: collapse;
+}
+.plans th,
+.plans td {
+  padding: var(--s-3);
+  border-block-end: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+}
+.plans thead th {
+  border-block-end: 2px solid var(--line-strong);
+}
+.plans tbody th {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.plans__name {
+  display: block;
+  font-size: var(--fs-section);
+  font-weight: 500;
+}
+.plans__for {
+  display: block;
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  font-weight: 400;
+}
+.plans__narrow {
+  display: none;
+}
+.plan {
+  padding-block-start: var(--s-3);
+  border-block-start: 2px solid var(--line-strong);
+}
+.plan__list {
+  display: flex;
+  flex-direction: column;
+  margin: var(--s-3) 0 0;
+}
+.plan__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding-block: var(--s-2);
+  border-block-end: 1px solid var(--line);
+}
+.plan__row dt {
+  color: var(--ink-2);
+}
+.plan__row dd {
+  margin: 0;
+  font-weight: 500;
+  text-align: end;
+}
+@media (max-width: 720px) {
+  .plans__wide {
+    display: none;
+  }
+  .plans__narrow {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+}
+
+/* ---------- The legal pages and the accessibility statement ---------- */
+.legal__article {
+  max-inline-size: 760px;
+}
+.legal__toc {
+  padding: var(--s-4) var(--s-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.legal__toc-title {
+  margin-block-end: var(--s-2);
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+}
+.legal__toc ol {
+  columns: 2;
+  column-gap: var(--s-6);
+  padding-inline-start: 1.6em;
+  list-style: decimal;
+}
+.legal__toc li {
+  break-inside: avoid;
+  padding-block: 2px;
+}
+.legal__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  scroll-margin-block-start: var(--s-5);
+}
+.legal__section h2 {
+  margin-block-start: var(--s-3);
+}
+.legal__promise {
+  padding: var(--s-4) var(--s-5);
+  border-inline-start: 4px solid var(--brand);
+  border-radius: var(--radius-sm);
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+  font-size: var(--fs-section);
+  font-weight: 500;
+  line-height: 1.45;
+}
+@media (max-width: 640px) {
+  .legal__toc ol {
+    columns: 1;
+  }
+}
+
+/* ---------- Footer: the Feedback button reads like its neighbours' links ---------- */
+.app-footer__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.app-footer__link:hover {
+  color: var(--brand);
+}

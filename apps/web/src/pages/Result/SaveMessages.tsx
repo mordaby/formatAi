@@ -54,7 +54,7 @@ export function SaveFailureMessage({ failure, onSignIn, problemsTitle }: SaveFai
         upgrade || failure.limit === 'savedFormats' ? (
           <>
             {failure.limit === 'savedFormats' ? <Link to="/formats">{t('account.myFormats')}</Link> : null}
-            {upgrade ? <UpgradeButton /> : null}
+            {upgrade && failure.limit ? <UpgradeButton trigger={failure.limit} /> : null}
           </>
         ) : undefined
       }
