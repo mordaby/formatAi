@@ -129,6 +129,18 @@ export const en = {
   'expr.datePart.month': 'the month of {x}',
   'expr.datePart.day': 'the day of {x}',
   'expr.dateFormat': '{x} written as {f}',
+  'expr.toDate': '{x} read as {f}',
+  'expr.toDateEither': '{x} read as {cases}, otherwise as {f}',
+  'expr.toDateWhen': '{f} when it contains {s}',
+  // The tokens of a date format, in words ("YYYY-MM-DD" is "year-month-day")
+  'date.day': 'day',
+  'date.month': 'month',
+  'date.monthName': 'month name',
+  'date.monthShort': 'short month name',
+  'date.year': 'year',
+  'date.year2': 'two-digit year',
+  'date.weekday': 'weekday name',
+  'date.weekdayShort': 'short weekday name',
   'expr.datePlus': '{x} plus {amount}',
   'expr.dateMinus': '{x} minus {amount}',
   'expr.dateDiff': 'the number of {unit} between {a} and {b}',
@@ -233,6 +245,8 @@ export const en = {
   'check.cutoff.line': 'Check: {rule}. A value in between: {severity}',
   'check.sameAs': 'your example also fits {other} for {col}',
   'check.sameAs.line': 'Check: {rule}. A row where it gives a different value: {severity}',
+  'check.sameAs.oneTime': 'the rule for {col} has a part your example had on one row only; without it, {other}',
+  'check.sameAs.oneTime.line': 'Check: {rule}. A row where that part applies: {severity}',
 
   // Functions and tables
   'table.line': 'Table {name}: {count}, look up by {key} to get {cols}',
