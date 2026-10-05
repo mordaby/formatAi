@@ -69,6 +69,14 @@ learn too, and is never a learn of its own: however many rounds a learn takes, i
 `GET /api/session` returns `{ anonId, tier: 'free', limits, turnstileSiteKey? }` and sets the
 first-party `anonId` cookie (httpOnly, SameSite=Lax, Secure in production) on first contact.
 
+**The public forms** (SPEC 16.1 screens 7 and 9, 13; `src/contact/`): `POST /api/leads` (the "For business" form),
+`POST /api/waitlist` (the paid waitlist) and `POST /api/feedback` store `{ createdAt, kind, ... }` documents in `leads`
+(kinds `lead` and `waitlist`) and `feedback`. The body is checked with the shared `checkLead` / `checkWaitlist` /
+`checkFeedback` (`packages/shared/src/contact.ts`: caps from `limits.contact`, trimmed, only whitelisted fields kept; a bad body is
+`400 invalidRequest`). A visitor must send a Turnstile token (`403 turnstileFailed`; a signed-in user is not asked); every caller is
+limited per IP (`429 rateLimited`: 5 requests a minute in memory, and 20 stored forms per UTC day on a keyed hash of the IP in
+`usage_counters`). The IP is never stored. They exist in every environment and need no sign-in.
+
 Production (`NODE_ENV=production`) refuses to start without `TURNSTILE_SECRET_KEY`,
 `IP_HASH_SECRET` (or `SESSION_SECRET`) and `MONGODB_URI`. Behind a proxy or load balancer set
 `TRUST_PROXY` (number of hops, or `true`) so per-IP limits see the real client address. With no
