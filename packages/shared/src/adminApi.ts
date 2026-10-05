@@ -72,6 +72,8 @@ export interface AdminOverview {
     /** Estimated cost (`llm_calls.estimate.costUsd`) summed over the priced calls; null when none is priced. */
     costUsd: number | null;
     unpriced: number;
+    /** Calls the fallback provider made because the primary could not serve them (`llm_calls.fallback`, SPEC 9.6). */
+    fallbackCalls: number;
     /** One row per UTC day, oldest first, empty days included. */
     byDay: AdminDayRow[];
     byModel: AdminModelRow[];

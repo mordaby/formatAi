@@ -33,6 +33,7 @@ function overview(over: Partial<AdminOverview> = {}): AdminOverview {
       calls: 14,
       costUsd: 0.0425,
       unpriced: 2,
+      fallbackCalls: 3,
       byDay: [
         { day: '2026-10-03', aiCalls: 4, costUsd: 0.01 },
         { day: '2026-10-04', aiCalls: 6, costUsd: 0.0325 },
@@ -185,6 +186,7 @@ describe('the overview', () => {
     expect(within(row('Runs, all time')).getByText('41')).toBeTruthy();
     expect(within(row('AI calls')).getByText('14')).toBeTruthy();
     expect(within(row('Estimated cost')).getByText('$0.0425')).toBeTruthy();
+    expect(within(row('Calls made by the fallback provider')).getByText('3')).toBeTruthy();
     expect(screen.getByText(/2 calls have no price estimate/)).toBeTruthy();
 
     // per model: an unpriced model is n/a
@@ -212,7 +214,7 @@ describe('the overview', () => {
   });
 
   it('says there is no chart when no call is priced', async () => {
-    adminApp(adminApi({ overview: vi.fn(async () => overview({ llm: { calls: 0, costUsd: null, unpriced: 0, byDay: [{ day: '2026-10-05', aiCalls: 0, costUsd: null }], byModel: [] } })) }));
+    adminApp(adminApi({ overview: vi.fn(async () => overview({ llm: { calls: 0, costUsd: null, unpriced: 0, fallbackCalls: 0, byDay: [{ day: '2026-10-05', aiCalls: 0, costUsd: null }], byModel: [] } })) }));
     expect(await screen.findByText('No priced AI calls in this period.')).toBeTruthy();
     expect(screen.queryByRole('img')).toBeNull();
     expect(within(rowByLabel('Estimated cost')).getByText('n/a')).toBeTruthy();
