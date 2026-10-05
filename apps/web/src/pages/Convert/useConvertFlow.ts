@@ -11,7 +11,7 @@
 //                                             running -> done                each with its OWN review before writing
 //   after the last one: done (exactly one file) or results (several, or some not made: a download each, and a zip)
 import type { ConversionMatch, Flag, OutputSheet, RunError, RunSummary } from '@formatai/engine';
-import type { ConversionDetail, Rules, SignatureEntry, SourceConversionRef } from '@formatai/shared';
+import type { ConversionDetail, ConversionStatus, Rules, SignatureEntry, SourceConversionRef } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../../api/http';
 import { useConvertApi } from '../../api/convert';
@@ -35,6 +35,7 @@ import {
   formatsNeeding,
   newColumns,
   requiredAcross,
+  readAsFixes,
   reviewRows,
   runCounts,
   scopeSources,
@@ -42,8 +43,11 @@ import {
   toRowDecisions,
   withAliases,
   withChoice,
+  withoutSaved,
+  withReadAs,
   type Attention,
   type Choices,
+  type ReadAsFix,
   type ReviewRow,
   type RowChoice,
 } from './logic';
@@ -57,6 +61,20 @@ export interface Target {
   /** The SOURCE's name. */
   sourceName: string;
   rules: Rules;
+  /** The conversion's status when it was read: "Do this every time?" is not offered for one that needs review (saving would have to pick its status). */
+  status: ConversionStatus;
+  /** How many formats the SOURCE feeds (this one included): an input-side change reaches all of them, and the offer says so when it is more than one. */
+  sourceFormats: number;
+}
+
+/**
+ * A typed fix the user chose to keep ("Do this every time?", SPEC 5 C, 8.4a) and what became of it: `saved` is the new version of the conversion
+ * and how many other conversions of its source the change reached, or null when it could not be saved (the fix was still used for this file).
+ */
+export interface KeptRules {
+  formatName: string;
+  fixes: ReadAsFix[];
+  saved: { version: number; others: number } | null;
 }
 
 export type ConvertError = FlowError | { kind: 'unreadable' } | { kind: 'noTable' } | { kind: 'sheetNotFound' } | { kind: 'invalidRules' } | { kind: 'gone' };
@@ -135,6 +153,8 @@ export interface Job {
   bypass: string[];
   /** The new-column notice for this file, shown after the run. */
   notice: NewColumnsNotice | null;
+  /** Fixes the user kept as rules while reviewing this file ("Do this every time?"), and what became of each: told after the run. */
+  kept: KeptRules[];
 }
 
 /** "Format 2 of 3": shown while one of several conversions is under review. */
@@ -165,9 +185,9 @@ export type Phase =
   | { kind: 'review'; target: Target; step: Step | null; flags: Flag[]; summary: RunSummary; rowInputs: Record<number, RowInputCell[]>; rows: ReviewRow[]; choices: Choices }
   | { kind: 'writing'; target: Target }
   /** Exactly one file was made. */
-  | { kind: 'done'; target: Target; finished: Finished; notice: NewColumnsNotice | null }
+  | { kind: 'done'; target: Target; finished: Finished; notice: NewColumnsNotice | null; kept: KeptRules[] }
   /** Several formats were made (or some could not be, or need attention): a file each, and all of them in one zip. */
-  | { kind: 'results'; source: SignatureEntry; results: RunResult[]; failed: FailedFormat[]; notice: NewColumnsNotice | null }
+  | { kind: 'results'; source: SignatureEntry; results: RunResult[]; failed: FailedFormat[]; notice: NewColumnsNotice | null; kept: KeptRules[] }
   | { kind: 'error'; error: ConvertError };
 
 export type SourcesState = { status: 'loading' } | { status: 'ready'; entries: SignatureEntry[] } | { status: 'error' };
@@ -241,7 +261,7 @@ export function failureText(i18n: I18n, failure: FormatFailure, formatName = '')
 
 /** A job over `queue`, with nothing run yet. */
 function newJob(file: File, source: SignatureEntry, mapping: Record<string, string>, queue: SourceConversionRef[], failed: FailedFormat[], notice: NewColumnsNotice | null): Job {
-  return { file, source, mapping, queue, index: 0, results: [], failed, bypass: [], notice };
+  return { file, source, mapping, queue, index: 0, results: [], failed, bypass: [], notice, kept: [] };
 }
 
 /** The formats of a split that were not made, as the results list them. */
@@ -338,9 +358,9 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     finishedRef.current = job;
     if (job.results.length === 1 && job.failed.length === 0) {
       const only = job.results[0] as RunResult;
-      setPhase({ kind: 'done', target: only.target, finished: only.finished, notice: job.notice });
+      setPhase({ kind: 'done', target: only.target, finished: only.finished, notice: job.notice, kept: [...job.kept] });
     } else {
-      setPhase({ kind: 'results', source: job.source, results: [...job.results], failed: [...job.failed], notice: job.notice });
+      setPhase({ kind: 'results', source: job.source, results: [...job.results], failed: [...job.failed], notice: job.notice, kept: [...job.kept] });
     }
   }, []);
 
@@ -404,6 +424,8 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
           formatName: conv.formatName,
           sourceName: detail.sourceName,
           rules: withAliases(detail.rules, job.mapping),
+          status: detail.status,
+          sourceFormats: detail.sourceFormats,
         };
         setPhase({ kind: 'running', target });
         const out = await engine.convertWithDecisions(
@@ -710,6 +732,35 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   const skipAll = useCallback(() => setPhase((p) => (p.kind === 'review' ? { ...p, choices: applyToAll(p.rows, 'skip', p.choices) } : p)), []);
   const clearChoices = useCallback(() => setPhase((p) => (p.kind === 'review' ? { ...p, choices: {} } : p)), []);
 
+  /**
+   * "Do this every time?" (SPEC 5 C, 8.4a): the fixes the user kept become `readAs` on their input columns, saved as a NEW VERSION of the
+   * conversion through the route the rules editor saves with (so it is in the editor's list of versions, and restoring the one before it undoes it
+   * for the source and every format it feeds). The rules are read from the server again first (an alias saved a minute ago, an edit from another
+   * tab) and only the kept fixes are added to them, with that version as the base: a conversion changed meanwhile is a refusal, never an overwrite.
+   * Never throws but for a cancelled run: a save that fails says so (`saved: null`) and the fixes still apply to this file.
+   */
+  const saveKept = useCallback(
+    async (target: Target, fixes: ReadAsFix[], signal: AbortSignal): Promise<KeptRules> => {
+      const notSaved: KeptRules = { formatName: target.formatName, fixes, saved: null };
+      try {
+        const fresh = await api.conversion(target.conversionId, signal);
+        if (fresh.status === 'needsReview' || !fixes.every((x) => fresh.rules.input.columns.some((c) => c.id === x.columnId))) return notSaved;
+        const res = await api.saveRules(target.conversionId, {
+          rules: withReadAs(fresh.rules, fixes),
+          status: fresh.status,
+          acceptedDifferences: fresh.acceptedDifferences,
+          exampleExceptions: fresh.exampleExceptions,
+          baseVersion: fresh.version,
+        });
+        return { formatName: target.formatName, fixes, saved: { version: res.conversion.version, others: res.affectedConversions ?? 0 } };
+      } catch (e) {
+        if (isCancellation(e)) throw e;
+        return notSaved;
+      }
+    },
+    [api],
+  );
+
   const create = useCallback(() => {
     const current = phaseRef.current;
     const f = fileRef.current;
@@ -720,12 +771,30 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     setPhase({ kind: 'writing', target });
     void (async () => {
       try {
+        // DECISION: the rule is saved when the file is created, not when the fix is typed: until then the user can still undo the fix or change
+        // their mind, and one create is one new version however many fixes were kept. The run then goes on with the new rule in the rules
+        // it runs with, and the cells it was typed for leave the per-run fixes (the rule reads them now).
+        let rules = target.rules;
+        let choices = current.choices;
+        const fixes = readAsFixes(target.rules, current.rowInputs, current.choices);
+        if (fixes.length > 0) {
+          const kept = await saveKept(target, fixes, signal);
+          if (runId !== runRef.current) return;
+          job.kept.push(kept);
+          if (kept.saved) {
+            rules = withReadAs(target.rules, fixes);
+            choices = withoutSaved(current.choices, current.rowInputs, fixes);
+            // The server wrote the change to every conversion of the source: the ones still to run are read again, with it.
+            for (const c of job.source.conversions) detailsRef.current.delete(c.conversionId);
+          }
+        }
+        const made: Target = rules === target.rules ? target : { ...target, rules };
         const out = await engine.convertWithDecisions(
           {
-            rules: target.rules,
+            rules,
             file: { name: f.name, bytes: await f.arrayBuffer() },
             mode: 'write',
-            rowDecisions: toRowDecisions(current.choices),
+            rowDecisions: toRowDecisions(choices),
             previewRows: webConfig.convertPreviewRows,
           },
           { signal },
@@ -733,7 +802,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         if (runId !== runRef.current) return;
         if (!out.ok) setPhase({ kind: 'error', error: { kind: 'invalidRules' } });
         else if (out.written) {
-          keep(job, target, out);
+          keep(job, made, out);
           if (advance(job)) await drive(job, runId, signal);
           else showOutcome(job);
         }
@@ -741,7 +810,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         fail(runId, e);
       }
     })();
-  }, [begin, engine, fail, keep, drive, showOutcome]);
+  }, [begin, engine, fail, keep, drive, saveKept, showOutcome]);
 
   const download = useCallback(() => {
     const current = phaseRef.current;

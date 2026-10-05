@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "reference",
+        "header": "Reference",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "customer",
+        "header": "Customer",
+        "type": "text"
+      },
+      {
+        "id": "date",
+        "header": "Date",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "dateRead",
+        "type": "date",
+        "expr": {
+          "op": "if",
+          "cond": {
+            "op": "contains",
+            "arg": {
+              "col": "date"
+            },
+            "text": "-"
+          },
+          "then": {
+            "op": "toDate",
+            "arg": {
+              "col": "date"
+            },
+            "format": "YYYY-MM-DD"
+          },
+          "else": {
+            "op": "if",
+            "cond": {
+              "op": "contains",
+              "arg": {
+                "col": "date"
+              },
+              "text": " "
+            },
+            "then": {
+              "op": "toDate",
+              "arg": {
+                "col": "date"
+              },
+              "format": "D בMMMM YYYY"
+            },
+            "else": {
+              "op": "toDate",
+              "arg": {
+                "col": "date"
+              },
+              "format": "D/M/YYYY"
+            }
+          }
+        }
+      },
+      {
+        "id": "dateText",
+        "type": "text",
+        "expr": {
+          "op": "dateFormat",
+          "arg": {
+            "col": "dateRead"
+          },
+          "format": "YYYY-MM-DD"
+        }
+      },
+      {
+        "id": "period",
+        "type": "text",
+        "expr": {
+          "op": "dateFormat",
+          "arg": {
+            "col": "dateRead"
+          },
+          "format": "MM/YYYY"
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Payments",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Reference",
+        "from": "reference"
+      },
+      {
+        "header": "Customer",
+        "from": "customer"
+      },
+      {
+        "header": "Date",
+        "from": "dateText"
+      },
+      {
+        "header": "Period",
+        "from": "period"
+      },
+      {
+        "header": "Amount",
+        "from": "amount",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Payments export -> payments with period",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

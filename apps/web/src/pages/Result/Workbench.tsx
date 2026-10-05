@@ -3,10 +3,10 @@
 // format, or a saved source opened for editing - or what "save" means there: the caller passes the header's actions, banners
 // and (when there is no example in memory) what replaces the preview.
 import { missingParts, type AiColumnNote, type AiStepPartCode, type Format, type SourceStructure, type Tier } from '@formatai/shared';
-import type { PartialInfo } from '@formatai/engine';
+import type { AmbiguousColumn, PartialInfo } from '@formatai/engine';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LeaveGuard } from '../../app/LeaveGuard';
-import { availableInputs, lineIds, lockProblem, useEditor, useLiveCheck, metaStatusOf, differencesOf, type ApplyActionOptions, type EditLock, type EditableRules, type EditAction, type EditorStore, type ExampleInputColumn, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';
+import { applyReading, availableInputs, lineIds, lockProblem, questionOpen, useEditor, useLiveCheck, metaStatusOf, differencesOf, type ApplyActionOptions, type EditLock, type EditableRules, type EditAction, type EditorStore, type ExampleInputColumn, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';
 import { normalizeHeader } from '../../editor/rulesUtil';
 import { useI18n } from '../../i18n';
 import { describeRules, type Line, type VerificationLike } from '../../rulesText';
@@ -19,6 +19,7 @@ import { FlagsList } from './FlagsList';
 import { assumptionIndexes, columnMismatches, columnsWithoutRule, planAdd, type AddKind } from './helpers';
 import { LiveCheckStrip } from './LiveCheckStrip';
 import { PreviewGrid } from './PreviewGrid';
+import { ReadingQuestion } from './ReadingQuestion';
 import { ResultHeader, StatusBadge } from './ResultHeader';
 import { RulesMap } from './RulesMap';
 import { useApplied } from './useApplied';
@@ -51,6 +52,8 @@ export interface WorkbenchInfo {
   sourceFormats: number;
   editor: UseEditor;
   check: UseLiveCheck;
+  /** Opens a line of the rules map in the editor (`lineIds`): "Fix the rule". */
+  openLine(id: string): void;
 }
 
 export interface WorkbenchProps {
@@ -82,9 +85,16 @@ export interface WorkbenchProps {
   verification?: VerificationLike | null | undefined;
   /** learn-v7: what the AI step noted about the columns it could not build (its guess, a recorded function request): shown in the session only. */
   aiNotes?: ReadonlyMap<string, AiColumnNote> | undefined;
+  /**
+   * The columns the example fits more than one rule for (SPEC 21 v12 item 11): each one whose question is still open (its check is in the rules)
+   * is asked on its line in the map. Undefined / empty: no question.
+   */
+  ambiguous?: readonly AmbiguousColumn[] | undefined;
   name: string;
   onRename?: ((name: string) => void) | undefined;
   learnedNote: string;
+  /** After an AI learn: what code filled in the answer from the example, in one quiet line under `learnedNote` (SPEC 21 v12 item 16). */
+  filledNote?: string | undefined;
   /** Rows shown on screen (the free tier's 20); `null` = all. */
   previewLimit: number | null;
   onSignIn(): void;
@@ -246,6 +256,44 @@ export function Workbench(props: WorkbenchProps) {
     const plan = planAdd(rules, kind, { column: t('map.newColumn'), title: t('map.newTitle'), total: t('map.newTotal') });
     if (plan && applyEdit(plan.action).ok) open(plan.lineId);
   };
+  // The ambiguity question (SPEC 21 v12 item 11): the check that marks it as unanswered is in the rules while it is open, so deleting that check
+  // in the editor closes it too. An answer applies the reading and takes the check out, in one undoable edit. "Not sure yet" only folds the question.
+  // A question without a check (the day/month order, SPEC 21 v12 item 16) is open while the rules read its default reading; answering with the reading
+  // they already have changes nothing, so that answer closes it here (`settled`: this screen only - an undo of an answer that changed the rules opens it again).
+  const [unsure, setUnsure] = useState<ReadonlySet<string>>(new Set());
+  const [settled, setSettled] = useState<ReadonlySet<string>>(new Set());
+  const ask = useMemo(() => {
+    const open = (props.ambiguous ?? []).filter((c) => questionOpen(rules, c) && !(c.check === null && settled.has(c.header)));
+    if (open.length === 0) return undefined;
+    const answer = (column: AmbiguousColumn, index: number): void => {
+      const next = applyReading(editor.store.getState().rules, column, index, false);
+      if (!next) return;
+      editor.apply({ type: 'replaceRules', rules: next });
+      if (column.check === null && questionOpen(next, column)) setSettled((prev) => new Set(prev).add(column.header));
+    };
+    const fold = (header: string, folded: boolean): void =>
+      setUnsure((prev) => {
+        const next = new Set(prev);
+        if (folded) next.add(header);
+        else next.delete(header);
+        return next;
+      });
+    return (header: string): ReactNode => {
+      const column = open.find((c) => c.header === header);
+      if (!column) return null;
+      return (
+        <ReadingQuestion
+          column={column}
+          rules={rules}
+          unsure={unsure.has(header)}
+          disabled={lock !== null}
+          onAnswer={(index) => answer(column, index)}
+          onUnsure={() => fold(header, true)}
+          onReopen={() => fold(header, false)}
+        />
+      );
+    };
+  }, [props.ambiguous, rules, unsure, settled, lock, editor]);
   const keep = (line: Line): void => {
     // From the last to the first, so the indexes still mean what they meant.
     for (const index of assumptionIndexes(rules, line).reverse()) editor.apply({ type: 'dismissAssumption', index });
@@ -309,6 +357,7 @@ export function Workbench(props: WorkbenchProps) {
     sourceFormats: editor.state.source?.formats ?? 1,
     editor,
     check,
+    openLine: open,
   };
 
   const panelOpen = advanced || selectedId !== null;
@@ -325,6 +374,7 @@ export function Workbench(props: WorkbenchProps) {
             onRename={props.onRename}
             badge={<StatusBadge tone={badge.tone} text={badge.text} {...(badge.busy ? { busy: true } : {})} />}
             learnedNote={props.learnedNote}
+            filledNote={props.filledNote}
             canUndo={editor.canUndo && !lock}
             canRedo={editor.canRedo && !lock}
             onUndo={editor.undo}
@@ -355,6 +405,7 @@ export function Workbench(props: WorkbenchProps) {
                 noExample={noExample}
                 applied={applied}
                 aiNotes={props.aiNotes}
+                ask={ask}
               />
               <p className="workbench__advanced">
                 <Button

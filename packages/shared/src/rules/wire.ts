@@ -43,6 +43,7 @@ import { z } from 'zod';
 import type { SummaryAgg } from '../payload';
 import {
   AssumptionSchema,
+  buildAlternativeSchema,
   buildComputedSchema,
   buildExpandSchema,
   buildGroupSchema,
@@ -60,7 +61,7 @@ import {
   StopAtSchema,
   SummaryAggSchema,
   buildUnsupportedSchema,
-  ValidationSchema,
+  AiValidationSchema,
   type Expand,
   type Expr,
   type Group,
@@ -140,11 +141,15 @@ const WireRulesFunctionSchema = buildRulesFunctionSchema(WireExprSchema);
 // learn-v7: the optional functionRequest / explanation notes, with no pattern or length caps on the wire (see `buildFunctionRequestSchema`).
 const WireUnsupportedSchema = buildUnsupportedSchema(false);
 
+// `readAs` (SPEC 8.4a) is not on the wire: it holds the user's own text (what "Do this every time?" saved on the Run screen), the AI never writes
+// it and is never shown it - so the schema sent to the provider is the one it always was, and `toWire` / `fromWire` below drop it.
+const WireInputColumnSchema = InputColumnSchema.omit({ readAs: true });
+
 const WireRulesInputSchema = z.strictObject({
   sheet: InputSheetSelectorSchema,
   headerRow: HeaderRowSchema,
   stopAt: StopAtSchema.optional(),
-  columns: z.array(InputColumnSchema).min(1),
+  columns: z.array(WireInputColumnSchema).min(1),
   rowFilters: z.array(WireRowFilterSchema).optional(),
 });
 
@@ -163,15 +168,28 @@ const WireRulesTransformSchema = z.strictObject({
  * `learnResultWireJsonSchema()` - never called with `.parse()`/`.safeParse()` directly.
  * The real validation gate is `LearnResultSchema` (SPEC 9.2 layer 1), run on
  * `fromWire`'s output. */
-const WireLearnResultSchema = z.strictObject({
+const wireLearnResultShape = {
   schemaVersion: z.literal(1),
   input: WireRulesInputSchema,
   transform: WireRulesTransformSchema,
   output: WireRulesOutputSchema,
-  validations: z.array(ValidationSchema),
+  validations: z.array(AiValidationSchema),
   unsupported: z.array(WireUnsupportedSchema),
   assumptions: z.array(AssumptionSchema),
-});
+};
+const WireLearnResultSchema = z.strictObject(wireLearnResultShape);
+
+// learn-v8: an optional top-level `alternatives` list - a second rule for an output column, in the same terms as an output column's
+// `from` and computed columns (formula text). No `maxItems` (not every structured-output provider takes it): the cap is
+// `limits.learn.maxAlternatives`, said in the prompt and enforced by the API, which drops the rest. Optional, so an answer without it
+// (every learn-v7 answer) is as valid as before.
+const WireAlternativeSchema = buildAlternativeSchema(WireExprSchema);
+const WireLearnResultWithAlternativesSchema = z.strictObject({ ...wireLearnResultShape, alternatives: z.array(WireAlternativeSchema).optional() });
+
+export interface WireSchemaOptions {
+  /** Whether the answer may carry `alternatives` (learn-v8 and later; default true). learn-v7 is sent the schema it was written for. */
+  alternatives?: boolean;
+}
 
 /**
  * The JSON Schema sent to the LLM as the structured-output constraint for a learn or
@@ -180,8 +198,24 @@ const WireLearnResultSchema = z.strictObject({
  * the file doc comment). Use this - never `./jsonSchema.ts`'s `learnResultJsonSchema()` -
  * as the `schema` passed to `apps/api/src/llm`'s `complete()`.
  */
-export function learnResultWireJsonSchema(): Record<string, unknown> {
-  return z.toJSONSchema(WireLearnResultSchema) as Record<string, unknown>;
+export function learnResultWireJsonSchema(opts: WireSchemaOptions = {}): Record<string, unknown> {
+  return z.toJSONSchema(wireAnswerSchema(opts)) as Record<string, unknown>;
+}
+
+/** The zod schema behind `learnResultWireJsonSchema` (tests read what it accepts; the API's gate is `LearnResultSchema` after `fromWire`). */
+export function wireAnswerSchema(opts: WireSchemaOptions = {}): z.ZodType {
+  return opts.alternatives === false ? WireLearnResultSchema : WireLearnResultWithAlternativesSchema;
+}
+
+/**
+ * Takes the learn-v8 `alternatives` off a raw (untrusted, not yet validated) answer, so the answer itself is checked exactly as before
+ * (`LearnResultSchema` is strict and knows nothing of them) and each alternative on its own. `alternatives` is the raw list (or undefined
+ * when the answer has none, or it is not a list).
+ */
+export function splitAlternatives(json: unknown): { answer: unknown; alternatives: unknown[] | undefined } {
+  if (!isRecord(json) || !('alternatives' in json)) return { answer: json, alternatives: undefined };
+  const { alternatives, ...answer } = json;
+  return { answer, alternatives: Array.isArray(alternatives) ? alternatives : undefined };
 }
 
 // ---------- Wire-shaped TypeScript types (derived from the real interfaces) ----------
@@ -257,12 +291,19 @@ function outputToWire(output: RulesOutput): WireRulesOutput {
 export function toWire<T extends LearnResult>(rules: T): WireLearnResult<T> {
   return {
     ...rules,
+    input: { ...rules.input, columns: rules.input.columns.map(({ readAs: _readAs, ...column }) => column) },
     transform: transformToWire(rules.transform),
     output: outputToWire(rules.output),
   };
 }
 
 // ---------- fromWire: wire (pairs, untrusted) -> real (record-shaped) ----------
+
+/** An answer never carries `readAs` (SPEC 8.4a): a provider that does not hold to the wire schema cannot slip one in. */
+function inputFromWire(input: unknown): unknown {
+  if (!isRecord(input) || !Array.isArray(input.columns)) return input;
+  return { ...input, columns: input.columns.map((c) => (isRecord(c) && 'readAs' in c ? Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'readAs')) : c)) };
+}
 
 function summaryRowFromWire(row: unknown): unknown {
   if (!isRecord(row)) return row;
@@ -332,6 +373,7 @@ export function fromWire(json: unknown): unknown {
   if (!isRecord(json)) return json;
   return {
     ...json,
+    input: json.input === undefined ? undefined : inputFromWire(json.input),
     transform: json.transform === undefined ? undefined : transformFromWire(json.transform),
     output: json.output === undefined ? undefined : outputFromWire(json.output),
   };

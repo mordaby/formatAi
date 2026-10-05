@@ -1,0 +1,13 @@
+{
+  "difficulty": "hard",
+  "domain": "salesByBranch",
+  "features": [
+    "lookupTable",
+    "fiftyValues",
+    "rareValues",
+    "nameNotDerivableFromCode",
+    "lookupWithCondition",
+    "newMixNextMonth"
+  ],
+  "expect": "verified"
+}

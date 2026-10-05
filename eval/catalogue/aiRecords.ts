@@ -1,6 +1,7 @@
 // The pure side of the AI measurement (no engine, no API, no LLM): which types need the AI step, how the needs-AI set is split into
 // chunks, which (type, seed) pairs `--resume` skips, how records are merged into results.json, and what an AI record counts as.
 // The measurement itself (it calls the real learn flow) is ai.ts.
+import { sumEstimates, type TokenEstimate } from '@formatai/shared';
 import type { Chunk } from './args';
 import type { AiConfigRecord, AiRecord, CatalogueRecord, CatalogueType } from './types';
 
@@ -23,6 +24,15 @@ export function aiConfigKey(c: Pick<AiConfigRecord, 'model' | 'mode' | 'masking'
 
 export function sameAiConfig(a: AiConfigRecord, b: AiConfigRecord): boolean {
   return aiConfigKey(a) === aiConfigKey(b);
+}
+
+// ---------- Our own token estimate ----------
+
+/** The estimates of the records that carry one (a record measured before the estimate existed has none), added up, and how many records that is.
+ * The cost is null as soon as one of them has no price. A mean per record is the total over `records`. */
+export function estimateTotals(records: readonly AiRecord[]): { records: number; total: TokenEstimate } {
+  const have = records.flatMap((a) => (a.estimate ? [a.estimate] : []));
+  return { records: have.length, total: sumEstimates(have) };
 }
 
 // ---------- The needs-AI set ----------

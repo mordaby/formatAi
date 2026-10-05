@@ -1,0 +1,17 @@
+{
+  "difficulty": "stress",
+  "domain": "salesOrders",
+  "features": [
+    "emptyCells",
+    "unreadableAmount",
+    "amountAsTextWithCurrency",
+    "impossibleDate",
+    "dateAsIsoText",
+    "paddedNames",
+    "duplicateRowStays",
+    "newBrokenKindsNextMonth",
+    "flagNotGuess"
+  ],
+  "expect": "verified",
+  "expectNote": "the cleanup is learned (names trimmed, \"1,250.00 ₪\" read as 1250, an ISO text date read as a date, a duplicate row left in, a cell nobody can read left EMPTY); next month's new broken cells (\"-\" or \"1.250,00\" as an Amount, the date \"12/13/2026\", a negative Amount, a row with only the Order ID) are flagged for review, not guessed. May break: the unreadable cell is kept as text instead of left empty, or guessed (\"1.250,00\" as 1250, \"12/13/2026\" as 13 December), or the whole row is dropped."
+}

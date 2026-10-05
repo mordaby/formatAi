@@ -52,6 +52,9 @@ export interface BuildPayloadResult {
    * back onto the original sheets. `out` has one entry for a pair, or one per
    * family row when rows expand. */
   sampleRows: { in: number; out: number[] }[];
+  /** The input rows (indices into `analysis.input.rows`) of `payload.dropped`, in the same order: with `sampleRows`, every row the
+   * payload already sends, which the learning loop never sends again. */
+  droppedRows: number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +109,8 @@ function buildFamilySample(analysis: PairAnalysis, family: Family): { sample: Sa
 
 // ---------------------------------------------------------------------------
 // Sample selection: first rows, empty cells, extreme values, must-include
-// failing rows, then filler - up to the cap (SPEC 7.3).
+// failing rows, then filler - up to the cap (SPEC 7.3). A pair that repeats one
+// already chosen (same input AND output values) takes no slot.
 // ---------------------------------------------------------------------------
 
 function hasEmptyCell(analysis: PairAnalysis, alignedRow: number): boolean {
@@ -165,22 +169,40 @@ function extremeValueRows(analysis: PairAnalysis): number[] {
   return [...rows];
 }
 
-function buildPairPriority(analysis: PairAnalysis, mustInclude: ReadonlySet<number>): number[] {
+/**
+ * What an aligned pair holds, compared on the REAL values (before masking and truncation): its input cells and its output cells. Two pairs
+ * with the same key teach the AI step the same thing.
+ */
+function pairContentKey(analysis: PairAnalysis, alignedRow: number): string {
+  const { in: inRow, out: outRow } = analysis.alignment.rows[alignedRow]!;
+  return JSON.stringify([rowCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904), outputRowCells(analysis, outRow)]);
+}
+
+/**
+ * The aligned pairs to send, in priority order, at most `cap` (proposal 3.1 follow-up, owner decision 2026-10-04): a pair whose input cells
+ * AND output cells equal a pair already chosen takes no slot - the AI step would see the same row twice. Pairs with the same input and a
+ * different output (a row number, a "duplicate" flag, a running total) are informative and are kept. A must-include row (a failing row of
+ * a hint) is always sent, even when an earlier row holds the same values. Dropped rows are chosen elsewhere and are unaffected.
+ */
+export function buildPairPriority(analysis: PairAnalysis, mustInclude: ReadonlySet<number>, cap: number): number[] {
   const K = analysis.alignment.rows.length;
   const order: number[] = [];
   const seen = new Set<number>();
-  const push = (k: number): void => {
-    if (k >= 0 && k < K && !seen.has(k)) {
-      seen.add(k);
-      order.push(k);
-    }
+  const contents = new Set<string>();
+  const push = (k: number, always = false): void => {
+    if (order.length >= cap || k < 0 || k >= K || seen.has(k)) return;
+    seen.add(k);
+    const content = pairContentKey(analysis, k);
+    if (!always && contents.has(content)) return;
+    contents.add(content);
+    order.push(k);
   };
-  for (const k of mustInclude) push(k);
-  const firstRowsTarget = mustInclude.size + 3;
+  for (const k of mustInclude) push(k, true);
+  const firstRowsTarget = Math.min(cap, mustInclude.size + 3);
   for (let k = 0; k < K && order.length < firstRowsTarget; k++) push(k);
   for (let k = 0; k < K; k++) if (hasEmptyCell(analysis, k)) push(k);
   for (const k of extremeValueRows(analysis)) push(k);
-  for (let k = 0; k < K; k++) push(k); // filler: everything else, in row order
+  for (let k = 0; k < K && order.length < cap; k++) push(k); // filler: everything else, in row order
   return order;
 }
 
@@ -348,6 +370,27 @@ function finishSample(sample: Sample, analysis: PairAnalysis, masker: Masker | u
   return truncateSample(masker ? maskSample(sample, analysis, masker) : sample, maxChars);
 }
 
+/**
+ * The learning loop (`learn/loop.ts`): one row of the example as a sample, built, masked and truncated exactly like the payload's own
+ * samples (the same masker, so a value has the same fake word in every round). When rows expand it is the whole family (the input row and
+ * all its output rows); a row the example dropped is the input row with no output rows (`out: []`: the rules must make nothing for it).
+ */
+export function counterexampleSample(analysis: PairAnalysis, inRow: number, masker?: Masker, maxCellChars: number = limits.payload.maxCellChars): Sample {
+  const aligned = analysis.alignment.rows.flatMap((r, k) => (r.in === inRow ? [k] : []));
+  const inCells = rowCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904);
+  let sample: Sample;
+  if (aligned.length === 0) {
+    sample = { in: inCells, out: [] as PayloadCell[][] };
+  } else if (analysis.shape.kind === 'families') {
+    const family = analysis.shape.families.find((f) => f.in === inRow);
+    // (every aligned input row is in a family; were one not, its aligned rows are the family)
+    sample = family ? buildFamilySample(analysis, family).sample : { in: inCells, out: aligned.map((k) => outputRowCells(analysis, analysis.alignment.rows[k]!.out)) };
+  } else {
+    sample = buildPairSample(analysis, aligned[0]!).sample;
+  }
+  return finishSample(sample, analysis, masker, maxCellChars);
+}
+
 function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Masker): ColumnHint {
   if (h.rel === 'valueMap') {
     const inType = analysis.input.profile[h.in[0]]?.type ?? 'text';
@@ -495,13 +538,13 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
   const hints = relationsToHints(analysis, preflight);
   const must = mustIncludeRows(hints, families, isFamilies);
 
-  const pairPriority = isFamilies ? [] : buildPairPriority(analysis, must.pairRows).slice(0, caps.maxPairs);
+  const pairPriority = isFamilies ? [] : buildPairPriority(analysis, must.pairRows, caps.maxPairs);
   const familyPriority = isFamilies ? buildFamilyPriority(families, must.familyIdx).slice(0, caps.maxFamilies) : [];
   const droppedPriority = buildDroppedPriority(analysis, must.droppedRows).slice(0, caps.maxDropped);
 
   // ---- masking setup: label words registered once, up front ----
   // SPEC 7.2: a label word is one that appears in NO data cell of the example - every row, not only the rows this payload sends: the
-  // repair call's problems quote cells of rows the samples do not carry, and a word that sits in one of them must be masked there.
+  // learning loop (`learn/loop.ts`) sends more rows later with the same masker, and a word that sits in one of them must be masked there.
   if (masker) masker.addLabelWords(labelWordsOf(analysis, extractWords(collectLabelTexts(analysis, opts.target, opts.complete))));
 
   const maskedHints = masker ? maskHintList(hints, analysis, masker) : hints;
@@ -569,7 +612,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
     if (opts.target) payload.target = buildTargetPayload(opts.target, masker);
     if (opts.complete) payload.complete = completePayloadOf(opts.complete, masker);
 
-    return { payload, sampleRows: samplesBuilt.sampleRows };
+    return { payload, sampleRows: samplesBuilt.sampleRows, droppedRows: [...droppedPriority] };
   };
 
   let result = finalize();

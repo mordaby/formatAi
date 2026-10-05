@@ -1,7 +1,7 @@
 // The worker methods of "convert a file" and "batch", run for real (the engine, the RPC runtime and client, in-process):
 // what matching says about a file's headers, the review that stops BEFORE the file is written, the row decisions applied
 // to the written file, and the batch's zip and summary workbook.
-import { readWorkbook, readZip } from '@formatai/engine';
+import { readWorkbook, readZip, writeXlsxWorkbook } from '@formatai/engine';
 import { describe, expect, it } from 'vitest';
 import { createEngineClient } from '../src/worker/engineClient';
 import { engineMethods } from '../src/worker/engineMethods';
@@ -86,13 +86,49 @@ describe('convertWithDecisions', () => {
     if (!out.ok || out.written) throw new Error('expected a review');
     expect(out.flags.map((f) => [f.rowNumber, f.column])).toEqual(expect.arrayContaining([[3, 'c_code'], [3, 'c_qty']]));
     expect(out.flags.find((f) => f.column === 'c_code')?.suggestion).toBe('00123');
+    // A CSV cell is text, and says so (`isText`: the cells "Do this every time?" can be offered for).
     expect(out.rowInputs[3]).toEqual([
-      { columnId: 'c_code', header: 'Item Code', value: '123' },
-      { columnId: 'c_qty', header: 'Qty', value: 'abc' },
-      { columnId: 'c_price', header: 'Price', value: '3' },
+      { columnId: 'c_code', header: 'Item Code', value: '123', isText: true },
+      { columnId: 'c_qty', header: 'Qty', value: 'abc', isText: true },
+      { columnId: 'c_price', header: 'Price', value: '3', isText: true },
     ]);
     expect(Object.keys(out.rowInputs)).toEqual(['3']);
     expect('bytes' in out).toBe(false);
+  });
+
+  it('only a cell that IS text says so: a number, a date and an empty cell do not (a readAs rule would never match them)', async () => {
+    const date = (d: number) => ({ v: d, isDate: true, z: 'dd/mm/yyyy' });
+    const sheet = {
+      name: 'Sheet1',
+      direction: 'ltr' as const,
+      language: 'en' as const,
+      columns: [{ header: 'Item Code' }, { header: 'Qty' }, { header: 'Price' }, { header: 'When' }],
+      rows: [
+        { kind: 'header' as const, cells: ['Item Code', 'Qty', 'Price', 'When'].map((h) => ({ v: h })) },
+        { kind: 'data' as const, cells: [{ v: '123' }, { v: 'abc' }, { v: 3.5 }, date(45293)] },
+        { kind: 'data' as const, cells: [{ v: '00002' }, { v: 'abc' }, { v: null }, date(45294)] },
+      ],
+      merges: [],
+    };
+    const bytes = (await writeXlsxWorkbook([sheet])).slice().buffer as ArrayBuffer;
+    const rules = { ...RULES, input: { ...RULES.input, columns: [...RULES.input.columns, { id: 'c_when', header: 'When', type: 'date' as const }] } };
+    const out = await engine().convertWithDecisions({ rules, file: { name: 'a.xlsx', bytes }, mode: 'review', previewRows: 10 });
+    if (!out.ok || out.written) throw new Error('expected a review');
+    const cells = out.rowInputs[2]!;
+    expect(cells.map((c) => [c.columnId, c.isText === true])).toEqual([['c_code', true], ['c_qty', true], ['c_price', false], ['c_when', false]]);
+    expect(out.rowInputs[3]!.find((c) => c.columnId === 'c_price')).toEqual({ columnId: 'c_price', header: 'Price', value: null });
+  });
+
+  it('rules whose column reads a text another way (readAs, SPEC 8.4a) are run with it: the text is not flagged, and the written file has the value', async () => {
+    const e = engine();
+    const withMap = (readAs: Record<string, string>) => ({ ...RULES, input: { ...RULES.input, columns: RULES.input.columns.map((c) => (c.id === 'c_qty' ? { ...c, readAs } : c)) } });
+    const empty = await e.convertWithDecisions({ rules: withMap({ abc: '' }), file: file('a.csv', SUPPLIER_A_CSV), mode: 'review', previewRows: 10 });
+    if (!empty.ok || empty.written) throw new Error('expected a review (the short code is still flagged)');
+    expect(empty.flags.map((f) => [f.rowNumber, f.column])).toEqual([[3, 'c_code']]);
+    const value = await e.convertWithDecisions({ rules: withMap({ abc: '9' }), file: file('a.csv', SUPPLIER_A_CSV), mode: 'write', previewRows: 10, rowDecisions: { 3: { action: 'keep' } } });
+    if (!value.ok || !value.written) throw new Error('expected a file');
+    expect(dec(value.bytes)).toContain('123,9,3');
+    expect(value.flags.map((f) => f.column)).toEqual(['c_code']);
   });
 
   it('review mode writes straight away when nothing is flagged', async () => {

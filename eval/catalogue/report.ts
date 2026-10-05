@@ -1,7 +1,7 @@
 // Turns the measurement records into the capability map (report.md) and a flat CSV. Pure functions over `CatalogueRecord[]`.
 // With AI results in the records (`run-catalogue.ts --ai <model>`, see ai.ts) the report gains the "AI learns it" column and an AI section;
 // without any, nothing about the report differs from the free-run report.
-import { aiConfigKey, aiStatusOf, type AiStatus } from './aiRecords';
+import { aiConfigKey, aiStatusOf, estimateTotals, type AiStatus } from './aiRecords';
 import { CAPABILITIES, CAPABILITY_FAMILY_TITLES, type CapabilityId } from './capabilities';
 import { TOPICS, TOPIC_TITLES, type AiRecord, type CatalogueRecord, type FastStatus, type TopicId } from './types';
 
@@ -117,6 +117,8 @@ export interface AiGroupStats {
   avgTokensOut: number;
   avgTokensCached: number;
   avgLatencyMs: number;
+  /** Our own token estimate over the answered records that carry one (`records` of them): the total; a mean per record is the total over `records`. */
+  est: { records: number; inTokens: number; cachedTokens: number; cacheWriteTokens: number; outTokens: number; costUsd: number | null };
   formulaErrors: number;
   /** The AI's unsupported codes / the functions it asked for, most frequent first; records with an explanation. */
   unsupported: [string, number][];
@@ -137,6 +139,8 @@ export interface AiSummary {
   tokensOut: number;
   tokensCached: number;
   costUsd: number;
+  /** Our own token estimate over every measurement that carries one. */
+  est: AiGroupStats['est'];
   latencyMs: number;
 }
 
@@ -233,6 +237,11 @@ function tally(items: readonly string[]): [string, number][] {
   return [...m].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
 }
 
+function estOf(records: readonly AiRecord[]): AiGroupStats['est'] {
+  const { records: n, total } = estimateTotals(records);
+  return { records: n, inTokens: total.inputTokens, cachedTokens: total.cachedInputTokens, cacheWriteTokens: total.cacheWriteTokens, outTokens: total.outputTokens, costUsd: total.costUsd };
+}
+
 function aiGroup(label: string, ts: TypeSummary[]): AiGroupStats {
   const run = ts.filter((t) => t.ai !== undefined && t.ai.status !== 'error');
   const count = (st: AiStatus): number => ts.filter((t) => t.ai?.status === st).length;
@@ -257,6 +266,7 @@ function aiGroup(label: string, ts: TypeSummary[]): AiGroupStats {
     avgTokensOut: avg((a) => a.tokensOut),
     avgTokensCached: avg((a) => a.tokensCached),
     avgLatencyMs: avg((a) => a.latencyMs),
+    est: estOf(answered),
     formulaErrors: answered.reduce((n, a) => n + a.formulaErrors, 0),
     unsupported: tally(answered.flatMap((a) => a.unsupported)),
     functionRequests: tally(answered.flatMap((a) => a.functionRequests)),
@@ -287,6 +297,7 @@ function aiSummary(types: TypeSummary[], records: CatalogueRecord[]): AiSummary 
     tokensOut: all.reduce((n, a) => n + a.tokensOut, 0),
     tokensCached: all.reduce((n, a) => n + a.tokensCached, 0),
     costUsd: all.reduce((n, a) => n + a.costUsd, 0),
+    est: estOf(all),
     latencyMs: all.reduce((n, a) => n + a.latencyMs, 0),
   };
 }
@@ -469,6 +480,14 @@ const dec = (x: number): string => (Number.isInteger(x) ? String(x) : x.toFixed(
 const kilo = (x: number): string => (x >= 1000 ? `${(x / 1000).toFixed(1)}k` : dec(Math.round(x * 10) / 10));
 const topList = (xs: readonly [string, number][], n = 4): string => (xs.length === 0 ? '—' : xs.slice(0, n).map(([k, c]) => `${k} ×${c}`).join(', ') + (xs.length > n ? `, +${xs.length - n} more` : ''));
 const seconds = (ms: number): string => (ms / 1000).toFixed(1);
+const money = (v: number | null): string => (v === null ? 'n/a' : `$${v.toFixed(v < 1 ? 4 : 2)}`);
+
+/** The mean per record of an estimate total, as "in / cached / write / out" tokens and the cost ("—" when no record carries one). */
+function estCells(e: AiGroupStats['est']): [string, string] {
+  if (e.records === 0) return ['—', '—'];
+  const mean = (n: number): string => kilo(n / e.records);
+  return [`${mean(e.inTokens)} / ${mean(e.cachedTokens)} / ${mean(e.cacheWriteTokens)} / ${mean(e.outTokens)}`, money(e.costUsd === null ? null : e.costUsd / e.records)];
+}
 
 /** The AI section of the report (only when the records carry AI results). */
 function renderAiSection(s: Summary, ai: AiSummary): string[] {
@@ -495,6 +514,10 @@ function renderAiSection(s: Summary, ai: AiSummary): string[] {
   out.push(`| Share learned (of those run) | ${g.learned + g.verifiedOnly + g.failed > 0 ? pct(g.share) : '—'} |`);
   out.push(`| Tokens in / out / cached, all measurements | ${kilo(ai.tokensIn)} / ${kilo(ai.tokensOut)} / ${kilo(ai.tokensCached)} |`);
   if (ai.costUsd > 0) out.push(`| Cost reported by the provider | $${ai.costUsd.toFixed(2)} |`);
+  if (ai.est.records > 0) {
+    out.push(`| Estimated tokens in / cached / cache write / out, all measurements (our own count) | ${kilo(ai.est.inTokens)} / ${kilo(ai.est.cachedTokens)} / ${kilo(ai.est.cacheWriteTokens)} / ${kilo(ai.est.outTokens)} |`);
+    out.push(`| Estimated cost at the published prices, all measurements | ${money(ai.est.costUsd)} |`);
+  }
   out.push(`| Time in LLM calls | ${seconds(ai.latencyMs)} s |`);
   out.push('');
   if (ai.notRun.length > 0) {
@@ -504,13 +527,14 @@ function renderAiSection(s: Summary, ai: AiSummary): string[] {
 
   out.push('### By topic');
   out.push('');
-  out.push('| Topic | Needs AI | Run | ✓ | ~ | ✗ | Share learned | Avg calls | Avg tokens in / out (cached) | Avg latency | Formula errors | Top unsupported codes | Function requests (named) | Explained |');
-  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+  out.push('| Topic | Needs AI | Run | ✓ | ~ | ✗ | Share learned | Avg calls | Avg tokens in / out (cached) | Avg est. tokens in / cached / write / out | Avg est. cost | Avg latency | Formula errors | Top unsupported codes | Function requests (named) | Explained |');
+  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const x of [...ai.topics, ai.total]) {
     const run = x.learned + x.verifiedOnly + x.failed;
     const tokens = `${kilo(x.avgTokensIn)} / ${kilo(x.avgTokensOut)} (${kilo(x.avgTokensCached)})`;
+    const [estTokens, estCost] = estCells(x.est);
     out.push(
-      `| ${x === ai.total ? '**All**' : x.label} | ${x.needsAi} | ${run}${x.errors > 0 ? ` (+${x.errors} error)` : ''} | ${x.learned} | ${x.verifiedOnly} | ${x.failed} | ${run > 0 ? pct(x.share) : '—'} | ${run > 0 ? dec(Math.round(x.avgCalls * 10) / 10) : '—'} | ${run > 0 ? tokens : '—'} | ${run > 0 ? `${seconds(x.avgLatencyMs)} s` : '—'} | ${x.formulaErrors} | ${cell(topList(x.unsupported))} | ${cell(topList(x.functionRequests))} | ${x.explanations} |`,
+      `| ${x === ai.total ? '**All**' : x.label} | ${x.needsAi} | ${run}${x.errors > 0 ? ` (+${x.errors} error)` : ''} | ${x.learned} | ${x.verifiedOnly} | ${x.failed} | ${run > 0 ? pct(x.share) : '—'} | ${run > 0 ? dec(Math.round(x.avgCalls * 10) / 10) : '—'} | ${run > 0 ? tokens : '—'} | ${run > 0 ? estTokens : '—'} | ${run > 0 ? estCost : '—'} | ${run > 0 ? `${seconds(x.avgLatencyMs)} s` : '—'} | ${x.formulaErrors} | ${cell(topList(x.unsupported))} | ${cell(topList(x.functionRequests))} | ${x.explanations} |`,
     );
   }
   out.push('');
@@ -519,8 +543,8 @@ function renderAiSection(s: Summary, ai: AiSummary): string[] {
 
   out.push('### Per type');
   out.push('');
-  out.push('| Type | AI learns it | Path | Calls | Tokens in / out (cached) | Latency | Formula errors | Unsupported | Function request | Explained |');
-  out.push('|---|---|---|---|---|---|---|---|---|---|');
+  out.push('| Type | AI learns it | Path | Calls | Tokens in / out (cached) | Est. tokens in / cached / write / out | Est. cost | Latency | Formula errors | Unsupported | Function request | Explained |');
+  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const topic of TOPICS) {
     for (const t of s.types.filter((y) => y.topic === topic && y.ai !== undefined)) {
       const rs = t.ai!.records;
@@ -529,13 +553,14 @@ function renderAiSection(s: Summary, ai: AiSummary): string[] {
       const unsupported = [...new Set(rs.flatMap((a) => a.unsupported))].join(', ');
       const requests = [...new Set(rs.flatMap((a) => a.functionRequests))].join(', ');
       const tokens = `${kilo(mean((a) => a.tokensIn))} / ${kilo(mean((a) => a.tokensOut))} (${kilo(mean((a) => a.tokensCached))})`;
+      const [estTokens, estCost] = estCells(estOf(rs));
       out.push(
-        `| \`${t.type}\` | ${cell(aiCell(t))} | ${paths} | ${dec(Math.round(mean((a) => a.llmCalls) * 10) / 10)} | ${tokens} | ${seconds(mean((a) => a.latencyMs))} s | ${rs.reduce((n, a) => n + a.formulaErrors, 0)} | ${unsupported || '—'} | ${requests || '—'} | ${rs.some((a) => a.explanation) ? 'yes' : '—'} |`,
+        `| \`${t.type}\` | ${cell(aiCell(t))} | ${paths} | ${dec(Math.round(mean((a) => a.llmCalls) * 10) / 10)} | ${tokens} | ${estTokens} | ${estCost} | ${seconds(mean((a) => a.latencyMs))} s | ${rs.reduce((n, a) => n + a.formulaErrors, 0)} | ${unsupported || '—'} | ${requests || '—'} | ${rs.some((a) => a.explanation) ? 'yes' : '—'} |`,
       );
     }
   }
   out.push('');
-  out.push('Calls, tokens and latency are the mean over the measured seeds.');
+  out.push('Calls, tokens and latency are the mean over the measured seeds. "Est." is our own count of the text sent and received, priced with the providers\' published prices (`packages/shared/src/config/pricing.ts`): the numbers to compare runs by, since the dev CLI\'s own tokens include Claude Code\'s overhead and thinking tokens. A model with no price shows n/a.');
   out.push('');
 
   out.push('### Functions the AI asked for');
@@ -682,7 +707,7 @@ const CSV_COLUMNS = [
 
 /** Appended only when some record has an AI result (a free-run CSV stays exactly what it was). */
 const CSV_AI_COLUMNS = [
-  'ai_provider', 'ai_mode', 'ai_masking', 'ai_noEscalation', 'ai_status', 'ai_classification', 'ai_tokensCached', 'ai_formulaErrors', 'ai_callErrors',
+  'ai_provider', 'ai_mode', 'ai_masking', 'ai_noEscalation', 'ai_status', 'ai_classification', 'ai_tokensCached', 'ai_estInTokens', 'ai_estCachedTokens', 'ai_estCacheWriteTokens', 'ai_estOutTokens', 'ai_estCostUsd', 'ai_formulaErrors', 'ai_callErrors',
   'ai_unsupported', 'ai_functionRequests', 'ai_explanation', 'ai_error', 'ai_at',
 ] as const;
 
@@ -707,7 +732,7 @@ export function renderCsv(records: CatalogueRecord[]): string {
       fast_needsAiParts: f.needsAiParts.join(';'), fast_holdOut: f.holdOut, fast_how: f.how, fast_ms: f.ms,
       ai_model: a?.model, ai_path: a?.path, ai_verified: a?.verified, ai_holdOut: a?.holdOut, ai_llmCalls: a?.llmCalls, ai_tokensIn: a?.tokensIn, ai_tokensOut: a?.tokensOut, ai_costUsd: a?.costUsd, ai_latencyMs: a?.latencyMs,
       ai_provider: a?.provider, ai_mode: a?.mode, ai_masking: a?.masking, ai_noEscalation: a?.noEscalation, ai_status: a ? aiStatusOf(a) : undefined, ai_classification: a?.classification,
-      ai_tokensCached: a?.tokensCached, ai_formulaErrors: a?.formulaErrors, ai_callErrors: a?.callErrors, ai_unsupported: a?.unsupported.join(';'),
+      ai_tokensCached: a?.tokensCached, ai_estInTokens: a?.estimate?.inputTokens, ai_estCachedTokens: a?.estimate?.cachedInputTokens, ai_estCacheWriteTokens: a?.estimate?.cacheWriteTokens, ai_estOutTokens: a?.estimate?.outputTokens, ai_estCostUsd: a?.estimate?.costUsd, ai_formulaErrors: a?.formulaErrors, ai_callErrors: a?.callErrors, ai_unsupported: a?.unsupported.join(';'),
       ai_functionRequests: a?.functionRequests.join(';'), ai_explanation: a?.explanation, ai_error: a?.error, ai_at: a?.at,
     };
     lines.push(columns.map((c) => csvField(row[c])).join(','));

@@ -14,6 +14,9 @@
 //    the engine tries them all), type, `padLeft`, and `inputFormats` (the date formats a column is read with; in order,
 //    because the reader tries them in order). `inputFormats` IS part of the lock: it is how the file is read, and a
 //    conversion that reads the same column with another date format reads another file.
+//  - `readAs` (SPEC 8.4a: a cell's exact text -> the text it is read as) IS part of the lock for the same reason, compared as a
+//    dictionary (key order changes nothing). A new conversion is brought to the source's (`mergeForReuse` takes the union, the editor
+//    save replaces it: `sourceLogic.ts`).
 //  - `required` is NOT locked: the spec doesn't list it, and one conversion may need a column another doesn't; the
 //    source's `required` is derived (required by at least one conversion).
 //  - Input validations are compared as a set (their order changes nothing), by header (see `sourceOf`), and PER COLUMN, on the
@@ -40,8 +43,8 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /** Why the conversion's copy of one column isn't the source's: the empty list when it is. */
-export function columnDifferences(own: SourceColumn, source: SourceColumn, opts: SourceLockOptions = {}): { field: 'aliases' | 'type' | 'padLeft' | 'inputFormats'; message: string }[] {
-  const out: { field: 'aliases' | 'type' | 'padLeft' | 'inputFormats'; message: string }[] = [];
+export function columnDifferences(own: SourceColumn, source: SourceColumn, opts: SourceLockOptions = {}): { field: 'aliases' | 'type' | 'padLeft' | 'inputFormats' | 'readAs'; message: string }[] {
+  const out: { field: 'aliases' | 'type' | 'padLeft' | 'inputFormats' | 'readAs'; message: string }[] = [];
   if (!opts.ignoreAliases && !sameSet(own.aliases, source.aliases)) {
     out.push({ field: 'aliases', message: `column "${own.header}": aliases must equal the source's ${JSON.stringify(source.aliases)}, got ${JSON.stringify(own.aliases)}` });
   }
@@ -53,6 +56,9 @@ export function columnDifferences(own: SourceColumn, source: SourceColumn, opts:
   }
   if (!deepEqual(own.inputFormats ?? [], source.inputFormats ?? [])) {
     out.push({ field: 'inputFormats', message: `column "${own.header}": date formats must equal the source's ${JSON.stringify(source.inputFormats ?? [])}, got ${JSON.stringify(own.inputFormats ?? [])}` });
+  }
+  if (!deepEqual(own.readAs ?? {}, source.readAs ?? {})) {
+    out.push({ field: 'readAs', message: `column "${own.header}": what it reads another way must equal the source's ${JSON.stringify(source.readAs ?? {})}, got ${JSON.stringify(own.readAs ?? {})}` });
   }
   return out;
 }

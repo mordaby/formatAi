@@ -84,8 +84,11 @@ export function inputColumnsUsed(rules: LearnResult | Rules): string[] {
     else for (const row of expand.rows) for (const e of Object.values(row.set)) readExpr(e);
   }
 
-  // A check on an input column.
-  for (const v of rules.validations) if ((v.on ?? 'input') !== 'output') readId(v.column);
+  // A check on an input column (and what the other rule of an open question reads, `sameAs`: without it the check cannot run).
+  for (const v of rules.validations) {
+    if ((v.on ?? 'input') !== 'output') readId(v.column);
+    if (v.rule === 'sameAs') readExpr(v.expr);
+  }
 
   return declared.filter((c) => used.has(c.id)).map((c) => c.id);
 }

@@ -9,6 +9,13 @@ export function aiLeftLabel(t: I18n['t'], quota: AiLearnQuotaState): string {
   return t(`account.aiLeft.${quota.period}`, { n: quota.remaining });
 }
 
+/** "Uses 1 AI format (2 left this month), and only if it succeeds.": what one AI step costs the person who runs it. `null`: not known yet. */
+export function aiUsesLabel(t: I18n['t'], quota: AiLearnQuotaState | null): string {
+  if (!quota) return t('deep.uses.unknown');
+  if (quota.remaining === null || quota.period === 'unlimited') return t('deep.uses.unlimited');
+  return t(`deep.uses.${quota.period}`, { n: quota.remaining });
+}
+
 /** "3 AI formats a month included": what signing in free gives (the registered tier's config). */
 export function includedLabel(t: I18n['t']): string {
   const { count, period } = tiers.registered.aiLearns;

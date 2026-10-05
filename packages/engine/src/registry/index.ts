@@ -6,4 +6,5 @@ export * from './checkSourceLock';
 export * from './inputSignature';
 export * from './matchConversions';
 export * from './checkFixedLock';
+export * from './restoreFixed';
 export * from './inputColumnsUsed';

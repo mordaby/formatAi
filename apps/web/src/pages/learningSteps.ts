@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import type { LearnFlowState } from '../flow/learnFlow';
 import type { MessageKey } from '../i18n';
+import type { LoopRoundInfo } from '../worker/engineApi';
 
 export type StepKey = 'reading' | 'checking' | 'learning' | 'learningRepair' | 'verifying';
 
@@ -29,6 +30,12 @@ export function stepKeyOf(state: LearnFlowState): StepKey | undefined {
     default:
       return undefined;
   }
+}
+
+/** A round of the learning loop in words: "Checking every row of your example: sending 5 rows the rules got wrong (round 2 of 3)." */
+export function roundText(t: (key: MessageKey, params?: Record<string, string | number>) => string, round: LoopRoundInfo): string {
+  const key: MessageKey = round.rows === 0 ? 'learning.round.none' : round.rows === 1 ? 'learning.round.one' : 'learning.round.other';
+  return t(key, { n: round.n, of: round.of, rows: round.rows });
 }
 
 /** The flow is busy with the files (as opposed to idle, or waiting for the user, or finished). */

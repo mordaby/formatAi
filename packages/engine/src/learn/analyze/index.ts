@@ -3,7 +3,7 @@
 // path and the payload builder.
 
 export { analyzePair, DEFAULT_MIN_COVERAGE, DEFAULT_SAMPLE_SIZE, DEFAULT_SEED } from './analyzePair';
-export { findDerivation, isDerivedColumn, isExternalColumn, MAX_BREAKPOINTS } from './derived';
+export { constantDerivation, findDerivation, isDerivedColumn, isExternalColumn, MAX_BREAKPOINTS } from './derived';
 export { profileColumns, toPayloadColumn, shapeOf } from './profile';
 export { mulberry32, sampleIndices } from './prng';
 export type * from './types';

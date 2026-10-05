@@ -23,7 +23,7 @@ export function dailyCounterExpiry(now: Date): Date {
   return new Date(endOfUtcDay(now).getTime() + limits.protection.dailyCounterGraceHours * 60 * 60 * 1000);
 }
 
-/** Consumed by the (single) browser-triggered repair of one learn (SPEC 9.3). */
+/** The rounds of the learning loop (browser-triggered repairs) one learn has used (SPEC 9.3, `limits.llm.browserRepairCalls`). */
 export const repairKey = (learnUuid: string): string => `repair:${learnUuid}`;
 
 /**

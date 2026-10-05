@@ -15,7 +15,7 @@
 //     language - does the reference rule parse, type-check and reproduce the expected output?
 //     fast     - does the free code engine (pair analysis + strict fast path) detect it from the
 //                example pair alone, and does what it learned generalize to a "next month" file?
-import type { ColumnType, OutputColumnAgg, Validation } from '@formatai/shared';
+import type { ColumnType, OutputColumnAgg, TokenEstimate, Validation } from '@formatai/shared';
 import type { FormulaRowFilter, FormulaRulesTransform, OutputFileSpec } from '@formatai/engine';
 import type { Rng } from '../cases/lib/prng';
 import type { CapabilityId } from './capabilities';
@@ -269,6 +269,9 @@ export interface AiRecord extends AiConfigRecord {
   tokensOut: number;
   tokensCached: number;
   costUsd: number;
+  /** OUR OWN token estimate over the calls (counts and a price, `@formatai/shared`'s `tokenEstimate`): what to compare runs by, since the
+   * provider-reported numbers above include the dev CLI's own overhead and thinking tokens. Absent on records measured before it existed. */
+  estimate?: TokenEstimate;
   /** Sum of the calls' own latency. */
   latencyMs: number;
   /** Formula-text parse failures over every call (learn, repair, escalation). */

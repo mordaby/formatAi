@@ -10,6 +10,7 @@ import {
   columnDifferences,
   compareInputChecks,
   findSourceColumn,
+  isSourceCheck,
   matchConversions,
   pickConversion,
   readingDifferences,
@@ -33,7 +34,12 @@ import {
 } from '@formatai/shared';
 import type { SourceDoc } from '../models.js';
 
-const cloneColumn = (c: SourceColumn): SourceColumn => ({ ...c, aliases: [...c.aliases], ...(c.inputFormats ? { inputFormats: [...c.inputFormats] } : {}) });
+const cloneColumn = (c: SourceColumn): SourceColumn => ({
+  ...c,
+  aliases: [...c.aliases],
+  ...(c.inputFormats ? { inputFormats: [...c.inputFormats] } : {}),
+  ...(c.readAs ? { readAs: { ...c.readAs } } : {}),
+});
 
 /** The structural part of a stored source, detached from the document. */
 export function structureOfDoc(doc: Pick<SourceDoc, 'inputSignature' | 'inputReading' | 'inputValidations'>): SourceStructure {
@@ -90,13 +96,28 @@ export function mergeForReuse(source: SourceStructure, rules: LearnResult | Rule
       return;
     }
     const s = columns[at]!;
+    // `readAs` (SPEC 8.4a) is unioned below, like aliases, not a mismatch: a conversion learned from an example has none of what the source's
+    // other formats were told on the Run screen, and it comes to read the column as they do (`applySource`).
     for (const d of columnDifferences(c, s, { ignoreAliases: true })) {
+      if (d.field === 'readAs') continue;
       problems.push({ kind: 'sourceMismatch', path: `input.columns[${i}].${d.field}`, message: d.message });
     }
     const aliases = unionAliases(s.header, s.aliases, c.aliases);
     if (aliases.length !== s.aliases.length) {
       s.aliases = aliases;
       changed = true;
+    }
+    if (c.readAs !== undefined) {
+      const merged = { ...s.readAs };
+      for (const [from, to] of Object.entries(c.readAs)) {
+        if (merged[from] !== undefined && merged[from] !== to) {
+          problems.push({ kind: 'sourceMismatch', path: `input.columns[${i}].readAs`, message: `column "${c.header}": "${from}" is read as ${JSON.stringify(to)}, and the source reads it as ${JSON.stringify(merged[from])}` });
+        } else if (merged[from] === undefined) {
+          merged[from] = to;
+          changed = true;
+        }
+      }
+      s.readAs = merged;
     }
     if (c.required) s.required = true;
   });
@@ -201,6 +222,10 @@ export function mergeFromEdit(source: SourceStructure, after: LearnResult | Rule
     };
     if (mine.padLeft !== undefined) next.padLeft = mine.padLeft;
     if (mine.inputFormats !== undefined) next.inputFormats = [...mine.inputFormats];
+    // `readAs` (SPEC 8.4a) follows the edit like the other shapes: what the editing conversion has IS the source's afterwards, so a version
+    // restored without a mapping takes it away from the source and from the formats that follow it. (An editor that has not seen a mapping
+    // saved since is refused by the version check, `baseVersion`: the source change rewrote every conversion of the source.)
+    if (mine.readAs !== undefined) next.readAs = { ...mine.readAs };
     columns[at] = next;
   });
 
@@ -214,6 +239,23 @@ export function mergeFromEdit(source: SourceStructure, after: LearnResult | Rule
     renames,
     structure: { inputSignature: { columns }, inputReading: own.inputReading, inputValidations: [...kept, ...mine] },
   };
+}
+
+/**
+ * The source with the `readAs` (SPEC 8.4a) of every column `rules` declares replaced by the rules' own - set, changed or taken away -
+ * and nothing else touched. A restored version (SPEC 8.11) is brought back by this: "Do this every time?" saves a mapping as a new
+ * version, and restoring the one before it is how it is undone, for the source and every format that reads it.
+ */
+export function withReadAsOf(source: SourceStructure, rules: LearnResult | Rules): SourceStructure {
+  const columns = source.inputSignature.columns.map(cloneColumn);
+  for (const c of sourceOf(rules).inputSignature.columns) {
+    const at = findSourceColumn(columns, c.header);
+    if (at < 0) continue;
+    const next = columns[at]!;
+    if (c.readAs !== undefined) next.readAs = { ...c.readAs };
+    else delete next.readAs;
+  }
+  return { ...source, inputSignature: { columns } };
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +275,7 @@ export interface SourceApplied {
 /**
  * Rebuilds `target`'s input side from `source` (SPEC 8.15 "Editing a source": "headers, aliases, types, reading options and
  * input validations are written into every conversion's `input`"):
- *  - each column the conversion declares takes its header, aliases, type, `padLeft` and `inputFormats` from the source column
+ *  - each column the conversion declares takes its header, aliases, type, `padLeft`, `inputFormats` and `readAs` from the source column
  *    it stands for (found through `renames`, then the way the engine finds a header). It keeps its id, its `required` and its place;
  *    a column the source no longer has is dropped (what still refers to it then fails `checkRules`: `needsReview`);
  *  - sheet, header row and `stopAt` are the source's; the conversion's input validations are the source's on the columns IT
@@ -258,6 +300,7 @@ export function applySource(target: Rules, source: SourceStructure, renames: Rea
     if (c.required !== undefined) col.required = c.required;
     if (s.padLeft !== undefined) col.padLeft = s.padLeft;
     if (s.inputFormats !== undefined && s.inputFormats.length > 0) col.inputFormats = [...s.inputFormats];
+    if (s.readAs !== undefined && Object.keys(s.readAs).length > 0) col.readAs = { ...s.readAs };
     columns.push(col);
   }
 
@@ -275,7 +318,10 @@ export function applySource(target: Rules, source: SourceStructure, renames: Rea
   const inputValidations = source.inputValidations
     .filter((v) => idOfHeader.has(v.column) || !sourceHeaders.has(v.column))
     .map((v) => ({ ...v, column: idOfHeader.get(v.column) ?? v.column }) as Validation);
-  const validations = [...inputValidations, ...target.validations.filter((v) => (v.on ?? 'input') === 'output')];
+  // A cut-off check (SPEC 8.8) is the conversion's own, not the source's (`isSourceCheck`): it stays as it is (a column it names that
+  // the rebuilt input no longer has fails `checkRules` below, like any other reference: `needsReview`).
+  const ownChecks = target.validations.filter((v) => !isSourceCheck(v) && (v.on ?? 'input') !== 'output');
+  const validations = [...inputValidations, ...ownChecks, ...target.validations.filter((v) => (v.on ?? 'input') === 'output')];
 
   const rules: Rules = { ...target, input, validations };
   const problems: ApiProblem[] = [];

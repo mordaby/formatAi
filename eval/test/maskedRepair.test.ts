@@ -1,12 +1,12 @@
-// Privacy (SPEC 7.2, 9.3, 15): with masking on, the browser's repair request - the payload and the problems it carries -
+// Privacy (SPEC 7.2, 9.3, 15): with masking on, a repair request of the learning loop - the payload, the problems and the rows it carries -
 // holds no real value of the example. Every value it quotes is masked the way the samples are (numbers, dates, headers and label words are
 // sent real by design); one that cannot be masked is left out. Walked over the eval cases whose output has title and summary rows, with an
-// answer that gets the titles, the summary labels and a text column wrong, so the repair carries layout problems that quote cells and diff
+// answer that gets the titles, the summary labels and a text column wrong, so the round carries layout problems that quote cells and diff
 // problems with rows. No LLM: the answer is canned.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { analyzePair, learnFromExamples, normalizeText, readWorkbook, sniffDelimitedText, splitWords, type LearnCallResult, type PairAnalysis } from '@formatai/engine';
+import { analyzePair, learnFromExamples, normalizeText, readWorkbook, sniffDelimitedText, splitWords, type LearnCallResult, type LoopRound, type PairAnalysis } from '@formatai/engine';
 import type { LearnPayload, LearnResult, RepairProblem, Rules } from '@formatai/shared';
 import { loadCase, type CaseDef } from '../lib/caseLoader';
 
@@ -46,7 +46,7 @@ function realWords(a: PairAnalysis): Set<string> {
 }
 
 /**
- * The reference answer, wrong where the repair must quote the example: every title and summary label, one text column (cell diffs), and each
+ * The reference answer, wrong where a round must quote the example: every title and summary label, one text column (cell diffs), and each
  * summary row showing the first value of a text column - so the rows the rules make carry real text values of the example, which the
  * layout problems quote.
  */
@@ -72,17 +72,18 @@ function wrongAnswer(rules: Rules): LearnResult {
 interface Captured {
   payload: LearnPayload;
   problems: RepairProblem[];
+  round: LoopRound;
 }
 
 describe('a repair request built with masking on holds no real value of the example', () => {
-  it.each(WITH_TITLES_OR_SUMMARIES)('%s: payload and problems (cells and messages)', async (name) => {
+  it.each(WITH_TITLES_OR_SUMMARIES)('%s: payload, problems (cells and messages) and rows', async (name) => {
     const c = loadCase(path.join(CASES, name))!;
     const a = await analysisOf(c);
     expect(a.layout.titleRows.length + a.layout.summaryRows.length + (a.layout.groupBy?.summaryRows?.length ?? 0)).toBeGreaterThan(0);
     const real = realWords(a);
     expect(real.size).toBeGreaterThan(0);
 
-    const repairs: Captured[] = [];
+    const rounds: Captured[] = [];
     const result = await learnFromExamples({
       input: { bytes: c.input.bytes, name: c.input.fileName },
       output: { bytes: c.output.bytes, name: c.output.fileName },
@@ -90,18 +91,18 @@ describe('a repair request built with masking on holds no real value of the exam
       key: new TextEncoder().encode(`masked-repair:${name}`),
       tier: 'paid',
       callLearn: async (): Promise<LearnCallResult> => ({ rules: wrongAnswer(c.referenceRules!), problems: [], calls: [] }),
-      callRepair: async (payload, _previous, problems): Promise<LearnCallResult> => {
-        repairs.push({ payload, problems });
+      callRepair: async (payload, _previous, problems, round): Promise<LearnCallResult> => {
+        rounds.push({ payload, problems, round });
         return { rules: null, problems: [], calls: [] };
       },
     });
     expect(result.path).toBe('llm');
-    expect(repairs).toHaveLength(1);
-    const { payload, problems } = repairs[0]!;
-    // the repair quotes the example: layout rows (titles, summary rows) and diffs with their rows
+    expect(rounds).toHaveLength(1);
+    const { payload, problems, round } = rounds[0]!;
+    // the round quotes the example: layout rows (titles, summary rows) and rows with their cells
     expect(problems.some((p) => p.kind === 'layout' && /: expected /.test(p.message))).toBe(true);
 
-    const sent = JSON.stringify({ payload, problems });
+    const sent = JSON.stringify({ payload, problems, rows: round.rows });
     const leaked = [...new Set(wordsOf(sent))].filter((w) => real.has(w));
     expect(leaked).toEqual([]);
   });

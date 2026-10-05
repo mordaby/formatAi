@@ -207,6 +207,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+.learn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
 .learn-row {
   display: flex;
   flex-wrap: wrap;
@@ -235,7 +240,7 @@
   .tool {
     gap: var(--s-5);
   }
-  .learn-row .btn--primary {
+  .learn-row .btn {
     inline-size: 100%;
   }
 }

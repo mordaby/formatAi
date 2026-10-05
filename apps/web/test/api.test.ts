@@ -58,6 +58,14 @@ describe('requests', () => {
     expect(sentBody(fetchMock)).toEqual({ learnId: 'L1', payload, previousRules: rules, problems });
   });
 
+  it('repair(): says when the learn already had its one repair for a rule that copies rows (SPEC 9.2 layer 6), and only then', async () => {
+    const { api, fetchMock } = apiWith(() => json({ rules, verified: true, problems: [] }));
+    await api.repair('L1', payload, rules, [], { overfitRepaired: true });
+    expect(sentBody(fetchMock, 0)).toEqual({ learnId: 'L1', payload, previousRules: rules, problems: [], overfitRepaired: true });
+    await api.repair('L1', payload, rules, [], { overfitRepaired: false });
+    expect(sentBody(fetchMock, 1)).not.toHaveProperty('overfitRepaired');
+  });
+
   it('only ever sends JSON: no method takes a File or Blob (SPEC 2/15)', async () => {
     const { api, fetchMock } = apiWith(() => json({ rules: null, verified: false, problems: [], cached: false }));
     await api.learn(payload);

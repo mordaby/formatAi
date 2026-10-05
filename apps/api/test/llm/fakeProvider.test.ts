@@ -77,4 +77,12 @@ describe('fake provider', () => {
     expect(result.usage).toEqual({ tokensIn: 0, tokensOut: 0, tokensCachedRead: 0, tokensCachedWrite: 0 });
     expect(result.costUsd).toBe(0);
   });
+
+  it('serves a truncated answer (X2): no json, the cut text as raw, its usage and cost', async () => {
+    const provider = createFakeProvider();
+    provider.enqueue({ truncated: true, raw: '{"a":', usage: { tokensOut: 4000 }, costUsd: 0.04 });
+    const result = await provider.complete(baseRequest());
+    expect(result).toMatchObject({ truncated: true, json: null, raw: '{"a":', costUsd: 0.04, provider: 'fake' });
+    expect(result.usage.tokensOut).toBe(4000);
+  });
 });

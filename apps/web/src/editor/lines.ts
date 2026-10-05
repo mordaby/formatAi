@@ -2,19 +2,21 @@
 // mean in terms of them:
 //
 // - `lineIdsOf(rules)` lists every line id in map order. The ids are the contract with the rules map
-//   (`col:<header>`, `filter:<i>`, `dedupe`, `expand`, `sort`, `group`, `summary:end:<i>`,
+//   (`col:<header>`, `readAs:<input id>:<text>`, `filter:<i>`, `dedupe`, `expand`, `sort`, `group`, `summary:end:<i>`,
 //   `summary:group:<i>`, `title:<i>`, `check:<i>`, `fn:<name>`, `table:<name>`).
 // - `editedLines(baseline, current)` compares what each line says with what it said when the editor
 //   opened. List items are matched by content, so deleting filter 1 of 3 doesn't make filter 2 look edited.
 // - `formatFingerprint(rules)` is what SPEC 8.12 calls the format side: output, sort and group by header,
 //   summary rows, output validations. It mirrors the engine's `formatOf` (which the main thread can't load).
 import type { OutputColumnRule, Validation } from '@formatai/shared';
-import { DEFAULT_OUTPUT_FILE } from '@formatai/shared';
+import { DEFAULT_OUTPUT_FILE, isCodeCheck } from '@formatai/shared';
 import { effectiveEndSummaryRows, effectiveGroupSummaryRows, stable, stableOf } from './rulesUtil';
 import type { EditableRules, LineId } from './types';
 
 export const lineIds = {
   col: (header: string): LineId => `col:${header}`,
+  /** One text an input column reads as another value (SPEC 8.4a): the input column's id, the text exactly as written. */
+  readAs: (columnId: string, from: string): LineId => `readAs:${columnId}:${from}`,
   filter: (i: number): LineId => `filter:${i}`,
   dedupe: 'dedupe' as LineId,
   expand: 'expand' as LineId,
@@ -63,6 +65,9 @@ function collect(rules: EditableRules): Lines {
   };
 
   rules.output.columns.forEach((c) => byId.set(lineIds.col(c.header), columnContent(rules, c)));
+  for (const c of rules.input.columns) {
+    for (const [from, to] of Object.entries(c.readAs ?? {})) byId.set(lineIds.readAs(c.id, from), json(to));
+  }
   (rules.input.rowFilters ?? []).forEach((f, i) => list('filter', lineIds.filter(i), f));
   if (rules.transform.dedupe) byId.set(lineIds.dedupe, json(rules.transform.dedupe));
   if (rules.transform.expand) byId.set(lineIds.expand, json(rules.transform.expand));
@@ -188,11 +193,12 @@ export function formatFingerprint(rules: EditableRules): string {
 
 const sortedStrings = (list: readonly string[] | undefined): string[] => [...(list ?? [])].sort();
 
-/** The input validations as a source keeps them: by the input column's header, `on: "input"` dropped, as a sorted set. */
+/** The input validations as a source keeps them: by the input column's header, `on: "input"` dropped, as a sorted set. A check only code
+ * writes (a cut-off, an open question's marker: SPEC 8.8) is the conversion's own, never the source's (the engine's `isSourceCheck`). */
 function inputValidationKeys(rules: EditableRules): string[] {
   const idToHeader = new Map(rules.input.columns.map((c) => [c.id, c.header] as const));
   return rules.validations
-    .filter((v) => (v.on ?? 'input') !== 'output')
+    .filter((v) => (v.on ?? 'input') !== 'output' && !isCodeCheck(v))
     .map((v) => {
       const { on: _on, ...rest } = v;
       return stable({ ...rest, column: idToHeader.get(v.column) ?? v.column });
@@ -202,7 +208,7 @@ function inputValidationKeys(rules: EditableRules): string[] {
 
 /**
  * Whether `after` changes the INPUT side of `before` - what SPEC 8.15 calls editing the source: the sheet pick, header row, stop rule
- * or input checks differ, or a column it declares has another header, aliases, type, padding or date formats - or is a column
+ * or input checks differ, or a column it declares has another header, aliases, type, padding, date formats or readAs (SPEC 8.4a) - or is a column
  * `before` did not declare. The mirror (for the main thread, which can't load the engine) of what the server's source lock treats
  * as a source edit.
  *
@@ -217,7 +223,7 @@ export function inputSideChanged(before: EditableRules, after: EditableRules): b
 
   const was = new Map(before.input.columns.map((c) => [c.id, c] as const));
   const shape = (c: EditableRules['input']['columns'][number]): string =>
-    stable({ header: c.header, aliases: sortedStrings(c.aliases), type: c.type, padLeft: c.padLeft, inputFormats: c.inputFormats });
+    stable({ header: c.header, aliases: sortedStrings(c.aliases), type: c.type, padLeft: c.padLeft, inputFormats: c.inputFormats, readAs: c.readAs });
   return after.input.columns.some((c) => {
     const old = was.get(c.id);
     return old === undefined || shape(old) !== shape(c);

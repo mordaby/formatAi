@@ -195,18 +195,20 @@ describe('"Add a column"', () => {
     expect(within(document.querySelector('[data-section="columns"]') as HTMLElement).getByRole('button', { name: 'Add a column' })).toBeTruthy();
   });
 
-  // Heavy UI flow (real editor + live check): give it room when the whole repo's tests share the CPU.
-  it('makes a new column that can use any input column, including one no rule uses yet (ID + name)', { timeout: 30_000 }, async () => {
+  // Heavy UI flow (real editor + live check): give it room when the whole repo's tests share the CPU - each wait too, not only
+  // the test (a busy machine made one step outlast the 5 s default wait, failing it under load only).
+  const SLOW = 15_000;
+  it('makes a new column that can use any input column, including one no rule uses yet (ID + name)', { timeout: 60_000 }, async () => {
     const { lastRules } = await openResult(PARTIAL);
     fireEvent.click(await screen.findByRole('button', { name: 'Not now' }).catch(() => document.body));
     fireEvent.click(screen.getByRole('button', { name: 'Add a column' }));
-    const panel = await screen.findByRole('complementary', { name: 'New column' });
+    const panel = await screen.findByRole('complementary', { name: 'New column' }, { timeout: SLOW });
     chooseHow('Join text');
     const [first, second] = [within(panel).getByRole('combobox', { name: 'Column 1' }), within(panel).getByRole('combobox', { name: 'Column 2' })];
     fireEvent.change(first, { target: { value: 'c3' } });
-    await waitFor(() => expect(inputColumn(lastRules(), 'ת.ז.')).toBeDefined());
+    await waitFor(() => expect(inputColumn(lastRules(), 'ת.ז.')).toBeDefined(), { timeout: SLOW });
     fireEvent.change(within(panel).getByRole('combobox', { name: 'Column 2' }), { target: { value: 'customerName' } });
-    await waitFor(() => expect(inputColumn(lastRules(), 'Customer name')).toBeDefined());
+    await waitFor(() => expect(inputColumn(lastRules(), 'Customer name')).toBeDefined(), { timeout: SLOW });
     void second;
     const rules = lastRules();
     const made = rules.output.columns.find((c) => c.header === 'New column')!;

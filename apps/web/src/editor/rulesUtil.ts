@@ -196,6 +196,8 @@ export function referencedIds(
     for (const id of rules.output.grandTotal.sum) used.add(id);
   }
   for (const v of rules.validations) if ((v.on ?? 'input') === 'input') used.add(v.column);
+  // The other rule of an open question (`sameAs`, SPEC 8.8) reads its columns where input checks run, after the value maps: always a reader.
+  for (const v of rules.validations) if (v.rule === 'sameAs') colRefs(v.expr, used);
   for (const t of rules.output.titleRows) {
     if ('parts' in t) for (const p of t.parts) if ('agg' in p) used.add(p.column);
   }

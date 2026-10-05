@@ -279,6 +279,17 @@ function removeFilter(rules: EditableRules, a: Action<'removeFilter'>): Out {
   return next.length === 0 ? ({ ...rules, input: omit(rules.input, 'rowFilters') } as EditableRules) : withInput(rules, { rowFilters: next });
 }
 
+function removeReadAs(rules: EditableRules, a: Action<'removeReadAs'>): Out {
+  const col = rules.input.columns.find((c) => c.id === a.column);
+  if (!col) return fail({ code: 'unknownColumn', message: `unknown column id "${a.column}"`, column: a.column, path: 'column' });
+  if (col.readAs === undefined || !Object.prototype.hasOwnProperty.call(col.readAs, a.from)) {
+    return fail({ code: 'noSuchItem', message: `${col.header} does not read "${a.from}" as anything else`, column: a.column, path: 'from' });
+  }
+  const left = Object.fromEntries(Object.entries(col.readAs).filter(([from]) => from !== a.from));
+  const next = Object.keys(left).length === 0 ? omit(col, 'readAs') : { ...col, readAs: left };
+  return withInput(rules, { columns: rules.input.columns.map((c) => (c === col ? next : c)) });
+}
+
 // ---------- duplicates, expand ----------
 
 function setDedupe(rules: EditableRules, a: Action<'setDedupe'>): Out {
@@ -531,8 +542,8 @@ function removeTable(rules: EditableRules, name: string): Out {
 
 // ---------- the dispatcher ----------
 
-/** Actions that change the rules. (markException / unmarkException / setAdvancedJson are handled by the model.) */
-export type RulesAction = Exclude<EditAction, { type: 'markException' | 'unmarkException' | 'setAdvancedJson' }>;
+/** Actions that change the rules. (markException / unmarkException / setAdvancedJson / replaceRules are handled by the model.) */
+export type RulesAction = Exclude<EditAction, { type: 'markException' | 'unmarkException' | 'setAdvancedJson' | 'replaceRules' }>;
 
 export function applyRulesAction(rules: EditableRules, a: RulesAction): Out {
   switch (a.type) {
@@ -556,6 +567,8 @@ export function applyRulesAction(rules: EditableRules, a: RulesAction): Out {
       return updateFilter(rules, a);
     case 'removeFilter':
       return removeFilter(rules, a);
+    case 'removeReadAs':
+      return removeReadAs(rules, a);
     case 'setDedupe':
       return setDedupe(rules, a);
     case 'setExpand':

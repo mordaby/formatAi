@@ -12,6 +12,7 @@ import {
   assumptionMessages,
   preflightBlockMessages,
   preflightWarnMessages,
+  sumEstimates,
   unsupportedMessages,
   type LearnResult,
 } from '@formatai/shared';
@@ -104,6 +105,8 @@ if (result.calls.length) {
   const cached = result.calls.reduce((s, c) => s + c.tokensCached, 0);
   const cost = result.calls.reduce((s, c) => s + c.costUsd, 0);
   console.log(`\nLLM: ${result.calls.length} call(s) [${result.calls.map((c) => `${c.purpose}:${c.model}`).join(', ')}], tokens in ${tokIn} + cached ${cached}, out ${tokOut}, cost $${cost.toFixed(4)}`);
+  const est = sumEstimates(result.calls.map((c) => c.estimate));
+  console.log(`Estimate (our own count): in ${est.inputTokens} + cached ${est.cachedInputTokens} + cache write ${est.cacheWriteTokens}, out ${est.outputTokens}, cost ${est.costUsd === null ? 'n/a (no price for the model)' : '$' + est.costUsd.toFixed(4)}`);
 }
 
 writeFileSync(rulesPath, JSON.stringify(rules, null, 2) + '\n', 'utf8');

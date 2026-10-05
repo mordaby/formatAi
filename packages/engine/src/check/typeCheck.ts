@@ -508,6 +508,14 @@ function checkValidationParam(
         problems.push({ kind: 'type', path, message: `dateRange applies to a date column; "${v.column}" is ${colType}` });
       }
       return;
+    case 'cutoffRange': {
+      // A number range on a numeric column, a date range (ISO dates) on a date column.
+      const dates = typeof v.low === 'string';
+      if (dates ? colType !== 'date' : !NUMERIC_ONLY.has(colType)) {
+        problems.push({ kind: 'type', path, message: `cutoffRange with ${dates ? 'dates' : 'numbers'} applies to a ${dates ? 'date' : 'numeric'} column; "${v.column}" is ${colType}` });
+      }
+      return;
+    }
     case 'lengthEquals':
       if (!fits(colType, 'text')) {
         problems.push({ kind: 'type', path, message: `lengthEquals applies to a text column; "${v.column}" is ${colType}` });
@@ -521,7 +529,8 @@ function checkValidationParam(
     case 'required':
     case 'oneOf':
     case 'unique':
-      return; // any column type is fine
+    case 'sameAs': // any column type is fine (its expression is type-checked on its own, in `typeCheck`)
+      return;
   }
 }
 
@@ -707,6 +716,10 @@ export function typeCheck(rules: LearnResult | Rules, opts?: TypeCheckOptions): 
 
   // ----- validations' params must suit their column -----
   rules.validations.forEach((v, i) => checkValidationParam(v, i, finalTypes, rules.output.columns, problems));
+  // The other rule of an open question (`sameAs`, SPEC 8.8) is an expression over the columns there are when input checks run.
+  rules.validations.forEach((v, i) => {
+    if (v.rule === 'sameAs') inferType(v.expr, { colTypes: finalTypes }, ctx, `validations[${i}].expr`, problems);
+  });
 
   // ----- summary rows (SPEC 8.12 v4): sum/average need numeric, min/max need
   // numeric or date -----

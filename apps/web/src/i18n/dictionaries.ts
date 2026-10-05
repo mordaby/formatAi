@@ -113,6 +113,8 @@ export const en = {
   'home.output.title': 'Example output',
   'home.output.caption': 'The same data, the way you want it',
   'home.learn': 'Learn the format',
+  'home.learnAi': 'Learn with AI',
+  'home.learnAi.guest': 'Sign in free to learn with AI ({included}).',
   'home.needFiles': 'Add both files to continue.',
   'home.how.title': 'How it works',
   'home.how.1.title': 'Show one example',
@@ -149,10 +151,14 @@ export const en = {
   'sendPanel.item.rows.on': 'Up to 12 sample rows. Names, ID numbers and other text are replaced with look-alike values first.',
   'sendPanel.item.rows.off': 'Up to 12 sample rows, exactly as they are.',
   'sendPanel.item.hints': 'What your computer already worked out: which columns are copied, reformatted or calculated.',
+  'sendPanel.item.loop': 'If the rules then get rows of your example wrong: up to {rounds} more requests, each with some of those rows (at most {rows} rows in all), sent like the sample rows.',
   'sendPanel.note.before': 'If your computer can solve it alone, nothing is sent at all. When something is sent, the exact data appears here.',
   'sendPanel.lead.sent': 'This is exactly what was sent.',
   'sendPanel.kind.learn': 'Learn request',
   'sendPanel.kind.repair': 'Fix request',
+  'sendPanel.kind.round': 'Fix request, round {n} of {of}',
+  'sendPanel.rows.one': 'It carries 1 row of your example the rules got wrong (every row sent so far).',
+  'sendPanel.rows.other': 'It carries {n} rows of your example the rules got wrong (every row sent so far).',
   'sendPanel.json': 'Data sent (JSON)',
 
   // SPEC 16.1 screen 2: pre-flight
@@ -179,6 +185,10 @@ export const en = {
   // SPEC 16.1 screen 3: learning progress
   'learning.title': 'Learning your format',
   'learning.wait': 'This can take a little while.',
+  // The learning loop (SPEC 9.3): each round, under the step that fixes what did not match.
+  'learning.round.one': 'Checking every row of your example: sending 1 row the rules got wrong (round {n} of {of}).',
+  'learning.round.other': 'Checking every row of your example: sending {rows} rows the rules got wrong (round {n} of {of}).',
+  'learning.round.none': 'Checking every row of your example: sending what still did not match (round {n} of {of}).',
   'learning.done': 'Done',
 
   'error.tryAgain': 'Try again',
@@ -284,6 +294,8 @@ export const he: Record<MessageKey, string> = {
   'home.output.title': 'דוגמת פלט',
   'home.output.caption': 'אותם נתונים, כפי שאתם רוצים אותם',
   'home.learn': 'ללמוד את הפורמט',
+  'home.learnAi': 'ללמוד עם AI',
+  'home.learnAi.guest': 'התחברו בחינם כדי ללמוד עם AI ({included}).',
   'home.needFiles': 'הוסיפו את שני הקבצים כדי להמשיך.',
   'home.how.title': 'איך זה עובד',
   'home.how.1.title': 'מראים דוגמה אחת',
@@ -319,10 +331,14 @@ export const he: Record<MessageKey, string> = {
   'sendPanel.item.rows.on': 'עד 12 שורות דוגמה. שמות, מספרי זהות וטקסט אחר מוחלפים קודם בערכים מדומים.',
   'sendPanel.item.rows.off': 'עד 12 שורות דוגמה, בדיוק כפי שהן.',
   'sendPanel.item.hints': 'מה שהמחשב שלך כבר הבין: אילו עמודות מועתקות, מעוצבות מחדש או מחושבות.',
+  'sendPanel.item.loop': 'אם הכללים טועים בשורות מהדוגמה שלכם: עד {rounds} בקשות נוספות, בכל אחת חלק מהשורות האלה (עד {rows} שורות בסך הכול), שנשלחות כמו שורות הדוגמה.',
   'sendPanel.note.before': 'אם המחשב שלך יכול לפתור את זה לבד, לא נשלח דבר. כשנשלח משהו, הנתונים המדויקים מופיעים כאן.',
   'sendPanel.lead.sent': 'זה בדיוק מה שנשלח.',
   'sendPanel.kind.learn': 'בקשת למידה',
   'sendPanel.kind.repair': 'בקשת תיקון',
+  'sendPanel.kind.round': 'בקשת תיקון, סבב {n} מתוך {of}',
+  'sendPanel.rows.one': 'היא כוללת שורה אחת מהדוגמה שלכם שהכללים טעו בה (כל השורות שנשלחו עד כה).',
+  'sendPanel.rows.other': 'היא כוללת {n} שורות מהדוגמה שלכם שהכללים טעו בהן (כל השורות שנשלחו עד כה).',
   'sendPanel.json': 'הנתונים שנשלחו (JSON)',
 
   'preflight.warnTitle': 'דבר אחד לבדוק קודם',
@@ -347,6 +363,9 @@ export const he: Record<MessageKey, string> = {
 
   'learning.title': 'לומדים את הפורמט שלכם',
   'learning.wait': 'זה עשוי לקחת קצת זמן.',
+  'learning.round.one': 'בודקים כל שורה בדוגמה שלכם: שולחים שורה אחת שהכללים טעו בה (סבב {n} מתוך {of}).',
+  'learning.round.other': 'בודקים כל שורה בדוגמה שלכם: שולחים {rows} שורות שהכללים טעו בהן (סבב {n} מתוך {of}).',
+  'learning.round.none': 'בודקים כל שורה בדוגמה שלכם: שולחים את מה שעדיין לא התאים (סבב {n} מתוך {of}).',
   'learning.done': 'הושלם',
 
   'error.tryAgain': 'נסו שוב',

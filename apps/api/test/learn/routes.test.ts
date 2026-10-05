@@ -94,6 +94,9 @@ describe('POST /api/learn', () => {
     });
     expect(doc.learnId).toEqual(expect.any(String));
     expect(doc.ts).toBeInstanceOf(Date);
+    // Our own token estimate: counts and a price only (the fake provider's model has no price, so no cost).
+    expect(doc.estimate).toEqual({ inputTokens: expect.any(Number), cachedInputTokens: 0, cacheWriteTokens: expect.any(Number), outputTokens: expect.any(Number), costUsd: null });
+    expect(doc.estimate!.cacheWriteTokens).toBeGreaterThan(0);
     // SPEC 9.2: the ledger tracks how often models write invalid formulas - counts
     // only, never message text or any other payload/response content.
     expect(doc.problemCounts).toEqual({
@@ -108,7 +111,34 @@ describe('POST /api/learn', () => {
       rowCount: 0,
       layout: 0,
       unsupportedDespiteEvidence: 0,
+      // prompt audit X2: an answer cut off at the output-token limit (none here)
+      truncated: 0,
+      // learn-v8: the answer's dropped alternatives (none here)
+      invalidAlternative: 0,
+      // SPEC 9.2 layer 6: a rule that copies rows of the example - the repair it asks for, and the columns code reported after it (none here)
+      overfit: 0,
+      overfitFallback: 0,
     });
+  });
+
+  it('the default version (learn-v7) offers no alternatives: any the answer gives are dropped and counted, never in the rules or the cache', async () => {
+    const fake: FakeLlmProvider = createFakeProvider();
+    const alternative = { outputColumn: 'Total', from: 'totalAlt', computed: [{ id: 'totalAlt', type: 'decimal', expr: 'amount + amount' }] };
+    fake.enqueue({ json: { ...(correctRulesWireJson() as object), alternatives: [alternative, { outputColumn: 'Nope', from: 'id', computed: [] }] } });
+    const store = createMemoryStore();
+    app = await buildServer({ env: devEnv(), db: null, logger: false, store, identify: asUser, complete: (req: CompleteRequest) => fake.complete(req) });
+    const send = () => app!.inject({ method: 'POST', url: '/api/learn', payload: JSON.stringify({ payload: basicPayload() }), headers: { 'content-type': 'application/json' } });
+
+    const body = (await send()).json();
+    expect(body.verified).toBe(true);
+    expect(body.rules).not.toHaveProperty('alternatives');
+    // (learn-v8 sends them beside the rules: `learn()` with `prompt: 'learn-v8'`, test/learn/alternatives.test.ts)
+    expect(body).not.toHaveProperty('alternatives');
+    expect(store.ledger[0]!.problemCounts.invalidAlternative).toBe(2);
+    // The same structure again: a cache hit carries the rules only.
+    const hit = (await send()).json();
+    expect(hit.cached).toBe(true);
+    expect(hit).not.toHaveProperty('alternatives');
   });
 });
 

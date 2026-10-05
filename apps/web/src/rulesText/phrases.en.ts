@@ -27,6 +27,8 @@ export const en = {
   'input.sheetIndex': 'Read sheet number {n}',
   'input.headerRow': 'The header is on row {n}',
   'input.stopAt': 'Stop reading at the first row that starts with {values}',
+  'input.readAs.empty': 'In {col}, {from} is read as empty',
+  'input.readAs.value': 'In {col}, {from} is read as {to}',
 
   // Rows
   'filter.keep': 'Keep rows where {cond}',
@@ -226,6 +228,11 @@ export const en = {
   'check.oneOf': '{col} is one of {values}',
   'check.unique': '{col} has no repeated values',
   'check.dateRange': '{col} is a date from {from} to {to}',
+  'check.cutoff.high': 'your example shows the cut-off for {col} is above {low} and at most {high}; we used {value}',
+  'check.cutoff.low': 'your example shows the cut-off for {col} is at least {low} and below {high}; we used {value}',
+  'check.cutoff.line': 'Check: {rule}. A value in between: {severity}',
+  'check.sameAs': 'your example also fits {other} for {col}',
+  'check.sameAs.line': 'Check: {rule}. A row where it gives a different value: {severity}',
 
   // Functions and tables
   'table.line': 'Table {name}: {count}, look up by {key} to get {cols}',

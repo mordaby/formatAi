@@ -1,4 +1,4 @@
-// "Run deep analysis with AI" as completion mode (LEARN_PROMPT "Completing a partial rules file"): the AI step produces only what is
+// "Finish with AI" as completion mode (LEARN_PROMPT "Completing a partial rules file"): the AI step produces only what is
 // missing from the rules on screen and must leave everything else exactly as it is. This hook runs it (in the session's own
 // `completion` flow, so the Result screen and its rules stay put) and decides what the answer is worth:
 //
@@ -10,8 +10,8 @@
 //     the rest can be edited: the answer is MERGED with those edits (`mergeRules`, the rules as they were at the start being the common
 //     ground). Only edits that collide with the answer keep it out.
 import { isCompletable, type AiColumnNote, type AiStepPartCode, type LearnResult, type Rules } from '@formatai/shared';
-import type { VerifyResult } from '@formatai/engine';
-import type { LearnOutput } from '../../worker/engineApi';
+import type { AmbiguousColumn, FillSummary, VerifyResult } from '@formatai/engine';
+import type { LearnOutput, LoopRoundInfo } from '../../worker/engineApi';
 import { useEffect, useRef, useState } from 'react';
 import { useLearnSession } from '../../app/LearnSession';
 import { mergeRules, type EditableRules, type EditorStore } from '../../editor';
@@ -40,6 +40,8 @@ export interface CompletionPlanInput {
 export interface UseCompletion {
   /** The AI step is working on it. */
   running: boolean;
+  /** While it runs a round of the learning loop: which one, of how many, and how many rows the rules got wrong it sends. */
+  round: LoopRoundInfo | null;
   /** How many output columns the run in progress was asked for. */
   columnsAsked: number;
   /** What the last run was asked for (headers and parts); null before the first. While `running`, these are the fields the analysis works on. */
@@ -47,7 +49,7 @@ export interface UseCompletion {
   /** What the last run came to (null: none yet, or one is running). */
   outcome: CompletionOutcome | null;
   /** Set once an answer has replaced the rules: the verification that let it, and the AI step's report (learn id, quota). */
-  completed: { verification: VerifyResult; ai: AiInfo | undefined } | null;
+  completed: { verification: VerifyResult; ai: AiInfo | undefined; filled: FillSummary | undefined; ambiguous: readonly AmbiguousColumn[] | undefined } | null;
   /** The failed-attempt cap on this example pair is reached: the AI step is not called for it any more. */
   exhausted: boolean;
   start(plan: CompletionPlanInput): void;
@@ -63,7 +65,7 @@ export function useCompletion(store: EditorStore, exampleId: string | undefined,
   const [outcome, setOutcome] = useState<CompletionOutcome | null>(null);
   const [asked, setAsked] = useState<{ columns: string[]; parts: AiStepPartCode[] } | null>(null);
   const columnsAsked = asked?.columns.length ?? 0;
-  const [done, setDone] = useState<{ result: object; verification: VerifyResult; ai: AiInfo | undefined } | null>(null);
+  const [done, setDone] = useState<{ result: object; verification: VerifyResult; ai: AiInfo | undefined; filled: FillSummary | undefined; ambiguous: readonly AmbiguousColumn[] | undefined } | null>(null);
   const revAtStart = useRef(0);
   const baseRules = useRef<EditableRules | null>(null);
   const handled = useRef<object | null>(null);
@@ -90,7 +92,7 @@ export function useCompletion(store: EditorStore, exampleId: string | undefined,
             res.aiNotes ?? [],
           );
           store.reset(next, { exceptions: s.exceptions, edited: [...s.edited] });
-          if (res.verification) setDone({ result: res, verification: res.verification, ai: state.ai });
+          if (res.verification) setDone({ result: res, verification: res.verification, ai: state.ai, filled: res.filled, ambiguous: res.ambiguous });
           const partsAsked = c.parts.length;
           setOutcome({ kind: 'done', asked: { columns: c.columns.length, parts: partsAsked }, produced: c.produced, merged: edited });
         }
@@ -128,10 +130,11 @@ export function useCompletion(store: EditorStore, exampleId: string | undefined,
 
   return {
     running: isRunning(state),
+    round: state.status === 'learning' && state.round ? state.round : null,
     columnsAsked,
     asked,
     outcome,
-    completed: done ? { verification: done.verification, ai } : null,
+    completed: done ? { verification: done.verification, ai, filled: done.filled, ambiguous: done.ambiguous } : null,
     exhausted,
     start,
   };

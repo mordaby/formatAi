@@ -1,9 +1,10 @@
 // CLI argument parsing for `pnpm eval` (SPEC 10): "pnpm eval --models <a>,<b>
 // --masking on,off --runs 3 [--provider anthropic|openai|claude-cli|fake]
-// [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]".
+// [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]
+// [--prompt learn-v7|learn-v8|learn-v8-noE1|learn-v8.1|learn-v8.1-noE1]".
 //
 // Kept dependency-free (no argv-parsing package) since the surface is tiny and fixed.
-import { LLM_PROVIDERS, type LlmProviderName } from '@formatai/shared';
+import { isPromptVersion, LLM_PROVIDERS, PROMPT_VERSIONS, type LlmProviderName, type PromptVersion } from '@formatai/shared';
 
 /** What the AI step is asked to do (LEARN_PROMPT "Completing a partial rules file"): `full` learns everything from the two
  * files (today's learn); `complete` runs the local partial result first (no LLM) and then the AI step only on what is
@@ -26,6 +27,8 @@ export interface EvalArgs {
   noEscalation: boolean;
   /** Which modes to run, in order (default: `['full']`). `--mode both` (or `full,complete`) runs both for a side-by-side report. */
   modes: EvalMode[];
+  /** `--prompt`: the prompt version to send (default: the current one, `promptVersion`), so two versions can be compared on the same code. */
+  prompt?: PromptVersion;
 }
 
 function isLlmProviderName(v: string): v is LlmProviderName {
@@ -107,6 +110,12 @@ export function parseArgs(argv: readonly string[]): EvalArgs {
       case '--cases':
         args.cases = value();
         break;
+      case '--prompt': {
+        const v = value();
+        if (!isPromptVersion(v)) throw new EvalArgsError(`--prompt: expected one of ${PROMPT_VERSIONS.join(', ')}, got "${v}"`);
+        args.prompt = v;
+        break;
+      }
       case '--out':
         args.out = value();
         break;

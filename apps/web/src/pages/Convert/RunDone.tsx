@@ -4,10 +4,11 @@ import { Link } from 'react-router-dom';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { Button } from '../../ui';
+import { KeptRulesNotice } from './KeptRules';
 import { isolate } from './logic';
 import { NewColumns } from './NewColumns';
 import { RunReport } from './RunReport';
-import type { Finished, NewColumnsNotice, Target } from './useConvertFlow';
+import type { Finished, KeptRules, NewColumnsNotice, Target } from './useConvertFlow';
 
 export interface RunDoneProps {
   target: Target;
@@ -15,13 +16,15 @@ export interface RunDoneProps {
   aliasNotSaved: boolean;
   /** "New column in this file" (SPEC 8.15), when there is one to mention. */
   notice: NewColumnsNotice | null;
+  /** The fixes the user kept as rules in the review ("Do this every time?"), and what became of them. */
+  kept: readonly KeptRules[];
   onDownload(): void;
   onAnother(): void;
   onDismissNotice(): void;
   onAddColumn(format: { conversionId: string; formatId: string }): void;
 }
 
-export function RunDone({ target, finished, aliasNotSaved, notice, onDownload, onAnother, onDismissNotice, onAddColumn }: RunDoneProps) {
+export function RunDone({ target, finished, aliasNotSaved, notice, kept, onDownload, onAnother, onDismissNotice, onAddColumn }: RunDoneProps) {
   const { t } = useI18n();
 
   return (
@@ -43,6 +46,7 @@ export function RunDone({ target, finished, aliasNotSaved, notice, onDownload, o
         <Cell value={finished.fileName} />
       </p>
       {aliasNotSaved ? <p className="muted">{t('conv.map.aliasNotSaved')}</p> : null}
+      <KeptRulesNotice kept={kept} />
       {notice ? <NewColumns notice={notice} onDismiss={onDismissNotice} onAdd={onAddColumn} /> : null}
 
       <RunReport rules={target.rules} finished={finished} />

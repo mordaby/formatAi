@@ -41,10 +41,17 @@ budgets (`limits.budgets`), and the user's AI-learn quota (`tiers.*.aiLearns: { 
 | 429 | `rateLimited` | too many requests from one IP this minute (`Retry-After` set) |
 | 403 | `signInForAi` | not signed in (learn, repair and outcome) |
 | 429 | `limitHit` + `limit: 'aiLearns'` + `period` | the AI-learn quota of the period is used up |
-| 429 | `limitHit` + `limit: 'repairsPerLearn'` | the one browser repair of this learn was used |
+| 429 | `limitHit` + `limit: 'repairsPerLearn'` | the learn's rounds of the learning loop are used (`limits.llm.browserRepairCalls`, 3) |
 | 409 | `aiAttemptsExhausted` + `counted` | 3 failed attempts on the same example pair (`limits.learn.maxFailedAiAttempts`); `counted: true` when this very answer counted the pair as one AI learn |
 | 503 | `budgetExhausted` | the daily overall budget is spent (kill switch) |
 | 400 | `invalidPayload`, `invalidPreviousRules`, `invalidProblems`, `invalidLearnId`, `invalidRequest` | malformed body / follow-up without a valid `learnId` |
+| 400 | `invalidRows` | a loop round's `rows` are malformed or larger than the loop allows: more than `limits.learn.loop.rowsPerRound` per round so far, more than `maxRowsTotal` masked rows in the learn (the payload's samples and dropped rows included), or the payload with them added past `limits.payload.maxBytes` |
+
+**The learning loop** (SPEC 9.3, `docs/proposals/learning-loop.md` 3.2): `POST /api/learn/repair` is one round. Its body carries,
+besides the previous rules and the problems, `rows`: every row of the example the browser sent since the learn (masked like the
+samples). Each round's answer is checked on the samples PLUS all of them (a later round cannot break a row an earlier one fixed), and
+gets `limits.llm.serverRepairRounds` server repairs of its own, like the learn call (no escalation). In completion mode an answer that
+changed part of the fixed rules has it put back by code (`restoreFixed`) before the checks decide.
 
 **What counts as an AI learn** (`src/protection/aiLearns.ts` has the state machine and its diagram): a
 learn counts once, when it succeeds. One unit of the user's period counter (`user:<id>:aiLearns[:<period-key>]`)
@@ -56,8 +63,8 @@ the attempt that reaches the cap keeps its unit - the pair counts as one learn -
 A provider outage (no model answered) is nobody's failed attempt. The browser then reports how the
 learn ended with `POST /api/learn/:learnId/outcome { outcome: 'verified' | 'accepted' | 'failed' }`
 (signed learnId, idempotent): `verified`/`accepted` count a learn that failed the server checks, `failed`
-gives back a counted one and records a failure. A browser repair that passes the server checks counts its
-learn too, and is never a learn of its own.
+gives back a counted one and records a failure. A loop round that passes the server checks counts its
+learn too, and is never a learn of its own: however many rounds a learn takes, it counts once (or not at all).
 
 `GET /api/session` returns `{ anonId, tier: 'free', limits, turnstileSiteKey? }` and sets the
 first-party `anonId` cookie (httpOnly, SameSite=Lax, Secure in production) on first contact.

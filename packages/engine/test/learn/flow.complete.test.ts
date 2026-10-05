@@ -1,6 +1,7 @@
 // learnFromExamples in completion mode (LEARN_PROMPT "Completing a partial rules file"): the local partial result is kept as a fixed part and
 // the AI step is asked only for what is missing. The fake `callLearn` plays the AI step: what matters is what the flow sends, what it accepts,
-// and that an answer which changed the fixed part is caught (and repaired) - never silently used.
+// and that what an answer changed of the fixed part is put back by code (`restoreFixed`) - or, what code cannot put back, caught and repaired:
+// never silently used.
 import { fromWire, LearnResultSchema, type LearnPayload, type LearnResult, type RepairProblem } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { formulaRulesFromWire } from '../../src/formula';
@@ -108,32 +109,66 @@ describe('learnFromExamples with complete', () => {
     expect(s.repairs).toHaveLength(0);
   });
 
-  it('an answer that changed a fixed element is caught: fixedProblems, matches stays about the example, and a repair is asked for', async () => {
+  it("a cut-off check in the user's rules is never sent (its edges are values of their rows), and comes back on the answer", async () => {
+    const pair = mixedPair();
+    const { rules } = await localPartial(pair);
+    const numeric = rules.input.columns.find((c) => c.type === 'decimal' || c.type === 'integer')!;
+    const check = { column: numeric.id, rule: 'cutoffRange', low: 123.5, high: 456.25, value: 400, includes: 'high', severity: 'flag' } as const;
+    const s = spy(answerFor);
+    const r = await learnFromExamples({
+      ...(await bytes(pair)),
+      masking: false,
+      tier: 'paid',
+      complete: { fixedRules: { ...rules, validations: [...rules.validations, check] }, columns: [3], parts: [] },
+      callLearn: s.callLearn,
+      callRepair: s.callRepair,
+    });
+    expect(JSON.stringify(s.payloads)).not.toContain('cutoffRange');
+    expect(JSON.stringify(s.payloads)).not.toContain('456.25');
+    expect(r.completion).toMatchObject({ fixedProblems: [], matches: true });
+    expect(r.rules?.validations).toContainEqual(check);
+  });
+
+  it('an answer that changed a fixed element gets it put back by code: the lock holds, the answer is good, and no repair is asked for', async () => {
+    const { rules: fixed } = await localPartial(mixedPair());
     const bad = (p: LearnPayload): LearnResult => {
       const a = answerFor(p);
       return { ...a, output: { ...a.output, columns: a.output.columns.map((c) => (c.header === 'Total' ? { ...c, from: a.input.columns.find((i) => i.header === 'Ref')!.id } : c)) } };
     };
-    const s = spy(bad); // the repair returns nothing usable
+    const s = spy(bad);
     const r = await complete(mixedPair(), s);
-    expect(r.completion!.fixedProblems.map((p) => p.path)).toEqual(['output.columns[2].from']);
-    expect(r.completion!.fixedProblems[0]).toMatchObject({ kind: 'fixedMismatch' });
-    expect(r.stages.browserRepairUsed).toBe(true);
-    expect(s.repairs).toHaveLength(1);
-    expect(s.repairs[0]!.problems.some((p) => p.kind === 'fixedMismatch' && p.path === 'output.columns[2].from')).toBe(true);
-    expect(r.stages.verifiedAfterRepair).toBe(false);
+    expect(r.completion).toMatchObject({ fixedProblems: [], matches: true, produced: { columns: 1, parts: 0 } });
+    expect(r.rules!.output.columns.find((c) => c.header === 'Total')!.from).toBe(fixed.output.columns.find((c) => c.header === 'Total')!.from);
+    expect(r.rules!.output.columns.find((c) => c.header === 'Label')!.from).toBe('labelOut'); // what it was asked for stays
+    expect(r.stages).toMatchObject({ verifiedFirstCall: true, browserRepairUsed: false, verifiedAfterRepair: true });
+    expect(s.repairs).toHaveLength(0);
   });
 
-  it('a repair that restores the fixed part makes the answer good (the repair is told which fixed element went missing)', async () => {
+  it('a dropped fixed computed column is put back too (no repair needed)', async () => {
     const bad = (p: LearnPayload): LearnResult => {
       const a = answerFor(p);
       return { ...a, transform: { ...a.transform, computed: a.transform.computed.filter((c) => c.id === 'labelOut') } }; // dropped the fixed computed column
     };
+    const s = spy(bad);
+    const r = await complete(mixedPair(), s);
+    expect(s.repairs).toHaveLength(0);
+    expect(r.stages).toMatchObject({ verifiedFirstCall: true, browserRepairUsed: false, verifiedAfterRepair: true });
+    expect(r.completion).toMatchObject({ fixedProblems: [], matches: true });
+  });
+
+  it('what code cannot put back is still a repair problem: a new value map on a column a fixed output column reads', async () => {
+    const bad = (p: LearnPayload): LearnResult => {
+      const a = answerFor(p);
+      const ref = a.input.columns.find((i) => i.header === 'Ref')!.id;
+      return { ...a, transform: { ...a.transform, valueMaps: [...a.transform.valueMaps, { column: ref, map: { 'R-1049': 'X' }, onMissing: 'keep' }] } };
+    };
     const s = spy(bad, (p) => answerFor(p));
     const r = await complete(mixedPair(), s);
     expect(s.repairs).toHaveLength(1);
-    expect(s.repairs[0]!.problems).toContainEqual(expect.objectContaining({ kind: 'fixedMismatch', path: 'transform.computed' }));
+    expect(s.repairs[0]!.problems).toContainEqual(expect.objectContaining({ kind: 'fixedMismatch', path: expect.stringMatching(/^transform\.valueMaps\[/) }));
     expect(r.stages).toMatchObject({ verifiedFirstCall: false, browserRepairUsed: true, verifiedAfterRepair: true });
     expect(r.completion).toMatchObject({ fixedProblems: [], matches: true });
+    expect(r.loop).toEqual({ rounds: 1, rowsSent: expect.any(Number), end: 'verified' });
   });
 
   it('a column the AI step reports as unsupported is left empty and does not spoil the answer', async () => {
@@ -186,7 +221,7 @@ describe('learnFromExamples with complete', () => {
     expect((r.rules!.input.rowFilters![0] as { value: string }).value).toBe('Zzqx'); // unmasked again
   });
 
-  it('with masking: the fixed lock\'s findings are asked of the answer as the AI wrote it (masked) - the repair call carries no real word', async () => {
+  it('with masking: a dropped fixed filter is put back by code (no repair asked for it), and no call carries the real word', async () => {
     const { rules } = await localPartial(mixedPair());
     const withFilter: LearnResult = {
       ...rules,
@@ -207,10 +242,11 @@ describe('learnFromExamples with complete', () => {
       callLearn: s.callLearn,
       callRepair: s.callRepair,
     });
-    expect(r.completion!.fixedProblems.map((p) => p.path)).toEqual(['input.rowFilters']); // the UI's own check, on the real answer
-    expect(s.repairs).toHaveLength(1);
-    expect(s.repairs[0]!.problems.filter((p) => p.kind === 'fixedMismatch').map((p) => (p as { path: string }).path)).toEqual(['input.rowFilters']);
-    expect(JSON.stringify([s.payloads[0], s.repairs[0]!.problems])).not.toContain('Zzqx');
+    // v12: the learning loop puts back what an answer changed of the fixed rules (restoreFixed) before the checks decide
+    expect(r.completion!.fixedProblems).toEqual([]);
+    expect((r.rules!.input.rowFilters![0] as { value: string }).value).toBe('Zzqx'); // the user's filter, real again
+    expect(s.repairs.flatMap((rq) => rq.problems).filter((p) => p.kind === 'fixedMismatch')).toEqual([]);
+    expect(JSON.stringify([s.payloads, s.repairs.map((rq) => rq.problems)])).not.toContain('Zzqx');
   });
 
   it('what is asked for does not depend on the readiness gate: only external columns left still goes to the AI step', async () => {

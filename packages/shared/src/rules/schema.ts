@@ -4,6 +4,7 @@
 // which by design take arbitrary keys taken from the user's own data.
 import { z } from 'zod';
 import {
+  AI_UNSUPPORTED_REASON_CODES,
   ASSUMPTION_REASON_CODES,
   UNSUPPORTED_REASON_CODES,
   type AssumptionReasonCode,
@@ -422,7 +423,18 @@ export interface InputColumn {
   required?: boolean;
   padLeft?: number;
   inputFormats?: string[];
+  /**
+   * SPEC 8.4a: how this column reads a cell whose text is exactly one of the keys - "N/A" -> "" (read as empty), "n/a" -> "0". Applied to the
+   * file's text cells at the very start of step 2 (before the type is read), so everything after sees the value it names; a number, a date or an
+   * empty cell is never matched. DECISION: the smallest addition that does the job. The existing `transform.valueMaps` run after the computed
+   * columns, on output values, so they can neither stop "N/A" from being flagged as a number nor change what a calculation reads. It is written by
+   * the Run screen's "Do this every time?" and never by the AI (the wire schema leaves it out), it is part of the SOURCE like `padLeft` and
+   * `inputFormats` (how the column is read, SPEC 8.15), and it holds the user's own text, not anything code read from the data.
+   */
+  readAs?: Record<string, string>;
 }
+/** The open dictionary of `readAs`: a cell's exact text -> the text it is read as (empty = an empty cell). Not on the wire (`./wire.ts`). */
+export const ReadAsSchema = z.record(z.string().min(1), z.string());
 export const InputColumnSchema = z.strictObject({
   id: z.string().min(1),
   header: z.string(),
@@ -431,6 +443,7 @@ export const InputColumnSchema = z.strictObject({
   required: z.boolean().optional(),
   padLeft: z.number().int().positive().optional(),
   inputFormats: z.array(z.string().min(1)).optional(),
+  readAs: ReadAsSchema.optional(),
 });
 
 // ---------- input.rowFilters (SPEC 8.3) ----------
@@ -991,9 +1004,81 @@ export type Validation =
       from: string;
       to: string;
       severity: ValidationSeverity;
-    };
+    }
+  | CutoffRangeValidation
+  | SameAsValidation;
 
-export const ValidationSchema = z.discriminatedUnion('rule', [
+/**
+ * A cut-off the example did not settle (SPEC 8.8, learning-loop proposal 3.4 / 7.1 item 3): a rule compares `column` with a constant
+ * (`amount >= 5000`), and code found from every row of the example only that the cut-off lies between two neighbouring values of the
+ * column, `low` and `high`, and used `value` inside that range. The user sees "your example shows the cut-off is above <low> and at most
+ * <high>; we used <value>", and at run time a row whose value is strictly between `low` and `high` is flagged: the example did not say
+ * which side of the cut-off it is on.
+ *
+ * DECISION: a new validation kind, not `range`: `range` flags a value OUTSIDE its bounds, this one flags a value INSIDE them, and it carries
+ * the value the rule uses so its sentence needs no reading of the rule. It is added to the stored schema only (`ValidationSchema`, so every
+ * saved and learned rules file may hold it; old files load unchanged); the AI step's wire schema leaves it out (`AiValidationSchema`): the
+ * AI never writes it, code does, and its two edges are values of the user's rows that are never sent (SPEC 7.2).
+ * DECISION: numbers stay numbers; for a date column the three are ISO dates ("YYYY-MM-DD"). `includes` says which edge the cut-off itself
+ * may equal: "high" for `>=` and `<` (above `low`, at most `high`), "low" for `>` and `<=` (at least `low`, below `high`). The flag is the
+ * same for both: strictly between the edges.
+ */
+export interface CutoffRangeValidation {
+  on?: ValidationOn;
+  column: string;
+  rule: 'cutoffRange';
+  low: number | string;
+  high: number | string;
+  value: number | string;
+  includes: 'high' | 'low';
+  severity: ValidationSeverity;
+}
+
+const CutoffValueSchema = z.union([z.number(), DateStringSchema]);
+
+const CutoffRangeValidationSchema = z.strictObject({
+  on: ValidationOnSchema,
+  column: z.string(),
+  rule: z.literal('cutoffRange'),
+  low: CutoffValueSchema,
+  high: CutoffValueSchema,
+  value: CutoffValueSchema,
+  includes: z.enum(['high', 'low']),
+  severity: SeveritySchema,
+});
+
+/**
+ * An open ambiguity question about a column's rule (SPEC 8.8, 8.11, 21 v12 item 17; owner decision 2026-10-04): the AI step gave a second
+ * rule for an output column (`LearnResult` alternatives, learn-v8) and BOTH reproduce every row of the example, so the user is asked which
+ * one is meant. Until they answer, the rules keep the first rule and this check flags a run-time row where the other rule (`expr`, the
+ * alternative written out as one expression over the columns the rules have) gives a different value than `column` holds. It is the
+ * question's marker (present = not answered) and is visible and deletable in the rules editor.
+ *
+ * DECISION: a new validation kind - no existing one compares a column with an expression. `column` is the input or computed id the output
+ * column reads (an input-side check, like `cutoffRange`), not the output header the owner's sketch named: an output check belongs to the
+ * FORMAT (8.8, 8.12) and would be copied to every source of it, while `expr` reads THIS source's columns. So it stays the conversion's own,
+ * never part of the source or the format (`sourceOf`), and it runs where input checks run: after the computed columns and value maps, before
+ * the sort. Severity is always `flag`. Only code writes it, never the AI step (the wire schema does not offer it), and it holds the
+ * alternative's constants: it is never sent (completion mode leaves it out of `complete.fixed` and puts it back, like `cutoffRange`).
+ */
+export interface SameAsValidation {
+  on?: 'input';
+  column: string;
+  rule: 'sameAs';
+  expr: Expr;
+  severity: ValidationSeverity;
+}
+
+const SameAsValidationSchema = z.strictObject({
+  on: z.literal('input').optional(),
+  column: z.string(),
+  rule: z.literal('sameAs'),
+  expr: ExprSchema,
+  severity: SeveritySchema,
+});
+
+/** The validation kinds the AI step may write (the wire schema, LEARN_PROMPT §5): every kind but `cutoffRange` and `sameAs`, which only code writes. */
+export const AI_VALIDATION_SCHEMAS = [
   z.strictObject({
     on: ValidationOnSchema,
     column: z.string(),
@@ -1042,7 +1127,17 @@ export const ValidationSchema = z.discriminatedUnion('rule', [
     to: DateStringSchema,
     severity: SeveritySchema,
   }),
-]);
+] as const;
+
+export const ValidationSchema = z.discriminatedUnion('rule', [...AI_VALIDATION_SCHEMAS, CutoffRangeValidationSchema, SameAsValidationSchema]);
+
+/** A check only code writes (SPEC 8.8): a cut-off the example did not settle, or the marker of an open question about a column's rule. Never sent. */
+export function isCodeCheck(v: Pick<Validation, 'rule'>): boolean {
+  return v.rule === 'cutoffRange' || v.rule === 'sameAs';
+}
+
+/** The wire schema's validations (`wire.ts`): what the AI step may write. Its JSON Schema is the one the prompt was written for. */
+export const AiValidationSchema = z.discriminatedUnion('rule', [...AI_VALIDATION_SCHEMAS]);
 
 // ---------- unsupported / assumptions (SPEC 8.10) ----------
 
@@ -1095,10 +1190,14 @@ export interface Unsupported {
   /** learn-v7: one short plain-language description of the rule the AI sees, in the output headers' language (a guess; in-session only, never stored). */
   explanation?: string;
 }
+/**
+ * `constrained: false` is the wire form (see `buildFunctionRequestSchema`), which also offers only the reason codes the AI step may write:
+ * `overfit` is code's alone (SPEC 9.2 layer 6), like the `cutoffRange` / `sameAs` checks.
+ */
 export function buildUnsupportedSchema(constrained: boolean): z.ZodType<Unsupported> {
   return z.strictObject({
     outputColumn: z.string(),
-    reasonCode: z.enum(UNSUPPORTED_REASON_CODES),
+    reasonCode: constrained ? z.enum(UNSUPPORTED_REASON_CODES) : z.enum(AI_UNSUPPORTED_REASON_CODES),
     functionRequest: buildFunctionRequestSchema(constrained).optional(),
     explanation: (constrained ? z.string().max(FUNCTION_REQUEST_LIMITS.maxExplanationChars) : z.string()).optional(),
   }) as unknown as z.ZodType<Unsupported>;
@@ -1136,6 +1235,34 @@ export interface LearnResult {
   assumptions: Assumption[];
 }
 export const LearnResultSchema = z.strictObject(learnResultShape);
+
+// ---------- alternatives (learn-v8; owner decision 2026-10-04; SPEC 9.2, 21 v12 item 17) ----------
+
+/**
+ * A second rule the AI step saw for one output column: it fits every row the AI step was shown as well as the answer's own rule. Code
+ * tests both on every row of the example: only one fits - that one is the rule; both fit - the user is asked; neither - the answer's rule
+ * goes on to the learning loop. NEVER part of a rules file: it travels beside the answer (`LearnResponse.alternatives`) and lives only in
+ * the learn session.
+ *
+ * In the same terms an output column and computed columns use: what the column reads instead (`from`: an id of the answer, or one of the
+ * alternative's own computed columns), plus the NEW computed columns it needs, run after the answer's own (their ids clash with none of
+ * the answer's).
+ */
+export interface LearnAlternative {
+  /** The output column (its header, as in `output.columns[].header`). */
+  outputColumn: string;
+  from: string;
+  computed: Computed[];
+}
+
+export function buildAlternativeSchema(exprSchema: z.ZodType<Expr>): z.ZodType<LearnAlternative> {
+  return z.strictObject({
+    outputColumn: z.string(),
+    from: z.string(),
+    computed: z.array(buildComputedSchema(exprSchema)),
+  }) as unknown as z.ZodType<LearnAlternative>;
+}
+export const LearnAlternativeSchema = buildAlternativeSchema(ExprSchema);
 
 // meta.source / meta.status per SPEC 5 (flow B, kept in the schema now, not built yet)
 // and SPEC 13 (formats.status).

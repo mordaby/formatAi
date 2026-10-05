@@ -12,6 +12,14 @@ export interface CaseMeta {
   domain: string;
   features: string[];
   expect: ExpectClassification | { masking_on: ExpectClassification; masking_off: ExpectClassification };
+  /**
+   * DECISION: a plain-words note on what the expected outcome really is, for a case whose target is richer than `expect` can say
+   * (`discount-hand-edited`: "the rule for the rest, the 3 rows reported" - no classification means that yet). The harness does not
+   * score it: `expect` still decides "expectation met", and the report prints the note next to the case.
+   */
+  expectNote?: string;
+  /** Rows of `output.*` edited by hand: the reference rules differ from it in exactly this many (see `cases/README.md`); not used by the runner. */
+  handEditedRows?: number;
   attachTo?: string;
 }
 

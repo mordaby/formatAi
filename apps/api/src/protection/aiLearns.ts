@@ -16,7 +16,7 @@
 //        open (0) --server checks pass (layers 1-7)------------------> charged (1)   the unit stays
 //        open (0) --server checks fail, attempts left----------------> failed (2)    the unit is released
 //        open (0) --server checks fail, the cap is reached-----------> exhausted (3) the unit stays: the pair counts once
-//        failed (2) --repair passes / the browser reports verified
+//        failed (2) --a loop round passes / the browser reports verified
 //                     or accepted (saved with accepted differences)--> charged (1)   F is refunded, unit charged
 //        charged (1) --the browser reports the full verification
 //                      failed (the result did not match the example)--> failed (2)    unit refunded, F recorded
@@ -29,6 +29,11 @@
 // DECISION: a learn whose server checks pass counts at once - not only when the browser reports - because a
 // browser that never reports would otherwise get results for free. The one way back is `failed` (it refunds
 // the unit and records a failure on the pair); the cap is what bounds that: 3 attempts per pair per window.
+//
+// The learning loop (SPEC 9.3): a learn may take up to `limits.llm.browserRepairCalls` rounds, and however many it takes it
+// is ONE learn. Every move above happens at most once per learn - a round that passes finds the learn charged already, or
+// moves it there once (`markSucceeded` is idempotent); a round that fails changes nothing - and the browser reports once,
+// when the loop has ended: `verified` (it stays counted, or is counted now) or `failed` (one failed attempt, nothing counted).
 import { limits, type AiLearnQuotaState } from '@formatai/shared';
 import { aiFailKey, aiLearnStateKey, type AiQuota } from './keys.js';
 import type { ProtectionStore } from './store.js';
@@ -151,7 +156,7 @@ export async function settleLearn(ctx: AiLearnCtx, r: { answered: boolean; verif
 }
 
 /**
- * The learn succeeded: a server repair passed the checks, or the browser reported it `verified` / `accepted`.
+ * The learn succeeded: a loop round passed the server checks, or the browser reported it `verified` / `accepted`.
  * Counts it if it does not count yet; idempotent.
  */
 export async function markSucceeded(ctx: AiLearnCtx): Promise<Settled> {

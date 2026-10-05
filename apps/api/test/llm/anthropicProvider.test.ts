@@ -107,6 +107,58 @@ describe('anthropic provider - request building (LEARN_PROMPT §1, SPEC 9.1)', (
   });
 });
 
+// Prompt audit X2: thinking counts toward max_tokens, so each model is sent what keeps the answer inside it - thinking off where the model
+// allows it, room where it cannot be turned off (claude-api skill, "Thinking & Effort").
+describe('anthropic provider - thinking and max_tokens per model (X2)', () => {
+  async function paramsFor(model: string, overrides: Partial<CompleteRequest> = {}): Promise<Anthropic.MessageCreateParamsNonStreaming> {
+    const create = vi.fn().mockResolvedValue(fakeMessage({ model }));
+    await createAnthropicProvider({ client: mockClient(create) }).complete(baseRequest({ model, ...overrides }));
+    return create.mock.calls[0]![0] as Anthropic.MessageCreateParamsNonStreaming;
+  }
+
+  it('the two configured slots: Haiku 4.5 (no thinking unless asked) gets no thinking field; Sonnet 5 (adaptive by default) gets thinking disabled', async () => {
+    const haiku = await paramsFor(models.anthropic.firstTry);
+    expect(models.anthropic.firstTry).toBe('claude-haiku-4-5-20251001');
+    expect(haiku).not.toHaveProperty('thinking');
+    expect(haiku.max_tokens).toBe(limits.llm.maxTokens);
+    expect(haiku.temperature).toBe(0);
+
+    const sonnet = await paramsFor(models.anthropic.escalation);
+    expect(models.anthropic.escalation).toBe('claude-sonnet-5');
+    expect(sonnet.thinking).toEqual({ type: 'disabled' });
+    expect(sonnet.max_tokens).toBe(limits.llm.maxTokens);
+    expect(sonnet).not.toHaveProperty('temperature');
+    // (no effort is sent: Sonnet 5's default, high, is one that accepts disabled thinking)
+    expect(sonnet.output_config).not.toHaveProperty('effort');
+  });
+
+  it('every other model: Sonnet 5.5 between_tools; Opus 5 disabled; Opus 5.5 / Fable / Mythos (always thinking) no field and room; Opus 4.8 / 4.7 / 4.6 nothing', async () => {
+    const cases: [string, Anthropic.ThinkingConfigParam | undefined, number][] = [
+      ['claude-sonnet-5-5', { type: 'between_tools' }, limits.llm.maxTokens],
+      ['claude-opus-5', { type: 'disabled' }, limits.llm.maxTokens],
+      ['claude-opus-5-5', undefined, limits.llm.maxTokensThinking],
+      ['claude-fable-5-1', undefined, limits.llm.maxTokensThinking],
+      ['claude-fable-5', undefined, limits.llm.maxTokensThinking],
+      ['claude-mythos-5-1', undefined, limits.llm.maxTokensThinking],
+      ['claude-opus-4-8', undefined, limits.llm.maxTokens],
+      ['claude-opus-4-7', undefined, limits.llm.maxTokens],
+      ['claude-opus-4-6', undefined, limits.llm.maxTokens],
+      ['claude-sonnet-4-6', undefined, limits.llm.maxTokens],
+    ];
+    for (const [model, thinking, maxTokens] of cases) {
+      const params = await paramsFor(model);
+      expect(params.thinking, model).toEqual(thinking);
+      expect(params.max_tokens, model).toBe(maxTokens);
+    }
+    expect(limits.llm.maxTokensThinking).toBeGreaterThan(limits.llm.maxTokens);
+  });
+
+  it('the request\'s own maxTokens still wins, on a thinking model too', async () => {
+    expect((await paramsFor('claude-opus-5-5', { maxTokens: 999 })).max_tokens).toBe(999);
+    expect((await paramsFor('claude-sonnet-5', { maxTokens: 999 })).max_tokens).toBe(999);
+  });
+});
+
 describe('anthropic provider - response mapping', () => {
   it('parses the text block as JSON and maps usage/cost/model', async () => {
     const create = vi.fn().mockResolvedValue(fakeMessage());
@@ -152,6 +204,22 @@ describe('anthropic provider - response mapping', () => {
     const provider = createAnthropicProvider({ client: mockClient(create) });
 
     await expect(provider.complete(baseRequest())).rejects.toMatchObject({ kind: 'invalidJson' });
+  });
+
+  it('X2: an answer cut off at max_tokens is a truncated result with the call\'s usage and cost - not an invalidJson error', async () => {
+    for (const stop_reason of ['max_tokens', 'model_context_window_exceeded'] as const) {
+      const create = vi.fn().mockResolvedValue(fakeMessage({ stop_reason, content: [{ type: 'text', text: '{"answer":4', citations: null }] }));
+      const result = await createAnthropicProvider({ client: mockClient(create) }).complete(baseRequest());
+      expect(result).toMatchObject({ truncated: true, json: null, raw: '{"answer":4', provider: 'anthropic' });
+      expect(result.usage).toEqual({ tokensIn: 100, tokensOut: 20, tokensCachedRead: 5, tokensCachedWrite: 7 });
+      expect(result.costUsd).toBeGreaterThan(0);
+    }
+  });
+
+  it('a whole answer is never marked truncated', async () => {
+    const create = vi.fn().mockResolvedValue(fakeMessage());
+    const result = await createAnthropicProvider({ client: mockClient(create) }).complete(baseRequest());
+    expect(result.truncated).toBeUndefined();
   });
 });
 

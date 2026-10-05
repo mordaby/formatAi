@@ -6,6 +6,9 @@
 //   switch) -> the user's AI-learn quota (reserved) -> the LLM -> ledger, spend, cache write -> what the
 //   learn counted as (see `protection/aiLearns.ts`).
 //
+// The learning loop (SPEC 9.3): /api/learn/repair is one round - up to `limits.llm.browserRepairCalls` per learnId, each carrying every row
+// the browser sent so far (`rows`, size-checked here), the answer checked on the samples plus all of them, and all of them one AI learn.
+//
 // DECISION: completion mode (LEARN_PROMPT "Completing a partial rules file"): a payload with `complete` is a learn like any other (same quota, same
 // failed-attempt cap on its example pair, same outcome report), except that it never touches the structure cache - its answer contains
 // the user's own rules, so it is neither served from nor stored in it.
@@ -23,8 +26,12 @@ import {
   LearnPayloadSchema,
   LearnResultSchema,
   limits,
+  loopRowsFit,
+  LoopRowsSchema,
   promptVersion,
   stripAiNotes,
+  sumEstimates,
+  withRows,
   type ApiErrorBody,
   type LearnOutcomeResponse,
   type LearnQuotaResponse,
@@ -33,6 +40,7 @@ import {
   type LearnResult,
   type RepairProblem,
   type RepairResponse,
+  type Sample,
 } from '@formatai/shared';
 import type { Env } from '../env.js';
 import { countProblems, learn, readCompleteFixed, recordFunctionRequests, repairFromBrowser, requestKeysOf, type CompleteFn, type LearnOutcome, type LlmCallRecord } from '../learn/index.js';
@@ -79,6 +87,8 @@ interface RepairRequestBody {
   previousRules?: unknown;
   problems?: unknown;
   learnId?: unknown;
+  rows?: unknown;
+  overfitRepaired?: unknown;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -114,6 +124,7 @@ function ledgerDocs(learnId: string, identity: Identity, calls: readonly LlmCall
     tokensOut: c.tokensOut,
     tokensCached: c.tokensCached,
     costUsd: c.costUsd,
+    estimate: c.estimate,
     latencyMs: c.latencyMs,
     outcome: c.outcome,
     cacheHit: false,
@@ -135,6 +146,7 @@ function cacheHitLedgerDoc(learnId: string, identity: Identity, payload: LearnPa
     tokensOut: 0,
     tokensCached: 0,
     costUsd: 0,
+    estimate: sumEstimates([]),
     latencyMs,
     outcome: 'cacheHit',
     cacheHit: true,
@@ -333,8 +345,11 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     const res: LearnResponse = {
       rules: outcome.rules,
+      // learn-v8: the answer's checked alternatives go to the browser beside it (never into the cache: `saveToCache` keeps the rules only).
+      ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
       verified: outcome.verified,
       problems: outcome.problems,
+      ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
       learnId,
       cached: false,
       counted: settled.counted,
@@ -357,6 +372,13 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const parsedRules = LearnResultSchema.safeParse(body?.previousRules);
     if (!parsedRules.success) return fail(reply, 400, { error: 'invalidPreviousRules' });
     if (!isRepairProblemArray(body?.problems)) return fail(reply, 400, { error: 'invalidProblems' });
+    // The learning loop's rows (SPEC 9.3): sample-shaped, and never more than one learn may send - its samples and dropped rows
+    // included, and the payload with all of them added under the payload byte cap. (Absent: a round with no rows.)
+    const parsedRows = LoopRowsSchema.safeParse(body?.rows ?? []);
+    if (!parsedRows.success) return fail(reply, 400, { error: 'invalidRows' });
+    const payload = parsedPayload.data as unknown as LearnPayload;
+    const rows = parsedRows.data as Sample[];
+    if (!loopRowsFit(payload, rows)) return fail(reply, 400, { error: 'invalidRows' });
 
     const owner = ownerOf(identity);
     const now = protection.now();
@@ -372,8 +394,13 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const refusal = await budgetRefusal(identity, now);
     if (refusal) return fail(reply, refusal.status, refusal.body);
 
-    // At most ONE browser-triggered repair per learn, and it is not a new learn: the quota is untouched.
-    // The `repair:<uuid>` counter is what makes "once" atomic.
+    // A round adds at most `rowsPerRound` rows: round N carries at most N x rowsPerRound in all. Checked against the rounds used so far,
+    // before this one is counted, so a request refused here costs no round.
+    const used = await store.getCounter(repairKey(learnCheck.uuid));
+    if (rows.length > (used + 1) * limits.learn.loop.rowsPerRound) return fail(reply, 400, { error: 'invalidRows' });
+
+    // At most `browserRepairCalls` rounds of the learning loop per learn, and they are not a new learn: the quota is untouched.
+    // The `repair:<uuid>` counter is what makes the cap atomic.
     const uses = await store.incrementCounter(
       repairKey(learnCheck.uuid),
       1,
@@ -381,15 +408,18 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     );
     if (uses > limits.llm.browserRepairCalls) return fail(reply, 429, { error: 'limitHit', limit: 'repairsPerLearn' });
 
-    const payload = parsedPayload.data as unknown as LearnPayload;
     const previousRules: LearnResult = parsedRules.data;
+    // (The rows are values of the user's own files too: a function request is filtered against them like against the samples.)
+    const checked = withRows(payload, rows);
     const outcome = await withRecordedRequests(
       await repairFromBrowser(payload, previousRules, body.problems, {
         tier: tierOf(identity),
         env,
         complete,
+        rows,
+        overfitRepaired: body.overfitRepaired === true,
       }),
-      payload,
+      checked,
       owner,
       now,
       previousRules,
@@ -400,15 +430,18 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     // the better version rather than the one the browser had to repair.
     await saveToCache(owner, learnCacheKey(payload), payload, outcome, now);
 
-    // A repair that passes the server checks makes the learn a success (a repair never counts on its own);
-    // one that does not changes nothing - the learn's failure was recorded when it failed.
+    // A round whose answer passes the server checks makes the learn a success (a round never counts on its own, and however many rounds a
+    // learn takes it counts once: `markSucceeded` is idempotent); one that does not changes nothing - the learn's failure was recorded when
+    // it failed, and the browser reports how the loop ended (`/outcome`).
     const ctx = ctxOf(identity, now, learnCheck);
     const settled: Settled = outcome.verified ? await markSucceeded(ctx) : await stateOf(ctx);
 
     const res: RepairResponse = {
       rules: outcome.rules,
+      ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
       verified: outcome.verified,
       problems: outcome.problems,
+      ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
       counted: settled.counted,
       failedAttempts: settled.failedAttempts,
       quota: await quotaState(store, ctx.quota),

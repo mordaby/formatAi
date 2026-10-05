@@ -20,8 +20,12 @@ export interface SignInApi {
    * what has been learned so far can be kept across the trip (SPEC 5 E).
    */
   start(provider: AuthProviderId): Promise<void>;
-  /** The screen that holds the learned rules registers how to keep them; pass null to unregister. */
-  setBeforeRedirect(fn: (() => Promise<void>) | null): void;
+  /**
+   * The screen that holds the learned rules registers how to keep them; pass null to unregister. `reason` is why the wall was open when
+   * the provider was chosen (null: it was not, e.g. the buttons of a popup): Home's "Learn with AI" opens the 'ai' wall, and that is the
+   * learn to carry across the trip.
+   */
+  setBeforeRedirect(fn: ((trip: { reason: SignInReason | null }) => Promise<void>) | null): void;
 }
 
 const SignInContext = createContext<SignInApi | null>(null);
@@ -46,7 +50,9 @@ export function SignInProvider({ children }: { children: ReactNode }) {
   const me = useMe();
   const location = useLocation();
   const [state, setState] = useState<{ open: boolean; reason: SignInReason }>({ open: false, reason: 'save' });
-  const beforeRedirect = useRef<(() => Promise<void>) | null>(null);
+  const beforeRedirect = useRef<((trip: { reason: SignInReason | null }) => Promise<void>) | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const meRef = useRef(me);
   meRef.current = me;
   const whereRef = useRef(location);
@@ -57,13 +63,13 @@ export function SignInProvider({ children }: { children: ReactNode }) {
     setState({ open: true, reason });
   }, []);
   const close = useCallback(() => setState((s) => ({ ...s, open: false })), []);
-  const setBeforeRedirect = useCallback((fn: (() => Promise<void>) | null) => {
+  const setBeforeRedirect = useCallback((fn: ((trip: { reason: SignInReason | null }) => Promise<void>) | null) => {
     beforeRedirect.current = fn;
   }, []);
   const start = useCallback(
     async (provider: AuthProviderId) => {
       try {
-        await beforeRedirect.current?.();
+        await beforeRedirect.current?.({ reason: stateRef.current.open ? stateRef.current.reason : null });
       } catch {
         // Keeping the learned rules is a courtesy: a browser that will not store them must not stop the sign-in.
       }

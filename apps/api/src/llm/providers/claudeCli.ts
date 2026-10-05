@@ -6,6 +6,7 @@ import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from 'node:ch
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { limits } from '@formatai/shared';
 import { LlmError } from '../errors.js';
 import type { CompleteRequest, CompleteResult, LlmProvider, LlmUsage } from '../types.js';
 
@@ -63,11 +64,15 @@ export interface CreateClaudeCliProviderOptions {
   nodeEnv?: string;
   /** Dependency injection for tests. Defaults to `node:child_process`'s `spawn`. */
   spawn?: SpawnFn;
+  /** How long one CLI call may run before its child is stopped (default `limits.llm.cliTimeoutMs`). */
+  timeoutMs?: number;
 }
 
 interface ClaudeCliJsonResult {
   is_error?: boolean;
   result?: string;
+  /** The model's own stop reason for its last turn (e.g. "end_turn", "tool_use", "max_tokens"), when the CLI reports one. */
+  stop_reason?: string | null;
   total_cost_usd?: number;
   usage?: {
     input_tokens?: number;
@@ -90,11 +95,17 @@ function isEnoent(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: unknown }).code === 'ENOENT';
 }
 
+/**
+ * Runs one CLI call. After `timeoutMs` without the child closing, THAT child is stopped through its own handle (`child.kill()` - never a
+ * process looked up by its image name: the developer's own servers and other CLI sessions run the same executables) and the call fails
+ * with an `LlmError` of kind `timeout`: a failed call like any other (`error:timeout` in the ledger), so the learn - and an eval run - goes on.
+ */
 function runProcess(
   spawnFn: SpawnFn,
   command: string,
   args: string[],
   stdin: string,
+  timeoutMs: number,
   cwd?: string,
 ): Promise<{ stdout: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
@@ -108,8 +119,19 @@ function runProcess(
 
     let stdout = '';
     let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill();
+      } catch {
+        // already gone: nothing to stop
+      }
+      reject(new LlmError('timeout', 'claude-cli', `the claude CLI gave no answer within ${Math.round(timeoutMs / 1000)} s; that call was stopped`));
+    }, timeoutMs);
 
     child.on('error', (err) => {
+      clearTimeout(timer);
       if (settled) return;
       settled = true;
       reject(err);
@@ -118,11 +140,14 @@ function runProcess(
       stdout += chunk.toString();
     });
     child.on('close', (exitCode) => {
+      clearTimeout(timer);
       if (settled) return;
       settled = true;
       resolve({ stdout, exitCode });
     });
 
+    // A child stopped (or gone) before it read its input closes the pipe: that is no reason to bring the process down.
+    child.stdin?.on('error', () => {});
     child.stdin?.write(stdin);
     child.stdin?.end();
   });
@@ -185,11 +210,14 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
         '--strict-mcp-config',
       ];
 
+      const timeoutMs = opts.timeoutMs ?? limits.llm.cliTimeoutMs;
       let outcome: { stdout: string; exitCode: number | null };
       try {
         try {
-          outcome = await runProcess(spawnFn, command, args, userContent, workDir);
+          outcome = await runProcess(spawnFn, command, args, userContent, timeoutMs, workDir);
         } catch (err) {
+          // (a call stopped at the timeout is already the failure it is)
+          if (err instanceof LlmError) throw err;
           if (!isEnoent(err)) {
             throw new LlmError('providerError', 'claude-cli', 'failed to spawn the claude CLI', { cause: err });
           }
@@ -204,8 +232,9 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
           }
           // Not found on PATH: fall back to `npx -y @anthropic-ai/claude-code`.
           try {
-            outcome = await runProcess(spawnFn, 'npx', ['-y', '@anthropic-ai/claude-code', ...args], userContent, workDir);
+            outcome = await runProcess(spawnFn, 'npx', ['-y', '@anthropic-ai/claude-code', ...args], userContent, timeoutMs, workDir);
           } catch (fallbackErr) {
+            if (fallbackErr instanceof LlmError) throw fallbackErr;
             throw new LlmError('providerError', 'claude-cli', 'failed to spawn the claude CLI via npx', {
               cause: fallbackErr,
             });
@@ -220,6 +249,19 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
         cliResult = JSON.parse(outcome.stdout) as ClaudeCliJsonResult;
       } catch {
         throw new LlmError('providerError', 'claude-cli', 'the claude CLI did not return valid JSON output');
+      }
+
+      const usage: LlmUsage = {
+        tokensIn: cliResult.usage?.input_tokens ?? 0,
+        tokensOut: cliResult.usage?.output_tokens ?? 0,
+        tokensCachedRead: cliResult.usage?.cache_read_input_tokens ?? 0,
+        tokensCachedWrite: cliResult.usage?.cache_creation_input_tokens ?? 0,
+      };
+
+      // Prompt audit X2: the CLI's JSON carries the model's `stop_reason`; an answer cut off at the output limit is reported the way the
+      // API providers report it (whatever else the CLI says about that run). The CLI's own thinking and token limits are left as they are.
+      if (cliResult.stop_reason === 'max_tokens' || cliResult.stop_reason === 'model_context_window_exceeded') {
+        return { json: null, raw: cliResult.result ?? '', truncated: true, usage, costUsd: 0, latencyMs: Date.now() - start, model: req.model, provider: 'claude-cli' };
       }
 
       if (cliResult.is_error) {
@@ -241,13 +283,6 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
       } catch {
         throw new LlmError('invalidJson', 'claude-cli', 'model response was not valid JSON');
       }
-
-      const usage: LlmUsage = {
-        tokensIn: cliResult.usage?.input_tokens ?? 0,
-        tokensOut: cliResult.usage?.output_tokens ?? 0,
-        tokensCachedRead: cliResult.usage?.cache_read_input_tokens ?? 0,
-        tokensCachedWrite: cliResult.usage?.cache_creation_input_tokens ?? 0,
-      };
 
       return {
         json,

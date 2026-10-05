@@ -225,6 +225,7 @@ function ConvertTool({ tier }: { tier: Tier }) {
             onSkipAll={flow.skipAll}
             onClear={flow.clearChoices}
             onChangeRule={changeRule}
+            {...(phase.target.status !== 'needsReview' ? { keepRule: { formats: phase.target.sourceFormats } } : {})}
             onCreate={flow.create}
           />
         ) : null}
@@ -234,6 +235,7 @@ function ConvertTool({ tier }: { tier: Tier }) {
             finished={phase.finished}
             aliasNotSaved={flow.aliasNotSaved}
             notice={phase.notice}
+            kept={phase.kept}
             onDownload={flow.download}
             onAnother={flow.reset}
             onDismissNotice={flow.dismissNewColumns}
@@ -247,6 +249,7 @@ function ConvertTool({ tier }: { tier: Tier }) {
             failed={phase.failed}
             aliasNotSaved={flow.aliasNotSaved}
             notice={phase.notice}
+            kept={phase.kept}
             packing={flow.packing}
             packError={flow.packError}
             onDownloadOne={flow.downloadOne}

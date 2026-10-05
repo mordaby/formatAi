@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V7, limits, models, REPAIR_INSTRUCTION } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT, learnPromptOf, limits, models, promptVersion, REPAIR_INSTRUCTION, REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V8 } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
@@ -15,8 +15,11 @@ import {
   externalColumnWireJson,
   gaveUpOnDerivableWireJson,
   schemaBrokenRulesJson,
+  wrongRoundingRules,
   wrongRoundingWireJson,
 } from './fixtures.js';
+import { formulaRulesToWire } from '@formatai/engine';
+import { toWire } from '@formatai/shared';
 
 const env = loadEnv({ ...process.env, LLM_PROVIDER: 'fake' });
 
@@ -39,10 +42,10 @@ async function withServerRepairRounds<T>(rounds: number, fn: () => Promise<T>): 
   }
 }
 
-describe('learn() with the fake provider: the learn-v7 prompt, the wire schema and the notes round trip', () => {
+describe('learn() with the fake provider: the current prompt, the wire schema and the notes round trip', () => {
   const request = { name: 'lookupStorageSite', purpose: 'Finds the storage site of an item from a table kept elsewhere.', args: [{ name: 'item', type: 'text' as const }], returns: 'text' as const };
 
-  it('sends the learn-v7 prompt and a wire schema that carries functionRequest and explanation, and returns both on the answer', async () => {
+  it('sends the current prompt and a wire schema that carries functionRequest and explanation, and returns both on the answer', async () => {
     const fake = createFakeProvider();
     const noted = { ...externalColumnRules(), unsupported: [{ outputColumn: 'Warehouse', reasonCode: 'externalData' as const, functionRequest: request, explanation: 'Looks like the storage site of the item.' }] };
     const { toWire } = await import('@formatai/shared');
@@ -54,12 +57,12 @@ describe('learn() with the fake provider: the learn-v7 prompt, the wire schema a
     expect(outcome.verified).toBe(true);
     expect(outcome.rules?.unsupported).toEqual(noted.unsupported);
     const sent = fake.calls[0]!;
-    expect(sent.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(sent.system).toBe(LEARN_SYSTEM_PROMPT);
     expect(sent.system).toContain('functionRequest');
     expect(sent.system).toContain('runningSum(x)');
     const unsupportedItem = (sent.schema as { properties: { unsupported: { items: { properties: Record<string, unknown> } } } }).properties.unsupported.items;
     expect(Object.keys(unsupportedItem.properties).sort()).toEqual(['explanation', 'functionRequest', 'outputColumn', 'reasonCode']);
-    expect(outcome.calls[0]).toMatchObject({ promptVersion: 'learn-v7' });
+    expect(outcome.calls[0]).toMatchObject({ promptVersion });
     // the ledger record is counts only: nothing of the notes
     expect(JSON.stringify(outcome.calls)).not.toMatch(/storage site|lookupStorageSite|explanation/);
   });
@@ -188,8 +191,8 @@ describe('learn()', () => {
 
     // Every call uses the identical, unchanging system prompt (SPEC 9.1) - no
     // conversation history is ever built up.
-    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
-    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(learnCall!.system).toBe(LEARN_SYSTEM_PROMPT);
+    expect(repairCall!.system).toBe(LEARN_SYSTEM_PROMPT);
 
     // The learn call: exactly one content block, the cached payload.
     expect(learnCall!.content).toHaveLength(1);
@@ -202,6 +205,76 @@ describe('learn()', () => {
     expect(repairCall!.content[1]!.cache).toBeUndefined();
     expect(repairCall!.content[1]!.text).toContain('"mode":"repair"');
     expect(repairCall!.content[1]!.text.endsWith(REPAIR_INSTRUCTION)).toBe(true);
+  });
+
+  // Prompt audit F11: each version sends its own repair instruction, so `--prompt learn-v7` repairs exactly as learn-v7 did.
+  it('appends the repair instruction of the prompt version sent: learn-v8 and learn-v8.1 (with its E1 sentence), their noE1 variants, learn-v7', async () => {
+    const sent: Record<string, string> = {};
+    for (const version of ['learn-v8', 'learn-v8-noE1', 'learn-v8.1', 'learn-v8.1-noE1', 'learn-v7'] as const) {
+      const fake = createFakeProvider();
+      fake.enqueue({ json: schemaBrokenRulesJson() });
+      fake.enqueue({ json: correctRulesWireJson() });
+      const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake), prompt: version });
+      expect(outcome.calls.map((c) => [c.purpose, c.promptVersion])).toEqual([['learn', version], ['repair', version]]);
+      sent[version] = fake.calls[1]!.content[1]!.text;
+      expect(sent[version]!.endsWith(`\n${learnPromptOf(version).repair}`)).toBe(true);
+    }
+    expect(sent['learn-v8']!.endsWith(`${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}`)).toBe(true);
+    expect(sent['learn-v8-noE1']!.endsWith(`\n${REPAIR_INSTRUCTION_V8}`)).toBe(true);
+    expect(sent['learn-v8.1']!.endsWith(`${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}`)).toBe(true);
+    expect(sent['learn-v8.1-noE1']!.endsWith(`\n${REPAIR_INSTRUCTION_V8}`)).toBe(true);
+    expect(sent['learn-v7']!.endsWith('\nFix only what the problems require. Keep everything else identical.')).toBe(true);
+  });
+});
+
+// Prompt audit X2: an answer cut off at the output-token limit used to surface as "not valid JSON" (a schema problem). It is its own
+// outcome now, counted on its own, with the call's usage (a cut answer is billed).
+describe('learn(): an answer cut off at the output-token limit (truncated)', () => {
+  it('is recorded as truncated - not a schema error - with its usage, and the repair asks for the whole answer again', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ truncated: true, raw: '{"schemaVersion":1,"input":{"sheet"', usage: { tokensIn: 900, tokensOut: 4000 }, costUsd: 0.02 });
+    fake.enqueue({ json: correctRulesWireJson() });
+
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.verified).toBe(true);
+    expect(outcome.rules).toEqual(correctRules());
+    const [cut, repair] = outcome.calls;
+    expect(cut).toMatchObject({ purpose: 'learn', outcome: 'truncated', tokensIn: 900, tokensOut: 4000, costUsd: 0.02 });
+    expect(cut!.problemCounts).toMatchObject({ truncated: 1, schema: 0, formula: 0 });
+    expect(cut!.estimate.outputTokens).toBeGreaterThan(0); // the cut text, counted by us too
+    expect(repair).toMatchObject({ purpose: 'repair', outcome: 'verified' });
+    expect(repair!.problemCounts.truncated).toBe(0);
+    // the repair block: nothing of the cut answer (it never parsed), and the one truncated problem
+    const block = JSON.parse(fake.calls[1]!.content[1]!.text.split('\n')[0]!) as { previousRules: unknown; problems: { kind: string; message: string }[] };
+    expect(block.previousRules).toBeNull();
+    expect(block.problems).toEqual([{ kind: 'truncated', message: expect.stringContaining('cut off at the output limit') }]);
+  });
+
+  it('a cut-off escalation never beats an answer with rules, however few its problems: the best real answer is kept', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: wrongRoundingWireJson() }); // learn: rules, some diff problems
+    fake.enqueue({ json: wrongRoundingWireJson() }); // repair: the same
+    fake.enqueue({ truncated: true }); // escalation: cut off (one problem)
+
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+
+    expect(outcome.calls.map((c) => [c.purpose, c.outcome])).toEqual([['learn', 'needsRepair'], ['repair', 'needsRepair'], ['escalation', 'truncated']]);
+    expect(outcome.calls[0]!.problemCounts.diff).toBeGreaterThan(1);
+    expect(outcome.rules).toEqual(wrongRoundingRules());
+    expect(outcome.verified).toBe(false);
+    expect(outcome.problems.every((p) => p.kind === 'diff')).toBe(true);
+  });
+
+  it('when no attempt has rules, the one with the fewest problems is still kept (no rules)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ truncated: true });
+    fake.enqueue({ truncated: true });
+    fake.enqueue({ truncated: true });
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    expect(outcome.calls.map((c) => c.outcome)).toEqual(['truncated', 'truncated', 'truncated']);
+    expect(outcome.rules).toBeNull();
+    expect(outcome.problems.map((p) => p.kind)).toEqual(['truncated']);
   });
 });
 
@@ -291,6 +364,83 @@ describe('repairFromBrowser()', () => {
     expect(outcome.calls).toHaveLength(1);
     expect(outcome.calls[0]!.purpose).toBe('repair');
     expect(outcome.verified).toBe(true);
+    expect(outcome.rules).toEqual(correctRules());
+  });
+});
+
+describe('repairFromBrowser(): one round of the learning loop', () => {
+  /** Rows of the example the browser sent (Total = Amount x 2), and one the first answer below gets wrong. */
+  const rows = [
+    { in: ['B1', 3], out: ['B1', 6] },
+    { in: ['B2', 4], out: ['B2', 8] },
+  ];
+  /** Right on the samples (10 -> 20, 5 -> 10) but not on B1/B2: Total = Amount + 10. */
+  const plusTen = (): unknown => {
+    const rules = correctRules();
+    return toWire(formulaRulesToWire({ ...rules, transform: { ...rules.transform, computed: [{ id: 'total', type: 'decimal', expr: { op: 'add', args: [{ col: 'amount' }, { const: 10 }] } }] } }) as never);
+  };
+  const browserProblems = [{ kind: 'diff' as const, out: 1, row: { in: ['B1', 3], out: ['B1', 6] }, expected: 6, actual: 3 }];
+
+  it('checks the answer on the samples PLUS every row sent: right on the samples, wrong on a row, it is repaired - and the repair is told the row itself', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: plusTen() });
+    fake.enqueue({ json: correctRulesWireJson() });
+    const outcome = await repairFromBrowser(basicPayload(), wrongRoundingRules(), browserProblems, { tier: 'registered', env, complete: fakeCompleteFn(fake), rows });
+
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['repair', 'repair']);
+    expect(outcome.verified).toBe(true);
+    expect(outcome.rules).toEqual(correctRules());
+    // the server's own repair names the rows (the model's payload block never had them), never a sample index past the payload's
+    const serverRepair = fake.calls[1]!.content[1]!.text;
+    expect(serverRepair).toContain('"row":{"in":["B1",3],"out":["B1",6]}');
+    expect(serverRepair).not.toMatch(/"sample":[2-9]/);
+  });
+
+  it('a row the example dropped (no output rows) that the answer still makes a row for is a problem naming that row', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: correctRulesWireJson() });
+    fake.enqueue({ json: correctRulesWireJson() });
+    const outcome = await repairFromBrowser(basicPayload(), wrongRoundingRules(), browserProblems, { tier: 'registered', env, complete: fakeCompleteFn(fake), rows: [{ in: ['VOID', 1], out: [] }] });
+    expect(outcome.verified).toBe(false);
+    // (`row.out` is the example's output for it - nothing - and what the rules made is `made`: prompt audit X1)
+    expect(outcome.problems).toContainEqual({ kind: 'diff', out: 0, expected: null, actual: 'VOID', row: { in: ['VOID', 1], out: [] }, made: ['VOID', 2] });
+  });
+
+  it('sends the first payload as it was (its cached prefix still hits) and the browser\'s problems in the repair block', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: correctRulesWireJson() });
+    await repairFromBrowser(basicPayload(), wrongRoundingRules(), browserProblems, { tier: 'registered', env, complete: fakeCompleteFn(fake), rows });
+    const [payloadBlock, repairBlock] = fake.calls[0]!.content as [{ text: string; cache?: boolean }, { text: string }];
+    expect(JSON.parse(payloadBlock.text)).toEqual(basicPayload());
+    expect(payloadBlock.cache).toBe(true);
+    expect(repairBlock.text).toContain('"kind":"diff"');
+    expect(repairBlock.text).toContain(REPAIR_INSTRUCTION);
+  });
+
+  it('gets the same server repair round as the first call for its own check problems (a formula error), and never escalates', async () => {
+    const fake = createFakeProvider();
+    const broken = correctRulesWireJson() as { transform: { computed: { expr: string }[] } };
+    const badFormula = structuredClone(broken);
+    badFormula.transform.computed[0]!.expr = 'amount * (2';
+    fake.enqueue({ json: badFormula });
+    fake.enqueue({ json: badFormula });
+    const outcome = await repairFromBrowser(basicPayload(), wrongRoundingRules(), browserProblems, { tier: 'registered', env, complete: fakeCompleteFn(fake), rows });
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['repair', ...Array(limits.llm.serverRepairRounds).fill('repair')]);
+    expect(new Set(outcome.calls.map((c) => c.model)).size).toBe(1); // the first-try model throughout: no escalation
+    expect(outcome.verified).toBe(false);
+    expect(outcome.problems[0]).toMatchObject({ kind: 'formula' });
+  });
+
+  it('keeps the best of the round\'s attempts', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: correctRulesWireJson() });
+    fake.enqueue({ json: plusTen() });
+    const outcome = await withServerRepairRounds(1, () =>
+      repairFromBrowser(basicPayload(), wrongRoundingRules(), browserProblems, { tier: 'registered', env, complete: fakeCompleteFn(fake), rows: [...rows, { in: ['B3', 1], out: ['B3', 3] }] }),
+    );
+    // x2 gets only B3 wrong (a row no rule of this file fits); the server repair's answer (+10) gets all three rows wrong: the first is kept
+    expect(outcome.calls).toHaveLength(2);
+    expect(outcome.verified).toBe(false);
     expect(outcome.rules).toEqual(correctRules());
   });
 });

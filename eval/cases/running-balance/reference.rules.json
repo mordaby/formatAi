@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "account",
+        "header": "Account",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "date",
+        "header": "Date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "id": "description",
+        "header": "Description",
+        "type": "text"
+      },
+      {
+        "id": "debit",
+        "header": "Debit",
+        "type": "decimal"
+      },
+      {
+        "id": "credit",
+        "header": "Credit",
+        "type": "decimal"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "net",
+        "type": "decimal",
+        "expr": {
+          "op": "sub",
+          "args": [
+            {
+              "col": "credit"
+            },
+            {
+              "col": "debit"
+            }
+          ]
+        }
+      },
+      {
+        "id": "balance",
+        "type": "decimal",
+        "expr": {
+          "op": "window",
+          "fn": "runningSum",
+          "arg": {
+            "col": "net"
+          },
+          "by": [
+            "account"
+          ],
+          "order": [
+            {
+              "column": "date",
+              "dir": "asc"
+            }
+          ]
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "account",
+        "dir": "asc"
+      },
+      {
+        "column": "date",
+        "dir": "asc"
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "Ledger with balance",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Account",
+        "from": "account"
+      },
+      {
+        "header": "Date",
+        "from": "date",
+        "format": "DD/MM/YYYY"
+      },
+      {
+        "header": "Description",
+        "from": "description"
+      },
+      {
+        "header": "Debit",
+        "from": "debit",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Credit",
+        "from": "credit",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Balance",
+        "from": "balance",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Ledger -> ledger with running balance",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

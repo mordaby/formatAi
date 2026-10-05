@@ -1,0 +1,17 @@
+{
+  "difficulty": "stress",
+  "domain": "salesReport",
+  "features": [
+    "titleFromData",
+    "renamedHeaders",
+    "sortTwoKeys",
+    "groupSummaryRows",
+    "countAndSum",
+    "blankRowAfterGroup",
+    "grandTotal",
+    "droppedColumn",
+    "newMonthNextMonth"
+  ],
+  "expect": "verified",
+  "expectNote": "a flat list becomes a report: a title row \"Sales by region - March 2026\" (the month from the data's dates), the headers Region / Sales rep / Amount, the rows sorted by Region then Amount descending, after each region a summary row (the sum of Amount and the count of rows) and a blank row, and a grand total row at the end. Next month: April, so the title says April 2026. May break: the title is copied as text (\"March 2026\" again), a summary row or the blank row is missing, the count is not a count of rows, the Date column is kept."
+}

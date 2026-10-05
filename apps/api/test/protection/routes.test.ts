@@ -1,5 +1,5 @@
 // The API protections end to end (fastify inject): anonId cookie, the AI-for-signed-in-users-only rule,
-// repair-once, budgets, the owner-scoped structure cache and the per-IP rate limit. (The AI-learn quota and
+// the learning loop's rounds (at most 3 per learn), budgets, the owner-scoped structure cache and the per-IP rate limit. (The AI-learn quota and
 // what counts as a learn are in aiQuota.test.ts; production mode in production.test.ts.)
 // Every suite runs against the in-memory store, and against a real local MongoDB when MONGODB_URI is set.
 import { limits, tiers } from '@formatai/shared';
@@ -168,36 +168,82 @@ function defineProtectionSuite(kit: StoreKit): void {
 
   // ---------- repair ----------
 
-  describe('POST /api/learn/repair (SPEC 9.3: at most one, and not a new learn)', () => {
+  describe('POST /api/learn/repair (SPEC 9.3: the learning loop\'s rounds, at most 3, and not a new learn)', () => {
     async function learned(h: Harness, cookie: string) {
       const res = await h.learn({ noCache: true }, { cookie });
       expect(res.statusCode).toBe(200);
       return res.json() as { rules: unknown; learnId: string };
     }
-    const repairBody = (rules: unknown, learnId: unknown) => ({
+    const repairBody = (rules: unknown, learnId: unknown, rows?: unknown) => ({
       payload: basicPayload(),
       previousRules: rules,
       problems: [],
       learnId,
+      ...(rows !== undefined ? { rows } : {}),
     });
+    /** `n` rows of the example the browser sends, sample-shaped (correct for `correctRules`: Total = Amount x 2). */
+    const rowsOf = (n: number) => Array.from({ length: n }, (_, i) => ({ in: [`B${i}`, i + 1], out: [`B${i}`, (i + 1) * 2] }));
 
-    it('issues a learnId and allows exactly one repair per learn', async () => {
+    it('issues a learnId and allows exactly 3 rounds per learn', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
       const { rules, learnId } = await learned(h, cookie);
       expect(learnId).toEqual(expect.any(String));
       const callsAfterLearn = llm.calls.length;
+      expect(limits.llm.browserRepairCalls).toBe(3);
 
-      const first = await h.post('/api/learn/repair', repairBody(rules, learnId), { cookie });
-      expect(first.statusCode).toBe(200);
-      expect(first.json().verified).toBe(true);
-      expect(llm.calls).toHaveLength(callsAfterLearn + 1);
+      for (let round = 1; round <= 3; round++) {
+        const res = await h.post('/api/learn/repair', repairBody(rules, learnId, rowsOf(round * 2)), { cookie });
+        expect(res.statusCode).toBe(200);
+        expect(res.json().verified).toBe(true);
+        expect(llm.calls).toHaveLength(callsAfterLearn + round);
+      }
 
-      const second = await h.post('/api/learn/repair', repairBody(rules, learnId), { cookie });
-      expect(second.statusCode).toBe(429);
-      expect(second.json()).toEqual({ error: 'limitHit', limit: 'repairsPerLearn' });
-      expect(llm.calls).toHaveLength(callsAfterLearn + 1);
+      const fourth = await h.post('/api/learn/repair', repairBody(rules, learnId), { cookie });
+      expect(fourth.statusCode).toBe(429);
+      expect(fourth.json()).toEqual({ error: 'limitHit', limit: 'repairsPerLearn' });
+      expect(llm.calls).toHaveLength(callsAfterLearn + 3);
+    });
+
+    it('refuses rows larger than the loop allows (400 invalidRows), before any call and without using a round', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const cookie = anonCookie(await h.get('/api/session'));
+      const { rules, learnId } = await learned(h, cookie);
+      const before = llm.calls.length;
+      const refused = async (rows: unknown) => {
+        const res = await h.post('/api/learn/repair', repairBody(rules, learnId, rows), { cookie });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: 'invalidRows' });
+      };
+      await refused('nope'); // not rows at all
+      await refused([{ in: 'x', out: [] }]);
+      await refused(rowsOf(limits.learn.loop.rowsPerRound + 1)); // more than one round may add (round 1)
+      await refused(rowsOf(limits.learn.loop.maxRowsTotal - basicPayload().samples.length + 1)); // more than one learn may send
+      await refused([{ in: ['x'.repeat(limits.payload.maxBytes), 1], out: ['x', 2] }]); // past the payload byte cap
+      expect(llm.calls).toHaveLength(before);
+      expect(await h.handle.counter(`repair:${learnId.split('.')[0]}`)).toBe(0);
+
+      // round 1 may add 8, round 2 up to 16 in all
+      expect((await h.post('/api/learn/repair', repairBody(rules, learnId, rowsOf(8)), { cookie })).statusCode).toBe(200);
+      expect((await h.post('/api/learn/repair', repairBody(rules, learnId, rowsOf(16)), { cookie })).statusCode).toBe(200);
+      await refused(rowsOf(25)); // round 3: at most 24
+    });
+
+    it('checks the answer on the samples PLUS every row sent: an answer right on the samples but wrong on a row is not verified, and the row is named', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const cookie = anonCookie(await h.get('/api/session'));
+      const { rules, learnId } = await learned(h, cookie);
+      const wrongRow = { in: ['B9', 7], out: ['B9', 15] }; // correctRules makes 14
+      const res = await h.post('/api/learn/repair', repairBody(rules, learnId, [...rowsOf(2), wrongRow]), { cookie });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { verified: boolean; problems: unknown[] };
+      expect(body.verified).toBe(false);
+      expect(body.problems).toContainEqual({ kind: 'diff', out: 1, row: { in: ['B9', 7], out: ['B9', 15] }, expected: 15, actual: 14 });
+      // the round's own server repair was made (the fake keeps answering the same rules): 1 + serverRepairRounds calls
+      expect((await h.handle.ledger()).filter((d) => d.purpose === 'repair')).toHaveLength(1 + limits.llm.serverRepairRounds);
     });
 
     it('is not counted as a new learn, and is allowed even once the AI-learn quota is spent', async () => {
@@ -270,15 +316,15 @@ function defineProtectionSuite(kit: StoreKit): void {
       expect((await bad(ok)).json()).toEqual({ error: 'invalidPreviousRules' });
     });
 
-    it('lets only one of several concurrent repairs through', async () => {
+    it('lets only 3 of several concurrent rounds through', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
       const { rules, learnId } = await learned(h, cookie);
       const results = await Promise.all(
-        Array.from({ length: 4 }, () => h.post('/api/learn/repair', repairBody(rules, learnId), { cookie })),
+        Array.from({ length: 6 }, () => h.post('/api/learn/repair', repairBody(rules, learnId), { cookie })),
       );
-      expect(results.filter((r) => r.statusCode === 200)).toHaveLength(1);
+      expect(results.filter((r) => r.statusCode === 200)).toHaveLength(3);
       expect(results.filter((r) => r.statusCode === 429)).toHaveLength(3);
     });
   });

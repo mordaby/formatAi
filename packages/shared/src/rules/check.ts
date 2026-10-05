@@ -12,7 +12,7 @@
 // Engine pipeline order (SPEC 8.2 / LEARN_PROMPT "Operations"):
 //   read -> rowFilters -> dedupe -> expand -> computed -> valueMaps -> sort -> group -> output -> validations
 import { limits } from '../config/limits';
-import { WINDOW_FNS, type Expr, type ExprNode, type LearnResult, type Rules, type SummaryRow, type TableCellValue } from './schema';
+import { WINDOW_FNS, type CutoffRangeValidation, type Expr, type ExprNode, type LearnResult, type Rules, type SummaryRow, type TableCellValue } from './schema';
 
 export type RuleProblemKind = 'reference' | 'depth' | 'duplicateId' | 'arity';
 
@@ -613,7 +613,30 @@ export function checkRules(rules: LearnResult | Rules, opts: CheckRulesOptions =
     } else {
       checkRef(v.column, finalIds, `validations[${i}].column`, problems);
     }
+    if (v.rule === 'cutoffRange') checkCutoffRange(v, `validations[${i}]`, problems);
+    // The other rule of an open question (SPEC 8.8 `sameAs`): it runs where input checks run, so it may read every column there is then
+    // (an across-row function only works in a computed column's formula).
+    if (v.rule === 'sameAs') checkExprTree(v.expr, { colIds: finalIds }, ctx, `validations[${i}].expr`, problems);
   });
 
   return problems;
+}
+
+/**
+ * A cut-off check (SPEC 8.8) is well formed: its three values are all numbers or all ISO dates, `low` is below `high`, and the value
+ * the rule uses is inside the range (at an edge only where the cut-off may equal it, `includes`).
+ */
+function checkCutoffRange(v: CutoffRangeValidation, path: string, problems: RuleProblem[]): void {
+  const kinds = new Set([typeof v.low, typeof v.high, typeof v.value]);
+  if (kinds.size !== 1) {
+    problems.push({ kind: 'reference', path, message: 'a cut-off check holds three numbers or three dates' });
+    return;
+  }
+  const [low, high, value] = [v.low, v.high, v.value] as [number | string, number | string, number | string];
+  if (!(low < high)) {
+    problems.push({ kind: 'reference', path: `${path}.low`, message: 'the low edge of a cut-off check must be below its high edge' });
+    return;
+  }
+  const inside = v.includes === 'high' ? value > low && value <= high : value >= low && value < high;
+  if (!inside) problems.push({ kind: 'reference', path: `${path}.value`, message: 'the cut-off a check names must be inside its range' });
 }

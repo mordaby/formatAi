@@ -1,0 +1,14 @@
+{
+  "difficulty": "stress",
+  "domain": "salesOrders",
+  "features": [
+    "filterNotEqual",
+    "dedupeKeepLatest",
+    "fileInDateOrder",
+    "rowsDropped",
+    "sortedOutput",
+    "newMixNextMonth"
+  ],
+  "expect": "verified",
+  "expectNote": "the Cancelled rows are dropped; of an order that appears more than once only the row with the LATEST Updated At stays (the file lists the versions oldest first, so that is the last row of the order); the rows are sorted by Order ID. Next month: more cancelled rows, fewer repeated orders and one order that appears three times. May break: a repeated order keeps its FIRST row, every row of a repeated order is dropped, or a Cancelled row survives."
+}

@@ -1,12 +1,13 @@
 // Runs the full production pipeline (SPEC 10) for every case x model x masking x run
 // combination: `learnFromExamples` (packages/engine) with `callLearn` = the API's
-// `learn()` and `callRepair` = `repairFromBrowser`, called in-process (no HTTP), plus
-// the hold-out check and scoring. This is the one place that actually spends tokens.
-import { completionPlan, formatOf, learnFromExamples, type LearnFromExamplesResult } from '@formatai/engine';
+// `learn()` and `callRepair` = `repairFromBrowser` (one round of the learning loop, with
+// the rows the loop sent), called in-process (no HTTP), plus the hold-out check and
+// scoring. This is the one place that actually spends tokens.
+import { completionPlan, formatOf, learnFromExamples, type FillSummary, type LearnFromExamplesResult } from '@formatai/engine';
 import { learn, repairFromBrowser, type CompleteFn, type LearnOptions, type LearnOutcome, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
-import type { Format, LearnResult, LlmProviderName, Rules, Tier } from '@formatai/shared';
+import { promptVersion, sumEstimates, type Format, type LearnResult, type LlmProviderName, type PromptVersion, type Rules, type Tier } from '@formatai/shared';
 import type { CaseDef } from './caseLoader.js';
 import type { EvalMode } from './args.js';
 import { checkHoldOut } from './holdout.js';
@@ -29,6 +30,8 @@ export interface RunRecord {
   path: LearnFromExamplesResult['path'];
   classification: string;
   expectationMet: boolean;
+  /** The case's `meta.expectNote`, when it has one (what the expected outcome means in words; the report prints it). */
+  expectNote?: string;
   holdOut: 'pass' | 'fail' | 'n/a';
   fastPath: boolean;
   /** DECISION: no per-call layer-1 signal is threaded out of `learn()` today (only
@@ -45,6 +48,58 @@ export interface RunRecord {
   costUsd: number;
   latencyMs: number;
   llmCalls: number;
+  /** OUR OWN token count over this run's LLM calls (the learning-loop proposal, section 4; `LlmCallRecord.estimate`, priced with
+   * `config/pricing.ts`) - the numbers to compare runs by, since the dev CLI's `tokens*` above include Claude Code's own overhead and
+   * thinking tokens. `estCostUsd` is null when a model of the run has no price. */
+  estInTokens: number;
+  estCachedTokens: number;
+  estCacheWriteTokens: number;
+  estOutTokens: number;
+  estCostUsd: number | null;
+  /** The learning loop (SPEC 9.3, `result.loop`): the rounds this learn made (browser-triggered repairs), the rows of the example they sent,
+   * and how the loop ended ('verified' or the stop reason: noProgress, roundCap, rowCap, payloadCap, nothingToSend). 0 / 0 / '' when the AI
+   * step was not called or brought back no rules. */
+  loopRounds: number;
+  loopRowsSent: number;
+  loopEnd: string;
+  /** What code filled in the kept answer from every row of the example (`result.filled`, learning-loop proposal 7.1): kinds and counts,
+   * never a value - e.g. "lookup 47, cutoff 1, 1 check". '' when nothing was filled (or no AI answer). */
+  filledByCode: string;
+  /** What the example could not settle (`result.ambiguities`, for the ambiguity question): the kinds, e.g. "dayMonthOrder". '' when none. */
+  ambiguities: string;
+  /** The prompt version the AI step was sent (`--prompt`; the current one by default). */
+  prompt: string;
+  /**
+   * learn-v8: the second rules the AI step gave - the ones the kept answer carried that code tested on every row (`result.alternatives`),
+   * plus every one the API's checks dropped in any call of the learn (`problemCounts.invalidAlternative`). 0 when none.
+   */
+  alternativesProposed: number;
+  /** What they turned out to be, per column, then the dropped ones: "Total bothPass, Tag alternativeOnly, invalid 2" ('' when none). The
+   * outcomes: bothPass (asked of the user), answerOnly / alternativeOnly (one fits: it is the rule), bothFail, invalid (dropped by the API). */
+  alternatives: string;
+  /**
+   * The prompt audit's measurement plan (docs/proposals/prompt-audit-learn-v7.md section 5): the output columns this learn's answers gave up
+   * on although the payload had a hint for them - the sum of every call's `problemCounts.unsupportedDespiteEvidence`. Each one is a repair:
+   * an answer that has one is sent back (a server repair, the escalation, or the loop's first round). 0 when no call was made.
+   */
+  unsupportedDespiteEvidence: number;
+  /** The reason codes of the kept answer's `unsupported` entries, counted: "externalData 1, hiddenByMasking 2" ('' when none, or no AI answer). */
+  unsupportedReasons: string;
+  /** Every problem kind this learn's calls produced, summed over the calls (`problemCounts`, counts only): "diff 6, reference 1" ('' when none). */
+  problemsByKind: string;
+  /** Prompt audit X2: the calls whose answer was cut off at the output-token limit (`outcome: "truncated"`). */
+  truncatedCalls: number;
+  /** The calls that were cut off or failed, by outcome: "truncated 1, error:timeout 1" ('' when every call came back whole). */
+  callFailures: string;
+  /** The kept answer's `overfitSuspected` assumptions (the API's overfitting lint, SPEC 9.2 layer 6). */
+  overfitSuspected: number;
+  /**
+   * The overfitting guards (SPEC 9.2 layer 6): the `overfit` problems the calls produced - a rule that copies rows of the example (a condition
+   * on a row's position, a long list of one-row cases), each asking for the learn's one repair for it - summed over every call.
+   */
+  overfitFound: number;
+  /** The kept answer's columns code reported as unsupported because their rule still copied rows after that repair (reason `overfit`). */
+  overfitFellBack: number;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
    * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
    * run's LLM calls produced, across the learn call and every repair/escalation call. */
@@ -74,6 +129,10 @@ export interface RunRecord {
  * `RunRecord[]` a single `runMatrix` call returns. */
 export const formulaErrorMessagesByRecord = new WeakMap<RunRecord, readonly string[]>();
 
+/** The rules each learn kept (the AI's answer as code filled it), for `run.ts` to write next to the report: what the AI step wrote for a
+ * column, and what code filled in, can only be read in the rules themselves. Eval cases are synthetic; the files stay in the report folder. */
+export const rulesByRecord = new WeakMap<RunRecord, LearnResult>();
+
 function buildEnv(provider: LlmProviderName): Env {
   return { ...loadEnv(), LLM_PROVIDER: provider };
 }
@@ -87,7 +146,9 @@ function formulaStats(calls: readonly LlmCallRecord[]): Pick<RunRecord, 'formula
   return { formulaErrorCount, firstCallFormulaErrors, formulaFixedByRepair };
 }
 
-function sumCalls(calls: readonly LlmCallRecord[]): Pick<RunRecord, 'tokensIn' | 'tokensOut' | 'tokensCached' | 'costUsd' | 'latencyMs' | 'llmCalls'> {
+type CallTotals = Pick<RunRecord, 'tokensIn' | 'tokensOut' | 'tokensCached' | 'costUsd' | 'latencyMs' | 'llmCalls' | 'estInTokens' | 'estCachedTokens' | 'estCacheWriteTokens' | 'estOutTokens' | 'estCostUsd'>;
+
+function sumCalls(calls: readonly LlmCallRecord[]): CallTotals {
   let tokensIn = 0;
   let tokensOut = 0;
   let tokensCached = 0;
@@ -100,11 +161,24 @@ function sumCalls(calls: readonly LlmCallRecord[]): Pick<RunRecord, 'tokensIn' |
     costUsd += c.costUsd;
     latencyMs += c.latencyMs;
   }
-  return { tokensIn, tokensOut, tokensCached, costUsd, latencyMs, llmCalls: calls.length };
+  const est = sumEstimates(calls.map((c) => c.estimate));
+  return {
+    tokensIn,
+    tokensOut,
+    tokensCached,
+    costUsd,
+    latencyMs,
+    llmCalls: calls.length,
+    estInTokens: est.inputTokens,
+    estCachedTokens: est.cachedInputTokens,
+    estCacheWriteTokens: est.cacheWriteTokens,
+    estOutTokens: est.outputTokens,
+    estCostUsd: est.costUsd,
+  };
 }
 
-function emptyTotals(): Pick<RunRecord, 'tokensIn' | 'tokensOut' | 'tokensCached' | 'costUsd' | 'latencyMs' | 'llmCalls'> {
-  return { tokensIn: 0, tokensOut: 0, tokensCached: 0, costUsd: 0, latencyMs: 0, llmCalls: 0 };
+function emptyTotals(): CallTotals {
+  return { tokensIn: 0, tokensOut: 0, tokensCached: 0, costUsd: 0, latencyMs: 0, llmCalls: 0, estInTokens: 0, estCachedTokens: 0, estCacheWriteTokens: 0, estOutTokens: 0, estCostUsd: 0 };
 }
 
 /** A deterministic (not cryptographically random) masking key, so `--runs > 1` and
@@ -132,6 +206,8 @@ export interface RunOneOptions {
   /** Called with every outcome of `learn()` / `repairFromBrowser()`: the answer BEFORE the AI notes are taken out of the rules (the catalogue's
    * AI measurement reads the function-request names from it). Observer only. */
   onLearnOutcome?: (outcome: LearnOutcome) => void;
+  /** `--prompt`: the prompt version to send (default: the current one). */
+  prompt?: PromptVersion;
 }
 
 export interface RunLearnResult {
@@ -166,6 +242,7 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     },
     ...(opts.noEscalation ? { noEscalation: true } : {}),
     ...(opts.complete ? { complete: opts.complete } : {}),
+    ...(opts.prompt ? { prompt: opts.prompt } : {}),
   };
   const common = {
     input: { bytes: opts.caseDef.input.bytes, name: opts.caseDef.input.fileName },
@@ -180,8 +257,10 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     opts.onLearnOutcome?.(outcome);
     return outcome;
   };
-  const callRepair: Parameters<typeof learnFromExamples<LlmCallRecord>>[0]['callRepair'] = async (payload, previousRules, problems) => {
-    const outcome = await repairFromBrowser(payload, previousRules, problems, learnOpts);
+  // A round of the learning loop, exactly as the API's /api/learn/repair runs it: the answer checked on the samples plus every row sent.
+  // (The loop itself - which rows, when to stop - is `learnFromExamples`' own, the same code the browser runs.)
+  const callRepair: Parameters<typeof learnFromExamples<LlmCallRecord>>[0]['callRepair'] = async (payload, previousRules, problems, round) => {
+    const outcome = await repairFromBrowser(payload, previousRules, problems, { ...learnOpts, rows: round.rows, ...(round.overfitRepaired ? { overfitRepaired: true } : {}) });
     opts.onLearnOutcome?.(outcome);
     return outcome;
   };
@@ -239,6 +318,7 @@ async function toRunRecord(
   ran: RunLearnResult,
   /** Set when the matrix ran more than one mode: every record then says which one it was. */
   tagMode: boolean,
+  prompt: PromptVersion = promptVersion,
 ): Promise<RunRecord> {
   const { result, formulaErrorMessages } = ran;
   const classification = classify(result);
@@ -263,12 +343,21 @@ async function toRunRecord(
     path: result.path,
     classification: classificationLabel(classification),
     expectationMet: expectationMet(caseDef.meta, masking, result, classification),
+    ...(caseDef.meta.expectNote ? { expectNote: caseDef.meta.expectNote } : {}),
     holdOut,
     fastPath: result.path === 'local',
     schemaValid: result.path !== 'llm' || result.rules !== null,
     verifiedFirstCall: result.stages.verifiedFirstCall,
     verifiedAfterRepair: result.stages.verifiedAfterRepair,
     ...totals,
+    loopRounds: result.loop?.rounds ?? 0,
+    loopRowsSent: result.loop?.rowsSent ?? 0,
+    loopEnd: result.loop?.end ?? '',
+    filledByCode: filledLabel(result.filled),
+    ambiguities: (result.ambiguities ?? []).map((a) => a.kind).join(' '),
+    prompt,
+    ...alternativesOf(result),
+    ...callsOf(result),
     ...formula,
     ...(tagMode
       ? {
@@ -285,6 +374,7 @@ async function toRunRecord(
       : {}),
   };
   if (formulaErrorMessages.length > 0) formulaErrorMessagesByRecord.set(record, formulaErrorMessages);
+  if (result.rules) rulesByRecord.set(record, result.rules);
   return record;
 }
 
@@ -306,9 +396,83 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     verifiedFirstCall: false,
     verifiedAfterRepair: false,
     ...emptyTotals(),
+    loopRounds: 0,
+    loopRowsSent: 0,
+    loopEnd: '',
+    filledByCode: '',
+    ambiguities: '',
+    prompt: promptVersion,
+    alternativesProposed: 0,
+    alternatives: '',
+    unsupportedDespiteEvidence: 0,
+    unsupportedReasons: '',
+    problemsByKind: '',
+    truncatedCalls: 0,
+    callFailures: '',
+    overfitSuspected: 0,
+    overfitFound: 0,
+    overfitFellBack: 0,
     ...formulaStats([]),
     error,
   };
+}
+
+/** "a 2, b 1": counts, most common first (ties by name); '' when none. */
+function tallyLabel(counts: ReadonlyMap<string, number>): string {
+  return [...counts.entries()]
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k, n]) => `${k} ${n}`)
+    .join(', ');
+}
+
+/**
+ * The prompt audit's measurement columns (docs/proposals/prompt-audit-learn-v7.md section 5) - counts only, from the call records
+ * (`problemCounts`, `outcome`) and the kept answer's own `unsupported` and `assumptions`: the columns given up on despite a hint, the problem
+ * kinds, the calls cut off or failed (X2), the reasons given for unsupported columns, and the overfitting lint's findings. Then the overfitting
+ * guards (SPEC 9.2 layer 6): the `overfit` problems found over every call, and the kept answer's columns code reported for them.
+ */
+export function callsOf(
+  result: Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'calls' | 'rules'>,
+): Pick<RunRecord, 'unsupportedDespiteEvidence' | 'unsupportedReasons' | 'problemsByKind' | 'truncatedCalls' | 'callFailures' | 'overfitSuspected' | 'overfitFound' | 'overfitFellBack'> {
+  const calls = result.path === 'llm' ? result.calls : [];
+  const kinds = new Map<string, number>();
+  const failures = new Map<string, number>();
+  for (const c of calls) {
+    // (Counts beside the problem kinds - the dropped alternatives, the columns code reported - are not problems.)
+    for (const [kind, n] of Object.entries(c.problemCounts)) if (kind !== 'invalidAlternative' && kind !== 'overfitFallback') kinds.set(kind, (kinds.get(kind) ?? 0) + n);
+    if (c.outcome === 'truncated' || c.outcome.startsWith('error:')) failures.set(c.outcome, (failures.get(c.outcome) ?? 0) + 1);
+  }
+  const rules = result.path === 'llm' ? result.rules : null;
+  const reasons = new Map<string, number>();
+  for (const u of rules?.unsupported ?? []) reasons.set(u.reasonCode, (reasons.get(u.reasonCode) ?? 0) + 1);
+  return {
+    unsupportedDespiteEvidence: kinds.get('unsupportedDespiteEvidence') ?? 0,
+    unsupportedReasons: tallyLabel(reasons),
+    problemsByKind: tallyLabel(kinds),
+    truncatedCalls: failures.get('truncated') ?? 0,
+    callFailures: tallyLabel(failures),
+    overfitSuspected: (rules?.assumptions ?? []).filter((a) => a.reasonCode === 'overfitSuspected').length,
+    overfitFound: kinds.get('overfit') ?? 0,
+    overfitFellBack: reasons.get('overfit') ?? 0,
+  };
+}
+
+/** The alternatives of a learn (learn-v8): those the kept answer carried, as code found them on every row, then the ones the API dropped. */
+export function alternativesOf(result: Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'calls' | 'alternatives'>): Pick<RunRecord, 'alternativesProposed' | 'alternatives'> {
+  const tested = result.alternatives ?? [];
+  const invalid = result.path === 'llm' ? result.calls.reduce((n, c) => n + (c.problemCounts.invalidAlternative ?? 0), 0) : 0;
+  const parts = tested.map((a) => `${a.column} ${a.outcome}`);
+  if (invalid > 0) parts.push(`invalid ${invalid}`);
+  return { alternativesProposed: tested.length + invalid, alternatives: parts.join(', ') };
+}
+
+/** "lookup 47, cutoff 1, 1 check": what code filled, kinds and counts only ('' when nothing). */
+export function filledLabel(filled: FillSummary | undefined): string {
+  if (!filled) return '';
+  const parts = filled.filled.map((f) => `${f.kind} ${f.count}`);
+  if (filled.checks > 0) parts.push(`${filled.checks} check${filled.checks === 1 ? '' : 's'}`);
+  return parts.join(', ');
 }
 
 export interface RunMatrixOptions {
@@ -322,6 +486,10 @@ export interface RunMatrixOptions {
   /** Which modes to run (default `['full']`); see `EvalMode`. */
   modes?: EvalMode[];
   onProgress?: (line: string) => void;
+  /** Replaces the LLM call (`RunOneOptions.complete`): a test passes a fake provider with canned answers. Default: the real provider. */
+  complete?: CompleteFn;
+  /** `--prompt`: the prompt version to send (default: the current one). */
+  prompt?: PromptVersion;
 }
 
 /**
@@ -353,9 +521,9 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
 
           for (const caseDef of baseCases) {
             opts.onProgress?.(`${label}: ${caseDef.name}`);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode });
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode, ...(opts.complete ? { complete: opts.complete } : {}), ...(opts.prompt ? { prompt: opts.prompt } : {}) });
             baseResults.set(caseDef.name, ran.result);
-            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode));
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt));
           }
 
           for (const caseDef of attachedCases) {
@@ -373,8 +541,8 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
               continue;
             }
             const target: Format = formatOf(baseRules);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode });
-            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode));
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode, ...(opts.complete ? { complete: opts.complete } : {}), ...(opts.prompt ? { prompt: opts.prompt } : {}) });
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt));
           }
         }
       }

@@ -20,11 +20,26 @@ export const limits = {
   /** SPEC 9.1, 9.3: LLM call settings and repair-round caps. */
   llm: {
     maxTokens: 4000,
+    /**
+     * Prompt audit X2: `max_tokens` for a model whose thinking cannot be turned off (Opus 5.5, Fable 5 / 5.1, Mythos: `apps/api/src/llm/
+     * providers/anthropic.ts`). Thinking counts toward `max_tokens`, so 4,000 could leave no room for the answer. 16,000 keeps a
+     * non-streaming request well under the SDK's HTTP timeout. Every model that can run without thinking is sent `maxTokens` with thinking off.
+     */
+    maxTokensThinking: 16_000,
     temperature: 0,
-    /** SPEC 9.3 / 20.5. Default 1; set to 0 for exactly one LLM call per learn. */
+    /** SPEC 9.3 / 20.5. Default 1; set to 0 for exactly one LLM call per learn. Every loop round gets the same (`learn.loop`). */
     serverRepairRounds: 1,
-    /** SPEC 9.3: at most 1 extra browser-triggered repair call after full verification. */
-    browserRepairCalls: 1,
+    /**
+     * SPEC 9.1 "claude-cli" (the dev provider): how long one spawned CLI call may run before that child process - and only it, through its
+     * own handle - is stopped and the call recorded as failed (`error:timeout`), so the learn and the eval go on. DECISION: 5 minutes - a
+     * learn call takes well under one, and one CLI call once hung for over an hour and took an eval run down with it.
+     */
+    cliTimeoutMs: 300_000,
+    /**
+     * SPEC 9.3: the browser-triggered repair calls of one learn - the rounds of the learning loop (`learn.loop`, owner decision
+     * 2026-10-04: 3 rounds; it was 1 before the loop). The server refuses a fourth under the same learnId.
+     */
+    browserRepairCalls: 3,
   },
   /**
    * SPEC 9.5: a daily anonymous budget and a daily overall budget, in USD.
@@ -45,7 +60,7 @@ export const limits = {
     rateLimitWindowMs: 60_000,
     /** Cloudflare Turnstile siteverify call timeout; a timeout counts as a failed check. */
     turnstileTimeoutMs: 5_000,
-    /** SPEC 9.3: how long after its learn a browser-triggered repair (at most one) is accepted. */
+    /** SPEC 9.3: how long after its learn a browser-triggered repair (a loop round, at most `llm.browserRepairCalls`) is accepted. */
     learnIdTtlMinutes: 60,
     /** Daily `anon:` / `ip:` usage counters are kept this long after their UTC day ends, then TTL-expired. */
     dailyCounterGraceHours: 24,
@@ -91,6 +106,8 @@ export const limits = {
     /** Across-row (window) functions per rules file, and columns in one `by:` / `order:` (docs/proposals/window-operations.md). Each window node also counts as one rule. */
     maxWindowOps: 8,
     maxWindowKeys: 3,
+    /** SPEC 8.4a: how many exact cell texts one input column may read another way (`input.columns[].readAs`, "Do this every time?" on the Run screen). */
+    maxReadAsPerColumn: 100,
   },
   /**
    * SPEC 6.5: the local fast path.
@@ -167,9 +184,48 @@ export const limits = {
       /** A request is rejected (counted, not stored) when its name, purpose or argument names contain a payload value: only tokens of at least this many characters are compared (numbers are compared whatever their length). */
       minTokenChars: 3,
     },
+    /**
+     * learn-v8 (owner decision 2026-10-04; SPEC 9.2, 21 v12 item 17): an answer may give, for an output column, a second rule that also fits
+     * every row it was shown (`alternatives`). At most one per column and at most this many per answer; the API drops the rest (counted in
+     * the call's `problemCounts.invalidAlternative`, never a repair). Each one costs the browser one more run of the rules on the example.
+     */
+    maxAlternatives: 3,
     /** The API's `function_requests` collection (SPEC 13): how many distinct (hashed) owners one request remembers; past it `distinctOwners` stops growing. */
     functionRequests: {
       maxOwnerHashes: 1000,
+    },
+    /**
+     * The learning loop (SPEC 9.3, docs/proposals/learning-loop.md 3.2; owner decision 2026-10-04): after the full verification the
+     * browser sends the rows the rules got wrong, round after round, while the number of wrong rows keeps going down. At most `maxRounds`
+     * rounds (one browser-triggered repair call each, `llm.browserRepairCalls`), at most `rowsPerRound` new rows in one round, and at most
+     * `maxRowsTotal` masked rows in one learn, the first payload's samples and dropped rows included. The payload byte cap
+     * (`payload.maxBytes`) holds for the payload with every row sent added to it.
+     */
+    loop: {
+      maxRounds: 3,
+      rowsPerRound: 8,
+      maxRowsTotal: 40,
+    },
+    /**
+     * Code fills the data parameters of an AI answer from every row of the example (docs/proposals/learning-loop.md 7.1, owner decision
+     * 2026-10-04; engine `learn/fillParams.ts`). Each condition (a value list, a cut-off) code settles costs two runs of the rules on the
+     * example; at most `maxConditions` of them per answer, in the order they appear (the rest are left as the AI wrote them).
+     */
+    fill: {
+      maxConditions: 24,
+    },
+    /**
+     * The overfitting guards (SPEC 9.2 layer 6, 21 v12 item 19; engine `learn/overfit.ts`): a computed column that is a chain of at least
+     * `minCases` cases, each giving a constant to the rows an equality or range of input columns picks (two input columns or more in all),
+     * and each the one taken for at most `maxRowsPerCase` of the rows code can see, copies the example's answers instead of stating a rule.
+     * DECISION: 6 and 2, from the learn-v8 measurement (2026-10-05): the memorized warehouse list (the kept answer) had 13 cases, each the
+     * one taken for one or two of the example's 20 rows, while no other kept rules file of that measurement (90 distinct: learn-v7 and
+     * learn-v8, both modes, the noE1 arm) has a chain of more than 4 cases (the longest, a status rule, takes 5 to 117 rows per case).
+     * A band table or a value map written as a `switch` reads one column and is never counted.
+     */
+    overfit: {
+      minCases: 6,
+      maxRowsPerCase: 2,
     },
   },
   /**

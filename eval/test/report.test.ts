@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { formulaErrorMessagesByRecord, type RunRecord } from '../lib/runner.js';
+import { callsOf, formulaErrorMessagesByRecord, type RunRecord } from '../lib/runner.js';
 import { buildCsvReport, buildMarkdownReport, printSummary } from '../lib/report.js';
 
 function record(overrides: Partial<RunRecord> = {}): RunRecord {
@@ -25,6 +25,27 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     costUsd: 0,
     latencyMs: 0,
     llmCalls: 0,
+    estInTokens: 0,
+    estCachedTokens: 0,
+    estCacheWriteTokens: 0,
+    estOutTokens: 0,
+    estCostUsd: 0,
+    loopRounds: 0,
+    loopRowsSent: 0,
+    loopEnd: '',
+    filledByCode: '',
+    ambiguities: '',
+    prompt: 'learn-v8',
+    alternativesProposed: 0,
+    alternatives: '',
+    unsupportedDespiteEvidence: 0,
+    unsupportedReasons: '',
+    problemsByKind: '',
+    truncatedCalls: 0,
+    callFailures: '',
+    overfitSuspected: 0,
+    overfitFound: 0,
+    overfitFellBack: 0,
     formulaErrorCount: 0,
     firstCallFormulaErrors: 0,
     formulaFixedByRepair: false,
@@ -245,5 +266,186 @@ describe('reports with modes (completion mode)', () => {
     printSummary([full(), complete()], (l) => lines.push(l));
     expect(lines.join('\n')).toContain('masking=off mode=full');
     expect(lines.join('\n')).toContain('masking=off mode=complete');
+  });
+});
+
+describe('token usage and cost (our own estimate)', () => {
+  /** A learn that made LLM calls: priced, with a cache write on the first call and a read on the repair. */
+  const aiLearn = (over: Partial<RunRecord> = {}) =>
+    record({
+      path: 'llm',
+      fastPath: false,
+      classification: 'verified',
+      llmCalls: 2,
+      latencyMs: 12_000,
+      estInTokens: 3000,
+      estCachedTokens: 10_000,
+      estCacheWriteTokens: 10_000,
+      estOutTokens: 1500,
+      estCostUsd: 0.04,
+      loopRounds: 1,
+      loopRowsSent: 8,
+      loopEnd: 'verified',
+      ...over,
+    });
+
+  it('has a section with the totals and the average per learn, over the learns that made an LLM call only', () => {
+    const records = [aiLearn({ case: 'a', holdOut: 'pass' }), aiLearn({ case: 'b', classification: 'notVerified', holdOut: 'fail', estCostUsd: 0.06, llmCalls: 3, estOutTokens: 2500, loopRounds: 2, loopRowsSent: 13, loopEnd: 'noProgress' }), record({ case: 'free' })];
+    const md = buildMarkdownReport(records, '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('## Token usage and cost (our own estimate)');
+    // 2 AI learns (the free-engine learn costs nothing and is not counted): totals, then the average per learn
+    expect(md).toContain('| haiku | off | total | 2 | 5 | 3 | 21 | noProgress 1, verified 1 | 6000 | 20000 | 20000 | 4000 | 0.1000 | 24.0 | 1 of 2 | 1 of 2 |');
+    expect(md).toContain('| haiku | off | average per learn |  | 2.50 | 1.50 | 10.5 |  | 3000 | 10000 | 10000 | 2000 | 0.0500 | 12.0 | 50% | 50% |');
+  });
+
+  it('lists every AI learn with its calls, loop rounds, rows sent and how the loop ended, tokens, cost, latency, verification and hold-out', () => {
+    const md = buildMarkdownReport([aiLearn({ case: 'orders-priority', holdOut: 'fail', classification: 'notVerified', loopRounds: 3, loopRowsSent: 24, loopEnd: 'roundCap' }), record({ case: 'free' })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('### Per learn');
+    expect(md).toContain('| orders-priority | haiku | off | 1 | 2 | 3 | 24 | roundCap | - | - | - | 3000 | 10000 | 10000 | 1500 | 0.0400 | 12.0 | no | fail |');
+    expect(md).not.toContain('| free | haiku | off | 1 |');
+  });
+
+  it('says per learn what code filled from every row and what the example could not settle (kinds and counts), and puts both in the CSV', () => {
+    const learn = aiLearn({ case: 'branch-lookup-50', filledByCode: 'lookup 47, cutoff 1, 1 check', ambiguities: 'dayMonthOrder' });
+    const md = buildMarkdownReport([learn], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| branch-lookup-50 | haiku | off | 1 | 2 | 1 | 8 | verified | lookup 47, cutoff 1, 1 check | dayMonthOrder | - | 3000 |');
+    const [head, row] = buildCsvReport([learn]).trim().split('\n');
+    const cols = head!.split(',');
+    expect(cols.slice(cols.indexOf('loopEnd') + 1, cols.indexOf('loopEnd') + 3)).toEqual(['filledByCode', 'ambiguities']);
+    expect(row).toContain('"lookup 47, cutoff 1, 1 check",dayMonthOrder');
+  });
+
+  it('the prompt audit\'s columns (section 5): hinted columns given up on, unsupported reasons, problem kinds, cut-off or failed calls, overfit - per learn, in the totals and in the CSV', () => {
+    const learn = aiLearn({ case: 'orders-priority', unsupportedDespiteEvidence: 2, unsupportedReasons: 'ambiguous 1', problemsByKind: 'diff 4, unsupportedDespiteEvidence 2', truncatedCalls: 1, callFailures: 'truncated 1', overfitSuspected: 1 });
+    const md = buildMarkdownReport([learn, aiLearn({ case: 'b' })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| yes | pass | 2 | ambiguous 1 | diff 4, unsupportedDespiteEvidence 2 | truncated 1 | 1 |');
+    expect(md).toContain('| yes | pass | 0 | - | - | - | 0 |');
+    expect(md).toContain('| 2 of 2 | 2 of 2 | 2 | 1 |');
+    expect(md).toContain('| 100% | 100% | 1.00 | 0.50 |');
+    const [head, row] = buildCsvReport([learn]).trim().split('\n');
+    const cols = head!.split(',');
+    const at = cols.indexOf('alternatives');
+    expect(cols.slice(at + 1, at + 9)).toEqual(['unsupportedDespiteEvidence', 'unsupportedReasons', 'problemsByKind', 'truncatedCalls', 'callFailures', 'overfitSuspected', 'overfitFound', 'overfitFellBack']);
+    expect(row).toContain(',2,ambiguous 1,"diff 4, unsupportedDespiteEvidence 2",1,truncated 1,1,0,0,');
+  });
+
+  it('the overfitting guards (SPEC 9.2 layer 6): what the calls found and what code reported, per learn and in the CSV', () => {
+    const learn = aiLearn({ case: 'fulfillment-external-column', problemsByKind: 'overfit 1', unsupportedReasons: 'overfit 1', overfitFound: 1, overfitFellBack: 1 });
+    const md = buildMarkdownReport([learn, aiLearn({ case: 'b' })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| overfit 1 | overfit 1 | - | 0 | found 1, fell back 1 |');
+    expect(md).toContain('| - | - | - | 0 | - |');
+    expect(md).toContain('"Copies rows"');
+    const [, row] = buildCsvReport([learn]).trim().split('\n');
+    expect(row).toContain(',0,overfit 1,overfit 1,0,,0,1,1,');
+  });
+
+  it('callsOf: counts from the call records and the kept answer only - never a message or a value', () => {
+    const call = (outcome: string, counts: Record<string, number>) => ({ outcome, problemCounts: { formula: 0, diff: 0, unsupportedDespiteEvidence: 0, truncated: 0, invalidAlternative: 0, ...counts } });
+    const result = {
+      path: 'llm' as const,
+      calls: [call('needsRepair', { diff: 3, unsupportedDespiteEvidence: 1, invalidAlternative: 2 }), call('truncated', { truncated: 1 }), call('error:timeout', { schema: 1 }), call('verified', {})],
+      rules: { unsupported: [{ outputColumn: 'A', reasonCode: 'externalData' }, { outputColumn: 'B', reasonCode: 'hiddenByMasking' }, { outputColumn: 'C', reasonCode: 'externalData' }], assumptions: [{ reasonCode: 'overfitSuspected' }, { reasonCode: 'filterGuessed' }] },
+    };
+    expect(callsOf(result as never)).toEqual({
+      unsupportedDespiteEvidence: 1,
+      unsupportedReasons: 'externalData 2, hiddenByMasking 1',
+      problemsByKind: 'diff 3, schema 1, truncated 1, unsupportedDespiteEvidence 1',
+      truncatedCalls: 1,
+      callFailures: 'error:timeout 1, truncated 1',
+      overfitSuspected: 1,
+      overfitFound: 0,
+      overfitFellBack: 0,
+    });
+    expect(callsOf({ path: 'local', calls: [], rules: null } as never)).toEqual({ unsupportedDespiteEvidence: 0, unsupportedReasons: '', problemsByKind: '', truncatedCalls: 0, callFailures: '', overfitSuspected: 0, overfitFound: 0, overfitFellBack: 0 });
+    // The overfitting guards: the overfit problems over every call, the kept answer's columns code reported; the fallbacks themselves
+    // (a count beside the problem kinds, like the dropped alternatives) are not a problem kind.
+    const guarded = {
+      path: 'llm' as const,
+      calls: [call('needsRepair', { overfit: 1 }), call('verified', { overfitFallback: 1 })],
+      rules: { unsupported: [{ outputColumn: 'W', reasonCode: 'overfit' }], assumptions: [] },
+    };
+    expect(callsOf(guarded as never)).toMatchObject({ problemsByKind: 'overfit 1', unsupportedReasons: 'overfit 1', overfitFound: 1, overfitFellBack: 1 });
+  });
+
+  it('shows n/a, never a guess, for a model with no price', () => {
+    const md = buildMarkdownReport([aiLearn({ estCostUsd: null })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| n/a |');
+    expect(md).not.toContain('0.0400');
+  });
+
+  it('says so when no call was made', () => {
+    expect(buildMarkdownReport([record()], '2025-01-01T00:00:00.000Z')).toContain('(no LLM call in this run)');
+  });
+
+  it('puts the estimate in the CSV, after the call count', () => {
+    const csv = buildCsvReport([aiLearn({ estCostUsd: null })]);
+    const [head, row] = csv.trim().split('\n');
+    const cols = head!.split(',');
+    expect(cols.slice(cols.indexOf('llmCalls'), cols.indexOf('llmCalls') + 6)).toEqual(['llmCalls', 'estInTokens', 'estCachedTokens', 'estCacheWriteTokens', 'estOutTokens', 'estCostUsd']);
+    const values = row!.split(',');
+    expect(values[cols.indexOf('estCacheWriteTokens')]).toBe('10000');
+    expect(values[cols.indexOf('estCostUsd')]).toBe('');
+    expect(cols.slice(cols.indexOf('estCostUsd') + 1, cols.indexOf('estCostUsd') + 4)).toEqual(['loopRounds', 'loopRowsSent', 'loopEnd']);
+    expect([values[cols.indexOf('loopRounds')], values[cols.indexOf('loopRowsSent')], values[cols.indexOf('loopEnd')]]).toEqual(['1', '8', 'verified']);
+  });
+
+  it('the stdout summary prints the totals and the per-learn numbers, with the cost, latency, verification and hold-out', () => {
+    const lines: string[] = [];
+    printSummary([aiLearn({ holdOut: 'pass' }), aiLearn({ holdOut: 'pass' })], (l) => lines.push(l));
+    const text = lines.join('\n');
+    expect(text).toContain('over 2 AI learn(s), 4 call(s): in 6000 / cached 20000 / cache write 20000 / out 3000, est. cost $0.0800, 24.0 s');
+    expect(text).toContain('per learn: in 3000 / cached 10000 / cache write 10000 / out 1500, est. cost $0.0400, 12.0 s');
+    expect(text).toContain('loop: 2 round(s), 16 row(s) sent, ends verified 2; verified on example 2 of 2, hold-out 2 of 2');
+  });
+
+  it('prints no usage line for a run without LLM calls', () => {
+    const lines: string[] = [];
+    printSummary([record()], (l) => lines.push(l));
+    expect(lines.join('\n')).not.toContain('est. tokens');
+  });
+});
+
+describe('expected outcomes in words', () => {
+  it('prints a case note next to the case, without scoring it', () => {
+    const md = buildMarkdownReport([record({ case: 'discount-hand-edited', expectNote: 'the rule for the rest, the 3 rows reported', expectationMet: false })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('## Expected outcomes in words');
+    expect(md).toContain('| discount-hand-edited | the rule for the rest, the 3 rows reported |');
+  });
+
+  it('has no such section when no case has a note', () => {
+    expect(buildMarkdownReport([record()], '2025-01-01T00:00:00.000Z')).not.toContain('Expected outcomes in words');
+  });
+});
+
+describe('learn-v8: the alternatives of each learn, and the prompt version', () => {
+  const aiLearn = (over: Partial<RunRecord> = {}) => record({ path: 'llm', fastPath: false, classification: 'verified', llmCalls: 2, latencyMs: 12_000, estInTokens: 3000, estCachedTokens: 10_000, estCacheWriteTokens: 10_000, estOutTokens: 1500, estCostUsd: 0.04, loopRounds: 1, loopRowsSent: 8, loopEnd: 'verified', ...over });
+  it('per learn: the alternatives and their outcomes; the CSV has the prompt, the number proposed and the outcomes; the header says the prompt', () => {
+    const learn = aiLearn({ case: 'orders-priority', alternativesProposed: 3, alternatives: 'Priority bothPass, Tag alternativeOnly, invalid 1' });
+    const md = buildMarkdownReport([learn], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('Prompt: learn-v8');
+    expect(md).toContain('| verified | - | - | Priority bothPass, Tag alternativeOnly, invalid 1 | 3000 |');
+    const [head, row] = buildCsvReport([learn]).trim().split('\n');
+    const cols = head!.split(',');
+    expect(cols.slice(cols.indexOf('ambiguities') + 1, cols.indexOf('ambiguities') + 4)).toEqual(['prompt', 'alternativesProposed', 'alternatives']);
+    expect(row).toContain('learn-v8,3,"Priority bothPass, Tag alternativeOnly, invalid 1"');
+  });
+
+  it('the stdout summary counts the outcomes across the learns', () => {
+    const lines: string[] = [];
+    printSummary(
+      [
+        aiLearn({ case: 'a', alternativesProposed: 2, alternatives: 'Priority bothPass, invalid 1' }),
+        aiLearn({ case: 'b', alternativesProposed: 1, alternatives: 'Tag alternativeOnly' }),
+        aiLearn({ case: 'c' }),
+      ],
+      (l) => lines.push(l),
+    );
+    expect(lines.find((l) => l.includes('alternatives:'))).toBe('    alternatives: 3 proposed in 2 learn(s) - bothPass 1, alternativeOnly 1, invalid 1');
+  });
+
+  it('says nothing about alternatives when no learn had any', () => {
+    const lines: string[] = [];
+    printSummary([aiLearn({ case: 'a' })], (l) => lines.push(l));
+    expect(lines.some((l) => l.includes('alternatives:'))).toBe(false);
   });
 });

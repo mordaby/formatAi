@@ -2,7 +2,8 @@
 // the incoming file the rules read - exactly as `formatOf(rules)` extracts the format side (formatOf.ts):
 //
 //   * `inputSignature.columns`: every input column the rules DECLARE (`input.columns`): header, aliases, type, `required`,
-//     and the shapes `padLeft` and `inputFormats`. A rules file declares only the columns some rule reads, so this is a
+//     and the shapes `padLeft`, `inputFormats` and `readAs` (SPEC 8.4a: the user's own "this text is read as that", typed on the Run
+//     screen - a rule parameter like an input check's bounds, not a value code read from the data). A rules file declares only the columns some rule reads, so this is a
 //     subset of the source's columns (the source holds the union over its conversions, SPEC 8.15);
 //   * `inputReading`: `input.sheet`, `input.headerRow`, `input.stopAt`;
 //   * `inputValidations`: `validations` whose `on` is not "output" (the output ones belong to the format, SPEC 8.8).
@@ -23,6 +24,7 @@
 // { values }`): they are the rule's own parameters, written by the user or by the learn step, not values read from the file;
 // and the source lock has to compare them to be able to say "equal". Sources gain no value that the rules file didn't already have.
 import type { LearnResult, Rules, SourceColumn, SourceInputReading, SourceStructure, Validation } from '@formatai/shared';
+import { isCodeCheck } from '@formatai/shared';
 import { normalizeText } from '../values/text';
 
 /**
@@ -68,6 +70,7 @@ export function sourceOf(rules: LearnResult | Rules): SourceStructure {
     };
     if (c.padLeft !== undefined) col.padLeft = c.padLeft;
     if (c.inputFormats !== undefined && c.inputFormats.length > 0) col.inputFormats = [...c.inputFormats];
+    if (c.readAs !== undefined && Object.keys(c.readAs).length > 0) col.readAs = { ...c.readAs };
     return col;
   });
 
@@ -80,6 +83,17 @@ export function sourceOf(rules: LearnResult | Rules): SourceStructure {
   return {
     inputSignature: { columns },
     inputReading: reading,
-    inputValidations: rules.validations.filter((v) => (v.on ?? 'input') !== 'output').map((v) => normalizeValidation(v, idToHeader)),
+    inputValidations: rules.validations.filter(isSourceCheck).map((v) => normalizeValidation(v, idToHeader)),
   };
+}
+
+/**
+ * Whether a validation belongs to the source (SPEC 8.15): an input check, except the checks only code writes (`cutoffRange`, `sameAs`,
+ * SPEC 8.8).
+ * DECISION: a cut-off check is about a constant of THIS conversion's rules (where its comparison draws the line), like a row filter, not
+ * about the file: it stays in the conversion and never travels to the source or to another format that reads the same column. So does the
+ * marker of an open question about one of this conversion's columns (`sameAs`).
+ */
+export function isSourceCheck(v: Validation): boolean {
+  return (v.on ?? 'input') !== 'output' && !isCodeCheck(v);
 }

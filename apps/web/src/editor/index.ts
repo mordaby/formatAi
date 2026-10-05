@@ -19,6 +19,7 @@ export * from './model';
 export { EditorStore, type ApplyActionOptions } from './store';
 export { lockProblem, type EditLock } from './lock';
 export { mergeRules } from './merge';
+export { applyReading, isReadingCheck, questionOpen, withOpenQuestion } from './readings';
 export { useEditor, type UseEditor } from './useEditor';
 export { useLiveCheck, type UseLiveCheck, type UseLiveCheckOptions } from './useLiveCheck';
 export { LiveCheckScheduler, type CheckEngine, type CheckInput, type LiveCheckState, type SchedulerOptions } from './liveCheckScheduler';

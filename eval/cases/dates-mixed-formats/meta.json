@@ -1,0 +1,16 @@
+{
+  "difficulty": "stress",
+  "domain": "payments",
+  "features": [
+    "mixedDateFormats",
+    "ddmmVsMmdd",
+    "hebrewMonthName",
+    "dateAsIsoText",
+    "excelDates",
+    "amountAsTextWithThousands",
+    "newColumnFromDate",
+    "ambiguityProvedNextMonth"
+  ],
+  "expect": "verified",
+  "expectNote": "every Date is read whatever its format (a real date, day/month text like \"05/03/2026\", ISO text, Hebrew month-name text like \"12 במרץ 2026\") and written as text yyyy-mm-dd; a Period column \"03/2026\" is added; Amount is a number. In the example every day/month text is ambiguous (both parts 12 or less); the answer is day/month, which next month's \"13/04/2026\" proves. May break: day/month read as month/day, the Hebrew month-name dates left as text, a real date written as its serial number."
+}

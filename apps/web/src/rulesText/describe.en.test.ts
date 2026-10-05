@@ -1,7 +1,7 @@
 import type { Expr, LearnResult } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { describeRules } from './describe';
-import { col, lineTexts, num, rules, str, withColumn, type Patch } from './fixtures';
+import { col, INPUT_COLUMNS, lineTexts, num, rules, str, withColumn, type Patch } from './fixtures';
 import type { RulesMapModel } from './types';
 
 const en = (r: LearnResult): RulesMapModel => describeRules(r, { lang: 'en' });
@@ -316,6 +316,18 @@ describe('rows', () => {
     expect(line(model, 'input:stopAt')).toBe("Stop reading at the first row that starts with 'Total' or 'Sum'");
     expect(line(en(rules({ input: { sheet: { pick: 'index', index: 1 } } })), 'input:sheet')).toBe('Read sheet number 2');
   });
+
+  it('says what a column reads as another value (readAs, SPEC 8.4a), one line per text, before the filters', () => {
+    const columns = INPUT_COLUMNS.map((c) => (c.id === 'c_amount' ? { ...c, readAs: { 'N/A': '', '-': '0' } } : c));
+    const model = en(rules({ input: { columns, stopAt: { when: 'firstCellMatches', values: ['Total'] }, rowFilters: [{ column: 'c_status', op: 'isEmpty' }] } }));
+    expect(line(model, 'readAs:c_amount:N/A')).toBe("In Amount, 'N/A' is read as empty");
+    expect(line(model, 'readAs:c_amount:-')).toBe("In Amount, '-' is read as '0'");
+    const rows = model.sections[0]!.lines.map((l) => l.id);
+    expect(rows).toEqual(['input:stopAt', 'readAs:c_amount:N/A', 'readAs:c_amount:-', 'filter:0']);
+    expect(model.sections[0]!.lines[1]!.target).toEqual({ kind: 'readAs', index: INPUT_COLUMNS.findIndex((c) => c.id === 'c_amount'), name: 'N/A' });
+    // a rules file without readAs has none of these lines
+    expect(lineTexts(en(rules())).some(([id]) => id.startsWith('readAs:'))).toBe(false);
+  });
 });
 
 describe('layout', () => {
@@ -448,6 +460,24 @@ describe('checks', () => {
     expect(v({ column: 'c_order', rule: 'unique', severity: 'flag' })).toBe('Check: Order number has no repeated values (flag)');
     expect(v({ column: 'c_date', rule: 'dateRange', from: '2024-01-01', to: '2024-12-31', severity: 'flag' })).toBe(
       'Check: Date is a date from 01/01/2024 to 31/12/2024 (flag)',
+    );
+  });
+
+  it('says what a cut-off check found in the example (SPEC 8.8), in both directions and for dates', () => {
+    expect(v({ column: 'c_amount', rule: 'cutoffRange', low: 4435, high: 5299, value: 5000, includes: 'high', severity: 'flag' })).toBe(
+      'Check: your example shows the cut-off for Amount is above 4435 and at most 5299; we used 5000. A value in between: flag',
+    );
+    expect(v({ column: 'c_amount', rule: 'cutoffRange', low: 10, high: 20, value: 10, includes: 'low', severity: 'flag' })).toBe(
+      'Check: your example shows the cut-off for Amount is at least 10 and below 20; we used 10. A value in between: flag',
+    );
+    expect(v({ column: 'c_date', rule: 'cutoffRange', low: '2024-03-01', high: '2024-03-31', value: '2024-03-15', includes: 'high', severity: 'flag' })).toBe(
+      'Check: your example shows the cut-off for Date is above 01/03/2024 and at most 31/03/2024; we used 15/03/2024. A value in between: flag',
+    );
+  });
+
+  it('says the other rule an open question is about (SPEC 8.8 sameAs), as a formula', () => {
+    expect(v({ column: 'c_amount', rule: 'sameAs', expr: { op: 'round', arg: { col: 'c_amount' }, digits: 0 }, severity: 'flag' })).toBe(
+      'Check: your example also fits round(Amount, 0) for Amount. A row where it gives a different value: flag',
     );
   });
 

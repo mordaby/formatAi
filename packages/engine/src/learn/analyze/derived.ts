@@ -21,6 +21,9 @@
 //       outputs (a constant column is fixed text, a common 2-letter value is chance, not data). The columns are
 //       reported in the order they first appear in the output text. Tried last: only a column that no band or
 //       category dependency explains (it would have been external before).
+//   (d) a constant the input can write: one value on every row that an input column holds, or a date column gives as its month or
+//       year, or a text holds as a fixed part (relations.ts `constantSources`). Not found here (`findDerivation` skips a constant
+//       column): `analyzePair` gives it `constantDerivation`, a dependency on the columns that can write the value.
 // Bands are tried first (they are the simpler, better generalizing rule), then one column, then two, then composition.
 // Values are integer-coded once per column, so testing a few unknown columns on 20,000 rows stays cheap.
 // Pure and deterministic. Only columns that stay `unknown` are tested. An unknown column with none of these is
@@ -501,6 +504,22 @@ function compositionDerivation(env: RelationEnv, out: ColumnData): Derivation | 
     else failing.push(k);
   }
   return { kind: 'composition', in: found.map((c) => c.col), coverage: matched / n, failing: capped(failing), failCount: n - matched };
+}
+
+// ---------- a constant the input can write ----------
+
+/** At most this many columns are named in the hint of a constant the input can write (`dependsOn` takes one or two). */
+const MAX_CONSTANT_SOURCES = 2;
+
+/**
+ * The derivation of a column whose every row holds one value that the input can write as well (relations.ts
+ * `constantSources`: a copy, the month of a date column, a fixed part of a text): it depends on those columns, in the
+ * only way a constant can - the same input always gave the same value. Reported as a category dependency, so the AI step is
+ * told which input column the value may come from instead of being handed a constant, and the column is not "external data".
+ */
+export function constantDerivation(env: RelationEnv, sources: readonly number[]): Derivation {
+  const named = sources.slice(0, MAX_CONSTANT_SOURCES);
+  return { kind: 'category', in: named, keys: new Set(keys(env.src[named[0]!]!)).size, coverage: 1, failing: [], failCount: 0 };
 }
 
 // ---------- entry point ----------

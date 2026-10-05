@@ -8,7 +8,9 @@
 //   3. for a verified case, running `convertFile(referenceRules, ...)` on
 //      input.* reproduces output.* byte-for-byte, and on next.input.*
 //      reproduces next.output.* byte-for-byte (the actual "holds up on next
-//      month's file" check SPEC 10 asks the hold-out pair for);
+//      month's file" check SPEC 10 asks the hold-out pair for) - except a case
+//      with `handEditedRows`: its rules reproduce output.* in every row but
+//      exactly that many (the rows a person edited by hand);
 //   4. the registry trio (registry-supplier-a/b/c) satisfies the format lock
 //      (SPEC 8.12): `checkFormatLock` finds no problems for b/c against a's format.
 //
@@ -28,6 +30,7 @@ interface CaseMeta {
   domain: string;
   features: string[];
   expect: unknown;
+  handEditedRows?: number;
   attachTo?: string;
 }
 
@@ -84,6 +87,30 @@ async function checkReproduces(
     return;
   }
   ok(`${label}: convertFile(${what}) reproduces ${expectedFile.fileName} byte-for-byte`);
+}
+
+/** A case whose example output was edited by hand in `expected` rows: the rules differ from output.* in exactly that many data rows. */
+async function checkDiffersInRows(
+  label: string,
+  rules: Rules,
+  inputFile: { fileName: string; bytes: Uint8Array },
+  outputFile: { fileName: string; bytes: Uint8Array },
+  expected: number,
+): Promise<void> {
+  const result = await convertFile(rules, inputFile.bytes, inputFile.fileName);
+  if (!result.ok) {
+    fail(label, `convertFile(input -> output) failed: ${JSON.stringify(result.error)}`);
+    return;
+  }
+  const made = (await readWorkbook(result.bytes, outputFile.fileName)).sheets[0]!.rows;
+  const given = (await readWorkbook(outputFile.bytes, outputFile.fileName)).sheets[0]!.rows;
+  if (made.length !== given.length) {
+    fail(label, `the rules make ${made.length} rows, ${outputFile.fileName} has ${given.length}`);
+    return;
+  }
+  const differing = made.filter((row, i) => JSON.stringify(row.map((c) => c?.v ?? null)) !== JSON.stringify((given[i] ?? []).map((c) => c?.v ?? null))).length;
+  if (differing !== expected) fail(label, `the rules differ from ${outputFile.fileName} in ${differing} row(s), expected exactly ${expected} (handEditedRows)`);
+  else ok(`${label}: the rules reproduce ${outputFile.fileName} in every row but the ${expected} hand-edited ones`);
 }
 
 async function main(): Promise<void> {
@@ -147,7 +174,8 @@ async function main(): Promise<void> {
       if (limitProblems.length > 0) fail(label, `checkLimits found problems: ${JSON.stringify(limitProblems)}`);
       else ok(`${label}: checkLimits clean`);
 
-      await checkReproduces(label, rules, input, output, 'input -> output');
+      if (meta.handEditedRows !== undefined) await checkDiffersInRows(label, rules, input, output, meta.handEditedRows);
+      else await checkReproduces(label, rules, input, output, 'input -> output');
       if (nextInput && nextOutput) {
         await checkReproduces(label, rules, nextInput, nextOutput, 'next.input -> next.output');
       }

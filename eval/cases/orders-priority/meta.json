@@ -1,0 +1,12 @@
+{
+  "difficulty": "hard",
+  "domain": "salesOrders",
+  "features": [
+    "switchOnTwoColumns",
+    "thresholdAtBoundary",
+    "rareBranchAwayFromSample",
+    "emptyTextCell",
+    "newValuesNextMonth"
+  ],
+  "expect": "verified"
+}

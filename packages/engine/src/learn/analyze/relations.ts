@@ -30,6 +30,7 @@ import {
   ymdOfSerial,
   type ColumnData,
 } from './cells';
+import { dateReadings } from './dateReadings';
 import type { Relation, RelationBody, SummaryAgg } from './types';
 
 /** Failing aligned-row indices kept per relation. */
@@ -212,9 +213,77 @@ export function eqTyped(a: ColumnData, b: ColumnData, k: number, j = k): boolean
   }
 }
 
+// ---------- the constant guard ----------
+
+/** Text renderings of a date a "fixed" column may really be: the month or year of the data (DATE_RENDERINGS, below), and the short ones. */
+const GUARD_DATE_RENDERINGS = ['MM', 'M', 'MMM', 'YY'];
+
+/**
+ * DECISION (owner: light detection, refuse on ambiguity, the UI never claims what it can't know): a column that holds
+ * the SAME value on every row is accepted as a `constant` only when the input cannot also write that value. In a March file
+ * a `Period` of "03/2026" on every row is the month of the data as likely as a fixed label, and a fixed label is wrong next month.
+ * The example cannot tell the two apart, so the constant is not guessed: the user is asked (readings.ts, fastPath.ts `ambiguityOf`; owner
+ * decision 2026-10-04, SPEC 21 v12 item 11), the data reading being built until they answer. Where no data reading can be written as a rule
+ * (a date column that mixes formats) the column goes to the AI step, with the input column that can write it named (a `dependsOn`
+ * hint, or the relation that does). The value is derivable when, on EVERY row:
+ *  (a) an input column holds the same value (a copy is as possible as a constant);
+ *  (b) a date input column, formatted with an output date format the free engine writes (the month, the year, ...), gives it
+ *      - each cell is read on its own, so a column mixing date formats counts (dateReadings.ts);
+ *  (c) a fixed part of an input text (a prefix, a suffix, a fixed position, one part of a split) is that value.
+ * (c) is the existing `substr` / `split` detection run on this column, not new code; `template` and `concat` need input values
+ * INSIDE the output, and a constant has none, so they cannot write it.
+ * A truly fixed value that also happens to appear in the data goes to the AI step too: acceptable, the AI step or the user decides.
+ * Returns the source columns (indices into `env.src`, input columns first) that can write the value; none = a real constant.
+ */
+function constantSources(env: RelationEnv, out: ColumnData, value: string): number[] {
+  const found = new Set<number>();
+  const total = env.total;
+  const v = value.trim();
+
+  // (a) a copy: an input column holds this very value on every row
+  env.src.forEach((a, s) => {
+    for (let k = 0; k < total; k++) if (!eqTyped(a, out, k)) return;
+    found.add(s);
+  });
+
+  // (b) the month or year of a date column
+  const langs: ('he' | 'en')[] = env.language === 'he' ? ['he', 'en'] : ['en', 'he'];
+  env.src.forEach((a, s) => {
+    if (found.has(s)) return;
+    const reads = dateReadings(a);
+    if (reads === null) return;
+    for (const f of [...DATE_RENDERINGS, ...GUARD_DATE_RENDERINGS]) {
+      for (const lang of /MMM/.test(f) ? langs : [langs[0]!]) {
+        if (reads.every((r) => r.some((d) => formatYmd(ymdOfSerial(d), f, lang) === v))) {
+          found.add(s);
+          return;
+        }
+      }
+    }
+  });
+
+  // (c) a fixed part of a text
+  for (const cand of [...substrCands(env, out), ...splitCands(env, out)]) {
+    const s = (cand.body as { in: number[] }).in[0]!;
+    if (found.has(s)) continue;
+    let holds = true;
+    for (let k = 0; k < total && holds; k++) holds = cand.test(k) === 1;
+    if (holds) found.add(s);
+  }
+  return [...found].sort((x, y) => x - y);
+}
+
+/** What `stage1` tells `findRelations` about the constant it did not accept. */
+interface ConstantGuard {
+  /** The columns that can write a constant column's value (see `constantSources`); undefined = no such column, or no constant. */
+  sources?: number[];
+  /** The value every row holds, when `sources` is set (the constant reading of the question the result screen asks, readings.ts). */
+  value?: PayloadCell;
+}
+
 // ---------- stage 1: constant, copy, normalize ----------
 
-function stage1(env: RelationEnv, out: ColumnData): Cand[] {
+function stage1(env: RelationEnv, out: ColumnData, guard: ConstantGuard): Cand[] {
   const cands: Cand[] = [];
   const counts = new Map<string, number>();
   const firstRow = new Map<string, number>();
@@ -227,7 +296,12 @@ function stage1(env: RelationEnv, out: ColumnData): Cand[] {
   const top = mode(counts);
   if (top !== null && counts.get(top)! >= (env.minCoverage - SLACK) * out.n) {
     const value: PayloadCell = payloadCell(out, firstRow.get(top)!);
-    cands.push({ body: { rel: 'constant', in: [], value }, rank: RANK.constant, test: (k) => (out.text[k] === top ? 1 : 0) });
+    // The guard looks only at a constant that is exact (every row holds it): one with exceptions is a hint for the AI step anyway.
+    const sources = counts.get(top) === out.n ? constantSources(env, out, top) : [];
+    if (sources.length > 0) {
+      guard.sources = sources;
+      guard.value = value;
+    } else cands.push({ body: { rel: 'constant', in: [], value }, rank: RANK.constant, test: (k) => (out.text[k] === top ? 1 : 0) });
   }
   const outText = kindShare(out, TEXT) > 0;
   const nb = outText ? norms(out) : null;
@@ -1205,13 +1279,32 @@ export function sortRelations(rels: Relation[]): Relation[] {
  * number format (used as the `to` of dates written as real dates).
  */
 export function findRelations(env: RelationEnv, out: ColumnData, outIndex: number, outFormat?: string): Relation[] {
-  if (env.total === 0) return [];
+  return findRelationsGuarded(env, out, outIndex, outFormat).relations;
+}
+
+export interface GuardedRelations {
+  relations: Relation[];
+  /**
+   * Set when every row holds the same value and the input can write that value too (`constantSources`: a copy, the month
+   * or year of a date column, a fixed part of a text): no `constant` relation is reported for it, and the columns that can
+   * write it are listed here. Such a column is never built as a constant: it is a question for the user (fastPath.ts `ambiguityOf`),
+   * or, with no data reading to build, left to the AI step (`chooseColumnRelation`).
+   */
+  derivableConstant?: number[];
+  /** With `derivableConstant`: the value every row holds (the constant the user may mean, readings.ts). */
+  derivableValue?: PayloadCell;
+}
+
+/** `findRelations`, and what its constant guard found (see `GuardedRelations`). */
+export function findRelationsGuarded(env: RelationEnv, out: ColumnData, outIndex: number, outFormat?: string): GuardedRelations {
+  if (env.total === 0) return { relations: [] };
   if (nonEmptyCount(out) === 0) {
-    return [{ rel: 'constant', in: [], value: null, out: outIndex, coverage: 1, matched: env.total, total: env.total, failing: [], failCount: 0 }];
+    return { relations: [{ rel: 'constant', in: [], value: null, out: outIndex, coverage: 1, matched: env.total, total: env.total, failing: [], failCount: 0 }] };
   }
+  const guard: ConstantGuard = {};
   // Stages run from simplest to most expensive; each one is skipped once an earlier stage explained the column on every row.
   const stages: (() => Cand[])[] = [
-    () => stage1(env, out),
+    () => stage1(env, out, guard),
     () => [
       ...padCands(env, out),
       ...substrCands(env, out),
@@ -1258,7 +1351,12 @@ export function findRelations(env: RelationEnv, out: ColumnData, outIndex: numbe
     if (r.rel !== 'concat') return true;
     return !all.slice(0, i).some((q) => q.rel === 'concat' && q.in.join(',') === r.in.join(',') && q.separator === r.separator);
   });
-  return out1.slice(0, MAX_RELATIONS);
+  const result: GuardedRelations = { relations: out1.slice(0, MAX_RELATIONS) };
+  if (guard.sources !== undefined) {
+    result.derivableConstant = guard.sources;
+    if (guard.value !== undefined) result.derivableValue = guard.value;
+  }
+  return result;
 }
 
 // ---------- summary shapes: aggregates per group ----------

@@ -12,8 +12,9 @@
 // the day the prompt documents it, the flag has to go (otherwise the API's LLM-answer check would keep
 // rejecting an op the model was told to use).
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V7 } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT, learnPromptOf, PROMPT_VERSIONS } from '@formatai/shared';
 import { OP_SIGNATURES, WINDOW_SIGNATURES, type SigOp } from '../../src/check/signatures';
+import { parseFormula } from '../../src/formula/parseFormula';
 
 /** The "# Operations" section of LEARN_PROMPT §2 (learn-v6): from "# Operations" to the
  * "# Example" heading that follows it. Also documents functions/tables/rowFilters/
@@ -36,7 +37,7 @@ function mentions(section: string, op: SigOp): boolean {
 }
 
 describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3, learn-v6 formulas)', () => {
-  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT_V7);
+  const section = extractOperationsSection(LEARN_SYSTEM_PROMPT);
   const ops = Object.keys(OP_SIGNATURES) as SigOp[];
   const inPrompt = ops.filter((op) => OP_SIGNATURES[op].inPrompt !== false);
   const notInPrompt = ops.filter((op) => OP_SIGNATURES[op].inPrompt === false);
@@ -75,19 +76,39 @@ describe('LEARN_PROMPT.md Operations section <-> engine OP_SIGNATURES (SPEC 8.3,
 
   it('the prompt documents the window arguments (named by:/order:/ties:, column-only) and the window hint', () => {
     for (const text of ['by:', 'order:', 'ties:', 'FILE ORDER', 'rel "window"', 'plain column ids']) {
-      expect(LEARN_SYSTEM_PROMPT_V7, text).toContain(text);
+      expect(LEARN_SYSTEM_PROMPT, text).toContain(text);
     }
   });
 
   it('the prompt documents the optional functionRequest and explanation of an unsupported entry, with the privacy wording', () => {
-    expect(LEARN_SYSTEM_PROMPT_V7).toContain('functionRequest');
-    expect(LEARN_SYSTEM_PROMPT_V7).toContain('explanation');
-    expect(LEARN_SYSTEM_PROMPT_V7).toMatch(/no examples and no values from the data of any kind/);
+    expect(LEARN_SYSTEM_PROMPT).toContain('functionRequest');
+    expect(LEARN_SYSTEM_PROMPT).toContain('explanation');
+    expect(LEARN_SYSTEM_PROMPT).toMatch(/no examples and no values from the data of any kind/);
   });
 
   it('the six comparison symbols and four arithmetic symbols are all documented', () => {
     for (const symbol of ['+', '-', '*', '/', '=', '<>', '<', '>', '<=', '>=']) {
       expect(section, `expected infix symbol "${symbol}" in the prompt's Operations section`).toContain(symbol);
+    }
+  });
+
+  // The eval can send any version (`--prompt`): each must document every op too.
+  it('every prompt version the code can send documents every op', () => {
+    for (const version of PROMPT_VERSIONS) {
+      const own = extractOperationsSection(learnPromptOf(version).system);
+      expect(inPrompt.filter((op) => !mentions(own, op)), version).toEqual([]);
+    }
+  });
+
+  // The formulas the prompt shows as examples must be formulas the parser takes - an example that does not parse teaches an error. Read the
+  // way the API reads an AI answer's computed column (prompt ops only, across-row functions allowed).
+  it('every example formula in the Operations section parses', () => {
+    const line = section.split('\n').find((l) => l.startsWith('More examples: '));
+    expect(line).toBeDefined();
+    const examples = line!.slice('More examples: '.length).split(/ {3}/);
+    expect(examples.length).toBeGreaterThanOrEqual(5);
+    for (const text of [...examples, 'round(amount / groupSum(amount, by: dept) * 100, 1)', 'round(amount * 0.17, 2)']) {
+      expect(parseFormula(text, { promptOpsOnly: true, allowWindows: true }).ok, text).toBe(true);
     }
   });
 });

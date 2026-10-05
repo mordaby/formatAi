@@ -5,7 +5,8 @@
 
 // ---------- SPEC 8.10: unsupported ----------
 
-export const UNSUPPORTED_REASON_CODES = [
+/** The reason codes the AI step may write (the wire schema, LEARN_PROMPT §2 "When you can't do something"): every one but `overfit`. */
+export const AI_UNSUPPORTED_REASON_CODES = [
   'externalData',
   'pivot',
   'rowExpansion',
@@ -13,6 +14,14 @@ export const UNSUPPORTED_REASON_CODES = [
   'hiddenByMasking',
   'ambiguous',
   'other',
+] as const;
+
+export const UNSUPPORTED_REASON_CODES = [
+  ...AI_UNSUPPORTED_REASON_CODES,
+  // Code only (SPEC 9.2 layer 6, 21 v12 item 19): the only rule the AI step found for the column copies particular rows of the example
+  // (a condition on a row's position, a long list of one-row cases, a lookup keyed on an amount), and it still did after its one repair - so code reports the column
+  // as "needs your input" rather than count a copy of the example as a rule. Never offered to the AI step.
+  'overfit',
 ] as const;
 export type UnsupportedReasonCode = (typeof UNSUPPORTED_REASON_CODES)[number];
 
@@ -90,6 +99,8 @@ export const FLAG_MESSAGE_KEYS = [
   'flag.validation.oneOf',
   'flag.validation.unique', // params: { firstRow }
   'flag.validation.dateRange', // params: { from, to }
+  'flag.validation.cutoffRange', // params: { low, high, value } (numbers, or ISO dates)
+  'flag.validation.sameAs', // params: { other } (the value the other rule of an open question gives here)
 ] as const;
 
 export type FlagMessageKey = (typeof FLAG_MESSAGE_KEYS)[number];
@@ -103,6 +114,8 @@ export const API_ERROR_CODES = [
   'invalidPreviousRules',
   'invalidProblems',
   'invalidLearnId',
+  // 400: a loop round's rows (SPEC 9.3) are malformed or larger than the loop allows (rows per round, rows in one learn, the payload byte cap).
+  'invalidRows',
   // 403: Turnstile token missing or rejected (anonymous learns, SPEC 9.5).
   'turnstileFailed',
   // 429: a per-tier limit was hit; `limit` says which one (see LIMIT_CODES).

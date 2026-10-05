@@ -18,7 +18,8 @@ export function casesRoot(): string {
   return path.join(LIB_DIR, '..');
 }
 
-export type Difficulty = 'easy' | 'medium' | 'hard';
+/** `stress`: a case built to find where the whole process can break (broken values, a value computed across rows, a messy sheet ...), not to sit on one difficulty rung. */
+export type Difficulty = 'easy' | 'medium' | 'hard' | 'stress';
 
 /** SPEC 10's case-format `expect` field: a single classification, or - for the
  * one case that demonstrates SPEC 7.2's masking accuracy gap - a per-masking-mode
@@ -30,6 +31,10 @@ export interface CaseMeta {
   domain: string;
   features: string[];
   expect: Expect;
+  /** What the expected outcome means in words, for a case whose target `expect` cannot say (printed by the eval report, not scored). */
+  expectNote?: string;
+  /** How many data rows of `output.*` a person edited by hand, so that the reference rules differ from it in exactly that many rows (`verify-cases.ts` checks it). */
+  handEditedRows?: number;
   attachTo?: string;
 }
 

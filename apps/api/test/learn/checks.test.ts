@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formulaRulesToWire } from '@formatai/engine';
-import { toWire, type LearnPayload, type LearnResult } from '@formatai/shared';
+import { learnPromptOf, PROMPT_VERSIONS, toWire, type LearnPayload, type LearnResult } from '@formatai/shared';
 import { runChecks } from '../../src/learn/index.js';
 import {
   allUnsupportedRules,
@@ -296,4 +296,24 @@ describe('runChecks: the across-row (window) functions are documented by learn-v
     const { problems } = runChecks(toWire(formulaRulesToWire(named) as unknown as LearnResult), basicPayload(), { tier: 'registered' });
     expect(problems.some((p) => p.kind === 'reference' && p.message.includes('"rank"') && p.message.includes('built-in'))).toBe(true);
   });
+});
+
+// The system prompt's one whole example (a masked Hebrew payload and its answer) is the only text that shows the model a complete answer:
+// in every version the code can send, that answer must pass every check on that payload, exactly as a real answer would.
+describe('runChecks: the system prompt\'s own example answer passes every check on its example payload', () => {
+  const between = (text: string, tag: string): string => {
+    const m = text.match(new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`));
+    if (!m) throw new Error(`no <${tag}> in the prompt`);
+    return m[1]!;
+  };
+  for (const version of PROMPT_VERSIONS) {
+    it(version, () => {
+      const prompt = learnPromptOf(version);
+      const payload = JSON.parse(between(prompt.system, 'example_payload')) as LearnPayload;
+      const answer = JSON.parse(between(prompt.system, 'example_result')) as unknown;
+      const { problems, rules } = runChecks(answer, payload, { tier: 'registered', alternatives: prompt.alternatives });
+      expect(problems).toEqual([]);
+      expect(rules).not.toBeNull();
+    });
+  }
 });

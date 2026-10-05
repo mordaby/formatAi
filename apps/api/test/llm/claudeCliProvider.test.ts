@@ -3,8 +3,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
+import { limits } from '@formatai/shared';
+import { loadEnv } from '../../src/env.js';
+import { learn } from '../../src/learn/index.js';
+import { LlmError } from '../../src/llm/errors.js';
 import { createClaudeCliProvider, resolveClaudeCommand, type SpawnFn } from '../../src/llm/providers/claudeCli.js';
 import type { CompleteRequest } from '../../src/llm/types.js';
+import { basicPayload, correctRulesWireJson } from '../learn/fixtures.js';
 
 function baseRequest(overrides: Partial<CompleteRequest> = {}): CompleteRequest {
   return {
@@ -210,6 +215,97 @@ describe('claude-cli provider - response mapping', () => {
     const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development' });
 
     await expect(provider.complete(baseRequest())).rejects.toMatchObject({ kind: 'providerError' });
+  });
+
+  // X2: the CLI's JSON carries the model's stop_reason (a real run: "tool_use" for a --json-schema answer, "max_tokens" when cut off).
+  it('reports an answer cut off at max_tokens as truncated, like the API providers, whatever the CLI says about the run', async () => {
+    for (const isError of [false, true]) {
+      const cliOutput = JSON.stringify({ is_error: isError, stop_reason: 'max_tokens', result: '{"answer":"h', usage: { input_tokens: 10, output_tokens: 5 } });
+      const spawn = vi.fn().mockImplementation(() => fakeChild(cliOutput));
+      const result = await createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development' }).complete(baseRequest());
+      expect(result).toMatchObject({ truncated: true, json: null, raw: '{"answer":"h', costUsd: 0, provider: 'claude-cli' });
+      expect(result.usage).toEqual({ tokensIn: 10, tokensOut: 5, tokensCachedRead: 0, tokensCachedWrite: 0 });
+    }
+  });
+
+  it('a whole answer (stop_reason "tool_use", as a --json-schema run reports it) is not truncated', async () => {
+    const cliOutput = JSON.stringify({ is_error: false, stop_reason: 'tool_use', result: JSON.stringify({ answer: 'hi' }) });
+    const spawn = vi.fn().mockImplementation(() => fakeChild(cliOutput));
+    const result = await createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development' }).complete(baseRequest());
+    expect(result.truncated).toBeUndefined();
+    expect(result.json).toEqual({ answer: 'hi' });
+  });
+});
+
+/**
+ * A child that never answers: no output, no close - until it is killed through its handle, when it closes (no exit code), the way a real
+ * child does. `killed` counts the kills; nothing else in the process is ever touched.
+ */
+function slowChild() {
+  const child = new EventEmitter() as EventEmitter & { stdout: PassThrough; stdin: PassThrough; kill: () => boolean; killed: number };
+  child.stdout = new PassThrough();
+  child.stdin = new PassThrough();
+  child.stdin.on('data', () => {});
+  child.killed = 0;
+  child.kill = () => {
+    child.killed += 1;
+    queueMicrotask(() => child.emit('close', null));
+    return true;
+  };
+  return child;
+}
+
+describe('claude-cli provider - the per-call timeout (limits.llm.cliTimeoutMs)', () => {
+  it('is 5 minutes by default', () => {
+    expect(limits.llm.cliTimeoutMs).toBe(300_000);
+  });
+
+  it('stops THAT child through its own handle and fails the call as a timeout; its temp dir is removed', async () => {
+    let child: ReturnType<typeof slowChild> | undefined;
+    let systemFile = '';
+    const spawn = vi.fn().mockImplementation((_cmd: string, args: string[]) => {
+      systemFile = args[args.indexOf('--system-prompt-file') + 1]!;
+      child = slowChild();
+      return child;
+    });
+    const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development', cliPath: 'claude', timeoutMs: 30 });
+
+    const err = await provider.complete(baseRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmError);
+    expect(err).toMatchObject({ kind: 'timeout', provider: 'claude-cli', message: expect.stringContaining('that call was stopped') });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(child!.killed).toBe(1);
+    expect(existsSync(systemFile)).toBe(false);
+  });
+
+  it('a call that answers in time is never stopped', async () => {
+    const children: { kill: ReturnType<typeof vi.fn> }[] = [];
+    const spawn = vi.fn().mockImplementation(() => {
+      const c = Object.assign(fakeChild(successResult({ answer: 'hi' })), { kill: vi.fn() });
+      children.push(c);
+      return c;
+    });
+    const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development', cliPath: 'claude', timeoutMs: 30 });
+    await expect(provider.complete(baseRequest())).resolves.toMatchObject({ json: { answer: 'hi' } });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(children[0]!.kill).not.toHaveBeenCalled();
+  });
+
+  it('a learn goes on after it: the call is recorded as failed (error:timeout, counted) and the next call is made', async () => {
+    // (made when spawned: a fake child answers right away)
+    const answers = [slowChild, slowChild, () => fakeChild(successResult(correctRulesWireJson()))];
+    const spawn = vi.fn().mockImplementation(() => answers.shift()!());
+    const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development', cliPath: 'claude', timeoutMs: 20 });
+    const env = loadEnv({ ...process.env, LLM_PROVIDER: 'fake' });
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: (req: CompleteRequest) => provider.complete(req) });
+
+    expect(outcome.calls.map((c) => [c.purpose, c.outcome])).toEqual([
+      ['learn', 'error:timeout'],
+      ['repair', 'error:timeout'],
+      ['escalation', 'verified'],
+    ]);
+    expect(outcome.calls[0]!.problemCounts.schema).toBe(1);
+    expect(outcome.verified).toBe(true);
   });
 });
 

@@ -9,7 +9,7 @@
 import type { CompleteFn } from '@formatai/api/learn';
 import { createFakeProvider } from '@formatai/api/llm';
 import type { Env } from '@formatai/api/env';
-import { toWire, type LearnResult } from '@formatai/shared';
+import { sumEstimates, toWire, type LearnResult } from '@formatai/shared';
 import type { CaseDef } from '../lib/caseLoader';
 import { checkHoldOut } from '../lib/holdout';
 import { runLearn } from '../lib/runner';
@@ -99,6 +99,7 @@ export async function measureAi(p: Prepared, opts: AiMeasureOptions): Promise<Ai
       verified: classification.kind === 'verified',
       holdOut,
       ...sums,
+      estimate: sumEstimates(calls.map((c) => c.estimate)),
       unsupported: result.unsupported.map((u) => u.reasonCode),
       functionRequests,
       explanation: (result.aiNotes ?? []).some((n) => n.explanation !== undefined),
@@ -216,6 +217,8 @@ export async function runAiMeasurement(o: AiRunOptions): Promise<AiRunResult> {
 
 // ---------- Printing ----------
 
+const usd = (v: number | null): string => (v === null ? 'n/a' : `$${v.toFixed(4)}`);
+
 function k(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
@@ -229,6 +232,8 @@ export function describeAi(typeId: string, seed: number, a: AiRecord): string {
     `${a.path} / ${STATUS_WORD[aiStatusOf(a)]}`,
     `${a.llmCalls} call(s), in ${k(a.tokensIn)} out ${k(a.tokensOut)}${a.tokensCached > 0 ? ` cached ${k(a.tokensCached)}` : ''}, ${(a.latencyMs / 1000).toFixed(1)} s`,
   ];
+  const e = a.estimate;
+  if (e && a.llmCalls > 0) parts.push(`est. in ${k(e.inputTokens)} / cached ${k(e.cachedInputTokens)} / write ${k(e.cacheWriteTokens)} / out ${k(e.outputTokens)}, ${usd(e.costUsd)}`);
   if (a.classification !== 'verified') parts.push(a.classification);
   if (a.formulaErrors > 0) parts.push(`${a.formulaErrors} formula error(s)`);
   if (a.functionRequests.length > 0) parts.push(`asks for ${a.functionRequests.join(', ')}`);

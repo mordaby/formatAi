@@ -1,11 +1,12 @@
 // Owner decision: the AI step never runs unless the user chooses it - signed in or not. Every learn is the free engine only; the Result screen
-// says what it solved and lists what it could not (with a tick each) and the user decides, there, whether to run a deep analysis with AI.
-// Home's "Deep analysis with AI if needed" (signed in, off by default, remembered per browser) makes the AI step start by itself after the free
-// result when fields are missing. The engine and the API are fakes: nothing real is ever called.
+// says what it solved and lists what it could not (with a tick each) and the user decides, there, whether to "Finish with AI" (one button: it
+// completes the ticked fields, or runs the whole learn when it cannot). Home's "Learn with AI" next to "Learn the format" makes the AI step
+// start by itself after the free result when fields are missing; a visitor is asked to sign in first. The engine and the API are fakes: nothing
+// real is ever called.
 import type { LearnResult, Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
+import { createMemoryPendingStore, setPendingStore, type PendingLearnStore } from '../src/app/pendingLearn';
 import { ordersRules } from '../src/editor/testkit';
 import type { LearnOutput } from '../src/worker/engineApi';
 import { conversionSummary, createFormatResponse, formatSummary } from './helpers/registryKit';
@@ -18,18 +19,16 @@ vi.mock('../src/flow/download', async (orig) => ({ ...(await orig<typeof import(
 const SUMMARY = { rowsIn: 3, rowsOut: 3, rowsFiltered: 0, duplicatesRemoved: [], duplicatesFlagged: 0, blockedRows: [] };
 const converted = (): unknown => ({ ok: true, bytes: new ArrayBuffer(8), flags: [], summary: SUMMARY, preview: { name: 'Out', direction: 'ltr', language: 'en', columns: [], rows: [], merges: [] }, totalRows: 3 });
 
-const PREF = 'formatai.deepAnalysis';
-
+let store: PendingLearnStore;
 beforeEach(() => {
   document.cookie = 'lang=; Path=/; Max-Age=0';
-  setPendingStore(createMemoryPendingStore());
-  window.localStorage.clear();
+  store = createMemoryPendingStore();
+  setPendingStore(store);
 });
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.restoreAllMocks();
-  window.localStorage.clear();
   setPendingStore(undefined);
 });
 
@@ -105,15 +104,18 @@ async function dropFiles(lang: 'en' | 'he' = 'en') {
   await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
 }
 const learnClick = () => act(async () => void fireEvent.click(screen.getByRole('button', { name: /Learn the format/ })));
+const learnAiButton = () => screen.getByRole('button', { name: 'Learn with AI' }) as HTMLButtonElement;
+const learnAiClick = () => act(async () => void fireEvent.click(learnAiButton()));
 
-/** The whole trip: sign in (or not), drop the files, learn, land on the Result screen. */
+/** The whole trip: sign in (or not), drop the files, learn (with "Learn with AI" when `deep`), land on the Result screen. */
 async function toResult(engine: ReturnType<typeof fakeEngine>['engine'], api = fakeApi({ user: USER }), opts: { deep?: boolean } = {}) {
   renderApp({ engine, api });
   await dropFiles();
   if (opts.deep) {
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Deep analysis with AI if needed' }));
-  }
-  await learnClick();
+    // (signed in: the button needs to know who it is first)
+    await waitFor(() => expect(learnAiButton().disabled).toBe(false));
+    await learnAiClick();
+  } else await learnClick();
   await screen.findByTestId('rules-map');
   return api;
 }
@@ -127,7 +129,7 @@ const line = (id: string): HTMLElement => {
   if (!el) throw new Error(`no line ${id}`);
   return el as HTMLElement;
 };
-const runButton = () => screen.getByRole('button', { name: 'Run deep analysis with AI' }) as HTMLButtonElement;
+const runButton = () => screen.getByRole('button', { name: 'Finish with AI' }) as HTMLButtonElement;
 const tick = (name: string | RegExp) => screen.getByRole('checkbox', { name }) as HTMLInputElement;
 
 describe('every learn is the free engine only', () => {
@@ -151,57 +153,72 @@ describe('every learn is the free engine only', () => {
   });
 });
 
-describe('Home: "Deep analysis with AI if needed"', () => {
-  it('is shown to signed-in users only, and is off by default', async () => {
+describe('Home: "Learn the format" and "Learn with AI"', () => {
+  it('shows both buttons, the second one secondary, and no checkbox any more (signed in or not)', async () => {
     const { engine } = fakeEngine();
     renderApp({ engine, api: fakeApi({ user: USER }) });
-    const box = await screen.findByRole('checkbox', { name: 'Deep analysis with AI if needed' });
-    expect((box as HTMLInputElement).checked).toBe(false);
+    const aiButton = await screen.findByRole('button', { name: 'Learn with AI' });
+    expect(screen.getByRole('button', { name: /Learn the format/ }).className).toContain('btn--primary');
+    expect(aiButton.className).toContain('btn--secondary');
+    expect(screen.queryByRole('checkbox', { name: /Deep analysis with AI/ })).toBeNull();
     cleanup();
     renderApp({ engine, api: fakeApi() });
     await screen.findByRole('button', { name: /Learn the format/ });
-    await new Promise((r) => setTimeout(r, 30));
-    expect(screen.queryByRole('checkbox', { name: 'Deep analysis with AI if needed' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Learn with AI' })).toBeTruthy(); // a visitor sees it too
+    expect(screen.queryByRole('checkbox', { name: /Deep analysis with AI/ })).toBeNull();
   });
 
-  it('is remembered in this browser (localStorage)', async () => {
+  it('is disabled until both files are added, like "Learn the format"', async () => {
     const { engine } = fakeEngine();
     renderApp({ engine, api: fakeApi({ user: USER }) });
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Deep analysis with AI if needed' }));
-    expect(window.localStorage.getItem(PREF)).toBe('1');
+    await screen.findByRole('button', { name: 'Learn with AI' });
+    await waitFor(() => expect(screen.getByTestId('learn-ai-hint').textContent).toMatch(/Uses 1 AI format/));
+    expect(learnAiButton().disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /Learn the format/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });
+    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(1));
+    expect(learnAiButton().disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('Orders report.csv')] } });
+    await waitFor(() => expect(learnAiButton().disabled).toBe(false));
+    expect((screen.getByRole('button', { name: /Learn the format/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('says in one line what it uses: one AI format, and only if it succeeds (the quota, in the words of its period); a visitor is told what signing in gives', async () => {
+    const { engine } = fakeEngine();
+    renderApp({ engine, api: fakeApi({ user: USER }) });
+    await waitFor(() => expect(screen.getByTestId('learn-ai-hint').textContent).toBe('Uses 1 AI format (3 left this month), and only if it succeeds.'));
     cleanup();
-    renderApp({ engine, api: fakeApi({ user: USER }) });
-    expect(((await screen.findByRole('checkbox', { name: 'Deep analysis with AI if needed' })) as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Deep analysis with AI if needed' }));
-    expect(window.localStorage.getItem(PREF)).toBe('0');
+    renderApp({ engine, api: fakeApi() });
+    expect((await screen.findByTestId('learn-ai-hint')).textContent).toBe('Sign in free to learn with AI (3 AI formats a month included).');
   });
 
-  it('works when the browser storage throws (private window, blocked site data): off, and still usable', async () => {
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('blocked');
-    });
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('blocked');
-    });
-    const { engine } = fakeEngine();
-    renderApp({ engine, api: fakeApi({ user: USER }) });
-    const box = (await screen.findByRole('checkbox', { name: 'Deep analysis with AI if needed' })) as HTMLInputElement;
-    expect(box.checked).toBe(false);
-    fireEvent.click(box);
-    expect(box.checked).toBe(true); // holds for this visit
+  it('with no AI formats left the button is off and says so; "Learn the format" still works', async () => {
+    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' as const })) } });
+    const { engine } = engineWith(async (a) => completionOutput(a));
+    renderApp({ engine, api });
+    await dropFiles();
+    await waitFor(() => expect(screen.getByTestId('learn-ai-hint').textContent).toMatch(/You've used your AI formats/));
+    expect(learnAiButton().disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /Learn the format/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('has its Hebrew label', async () => {
+  it('has its Hebrew labels', async () => {
     const { engine } = fakeEngine();
     renderApp({ engine, api: fakeApi({ user: USER }), lang: 'he' });
-    expect(await screen.findByRole('checkbox', { name: 'ניתוח מעמיק עם AI במידת הצורך' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'ללמוד עם AI' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /ללמוד את הפורמט/ })).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('learn-ai-hint').textContent).toBe('ינצל פורמט אחד עם AI (נותרו לכם 3 החודש), ורק אם יצליח.'));
+    cleanup();
+    renderApp({ engine, api: fakeApi(), lang: 'he' });
+    expect((await screen.findByTestId('learn-ai-hint')).textContent).toBe('התחברו בחינם כדי ללמוד עם AI (כולל 3 פורמטים עם AI בחודש).');
   });
 
-  it('ON: the AI step starts by itself right after the free result when fields are missing - the free result is shown first, "Running deep analysis…" on the missing fields', async () => {
+  it('signed in: the free engine runs first and the AI step starts by itself right after it when fields are missing - the free result is shown first, "Running deep analysis…" on the missing fields', async () => {
     let release!: () => void;
     const { engine, learn } = engineWith((a) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(a)))));
     await toResult(engine, fakeApi({ user: USER }), { deep: true });
     // The free result is on screen, and the analysis has started on what is missing.
+    expect(callArgs(learn, 0)).toMatchObject({ ai: 'notAllowed', tier: 'registered' });
     await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
     expect(callArgs(learn, 1)).toMatchObject({ ai: 'allowed', tier: 'registered', complete: { columns: [3, 4, 5], parts: ['summaryRows'] } });
     expect((await screen.findByTestId('completion-running')).textContent).toContain('Running deep analysis…');
@@ -217,23 +234,41 @@ describe('Home: "Deep analysis with AI if needed"', () => {
     expect(learn).toHaveBeenCalledTimes(2); // once per result
   });
 
-  it('ON, but nothing is missing (the free engine solved it all): no AI call', async () => {
+  it('signed in, but nothing is missing (the free engine solved it all): no AI call, nothing counted, and the result says so', async () => {
     const { engine, learn } = engineWith(async (a) => completionOutput(a), () => learnResult({ path: 'local' }));
     const api = await toResult(engine, fakeApi({ user: USER }), { deep: true });
     await new Promise((r) => setTimeout(r, 60));
     expect(learn).toHaveBeenCalledTimes(1);
     expect(api.learn).not.toHaveBeenCalled();
+    expect(api.repair).not.toHaveBeenCalled();
+    expect(api.registry.learnOutcome).not.toHaveBeenCalled();
     expect(screen.queryByTestId('deep-panel')).toBeNull();
+    expect(screen.getByTestId('ai-not-needed').textContent).toBe('Everything was solved on your computer, so the AI was not used and none of your AI formats was counted.');
   });
 
-  it('OFF: fields are missing and nothing runs until the user chooses', async () => {
-    const { engine, learn } = engineWith(async (a) => completionOutput(a));
+  it('"Learn the format" is the free engine only: fields are missing and nothing runs until the user chooses; no "not needed" note either', async () => {
+    const { engine, learn } = engineWith(async (a) => completionOutput(a), () => learnResult({ path: 'local' }));
     await toResult(engine);
     await new Promise((r) => setTimeout(r, 60));
     expect(learn).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('ai-not-needed')).toBeNull();
   });
 
-  it('ON with too little solved: the whole learn runs (as for the button), with the AI step allowed', async () => {
+  it('the choice is per learn: after "Learn with AI", a later "Learn the format" does not start the AI step', async () => {
+    const { engine, learn } = engineWith(async (a) => (a.complete ? completionOutput(a) : partialOutput()));
+    await toResult(engine, fakeApi({ user: USER }), { deep: true });
+    await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
+    await screen.findByTestId('completion-done');
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    await dropFiles();
+    await learnClick();
+    await screen.findByTestId('rules-map');
+    await new Promise((r) => setTimeout(r, 60));
+    expect(learn).toHaveBeenCalledTimes(3); // the free learn of the second round, and nothing after it
+    expect(screen.queryByTestId('completion-running')).toBeNull();
+  });
+
+  it('signed in with too little solved: the whole learn runs (as for the button), with the AI step allowed', async () => {
     const { engine, learn } = engineWith(
       async () => learnResult({ path: 'llm' }),
       () => partialOutput({ rules: partialRules(['Supplier', 'Qty', 'Total', 'Shipped']) }), // 2 of 6 fixed: under half
@@ -242,6 +277,19 @@ describe('Home: "Deep analysis with AI if needed"', () => {
     await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
     expect(callArgs(learn, 1)).toMatchObject({ ai: 'allowed', tier: 'registered' });
     expect(callArgs(learn, 1).complete).toBeUndefined();
+  });
+
+  it('a visitor: the button opens the sign-in wall with the AI reason, and nothing is learned or sent', async () => {
+    const { engine, learn } = engineWith(async (a) => completionOutput(a));
+    const api = fakeApi();
+    renderApp({ engine, api });
+    await dropFiles();
+    fireEvent.click(learnAiButton());
+    const wall = await screen.findByRole('dialog', { name: 'Sign in' });
+    expect(within(wall).getByText('Sign in free to finish this with the AI step.')).toBeTruthy();
+    expect(within(wall).getByRole('button', { name: 'Continue with Google' })).toBeTruthy();
+    expect(learn).not.toHaveBeenCalled();
+    expect(api.learn).not.toHaveBeenCalled();
   });
 });
 
@@ -260,11 +308,11 @@ describe('the panel on the Result screen', () => {
     // The one primary action, and the cost in words.
     expect(runButton().className).toContain('btn--primary');
     expect(screen.getByTestId('deep-uses').textContent).toBe('Uses 1 AI format (3 left this month), and only if it succeeds.');
-    // "Re-run all with AI" is a secondary link in the same panel; there is no other place for the AI action.
-    expect(within(panel).getByRole('button', { name: 'Re-run all with AI' })).toBeTruthy();
+    // One AI button, in the panel: there is no "Re-run all with AI" next to it, and no other place for the AI action.
+    expect(screen.queryByRole('button', { name: 'Re-run all with AI' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Finish with the AI step' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Try these columns with AI' })).toBeNull();
-    expect(screen.getAllByRole('button', { name: 'Run deep analysis with AI' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Finish with AI' })).toHaveLength(1);
   });
 
   it('is in Hebrew too, with the same numbers', async () => {
@@ -275,7 +323,7 @@ describe('the panel on the Result screen', () => {
     await screen.findByTestId('rules-map');
     const panel = screen.getByTestId('deep-panel');
     expect(within(panel).getByRole('heading', { name: 'המנוע החינמי פתר 3 מתוך 6 שדות.' })).toBeTruthy();
-    expect(within(panel).getByRole('button', { name: 'הפעלת ניתוח מעמיק עם AI' })).toBeTruthy();
+    expect(within(panel).getByRole('button', { name: 'השלמה עם AI' })).toBeTruthy();
     expect(screen.getByTestId('deep-uses').textContent).toBe('ינצל פורמט אחד עם AI (נותרו לכם 3 החודש), ורק אם יצליח.');
   });
 
@@ -390,12 +438,12 @@ describe('quota', () => {
   it('with none left the run is not offered, and it says so (the fields are then "the best we can do for now", and delivered)', async () => {
     const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' as const })) } });
     const { engine, learn } = engineWith(async (a) => completionOutput(a));
-    await toResult(engine, api, { deep: true });
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull());
+    await toResult(engine, api);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Finish with AI' })).toBeNull());
     expect(screen.getByText(/You've used your AI formats/)).toBeTruthy();
     expect(screen.getByTestId('deep-best').textContent).toContain('This is the best we can do for now: 3 fields need a rule');
     expect(screen.getByRole('button', { name: 'Download with these fields empty' })).toBeTruthy();
-    expect(learn).toHaveBeenCalledTimes(1); // not even the automatic run
+    expect(learn).toHaveBeenCalledTimes(1);
   });
 
   it('a plan with no limit says so', async () => {
@@ -436,7 +484,7 @@ describe('fields that still have no rule: the best we can do for now - said hone
     expect(line('col:Shipped').getAttribute('data-status')).toBe('needsInput');
     expect(line('col:Remarks').getAttribute('data-status')).toBe('needsInput');
     // Nothing to ask again right after the AI step has answered; the three ways forward are all there.
-    expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Finish with AI' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Download with these fields empty' })).toBeTruthy();
     expect(screen.getByText(/fill them in yourself on the map, or save the format/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
@@ -448,7 +496,7 @@ describe('fields that still have no rule: the best we can do for now - said hone
     await dropFiles('he');
     await act(async () => void fireEvent.click(screen.getByRole('button', { name: /ללמוד את הפורמט/ })));
     await screen.findByTestId('rules-map');
-    fireEvent.click(screen.getByRole('button', { name: 'הפעלת ניתוח מעמיק עם AI' }));
+    fireEvent.click(screen.getByRole('button', { name: 'השלמה עם AI' }));
     await screen.findByTestId('completion-done');
     const best = screen.getByTestId('deep-best');
     expect(within(best).getByText('זה הכי טוב שאנחנו יכולים לעשות כרגע: 2 שדות דורשים כלל שאנחנו עדיין לא יודעים לבנות. אנחנו ממשיכים להשתפר, ואולי נתמוך בהם בפעם הבאה.')).toBeTruthy();
@@ -576,17 +624,9 @@ describe('a visitor', () => {
     expect(within(panel).getByRole('button', { name: 'Sign in free to finish' })).toBeTruthy();
     expect(within(panel).queryAllByRole('checkbox')).toHaveLength(0);
     expect(within(panel).getByTestId('deep-fields').textContent).toContain('Total');
-    expect(screen.queryByRole('button', { name: 'Run deep analysis with AI' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Finish with AI' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Re-run all with AI' })).toBeNull();
     expect(learn).toHaveBeenCalledTimes(1);
     expect(api.learn).not.toHaveBeenCalled();
-  });
-
-  it('is not auto-run by a remembered "Deep analysis" setting', async () => {
-    window.localStorage.setItem(PREF, '1');
-    const { engine, learn } = engineWith(async (a) => completionOutput(a));
-    await toResult(engine, fakeApi());
-    await new Promise((r) => setTimeout(r, 60));
-    expect(learn).toHaveBeenCalledTimes(1);
   });
 });

@@ -6,7 +6,7 @@ import { ObjectId } from 'mongodb';
 import { describe, expect, it } from 'vitest';
 import type { SourceDoc } from '../../src/models.js';
 import { checkRulesFile, withMeta } from '../../src/registry/rules.js';
-import { applySource, mergeForReuse, mergeFromEdit, newIgnoredHeaders, pickReusableSource, unusedExampleHeaders, withDerivedRequired, withSourceAliases } from '../../src/registry/sourceLogic.js';
+import { applySource, mergeForReuse, mergeFromEdit, newIgnoredHeaders, pickReusableSource, unusedExampleHeaders, withDerivedRequired, withReadAsOf, withSourceAliases } from '../../src/registry/sourceLogic.js';
 import { edited, sourceOne, sourceTwo } from './helpers.js';
 
 function asRules(learn: LearnResult): Rules {
@@ -233,6 +233,17 @@ describe('applySource (a source edit reaches a conversion)', () => {
     expect(applied.needsReview).toBe(false);
   });
 
+  it("DECISION: a cut-off check (cutoffRange) is the conversion's own: never in the source, kept as it is when the source is written back", () => {
+    const cutoff = { column: 'amount', rule: 'cutoffRange', low: 100, high: 200, value: 150, includes: 'high', severity: 'flag' } as const;
+    const target = edited(one(), (r) => { r.validations = [...r.validations, cutoff]; });
+    const source = sourceOf(target);
+    expect(source.inputValidations.some((v) => v.rule === 'cutoffRange')).toBe(false);
+    const applied = applySource(target, source);
+    expect(applied.rules.validations).toContainEqual(cutoff);
+    expect(applied.needsReview).toBe(false);
+    expect(checkSourceLock(applied.rules, source)).toEqual([]);
+  });
+
   it("a check on no column of the source (a computed column's) is written as it is", () => {
     const check = { column: 'total', rule: 'range', min: 0, severity: 'flag' } as const;
     const source: SourceStructure = { ...sourceOf(one()), inputValidations: [check] };
@@ -242,6 +253,72 @@ describe('applySource (a source edit reaches a conversion)', () => {
   it('is a no-op for a conversion already as the source says', () => {
     const applied = applySource(one(), sourceOf(one()));
     expect(applied).toMatchObject({ changed: false, needsReview: false, problems: [] });
+  });
+});
+
+describe('readAs (SPEC 8.4a): what a column reads another way belongs to the source', () => {
+  const withMap = (map: Record<string, string> | undefined): Rules => edited(one(), (r) => void (r.input.columns[1]!.readAs = map));
+
+  it('applySource writes the source column’s readAs into the conversion (and takes it away when the source has none)', () => {
+    const source = sourceOf(withMap({ 'N/A': '', none: '0' }));
+    const applied = applySource(one(), source);
+    expect(applied.rules.input.columns[1]!.readAs).toEqual({ 'N/A': '', none: '0' });
+    expect(applied).toMatchObject({ changed: true, needsReview: false, problems: [] });
+    // a copy: changing the conversion's does not change the source's
+    applied.rules.input.columns[1]!.readAs!['x'] = 'y';
+    expect(source.inputSignature.columns[1]!.readAs).toEqual({ 'N/A': '', none: '0' });
+    const cleared = applySource(withMap({ 'N/A': '' }), sourceOf(one()));
+    expect('readAs' in cleared.rules.input.columns[1]!).toBe(false);
+    expect(cleared.needsReview).toBe(false);
+  });
+
+  it('mergeForReuse: a conversion without the mapping fits a source that has it, and the source keeps it', () => {
+    const source = sourceOf(withMap({ 'N/A': '' }));
+    const r = mergeForReuse(source, one());
+    expect(r).toMatchObject({ ok: true, changed: false });
+    if (!r.ok) return;
+    expect(r.structure.inputSignature.columns[1]!.readAs).toEqual({ 'N/A': '' });
+    // ...and applying it brings the conversion to the source (so it passes the source lock afterwards)
+    const applied = applySource(one(), r.structure);
+    expect(applied.rules.input.columns[1]!.readAs).toEqual({ 'N/A': '' });
+    expect(checkSourceLock(applied.rules, r.structure)).toEqual([]);
+  });
+
+  it('mergeForReuse: a mapping only the conversion has is added to the source (the union); one that says another value does not fit', () => {
+    const source = sourceOf(withMap({ 'N/A': '' }));
+    const more = mergeForReuse(source, withMap({ none: '0' }));
+    expect(more).toMatchObject({ ok: true, changed: true });
+    if (more.ok) expect(more.structure.inputSignature.columns[1]!.readAs).toEqual({ 'N/A': '', none: '0' });
+    const clash = mergeForReuse(source, withMap({ 'N/A': '0' }));
+    expect(clash.ok).toBe(false);
+    if (!clash.ok) expect(clash.problems.map((p) => p.path)).toEqual(['input.columns[1].readAs']);
+  });
+
+  it('mergeFromEdit: the editing conversion’s readAs IS the source’s afterwards (set, changed or taken away)', () => {
+    const before = withMap({ 'N/A': '' });
+    const source = sourceOf(before);
+    const added = mergeFromEdit(source, edited(before, (r) => void (r.input.columns[1]!.readAs = { 'N/A': '', none: '0' })), before);
+    expect(added.structure.inputSignature.columns[1]!.readAs).toEqual({ 'N/A': '', none: '0' });
+    const away = mergeFromEdit(source, one(), before);
+    expect('readAs' in away.structure.inputSignature.columns[1]!).toBe(false);
+  });
+
+  it('withReadAsOf: only the readAs of the columns the rules declare change - a restored version undoes a mapping, nothing else is touched', () => {
+    const source: SourceStructure = {
+      ...sourceOf(withMap({ 'N/A': '' })),
+      inputValidations: [{ column: 'Amount', rule: 'required', severity: 'flag' }],
+    };
+    source.inputSignature.columns.push({ header: 'Note', aliases: ['Remark'], type: 'text', required: false, readAs: { x: 'y' } });
+    const back = withReadAsOf(source, one());
+    expect(back.inputSignature.columns.map((c) => [c.header, c.readAs])).toEqual([
+      ['ID', undefined],
+      ['Amount', undefined],
+      ['Note', { x: 'y' }], // a column the restored version does not declare is the source's own business
+    ]);
+    expect(back.inputValidations).toEqual(source.inputValidations);
+    expect(source.inputSignature.columns[1]!.readAs).toEqual({ 'N/A': '' }); // the argument is not mutated
+    const set = withReadAsOf(sourceOf(one()), withMap({ a: 'b' }));
+    expect(set.inputSignature.columns[1]!.readAs).toEqual({ a: 'b' });
   });
 });
 

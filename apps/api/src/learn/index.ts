@@ -25,4 +25,6 @@ export {
   type LearnOptions,
   type LearnOutcome,
   type LlmCallRecord,
+  type ProblemCounts,
+  type RepairOptions,
 } from './learn.js';

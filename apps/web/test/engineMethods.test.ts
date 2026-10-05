@@ -137,6 +137,31 @@ describe('engine methods, through the worker RPC', () => {
     expect((err as RpcRemoteError).code).toBe('unsupportedFileType');
   });
 
+  it('learn-v8: a second rule the answer gave that also fits every row becomes the ambiguity question the result screen asks', async () => {
+    const client = loopback(engineMethods);
+    const size = (op: 'gte' | 'gt', n: number) => ({ op, args: [{ col: 'qty' }, { const: n }] });
+    const callLearn = vi.fn(async () => {
+      const answer: LearnResult = {
+        schemaVersion: 1,
+        input: { sheet: { pick: 'first' }, headerRow: 'auto', columns: [{ id: 'item', header: 'Item', type: 'text' }, { id: 'qty', header: 'Qty', type: 'integer' }] },
+        transform: { computed: [{ id: 'size', type: 'text', expr: { op: 'if', cond: size('gte', 10), then: { const: 'bulk' }, else: { const: 'single' } } as LearnResult['transform']['computed'][number]['expr'] }], valueMaps: [], sort: [] },
+        output: { sheetName: 'Sheet1', direction: 'ltr', language: 'en', titleRows: [], columns: [{ header: 'Item', from: 'item' }, { header: 'Size', from: 'size' }] },
+        validations: [],
+        unsupported: [],
+        assumptions: [],
+      };
+      const other = { op: 'if', cond: size('gt', 9), then: { const: 'bulk' }, else: { const: 'single' } } as LearnResult['transform']['computed'][number]['expr'];
+      return { rules: answer, alternatives: [{ outputColumn: 'Size', from: 'sizeAlt', computed: [{ id: 'sizeAlt', type: 'text' as const, expr: other }] }], problems: [], calls: [] };
+    });
+    const { args, transfer } = learnArgs(llmPair(), false);
+    // (The answer declares no csv output file, so the loop may ask for a round: nothing comes back from it.)
+    const callRepair = vi.fn(async () => ({ rules: null, problems: [], calls: [] }));
+    const res = await client.call<LearnOutput>('learn', args, { transfer, host: { callLearn, callRepair } });
+    expect(res.alternatives?.map((a) => [a.column, a.outcome])).toEqual([['Size', 'bothPass']]);
+    expect(res.ambiguous?.map((q) => [q.header, q.readings.map((r) => r.kind)])).toEqual([['Size', ['rule', 'alternative']]]);
+    expect(res.rules!.validations.filter((v) => v.rule === 'sameAs')).toEqual([res.ambiguous![0]!.check]);
+  });
+
   it('learn: off the fast path the worker asks the main thread (host) to call the API, with a masked payload', async () => {
     const client = loopback(engineMethods);
     const payloads: LearnPayload[] = [];
@@ -208,6 +233,60 @@ describe('engine methods, through the worker RPC', () => {
     expect(res.verification?.verified).toBe(true);
     // The Result screen's live check goes on with the example it already holds.
     expect(res.exampleId).toBe(first.exampleId);
+  });
+
+  it('learn: an AI answer whose day/month order no date settles comes back with the question for it (`ambiguous`), made from the fill\'s ambiguity', async () => {
+    const client = loopback(engineMethods);
+    // Every date reads both ways (no part above 12), so the example cannot say whether "05/03/2026" is 5 March or 3 May.
+    const dates = ['05/03/2026', '01/04/2026', '02/01/2026', '07/08/2026', '03/06/2026', '04/05/2026', '09/02/2026', '06/07/2026'];
+    const pair = {
+      input: 'Ref,When\n' + dates.map((d, i) => `R${100 + i},${d}`).join('\n') + '\n',
+      output: 'Ref,Label\n' + dates.map((d, i) => `R${100 + i},M-${d.split('/')[1]}`).join('\n') + '\n',
+    };
+    // The answer reads the dates day first.
+    const callLearn = vi.fn(async () => {
+      const answer: LearnResult = {
+        schemaVersion: 1,
+        input: {
+          sheet: { pick: 'first' },
+          headerRow: 'auto',
+          columns: [{ id: 'ref', header: 'Ref', type: 'text' }, { id: 'when', header: 'When', type: 'text' }],
+        },
+        transform: {
+          computed: [
+            {
+              id: 'label',
+              type: 'text',
+              expr: { op: 'concat', args: [{ const: 'M-' }, { op: 'dateFormat', arg: { op: 'toDate', arg: { col: 'when' }, format: 'DD/MM/YYYY' }, format: 'MM' }] },
+            },
+          ],
+          valueMaps: [],
+          sort: [],
+        },
+        output: {
+          file: { type: 'csv', delimiter: ',', encoding: 'utf8', quote: 'minimal', header: true },
+          sheetName: 'Sheet1',
+          direction: 'ltr',
+          language: 'en',
+          titleRows: [],
+          columns: [{ header: 'Ref', from: 'ref' }, { header: 'Label', from: 'label' }],
+        },
+        validations: [],
+        unsupported: [],
+        assumptions: [],
+      };
+      return { rules: answer, problems: [], calls: [] };
+    });
+    const { args, transfer } = learnArgs(pair, false);
+    const res = await client.call<LearnOutput>('learn', { ...args, ai: 'allowed' as const }, { transfer, host: { callLearn } });
+    expect(res.path).toBe('llm');
+    expect(res.ambiguities).toEqual([{ kind: 'dayMonthOrder', column: 'When', format: 'DD/MM/YYYY', other: 'MM/DD/YYYY' }]);
+    expect(res.ambiguous).toHaveLength(1);
+    expect(res.ambiguous![0]).toMatchObject({ header: 'Label', defaultReading: 0, check: null });
+    expect(res.ambiguous![0]!.readings.map((r) => [r.kind, r.columns, r.fragment.dateFormats])).toEqual([
+      ['dayMonthOrder', ['When'], [{ column: 'When', from: 'MM/DD/YYYY', to: 'DD/MM/YYYY' }]],
+      ['dayMonthOrder', ['When'], [{ column: 'When', from: 'DD/MM/YYYY', to: 'MM/DD/YYYY' }]],
+    ]);
   });
 
   it('learn: masking off sends the sample rows as they are', async () => {

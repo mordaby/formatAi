@@ -1,0 +1,342 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "saleId",
+        "header": "Sale ID",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "branchCode",
+        "header": "Branch Code",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "channel",
+        "header": "Channel",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "product",
+        "header": "Product",
+        "type": "text"
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "saleDate",
+        "header": "Sale Date",
+        "type": "date",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "branchName",
+        "type": "text",
+        "expr": {
+          "op": "switch",
+          "cases": [
+            {
+              "when": {
+                "op": "eq",
+                "args": [
+                  {
+                    "col": "channel"
+                  },
+                  {
+                    "const": "Online"
+                  }
+                ]
+              },
+              "then": {
+                "const": "Online"
+              }
+            }
+          ],
+          "else": {
+            "op": "lookup",
+            "table": "branches",
+            "key": {
+              "col": "branchCode"
+            },
+            "return": "name",
+            "onMissing": "flag"
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": [],
+    "tables": [
+      {
+        "name": "branches",
+        "columns": [
+          "code",
+          "name"
+        ],
+        "rows": [
+          [
+            "B01",
+            "Tulsa"
+          ],
+          [
+            "B02",
+            "Reno"
+          ],
+          [
+            "B03",
+            "Omaha"
+          ],
+          [
+            "B04",
+            "Boise"
+          ],
+          [
+            "B05",
+            "Fargo"
+          ],
+          [
+            "B06",
+            "Macon"
+          ],
+          [
+            "B07",
+            "Salem"
+          ],
+          [
+            "B08",
+            "Provo"
+          ],
+          [
+            "B09",
+            "Akron"
+          ],
+          [
+            "B10",
+            "Dayton"
+          ],
+          [
+            "B11",
+            "Toledo"
+          ],
+          [
+            "B12",
+            "Albany"
+          ],
+          [
+            "B13",
+            "Savannah"
+          ],
+          [
+            "B14",
+            "Mobile"
+          ],
+          [
+            "B15",
+            "Laredo"
+          ],
+          [
+            "B16",
+            "Eugene"
+          ],
+          [
+            "B17",
+            "Spokane"
+          ],
+          [
+            "B18",
+            "Tacoma"
+          ],
+          [
+            "B19",
+            "Madison"
+          ],
+          [
+            "B20",
+            "Lansing"
+          ],
+          [
+            "B21",
+            "Dover"
+          ],
+          [
+            "B22",
+            "Helena"
+          ],
+          [
+            "B23",
+            "Juneau"
+          ],
+          [
+            "B24",
+            "Topeka"
+          ],
+          [
+            "B25",
+            "Austin"
+          ],
+          [
+            "B26",
+            "Denver"
+          ],
+          [
+            "B27",
+            "Miami"
+          ],
+          [
+            "B28",
+            "Seattle"
+          ],
+          [
+            "B29",
+            "Boston"
+          ],
+          [
+            "B30",
+            "Phoenix"
+          ],
+          [
+            "B31",
+            "Chicago"
+          ],
+          [
+            "B32",
+            "Atlanta"
+          ],
+          [
+            "B33",
+            "Portland"
+          ],
+          [
+            "B34",
+            "Orlando"
+          ],
+          [
+            "B35",
+            "Detroit"
+          ],
+          [
+            "B36",
+            "Memphis"
+          ],
+          [
+            "B37",
+            "Newark"
+          ],
+          [
+            "B38",
+            "Raleigh"
+          ],
+          [
+            "B39",
+            "Richmond"
+          ],
+          [
+            "B40",
+            "Buffalo"
+          ],
+          [
+            "B41",
+            "Hartford"
+          ],
+          [
+            "B42",
+            "Wichita"
+          ],
+          [
+            "B43",
+            "Tucson"
+          ],
+          [
+            "B44",
+            "Fresno"
+          ],
+          [
+            "B45",
+            "Oakland"
+          ],
+          [
+            "B46",
+            "Anaheim"
+          ],
+          [
+            "B47",
+            "Durham"
+          ],
+          [
+            "B48",
+            "Norfolk"
+          ],
+          [
+            "B49",
+            "Garland"
+          ],
+          [
+            "B50",
+            "Irvine"
+          ]
+        ]
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "Sales by branch",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Sale ID",
+        "from": "saleId"
+      },
+      {
+        "header": "Branch Code",
+        "from": "branchCode"
+      },
+      {
+        "header": "Branch Name",
+        "from": "branchName"
+      },
+      {
+        "header": "Product",
+        "from": "product"
+      },
+      {
+        "header": "Amount",
+        "from": "amount",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Sale Date",
+        "from": "saleDate",
+        "format": "DD/MM/YYYY"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Sales export -> sales with branch name",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

@@ -6,13 +6,13 @@
 import type { RawWorkbook } from '../../types';
 import { gather, isoOfSerial, normFast, norms, type ColumnData } from './cells';
 import { alignRows } from './align';
-import { findDerivation } from './derived';
+import { constantDerivation, findDerivation } from './derived';
 import { analyzeDropped } from './dropped';
 import { detectFamilies, type CreatedData, type FamilyFinding } from './families';
 import { analyzeLayout } from './layout';
 import { sampleIndices } from './prng';
 import { profileColumn } from './profile';
-import { findRelations, MAX_RELATIONS, relationRank, sortRelations, summaryRelations, type RelationEnv } from './relations';
+import { findRelations, findRelationsGuarded, MAX_RELATIONS, relationRank, sortRelations, summaryRelations, type RelationEnv } from './relations';
 import { WindowDetector } from './windows';
 import { decideHeader, explainedRate, firstRowExplained, HEADER_MIN_EXPLAINED, headerRowMayBeData } from './headerCheck';
 import { identicalSheets, readInput, readOutput, type InputData, type OutputData } from './tables';
@@ -299,7 +299,8 @@ function analyzeSides(
     const windowable = shape.kind === 'plain' && (alignment.method === 'key' || alignment.method === 'position');
     let detector: WindowDetector | null = null;
     for (let o = 0; o < nCols; o++) {
-      let rels = findRelations(env, outA[o]!, o, outProfile[o]?.format);
+      const guarded = findRelationsGuarded(env, outA[o]!, o, outProfile[o]?.format);
+      let rels = guarded.relations;
       let windows: WindowFinding[] = [];
       if (windowable && !rels.some((r) => r.coverage === 1 && relationRank(r.rel) < relationRank('window'))) {
         detector ??= new WindowDetector({
@@ -315,9 +316,12 @@ function analyzeSides(
       }
       const ca = columnAnalysis(o, outSide.headers[o] ?? '', rels);
       if (windows.length > 0) ca.windows = windows;
+      if (guarded.derivableConstant !== undefined) ca.derivableConstant = guarded.derivableConstant;
+      if (guarded.derivableValue !== undefined) ca.derivableValue = guarded.derivableValue;
       // SPEC 6.2 step 4 (v5): an unknown column the input still determines is derived (the AI can solve it),
-      // not external data.
-      if (ca.unknown) ca.derived = findDerivation(env, outA[o]!);
+      // not external data. A column that is one value on every row, which the input can write as well, is derived from
+      // the columns that can write it (a month label of a March file is the month of the data, not "another source").
+      if (ca.unknown) ca.derived = guarded.derivableConstant ? constantDerivation(env, guarded.derivableConstant) : findDerivation(env, outA[o]!);
       columns.push(ca);
       progress('relations', 0.35 + (0.4 * (o + 1)) / Math.max(1, nCols));
     }

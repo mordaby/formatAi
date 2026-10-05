@@ -3,8 +3,10 @@
 // thread sends over HTTP on the worker's behalf via `ctx.host` (the learn payload, which
 // the engine itself builds - masked unless the user turned masking off).
 import {
+  ambiguousColumns,
   analyzePair,
   convertFile,
+  dayMonthQuestions,
   detectTable,
   isExternalColumn,
   learnFromExamples,
@@ -66,18 +68,30 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
       emit({ phase: 'verifying' });
       return out;
     },
-    callRepair: async (payload, previousRules, problems) => {
-      emit({ phase: 'learning', attempt: 'repair' });
-      const out = await ctx.host<LearnCallResult>('callRepair', payload, previousRules, problems);
+    callRepair: async (payload, previousRules, problems, round) => {
+      // The learning loop: which round, and how many rows the rules got wrong it sends (the rows themselves go to the main thread with it).
+      emit({ phase: 'learning', attempt: 'repair', round: { n: round.round, of: round.maxRounds, rows: round.newRows } });
+      const out = await ctx.host<LearnCallResult>('callRepair', payload, previousRules, problems, round);
       emit({ phase: 'verifying' });
       return out;
     },
   });
   // The rules editor's live check (SPEC 8.11) re-runs rules on this example; it stays in the worker.
   // Its input's columns come with it: the editor offers the ones no rule uses yet (headers only; the file stays here).
-  return analysis && result.rules
-    ? { ...result, exampleId: rememberExample(analysis, args.keepExampleId), exampleInput: exampleInputOf(analysis), exampleOutputColumns: analysis.output.columnCount }
-    : result;
+  if (!analysis || !result.rules) return result;
+  // The columns the example fits more than one rule for are a question for the user, whatever path built the rules (the free engine's, or the AI step's):
+  // a constant the input could write too, and - after an AI answer - a second rule the AI step gave that also fits every row (learn-v8, SPEC 21 v12
+  // item 17; its check is already in the rules) and the day/month order of a text date that no value settles (SPEC 21 v12 item 16).
+  // A column asks one question: the first one stands (the engine adds no alternative question on a column the free engine asks about).
+  const alternatives = (result.alternatives ?? []).flatMap((a) => (a.question ? [a.question] : []));
+  const ambiguous = [...ambiguousColumns(analysis), ...alternatives, ...dayMonthQuestions(result.rules, result.ambiguities ?? [])].filter((q, i, all) => all.findIndex((x) => x.header === q.header) === i);
+  return {
+    ...result,
+    exampleId: rememberExample(analysis, args.keepExampleId),
+    exampleInput: exampleInputOf(analysis),
+    exampleOutputColumns: analysis.output.columnCount,
+    ...(ambiguous.length > 0 ? { ambiguous } : {}),
+  };
 }
 
 async function convert(args: ConvertArgs): Promise<Transfer<ConvertOutput> | ConvertOutput> {

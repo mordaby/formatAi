@@ -2,8 +2,8 @@
 // browser bundle can import them freely. The server's source of truth is `apps/api/src/routes`.
 import type { ApiErrorCode, LimitCode } from './codes';
 import type { AiLearnPeriod, TierLimits } from './config/tiers';
-import type { LearnPayload, RepairProblem } from './payload';
-import type { LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, Validation } from './rules/schema';
+import type { LearnPayload, RepairProblem, Sample } from './payload';
+import type { LearnAlternative, LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, Validation } from './rules/schema';
 import type { SourceColumn, SourceInputReading, SourceInputSignature, SourceLockProblem } from './source';
 
 /** What an error's `problems` may hold: what the checks found in a rules file, or what the source lock found (SPEC 8.15). */
@@ -48,6 +48,12 @@ export interface LearnResponse {
   rules: LearnResult | null;
   verified: boolean;
   problems: RepairProblem[];
+  /**
+   * learn-v8: the second rules the answer gave for some of its columns, each checked like the answer (formula, references, types,
+   * limits) - an invalid one is not here. In the answer's own vocabulary (masked when masking is on), like `rules`; the browser tests each
+   * on every row of the example. Never cached and never part of `rules`. Absent when there are none.
+   */
+  alternatives?: LearnAlternative[];
   /** Present on an LLM learn; required (once) for /api/learn/repair. Absent on a cache hit. */
   learnId?: string;
   /** True when saved rules for this exact structure were returned without an LLM call. */
@@ -60,6 +66,11 @@ export interface LearnResponse {
   counted?: boolean;
   /** Failed AI attempts so far on this example pair, of `limits.learn.maxFailedAiAttempts`. */
   failedAttempts?: number;
+  /**
+   * True once this learn had its one repair for a rule that copies rows of the example (SPEC 9.2 layer 6: an `overfit` problem was sent).
+   * The browser says so in its later loop rounds (`RepairRequest.overfitRepaired`), so the learn never gets a second one.
+   */
+  overfitRepaired?: boolean;
 }
 
 /** SPEC 21 v5: what is left of a signed-in user's AI learns. */
@@ -74,12 +85,19 @@ export interface LearnQuotaResponse {
   quota: AiLearnQuotaState;
 }
 
-/** POST /api/learn/repair body: at most one repair per `learnId`. */
+/** POST /api/learn/repair body: one round of the learning loop, at most `limits.llm.browserRepairCalls` per `learnId`. */
 export interface RepairRequest {
   payload: LearnPayload;
   previousRules: LearnResult;
   problems: RepairProblem[];
   learnId: string;
+  /**
+   * The learning loop (SPEC 9.3): every row of the example the browser sent since the learn, this round's included, masked like the
+   * samples (`withRows`). The server checks the answer against the samples plus all of them. Absent: none.
+   */
+  rows?: Sample[];
+  /** The learn already had its one repair for a rule that copies rows (`LearnResponse.overfitRepaired`): such a rule is reported as unsupported now. */
+  overfitRepaired?: boolean;
 }
 
 /** POST /api/learn/repair 200 body. */

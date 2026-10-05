@@ -155,13 +155,14 @@ explanation's text.
 - `path`: `llm`, or `local` when the free engine answered first. `classification`: `verified`, `unsupported:<codes>`, `notVerified`, `failed`, `blocked:<reason>`.
 - `verified`: the answer reproduces the example, has no unsupported column and (complete mode) keeps the fixed rules. `holdOut`: the answer converts the next month's file exactly.
 - `llmCalls`, `tokensIn`, `tokensOut`, `tokensCached`, `costUsd`, `latencyMs` (sum of the calls'), `formulaErrors` (formula-text parse failures over every call), `callErrors`.
+- `estimate`: OUR OWN token count over the calls - `{ inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, costUsd }`, from the text sent and received, priced with the providers' published prices (`packages/shared/src/config/pricing.ts`; `costUsd` is `null` for a model with no price). Compare runs by this, not by the provider-reported tokens above: the dev CLI's include Claude Code's overhead and thinking tokens (about 15k output tokens per call). Absent on records measured before it existed.
 - `unsupported`: the reason codes of the columns the AI reported as unsupported. `functionRequests`: the NAMES of the functions it asked for (read from its answer, before the
   API's value filter; nothing else of the request). `explanation`: whether it explained an unsupported column (a boolean).
 - `completion` (complete mode): columns the free engine fixed / left to the AI step. `error`: the measurement itself failed. `at`: when.
 
 The report gains the **AI learns it** column in the capability map: `✓` verified + hold-out, `~` verified only (hold-out fails), `✗` otherwise (with the classification),
 `not run` for a needs-AI type not measured yet, `—` where there is nothing for the AI to do. It also gains an **AI step** section: totals, a per-topic table (share learned,
-average calls / tokens in / out / cached / latency, formula errors, top unsupported codes, function requests named), a per-type table, and the list of functions the AI asked for.
+average calls / tokens in / out / cached / estimated tokens and cost / latency, formula errors, top unsupported codes, function requests named), a per-type table, and the list of functions the AI asked for.
 A type counts by its worst seed. When no record has an AI result, the report and the CSV are exactly the free-run ones.
 
 A type the free engine got **wrong** (`overfit` / `unverified`) is in the needs-AI set, but the real flow takes the free engine's answer first and never reaches the AI:

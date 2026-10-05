@@ -37,6 +37,7 @@ import { significantDigits } from './analyze/cells';
 import { SPLIT_SEPARATORS } from './analyze/relations';
 import { relationHasHint } from './hints';
 import type { PreflightResult } from './preflight';
+import type { AmbiguousColumn, ColumnReading, RuleFragment } from './readings';
 import { maxDistinctValues, templateOperandForm, type OperandForm } from './templateOperands';
 
 // ---------------------------------------------------------------------------
@@ -60,6 +61,11 @@ export interface FastPathFailure {
 export interface FastPathSuccess {
   rules: LearnResult;
   assumptions: Assumption[];
+  /**
+   * The columns the example fits more than one rule for (a constant the input could write too, readings.ts): built from their data reading,
+   * with the check that flags a row where the readings differ, until the user answers. Absent when there are none.
+   */
+  ambiguous?: AmbiguousColumn[];
 }
 
 export type FastPathResult = FastPathSuccess | FastPathFailure;
@@ -842,14 +848,16 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
   const ctx = newCtx();
 
   const outputColumns: { header: string; from: string; format?: string; width?: number }[] = [];
+  const ambiguous: AmbiguousColumn[] = [];
 
   for (const ca of analysis.columns) {
-    const chosen = chooseColumnRelation(analysis, ca);
+    const chosen = chooseColumn(analysis, ca);
     if ('reason' in chosen) return chosen;
-    const rel = chosen;
+    const rel = chosen.relation;
 
     const from = columnFrom(ctx, analysis, headerFor(analysis, ca, rel), rel);
     if (typeof from !== 'string') return from;
+    if (chosen.ambiguity) ambiguous.push(chosen.ambiguity.column);
 
     const outProfile = analysis.output.profile[ca.out];
     const col: { header: string; from: string; format?: string; width?: number } = { header: headerFor(analysis, ca, rel), from };
@@ -862,11 +870,11 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
   if ('reason' in droppedResult) return droppedResult;
   const { build: dropped, assumptions } = droppedResult;
 
-  const validations = buildValidations(analysis, ctx, outputColumns);
+  const validations = [...buildValidations(analysis, ctx, outputColumns), ...readingChecks(ambiguous)];
 
   const rules = assembleRules(analysis, ctx, outputColumns, dropped, validations, assumptions);
 
-  return { rules, assumptions };
+  return ambiguous.length > 0 ? { rules, assumptions, ambiguous } : { rules, assumptions };
 }
 
 /** A relation can be written as a rule: it has a Hint equivalent (SPEC 6.5), or it is a `split`, which only the formula `split(x, sep, n)` says. */
@@ -911,6 +919,13 @@ function ambiguityBucket(r: Relation): string {
  */
 export function chooseColumnRelation(analysis: PairAnalysis, ca: ColumnAnalysis): Relation | FastPathFailure {
   let c1 = ca.relations.filter((r) => r.coverage === 1);
+  // DECISION: one value on every row that the input can write too (a copy of a column, the month or year of a date column,
+  // a fixed part of a text: relations.ts `constantSources`) is a label or a value of the data - the example cannot say which,
+  // and a label built as a constant is wrong next month. Whatever else fits the column (a copy, a date format, ...) fits just
+  // as well: nothing is built HERE. `chooseColumn` (above) builds the data reading and asks the user when there is one (`ambiguityOf`);
+  // this is what is left - no data reading code can write as a rule - and the AI step or the user decides. Only an across-row
+  // relation (a group's total, a count per group) that holds on every row still outranks it, as it outranks any lookalike below.
+  if (ca.derivableConstant !== undefined && !c1.some((r) => r.rel === 'window')) return fail('ambiguousColumn', { column: ca.out });
   if (c1.length === 0) return fail('columnNotFullyExplained', { column: ca.out });
   // An across-row relation (a group's total, a count per group) ranks above the lookalikes the same cells also fit (a value map of the
   // group key, a constant): only the across-row readings compete with each other.
@@ -933,6 +948,124 @@ export function chooseColumnRelation(analysis: PairAnalysis, ca: ColumnAnalysis)
   const thin = thinEvidenceIssue(analysis, rel);
   if (thin) return thin;
   return rel;
+}
+
+// ---------------------------------------------------------------------------
+// Ambiguous columns: a constant the input could write too (SPEC 6.2 step 4, 6.5, 21 v12 item 11)
+// ---------------------------------------------------------------------------
+
+/** At most this many data readings of one column are offered next to the constant: the question stays short. */
+const MAX_DATA_READINGS = 2;
+
+/** One ambiguous column, with the data reading the free engine builds until the user answers. */
+export interface Ambiguity {
+  column: AmbiguousColumn;
+  relation: Relation;
+}
+
+/** A relation as a rule fragment: built the way the strict path builds it, in a context of its own (so its ids are local to it). */
+function fragmentOf(analysis: PairAnalysis, header: string, rel: Relation): RuleFragment | null {
+  if (!rel.in.every((i) => i < analysis.input.columnCount)) return null; // (a column a family creates is declared by the expand, not here)
+  const ctx = newCtx();
+  try {
+    const from = columnFrom(ctx, analysis, header, rel);
+    if (typeof from !== 'string') return null;
+    return {
+      from,
+      inputColumns: [...ctx.inputColumns.entries()].sort((a, b) => a[0] - b[0]).map(([, col]) => col),
+      computed: [...ctx.computed],
+      valueMaps: [...ctx.valueMaps],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The competing readings of a column that holds one value on every row that the input can write too (relations.ts `constantSources`),
+ * or null when it is not one, or when the data has no reading code can write as a rule (a date column that mixes several formats: the
+ * month of it has no rule here) - such a column is still not built and goes to the AI step, as before.
+ *
+ * DECISION (owner, 2026-10-04): the AI step sees the same rows as the free engine, so sending the column to it is pointless; the user
+ * knows which reading is meant. The readings are the constant and each data reading the example proves on EVERY row (the relations
+ * the guard found at coverage 1.0: a copy of a column, a prefix, a part of a split text, a date format), as ready-to-apply fragments.
+ * The default is the data reading (it follows next month's data; a constant built by guess is wrong next month), with a check that flags
+ * a row where it differs from the constant. A data reading must pass the same evidence rules as any built relation (`thinEvidenceIssue`).
+ * Only a text or number constant: a boolean would need a different check.
+ */
+export function ambiguityOf(analysis: PairAnalysis, ca: ColumnAnalysis): Ambiguity | null {
+  const value = ca.derivableValue;
+  if (ca.derivableConstant === undefined || (typeof value !== 'string' && typeof value !== 'number')) return null;
+  const c1 = ca.relations.filter((r) => r.coverage === 1);
+  // An across-row relation that holds on every row outranks any lookalike, as everywhere else.
+  if (c1.some((r) => r.rel === 'window')) return null;
+
+  // One data reading per input column (the best ranked: the user chooses between "the constant" and "what column X says", not between
+  // two ways of cutting the same text); a copy and a normalized copy of a column are one reading, the plain copy.
+  const bySource = new Map<string, Relation>();
+  for (const r of c1) {
+    if (r.rel === 'constant' || r.rel === 'aggregate' || !hasRuleForm(r) || thinEvidenceIssue(analysis, r)) continue;
+    const source = r.in.join(',');
+    const held = bySource.get(source);
+    if (held === undefined || (r.rel === 'copy' && held.rel !== 'copy')) bySource.set(source, r);
+  }
+
+  const data: { rel: Relation; header: string; fragment: RuleFragment }[] = [];
+  for (const rel of bySource.values()) {
+    if (data.length >= MAX_DATA_READINGS) break;
+    const header = headerFor(analysis, ca, rel);
+    const fragment = fragmentOf(analysis, header, rel);
+    if (fragment !== null) data.push({ rel, header, fragment });
+  }
+  const first = data[0];
+  if (first === undefined) return null;
+
+  const total = analysis.alignment.rows.length;
+  const constant: Relation = { rel: 'constant', in: [], value, out: ca.out, coverage: 1, matched: total, total, failing: [], failCount: 0 };
+  const constantFragment = fragmentOf(analysis, first.header, constant);
+  if (constantFragment === null) return null;
+
+  const headers = (rel: Relation): string[] => rel.in.map((i) => analysis.input.profile[i]?.header ?? '');
+  const readings: ColumnReading[] = [
+    { kind: 'constant', columns: [], fragment: constantFragment },
+    ...data.map((d): ColumnReading => ({ kind: d.rel.rel, columns: headers(d.rel), fragment: d.fragment })),
+  ];
+  const column: AmbiguousColumn = {
+    out: ca.out,
+    header: first.header,
+    readings,
+    defaultReading: 1,
+    // The default reading writes the data's value; the check flags a row where it is not the constant.
+    check: { on: 'output', column: first.header, rule: 'oneOf', values: [String(value)], severity: 'flag' },
+    value,
+  };
+  return { column, relation: first.rel };
+}
+
+/** The columns of the example's output that fit more than one rule, each with its readings (see `ambiguityOf`). */
+export function ambiguousColumns(analysis: PairAnalysis): AmbiguousColumn[] {
+  const out: AmbiguousColumn[] = [];
+  for (const ca of analysis.columns) {
+    const a = ambiguityOf(analysis, ca);
+    if (a) out.push(a.column);
+  }
+  return out;
+}
+
+/** The checks that go with unanswered questions (readings.ts `AmbiguousColumn.check`). */
+export function readingChecks(columns: readonly AmbiguousColumn[]): Validation[] {
+  return columns.flatMap((c) => (c.check === null ? [] : [c.check]));
+}
+
+/**
+ * The relation to build one output column from, or why it can't be built. Like `chooseColumnRelation`, except that a column the
+ * example fits more than one rule for (`ambiguityOf`) is built from its data reading and says so: the question goes to the user.
+ */
+export function chooseColumn(analysis: PairAnalysis, ca: ColumnAnalysis): { relation: Relation; ambiguity?: Ambiguity } | FastPathFailure {
+  const ambiguity = ambiguityOf(analysis, ca);
+  if (ambiguity) return { relation: ambiguity.relation, ambiguity };
+  const chosen = chooseColumnRelation(analysis, ca);
+  return 'reason' in chosen ? chosen : { relation: chosen };
 }
 
 /** SPEC 8.13: a headerless output's columns still need a header, "used in the

@@ -46,6 +46,10 @@ export const unsupportedMessages: Record<UnsupportedReasonCode, Localized> = {
     en: "We couldn't figure out how to build this column.",
     he: 'לא הצלחנו להבין איך לבנות את העמודה הזו.',
   },
+  overfit: {
+    en: 'The only rule we found for this column copies particular rows of your example, so it would be wrong on your next file. Please set this column yourself.',
+    he: 'הכלל היחיד שמצאנו לעמודה הזו מעתיק שורות מסוימות מהדוגמה שלך, ולכן הוא יטעה בקובץ הבא. אנא הגדירו את העמודה הזו בעצמכם.',
+  },
 };
 
 export const assumptionMessages: Record<AssumptionReasonCode, Localized> = {
@@ -198,6 +202,14 @@ export const flagMessages: Record<FlagMessageKey, Localized> = {
     en: 'This date is outside {from} – {to}.',
     he: 'התאריך מחוץ לטווח {from} – {to}.',
   },
+  'flag.validation.cutoffRange': {
+    en: 'Your example did not settle which side of the cut-off this value is on (between {low} and {high}; we used {value}). Please check it.',
+    he: 'הדוגמה שלך לא קבעה באיזה צד של הסף נמצא הערך הזה (בין {low} לבין {high}; השתמשנו ב-{value}). כדאי לבדוק.',
+  },
+  'flag.validation.sameAs': {
+    en: 'Your example fits two rules for this column, and here they differ: the other rule gives {other}. Please check it.',
+    he: 'הדוגמה שלך מתאימה לשני כללים בעמודה הזו, וכאן הם שונים: הכלל השני נותן {other}. כדאי לבדוק.',
+  },
 };
 
 // API error messages (SPEC 9.5, 11). The API returns only codes; the web shows this text.
@@ -218,6 +230,10 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
   invalidLearnId: {
     en: 'This learning session has expired. Please start again.',
     he: 'פג תוקף הלמידה הזו. אנא התחילו מחדש.',
+  },
+  invalidRows: {
+    en: 'Something went wrong with this request. Please try again.',
+    he: 'משהו השתבש בבקשה הזו. אנא נסו שוב.',
   },
   turnstileFailed: {
     en: "We couldn't confirm you're not a robot. Refresh the page and try again.",
@@ -322,8 +338,8 @@ export const limitMessages: Record<LimitCode, Localized> = {
     he: 'ניצלתם את כל הלמידות של החודש.',
   },
   repairsPerLearn: {
-    en: 'We already tried an extra fix for this one.',
-    he: 'כבר ניסינו תיקון נוסף עבור הלמידה הזו.',
+    en: 'We already tried every extra fix for this one.',
+    he: 'כבר ניסינו את כל התיקונים הנוספים עבור הלמידה הזו.',
   },
   // SPEC 21 v5: generic text; `aiLearnsLimitMessages` has one per `period`.
   aiLearns: {

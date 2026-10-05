@@ -26,13 +26,14 @@ import {
   assembleRules,
   buildDropped,
   buildValidations,
-  chooseColumnRelation,
+  chooseColumn,
   columnFrom,
   ensureInputColumn,
   fail,
   freshId,
   headerFor,
   newCtx,
+  readingChecks,
   restoreCtx,
   snapshotCtx,
   type BuiltOutputColumn,
@@ -41,6 +42,7 @@ import {
   type FastPathFailure,
 } from './fastPath';
 import type { PreflightResult } from './preflight';
+import type { AmbiguousColumn } from './readings';
 
 export interface PartialRulesResult {
   /** Rules that load and run: solved columns are built, the rest have `from: null` (and are not in `unsupported`: only the AI step reports that). */
@@ -56,6 +58,11 @@ export interface PartialRulesResult {
   solvedColumns: number[];
   /** What besides columns still needs the AI step (rows that change shape, dropped rows, sort, groups...). */
   needsAiParts: AiStepPartCode[];
+  /**
+   * The columns built here whose example fits more than one rule (a constant the input could write too): each is in `solved`, built from its
+   * data reading with the check that flags a row where the readings differ, and is a question for the user - never for the AI step.
+   */
+  ambiguous: AmbiguousColumn[];
 }
 
 export type PartialRulesOutcome = PartialRulesResult | FastPathFailure;
@@ -167,6 +174,7 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
   const needsAi: string[] = [];
   const external: string[] = [];
   const solvedColumns: number[] = [];
+  const ambiguous: AmbiguousColumn[] = [];
 
   for (const ca of analysis.columns) {
     // Neither a derived column nor an external one is built here: both "need the AI step" (external only changes the wording).
@@ -175,13 +183,15 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
     let header = looseHeader(analysis, ca);
 
     if (rowsBuilt && !isExternal) {
-      const chosen = chooseColumnRelation(analysis, ca);
-      if (!('reason' in chosen) && operandsAvailable(analysis, ctx, chosen)) {
+      const chosen = chooseColumn(analysis, ca);
+      if (!('reason' in chosen) && operandsAvailable(analysis, ctx, chosen.relation)) {
+        const rel = chosen.relation;
         const snap = snapshotCtx(ctx);
-        const built = columnFrom(ctx, analysis, headerFor(analysis, ca, chosen), chosen);
+        const built = columnFrom(ctx, analysis, headerFor(analysis, ca, rel), rel);
         if (typeof built === 'string') {
           from = built;
-          header = headerFor(analysis, ca, chosen);
+          header = headerFor(analysis, ca, rel);
+          if (chosen.ambiguity) ambiguous.push(chosen.ambiguity.column);
         } else {
           restoreCtx(ctx, snap);
         }
@@ -224,7 +234,7 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
 
   // A columns-to-rows expand removes the columns it turns into rows, so no input-side check can name them.
   const consumed = new Set(expand?.mode === 'columnsToRows' ? expand.columns : []);
-  const validations = buildValidations(analysis, ctx, outputColumns).filter((v) => v.on === 'output' || !consumed.has(v.column));
+  const validations = [...buildValidations(analysis, ctx, outputColumns).filter((v) => v.on === 'output' || !consumed.has(v.column)), ...readingChecks(ambiguous)];
 
   const titleRows: TitleRow[] = analysis.layout.titleRows
     .filter((t) => t.containsDate === undefined)
@@ -243,6 +253,7 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
     external,
     solvedColumns,
     needsAiParts: AI_STEP_PART_CODES.filter((code) => parts.has(code)),
+    ambiguous,
   };
 }
 
