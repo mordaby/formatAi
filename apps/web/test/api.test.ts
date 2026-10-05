@@ -41,12 +41,14 @@ describe('requests', () => {
     expect(sentBody(fetchMock)).toEqual({ payload, turnstileToken: 'tok' });
   });
 
-  it('learn(): leaves the token out when there is none, and adds noCache only when asked', async () => {
+  it('learn(): leaves the token out when there is none, and adds noCache and rulesNow only when asked', async () => {
     const { api, fetchMock } = apiWith(() => json({ rules: null, verified: false, problems: [], cached: false }));
     await api.learn(payload);
     expect(sentBody(fetchMock, 0)).toEqual({ payload });
     await api.learn(payload, { noCache: true });
     expect(sentBody(fetchMock, 1)).toEqual({ payload, noCache: true });
+    await api.learn(payload, { noCache: true, rulesNow: true });
+    expect(sentBody(fetchMock, 2)).toEqual({ payload, noCache: true, rulesNow: true });
   });
 
   it('repair(): POSTs learnId, payload, previousRules and problems', async () => {

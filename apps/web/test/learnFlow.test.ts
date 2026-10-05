@@ -159,7 +159,9 @@ describe('LearnFlow', () => {
     await start();
     expect(api.repair).not.toHaveBeenCalled();
     expect(api.learn).toHaveBeenCalledTimes(2);
-    expect((api.learn as ReturnType<typeof vi.fn>).mock.calls[1]![1]).toMatchObject({ noCache: true });
+    // (it stands in for a loop round: the AI step must answer with the rules, never with checks)
+    expect((api.learn as ReturnType<typeof vi.fn>).mock.calls[1]![1]).toMatchObject({ noCache: true, rulesNow: true });
+    expect((api.learn as ReturnType<typeof vi.fn>).mock.calls[0]![1]).not.toHaveProperty('rulesNow');
     expect(state(flow).sent[1]).toMatchObject({ kind: 'repair', fresh: true });
   });
 

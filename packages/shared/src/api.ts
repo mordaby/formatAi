@@ -42,6 +42,13 @@ export interface LearnRequest {
   /** Skip the owner's structure cache and learn afresh (counts as a learn) - e.g. when the
    * browser's full verification rejected a cached result. */
   noCache?: boolean;
+  /**
+   * AI code checks (learn-v9, SPEC 21 v14): this learn must answer with the rules, never with checks - its first call gets the "answer with
+   * the rules now" block, and checks are a schema problem for its repair round. The browser sets it on the fresh learn that stands in for a
+   * round of the learning loop (a cached result failed full verification, so there is no learnId to repair): loop rounds carry no checks.
+   * Ignored by a prompt version without checks.
+   */
+  rulesNow?: boolean;
 }
 
 /** POST /api/learn 200 body. */

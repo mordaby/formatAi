@@ -3,7 +3,7 @@
 // ledger's `check` purpose, and the structure cache never storing a learn whose rounds are non-empty.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT_V7, LEARN_SYSTEM_PROMPT_V9, limits, type Check, type CheckRound, type LearnPayload } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT_V7, LEARN_SYSTEM_PROMPT_V9, limits, RULES_NOW_INSTRUCTION_V9, type Check, type CheckRound, type LearnPayload } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import type { Identity } from '../../src/protection/identity.js';
@@ -167,6 +167,29 @@ describe('POST /api/learn answering with checks, then POST /api/learn/step', () 
     expect(big.statusCode).toBe(400);
     expect(big.json()).toEqual({ error: 'invalidRounds' });
     expect(fake.calls).toHaveLength(1);
+  });
+});
+
+describe('the fresh learn that stands in for a loop round (rulesNow)', () => {
+  it('POST /api/learn { noCache, rulesNow }: told to answer with the rules - a checks answer goes to repair, the response has the rules', async () => {
+    const { app: a, fake } = await start('all');
+    fake.enqueue(asksChecks);
+    fake.enqueue(answersRules());
+    const res = await post(a, '/api/learn', { payload: basicPayload(), noCache: true, rulesNow: true });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ verified: true, cached: false });
+    expect(res.json().rules).toBeTruthy();
+    expect(res.json().checks).toBeUndefined();
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls[0]!.system).toBe(LEARN_SYSTEM_PROMPT_V9);
+    expect(fake.calls[0]!.content.map((c) => c.text)).toEqual([JSON.stringify(basicPayload()), RULES_NOW_INSTRUCTION_V9]);
+  });
+
+  it('without rulesNow the same learn may ask checks (as before)', async () => {
+    const { app: a, fake } = await start('all');
+    fake.enqueue(asksChecks);
+    const res = await post(a, '/api/learn', { payload: basicPayload(), noCache: true });
+    expect(res.json()).toMatchObject({ rules: null, checks: [CHECK] });
   });
 });
 

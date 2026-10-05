@@ -117,6 +117,32 @@ describe('learn() with learn-v9: a step carries every round so far', () => {
     expect(JSON.parse(repair.content[1 + rounds.length]!.text.split('\n')[0]!).problems[0]).toMatchObject({ kind: 'schema', path: 'checks' });
   });
 
+  it('rulesNow (the browser\'s fresh learn in a loop round): no checks - the first call is told to answer with the rules, checks then go to repair', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: asksChecks([CHECK]) });
+    fake.enqueue({ json: answersRules() });
+    const outcome = await learn(basicPayload(), { tier: 'paid', env, complete: completeOf(fake), prompt: 'learn-v9', rulesNow: true });
+    expect(outcome.checks).toBeUndefined();
+    expect(outcome.verified).toBe(true);
+    const first = fake.calls[0]!;
+    expect(first.system).toBe(LEARN_SYSTEM_PROMPT_V9);
+    expect(first.content).toEqual([{ text: JSON.stringify(basicPayload()), cache: true }, { text: RULES_NOW_INSTRUCTION_V9 }]);
+    expect(outcome.calls.map((c) => [c.purpose, c.outcome])).toEqual([
+      ['learn', 'needsRepair'],
+      ['repair', 'verified'],
+    ]);
+    expect(JSON.parse(fake.calls[1]!.content[1]!.text.split('\n')[0]!).problems[0]).toMatchObject({ kind: 'schema', path: 'checks' });
+  });
+
+  it('rulesNow is ignored by a prompt version without checks (learn-v7: no extra block)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: correctRulesWireJson() });
+    const outcome = await learn(basicPayload(), { tier: 'paid', env, complete: completeOf(fake), prompt: 'learn-v7', rulesNow: true });
+    expect(outcome.verified).toBe(true);
+    expect(fake.calls[0]!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(fake.calls[0]!.content).toEqual([{ text: JSON.stringify(basicPayload()), cache: true }]);
+  });
+
   it('the escalation gets the rounds and must answer with the rules', async () => {
     const fake = createFakeProvider();
     const wrong = toWire(formulaRulesToWire(wrongRoundingRules()) as unknown as LearnResult);

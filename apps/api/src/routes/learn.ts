@@ -97,6 +97,7 @@ export interface RegisterLearnRoutesOptions {
 interface LearnRequestBody {
   payload?: unknown;
   noCache?: unknown;
+  rulesNow?: unknown;
 }
 
 interface StepRequestBody {
@@ -366,7 +367,8 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const prompt = promptFor(identity);
     let outcome: LearnOutcome;
     try {
-      outcome = await withRecordedRequests(await learn(payload, { tier: tierOf(identity), env, complete, prompt }), payload, owner, now);
+      // (`rulesNow`: the browser's fresh learn in a round of the learning loop answers with the rules - loop rounds carry no checks.)
+      outcome = await withRecordedRequests(await learn(payload, { tier: tierOf(identity), env, complete, prompt, ...(body?.rulesNow === true ? { rulesNow: true } : {}) }), payload, owner, now);
     } catch (err) {
       // Something threw past the provider layer: nothing was learned, nothing counts.
       await releaseReservation(ctx).catch((e: unknown) => logFailure('failed to release an AI learn', e));

@@ -173,6 +173,11 @@ export interface LearnOptions {
    * answered (`POST /api/learn/step`'s `rounds`). Empty or absent: the learn's first call. Ignored by a prompt version without checks.
    */
   rounds?: readonly CheckRound[];
+  /**
+   * learn-v9: no checks at all - the first call is told to answer with the rules (as after the last round), and checks are a schema problem
+   * for its repair round (`LearnRequest.rulesNow`: the browser's fresh learn in a round of the learning loop). Ignored without checks.
+   */
+  rulesNow?: boolean;
 }
 
 export interface LearnOutcome {
@@ -520,7 +525,7 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
   const prompt = learnPromptOf(opts.prompt);
   const rounds = prompt.checks ? (opts.rounds ?? []) : [];
   const head = [block, ...rounds.map((round, i) => roundBlock(round, i + 1, i === rounds.length - 1))];
-  const checksLeft = prompt.checks === true && rounds.length < limits.learn.checks.maxRounds;
+  const checksLeft = prompt.checks === true && opts.rulesNow !== true && rounds.length < limits.learn.checks.maxRounds;
   // learn-v9: a call that must answer with the rules says so in one more block (after the last round; the escalation).
   const rulesNow = prompt.checks ? [RULES_NOW_BLOCK] : [];
   const ctx: CallContext = { completeFn, env, model: firstTryModel, head, payload, tier: opts.tier, prefixCache: new Set(), rows: [], prompt, calls: [], attempts: [], opts, overfitRepaired: opts.overfitRepaired === true };

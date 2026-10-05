@@ -17,8 +17,11 @@ export { ApiError, isApiError, toApiError, type ApiFailureCode, type ClientError
 export interface Api {
   /** GET /api/session: sets/reads the anonymous-id cookie and reports the tier and its limits. */
   session(signal?: AbortSignal): Promise<SessionResponse>;
-  /** POST /api/learn. `turnstileToken` is required for anonymous visitors when Turnstile is configured. */
-  learn(payload: LearnPayload, opts?: { turnstileToken?: string | undefined; noCache?: boolean; signal?: AbortSignal }): Promise<LearnResponse>;
+  /**
+   * POST /api/learn. `turnstileToken` is required for anonymous visitors when Turnstile is configured. `rulesNow` (learn-v9): the answer must be
+   * the rules, never checks - the fresh learn that stands in for a round of the learning loop.
+   */
+  learn(payload: LearnPayload, opts?: { turnstileToken?: string | undefined; noCache?: boolean; rulesNow?: boolean; signal?: AbortSignal }): Promise<LearnResponse>;
   /**
    * POST /api/learn/repair: one round of the learning loop, at most `limits.llm.browserRepairCalls` per `learnId`. `rows`: every row the loop sent
    * so far, masked. `overfitRepaired`: the learn already had its one repair for a rule that copies rows (SPEC 9.2 layer 6).
@@ -59,6 +62,7 @@ export function createApi(options: CreateApiOptions = {}): Api {
         payload,
         ...(opts.turnstileToken ? { turnstileToken: opts.turnstileToken } : {}),
         ...(opts.noCache ? { noCache: true } : {}),
+        ...(opts.rulesNow ? { rulesNow: true } : {}),
       };
       return request<LearnResponse>('POST', '/api/learn', req, opts.signal);
     },

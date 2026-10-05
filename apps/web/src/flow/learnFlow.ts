@@ -266,12 +266,14 @@ export class LearnFlow {
         const fresh = learnId === undefined;
         // DECISION: a fresh learn carries no rows (it is a learn, not a round), so the rows of that round never left the browser; the later
         // rounds, under the fresh learn's own learnId, send only the rows sent since (the server counts rows per round from its own rounds).
+        // DECISION (AI code checks): it stands in for a round of the loop, and loop rounds carry no checks - so it is sent `rulesNow`: the
+        // AI step must answer with the rules (learn-v9's "answer with the rules now"), never ask checks the loop has no way to answer.
         if (fresh) rowsBeforeLearnId = round.rows.length;
         const rows = fresh ? [] : round.rows.slice(rowsBeforeLearnId);
         try {
           await record({ kind: 'repair', payload, previousRules, problems, round: { n: round.round, of: round.maxRounds }, ...(rows.length > 0 ? { rows } : {}), ...(fresh ? { fresh: true } : {}) });
           const res = fresh
-            ? await this.deps.api.learn(payload, { turnstileToken: await token(), noCache: true, signal: abort.signal })
+            ? await this.deps.api.learn(payload, { turnstileToken: await token(), noCache: true, rulesNow: true, signal: abort.signal })
             : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, rows, overfitRepaired: round.overfitRepaired });
           lastProblems = res.problems;
           // (the next round repairs the fresh learn, under its own learnId)
