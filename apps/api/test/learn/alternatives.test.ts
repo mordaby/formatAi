@@ -104,11 +104,12 @@ describe('runChecks: alternatives', () => {
   });
 });
 
+// (learn-v8 offers alternatives; the default version, learn-v7 again since 2026-10-05, does not: these learns ask for learn-v8.)
 describe('learn(): the alternatives of the kept answer, and the count on the call record', () => {
   it('returns the checked alternatives beside the rules and counts the dropped ones in problemCounts.invalidAlternative', async () => {
     const fake = createFakeProvider();
     fake.enqueue({ json: answer([plus, { outputColumn: 'Nope', from: 'amount', computed: [] }]) });
-    const outcome = await learn(payload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    const outcome = await learn(payload(), { tier: 'registered', env, complete: fakeCompleteFn(fake), prompt: 'learn-v8' });
     expect(outcome.verified).toBe(true);
     expect(outcome.rules).not.toHaveProperty('alternatives');
     expect(outcome.alternatives?.map((a) => a.from)).toEqual(['totalAlt']);
@@ -120,7 +121,7 @@ describe('learn(): the alternatives of the kept answer, and the count on the cal
   it('an invalid alternative never causes a repair: one call, the answer verified', async () => {
     const fake = createFakeProvider();
     fake.enqueue({ json: answer([{ outputColumn: 'Total', from: 'x', computed: [{ id: 'x', type: 'decimal', expr: 'amount *' }] }]) });
-    const outcome = await learn(payload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    const outcome = await learn(payload(), { tier: 'registered', env, complete: fakeCompleteFn(fake), prompt: 'learn-v8' });
     expect(fake.calls).toHaveLength(1);
     expect(outcome.verified).toBe(true);
     expect(outcome.alternatives).toBeUndefined();
@@ -129,7 +130,7 @@ describe('learn(): the alternatives of the kept answer, and the count on the cal
   it('a browser round returns the alternatives of its answer too', async () => {
     const fake = createFakeProvider();
     fake.enqueue({ json: answer([plus]) });
-    const outcome = await repairFromBrowser(payload(), correctRules(), [], { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    const outcome = await repairFromBrowser(payload(), correctRules(), [], { tier: 'registered', env, complete: fakeCompleteFn(fake), prompt: 'learn-v8' });
     expect(outcome.alternatives).toHaveLength(1);
   });
 
@@ -142,11 +143,16 @@ describe('learn(): the alternatives of the kept answer, and the count on the cal
     expect(sent.schema).toEqual(learnResultWireJsonSchema({ alternatives: false }));
     expect(outcome.calls[0]).toMatchObject({ promptVersion: 'learn-v7', problemCounts: { invalidAlternative: 1 } });
     expect(outcome.alternatives).toBeUndefined();
-    // The default is the current version, with the schema that offers them.
+    // The default is the current version - learn-v7 again (2026-10-05) - with the schema that does not offer them; learn-v8 offers them.
+    const fakeDefault = createFakeProvider();
+    fakeDefault.enqueue({ json: answer() });
+    const current = await learn(payload(), { tier: 'registered', env, complete: fakeCompleteFn(fakeDefault) });
+    expect(fakeDefault.calls[0]!.schema).toEqual(learnResultWireJsonSchema({ alternatives: false }));
+    expect(current.calls[0]!.promptVersion).toBe('learn-v7');
     const fake8 = createFakeProvider();
     fake8.enqueue({ json: answer() });
-    const current = await learn(payload(), { tier: 'registered', env, complete: fakeCompleteFn(fake8) });
+    const v8 = await learn(payload(), { tier: 'registered', env, complete: fakeCompleteFn(fake8), prompt: 'learn-v8' });
     expect(fake8.calls[0]!.schema).toEqual(learnResultWireJsonSchema());
-    expect(current.calls[0]!.promptVersion).toBe('learn-v8');
+    expect(v8.calls[0]!.promptVersion).toBe('learn-v8');
   });
 });

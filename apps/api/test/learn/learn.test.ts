@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT, learnPromptOf, limits, models, REPAIR_INSTRUCTION, REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V8 } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT, learnPromptOf, limits, models, promptVersion, REPAIR_INSTRUCTION, REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V8 } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
@@ -42,7 +42,7 @@ async function withServerRepairRounds<T>(rounds: number, fn: () => Promise<T>): 
   }
 }
 
-describe('learn() with the fake provider: the current prompt (learn-v8), the wire schema and the notes round trip', () => {
+describe('learn() with the fake provider: the current prompt, the wire schema and the notes round trip', () => {
   const request = { name: 'lookupStorageSite', purpose: 'Finds the storage site of an item from a table kept elsewhere.', args: [{ name: 'item', type: 'text' as const }], returns: 'text' as const };
 
   it('sends the current prompt and a wire schema that carries functionRequest and explanation, and returns both on the answer', async () => {
@@ -62,7 +62,7 @@ describe('learn() with the fake provider: the current prompt (learn-v8), the wir
     expect(sent.system).toContain('runningSum(x)');
     const unsupportedItem = (sent.schema as { properties: { unsupported: { items: { properties: Record<string, unknown> } } } }).properties.unsupported.items;
     expect(Object.keys(unsupportedItem.properties).sort()).toEqual(['explanation', 'functionRequest', 'outputColumn', 'reasonCode']);
-    expect(outcome.calls[0]).toMatchObject({ promptVersion: 'learn-v8' });
+    expect(outcome.calls[0]).toMatchObject({ promptVersion });
     // the ledger record is counts only: nothing of the notes
     expect(JSON.stringify(outcome.calls)).not.toMatch(/storage site|lookupStorageSite|explanation/);
   });

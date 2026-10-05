@@ -25,11 +25,17 @@ describe('learn-v8 system prompt sync (the current version)', () => {
     expect(read('learn-v8.txt')).toBe(expected);
   });
 
-  it('matches the LEARN_SYSTEM_PROMPT_V8 TS constant, which is the current prompt', () => {
+  it('matches the LEARN_SYSTEM_PROMPT_V8 TS constant', () => {
     expect(LEARN_SYSTEM_PROMPT_V8).toBe(expected);
-    expect(promptVersion).toBe('learn-v8');
-    expect(LEARN_SYSTEM_PROMPT).toBe(LEARN_SYSTEM_PROMPT_V8);
-    expect(learnPromptOf()).toMatchObject({ version: 'learn-v8', alternatives: true });
+  });
+});
+
+describe('the default prompt version (what every learn sends)', () => {
+  it('is learn-v7 again (2026-10-05: learn-v8 fitted rows at any cost on the eval); learn-v8 stays selectable', () => {
+    expect(promptVersion).toBe('learn-v7');
+    expect(LEARN_SYSTEM_PROMPT).toBe(LEARN_SYSTEM_PROMPT_V7);
+    expect(learnPromptOf()).toMatchObject({ version: 'learn-v7', alternatives: false });
+    expect(learnPromptOf('learn-v8')).toMatchObject({ version: 'learn-v8', system: LEARN_SYSTEM_PROMPT_V8, alternatives: true });
   });
 });
 
@@ -117,10 +123,11 @@ describe('learn-v7 stays frozen (for the eval comparison, --prompt learn-v7)', (
 });
 
 describe('the repair instruction, per version (LEARN_PROMPT §4; prompt audit F11)', () => {
-  it('learn-v8 sends the audit\'s instruction plus its E1 sentence; learn-v8-noE1 the instruction alone; the current one is learn-v8\'s', () => {
+  it('learn-v8 sends the audit\'s instruction plus its E1 sentence; learn-v8-noE1 the instruction alone; the current one is the default version\'s', () => {
     expect(learnPromptOf('learn-v8').repair).toBe(`${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}`);
     expect(learnPromptOf('learn-v8-noE1').repair).toBe(REPAIR_INSTRUCTION_V8);
     expect(REPAIR_INSTRUCTION).toBe(learnPromptOf().repair);
+    expect(REPAIR_INSTRUCTION).toBe(REPAIR_INSTRUCTION_V7);
   });
 
   it('says fix only what the problems require, never a condition on one row\'s own values, and what a row in a problem holds (X1)', () => {

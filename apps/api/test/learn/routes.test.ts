@@ -118,7 +118,7 @@ describe('POST /api/learn', () => {
     });
   });
 
-  it('learn-v8: sends the checked alternatives beside the rules, never in them, and never from the structure cache', async () => {
+  it('the default version (learn-v7) offers no alternatives: any the answer gives are dropped and counted, never in the rules or the cache', async () => {
     const fake: FakeLlmProvider = createFakeProvider();
     const alternative = { outputColumn: 'Total', from: 'totalAlt', computed: [{ id: 'totalAlt', type: 'decimal', expr: 'amount + amount' }] };
     fake.enqueue({ json: { ...(correctRulesWireJson() as object), alternatives: [alternative, { outputColumn: 'Nope', from: 'id', computed: [] }] } });
@@ -129,8 +129,9 @@ describe('POST /api/learn', () => {
     const body = (await send()).json();
     expect(body.verified).toBe(true);
     expect(body.rules).not.toHaveProperty('alternatives');
-    expect(body.alternatives).toEqual([{ outputColumn: 'Total', from: 'totalAlt', computed: [{ id: 'totalAlt', type: 'decimal', expr: { op: 'add', args: [{ col: 'amount' }, { col: 'amount' }] } }] }]);
-    expect(store.ledger[0]!.problemCounts.invalidAlternative).toBe(1);
+    // (learn-v8 sends them beside the rules: `learn()` with `prompt: 'learn-v8'`, test/learn/alternatives.test.ts)
+    expect(body).not.toHaveProperty('alternatives');
+    expect(store.ledger[0]!.problemCounts.invalidAlternative).toBe(2);
     // The same structure again: a cache hit carries the rules only.
     const hit = (await send()).json();
     expect(hit.cached).toBe(true);

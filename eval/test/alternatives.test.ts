@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@formatai/api/env';
 import type { CompleteFn } from '@formatai/api/learn';
 import { formulaRulesToWire } from '@formatai/engine';
-import { LEARN_SYSTEM_PROMPT, LEARN_SYSTEM_PROMPT_V7, learnResultWireJsonSchema, toWire, type LearnResult } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT, LEARN_SYSTEM_PROMPT_V7, LEARN_SYSTEM_PROMPT_V8, learnResultWireJsonSchema, toWire, type LearnResult } from '@formatai/shared';
 import { loadCase, type CaseDef } from '../lib/caseLoader';
 import { alternativesOf, runMatrix } from '../lib/runner';
 
@@ -41,6 +41,7 @@ function scripted(answers: unknown[]): { complete: CompleteFn; requests: { syste
   return { complete, requests };
 }
 
+// (learn-v8 offers alternatives; the default version, learn-v7 again since 2026-10-05, does not: these runs ask for learn-v8.)
 describe('the runner records the alternatives of each learn and their outcomes', () => {
   it('orders-priority: one that also fits every row (asked), one that fits only the samples (the answer stays), one the API drops', async () => {
     const c = load('orders-priority');
@@ -51,7 +52,7 @@ describe('the runner records the alternatives of each learn and their outcomes',
       { outputColumn: 'Customer', from: 'x', computed: [{ id: 'x', type: 'text', expr: 'upper(' }] },
     ];
     const { complete } = scripted([answerWith(c, alternatives)]);
-    const [record] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
+    const [record] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete, prompt: 'learn-v8' });
     expect(record).toMatchObject({ verifiedFirstCall: true, prompt: 'learn-v8', alternativesProposed: 2, alternatives: 'Priority bothPass, invalid 1' });
   });
 
@@ -59,7 +60,7 @@ describe('the runner records the alternatives of each learn and their outcomes',
     const c = load('orders-priority');
     const narrow = priorityFormula(c, 'amount >= 5000', 'and(amount >= 5000, amount < 5100)');
     const { complete } = scripted([answerWith(c, [{ outputColumn: 'Priority', from: 'p2', computed: [{ id: 'p2', type: 'text', expr: narrow }] }])]);
-    const [record] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
+    const [record] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete, prompt: 'learn-v8' });
     expect(record).toMatchObject({ verifiedFirstCall: true, alternativesProposed: 1, alternatives: 'Priority answerOnly' });
   });
 
@@ -71,7 +72,7 @@ describe('the runner records the alternatives of each learn and their outcomes',
     computed[0]!.expr = priorityFormula(c, 'amount >= 5000', 'round(amount, 0) >= 5300');
     const right = { outputColumn: 'Priority', from: 'p2', computed: [{ id: 'p2', type: 'text', expr: priorityFormula(c, 'amount >= 5000', 'amount >= 5000') }] };
     const { complete, requests } = scripted([{ ...wrong, alternatives: [right] }, { ...wrong }]);
-    const [record] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete });
+    const [record] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete, prompt: 'learn-v8' });
     expect(record).toMatchObject({ verifiedFirstCall: true, loopRounds: 0, alternatives: 'Priority alternativeOnly', alternativesProposed: 1 });
     expect(requests.length).toBeLessThanOrEqual(2); // the learn (and the server repair its sample run asked for) - no browser round
   });
@@ -92,10 +93,16 @@ describe('--prompt: the prompt version sent, with the wire schema it was written
     expect(v7.requests[0]!.schema).toEqual(learnResultWireJsonSchema({ alternatives: false }));
     expect(old).toMatchObject({ prompt: 'learn-v7', alternativesProposed: 1, alternatives: 'invalid 1' });
 
+    // No --prompt: the default version (learn-v7 again, 2026-10-05); --prompt learn-v8 sends learn-v8 with the schema that offers them.
+    const plain = scripted([answerWith(c)]);
+    const [current] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete: plain.complete });
+    expect(plain.requests[0]!.system).toBe(LEARN_SYSTEM_PROMPT);
+    expect(current).toMatchObject({ prompt: 'learn-v7', alternativesProposed: 0, alternatives: '' });
     const v8 = scripted([answerWith(c)]);
-    const [current] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete: v8.complete });
-    expect(v8.requests[0]!.system).toBe(LEARN_SYSTEM_PROMPT);
-    expect(current).toMatchObject({ prompt: 'learn-v8', alternativesProposed: 0, alternatives: '' });
+    const [eight] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete: v8.complete, prompt: 'learn-v8' });
+    expect(v8.requests[0]!.system).toBe(LEARN_SYSTEM_PROMPT_V8);
+    expect(v8.requests[0]!.schema).toEqual(learnResultWireJsonSchema());
+    expect(eight).toMatchObject({ prompt: 'learn-v8', alternativesProposed: 0, alternatives: '' });
     expect(env.LLM_PROVIDER).toBe('fake');
   });
 });

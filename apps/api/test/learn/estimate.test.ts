@@ -1,7 +1,7 @@
 // The per-call token estimate on every `LlmCallRecord` (learning-loop proposal, section 4): counted from the text we send and
 // receive, split by the prompt cache across the calls of ONE learn, priced with the published prices, counts only.
 import { describe, expect, it } from 'vitest';
-import { estimateTokens, learnResultWireJsonSchema, LEARN_SYSTEM_PROMPT, sumEstimates, tokenPriceOf, type TokenEstimate } from '@formatai/shared';
+import { estimateTokens, learnPromptOf, learnResultWireJsonSchema, LEARN_SYSTEM_PROMPT, sumEstimates, tokenPriceOf, type TokenEstimate } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, LlmError, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
@@ -12,7 +12,7 @@ const fakeCompleteFn = (fake: FakeLlmProvider): CompleteFn => (req: CompleteRequ
 
 /** Priced models, so the cost is a number; the fake provider's own ids have no price. */
 const PRICED = { firstTry: 'claude-haiku-4-5', escalation: 'claude-sonnet-5' };
-const PREFIX_TOKENS = estimateTokens(LEARN_SYSTEM_PROMPT) + estimateTokens(JSON.stringify(learnResultWireJsonSchema()));
+const PREFIX_TOKENS = estimateTokens(LEARN_SYSTEM_PROMPT) + estimateTokens(JSON.stringify(learnResultWireJsonSchema({ alternatives: learnPromptOf().alternatives })));
 
 describe('LlmCallRecord.estimate', () => {
   it('counts the exact text sent and received: the cached prefix, every content block and the raw answer', async () => {
