@@ -413,6 +413,7 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
   }
   if (h.rel === 'bands') {
     // The thresholds are numbers or ISO dates (sent real, SPEC 7.2); the band values are output cells, masked like samples.
+    // Bands on a computed output column (`onOut`) are no different: the thresholds are numbers of that column, the values cells of `out`.
     const outType = analysis.output.profile[h.out]?.type ?? 'text';
     const bands: Band[] = h.bands.map((band) => ({ ...band, value: masker.maskCell(band.value, outType) }));
     return { ...h, bands };

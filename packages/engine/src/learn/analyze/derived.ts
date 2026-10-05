@@ -13,6 +13,11 @@
 //       ranges with few breakpoints (<= 5), each range seen on >= 2 rows. The breakpoints are reported
 //       (e.g. `< 10 -> single`, `>= 10 -> bulk`). A value seen on a single row is an exception (it counts
 //       against the coverage), not a band.
+//   (b') bands on a COMPUTED output column (owner amendment 2026-10-05): the same test, with the rows sorted by
+//       another OUTPUT column that an arithmetic relation computes from the input on every row (`Total = Qty * Price`,
+//       then `Class = Small / Medium / Big by Total`). No input column holds the total, so (b) can't see it. Not
+//       tried here: `analyzePair` asks `bandsOnComputed` once every output column's relations are known, and only
+//       for a column that is still external after (a)-(d) - it only adds evidence where there was none.
 //   (c) composition: the output is text COMPOSED from input values beyond the light `template` relation (three columns,
 //       longer fixed text: `312345002 - Dana Cohen`, `Customer number 312345002: Cohen`). The cells visibly contain
 //       input values, so the AI can write the rule: an input column counts when its value (normalized text) is a
@@ -35,7 +40,7 @@ import type { Band } from '@formatai/shared';
 import { ymdToSerial } from '../../values/dates';
 import { DATE, EMPTY, TEXT, canonNum, decimalsOf, isoOfSerial, keys, norms, payloadCell, ymdOfSerial, type ColumnData } from './cells';
 import { MAX_FAILING, type RelationEnv } from './relations';
-import type { ColumnAnalysis, Derivation } from './types';
+import type { ColumnAnalysis, Derivation, RelationKind } from './types';
 
 /** At most this many breakpoints between bands (so at most 6 bands). */
 export const MAX_BREAKPOINTS = 5;
@@ -303,8 +308,16 @@ function fewValuesCover(out: OutputCoding, minCoverage: number): boolean {
   return top.reduce((a, b) => a + b, 0) >= minCoverage * n;
 }
 
-/** Sorts the rows by a numeric or date input column and looks for a few contiguous ranges of one output value. */
-function bandsFor(src: ColumnData, s: number, outCol: ColumnData, out: OutputCoding, minCoverage: number): Derivation | null {
+type BandsDerivation = Extract<Derivation, { kind: 'bands' }>;
+
+/** A band rule found on one column, before it says which column that is (an input column's `in`, or an output column's `onOut`). */
+type BandsFit = Omit<BandsDerivation, 'kind' | 'in' | 'onOut'>;
+
+/**
+ * Sorts the rows by a numeric or date column and looks for a few contiguous ranges of one output value. `src` is any column aligned
+ * to the rows: an input (or created family) column, or (b') an output column the input computes.
+ */
+function bandsFor(src: ColumnData, outCol: ColumnData, out: OutputCoding, minCoverage: number): BandsFit | null {
   const n = out.ids.length;
   const axis = axisOf(src, minCoverage);
   if (axis === null) return null;
@@ -410,7 +423,7 @@ function bandsFor(src: ColumnData, s: number, outCol: ColumnData, out: OutputCod
     if (i < thresholds.length) band.lt = thresholds[i]!;
     return band;
   });
-  return { kind: 'bands', in: [s], bands, coverage, failing: capped(failing), failCount: n - matched };
+  return { bands, coverage, failing: capped(failing), failCount: n - matched };
 }
 
 // ---------- (c) composition ----------
@@ -537,12 +550,69 @@ export function findDerivation(env: RelationEnv, out: ColumnData): Derivation | 
   if (coded.chance >= 1) return null; // a constant column: nothing to derive
 
   // Bands first (the simpler rule, and the one that generalizes): the fewest breakpoints wins.
-  let best: (Derivation & { kind: 'bands' }) | null = null;
+  let best: BandsDerivation | null = null;
   if (fewValuesCover(coded, env.minCoverage)) {
     for (let s = 0; s < env.src.length; s++) {
-      const d = bandsFor(env.src[s]!, s, out, coded, env.minCoverage);
-      if (d !== null && d.kind === 'bands' && (best === null || d.bands.length < best.bands.length)) best = d;
+      const fit = bandsFor(env.src[s]!, out, coded, env.minCoverage);
+      if (fit !== null && (best === null || fit.bands.length < best.bands.length)) best = { kind: 'bands', in: [s], ...fit };
     }
   }
   return best ?? categoryDerivation(env.src, coded, env.minCoverage) ?? compositionDerivation(env, out);
+}
+
+// ---------- (b') bands on a computed output column ----------
+
+/**
+ * The relations that COMPUTE a number from the input (relations.ts): a column one of them explains on every row holds a value no input
+ * column holds, so bands on it are invisible to (b). A `copy` (or any other relation that passes an input value through) is not here: its
+ * input column is already sorted on by (b).
+ */
+const ARITHMETIC: ReadonlySet<RelationKind> = new Set<RelationKind>(['mulConst', 'addConst', 'add', 'sub', 'mul', 'div', 'sum']);
+
+/** An output column the input computes exactly: the value another output column may be banded on (b'). */
+export interface ComputedOperand {
+  /** Its output column position. */
+  out: number;
+  /** Its values, aligned to the rows like `env.src`. */
+  col: ColumnData;
+  /** The input (or created family) columns its relation reads: what a band rule on it names as `in`. */
+  in: number[];
+}
+
+/**
+ * The output columns an arithmetic relation explains at coverage 1 (the first such relation, in the analysis's best-first order), each with
+ * the input columns behind it. `outCols` are the output columns aligned to the rows (`analyzePair`'s `outA`).
+ * DECISION: coverage 1 only. A total that is Qty * Price on most rows is not a value the AI step can rebuild on every row, and bands on it
+ * would be evidence about a number the rules never have.
+ */
+export function computedOperands(columns: readonly ColumnAnalysis[], outCols: readonly ColumnData[]): ComputedOperand[] {
+  const found: ComputedOperand[] = [];
+  for (const ca of columns) {
+    const rel = ca.relations.find((r) => r.coverage === 1 && ARITHMETIC.has(r.rel));
+    const col = outCols[ca.out];
+    if (rel !== undefined && col !== undefined) found.push({ out: ca.out, col, in: [...rel.in] });
+  }
+  return found;
+}
+
+/**
+ * (b') Bands of the (unknown) output column `out` on the value of another output column the input computes (`operands`, from
+ * `computedOperands`): the same evidence rule as (b) - at most 5 breakpoints, each band seen on >= 2 rows, `env.minCoverage` - and the
+ * fewest bands win (then the first column). Numbers only (the amendment's scope): an operand whose values read as dates is skipped.
+ * `in` is the operand's input columns, `onOut` its position. Null when no operand gives a band rule: the column stays external.
+ */
+export function bandsOnComputed(env: RelationEnv, out: ColumnData, operands: readonly ComputedOperand[]): Derivation | null {
+  const n = env.total;
+  if (n < MIN_ROWS || operands.length === 0) return null;
+  const coded = codeOutput(out, n);
+  if (coded.chance >= 1 || !fewValuesCover(coded, env.minCoverage)) return null;
+  let best: BandsDerivation | null = null;
+  for (const op of operands) {
+    if (op.col === out) continue;
+    const axis = axisOf(op.col, env.minCoverage);
+    if (axis === null || axis.isDate) continue;
+    const fit = bandsFor(op.col, out, coded, env.minCoverage);
+    if (fit !== null && (best === null || fit.bands.length < best.bands.length)) best = { kind: 'bands', in: [...op.in], onOut: op.out, ...fit };
+  }
+  return best;
 }

@@ -7,7 +7,9 @@
 // dates, a calculation mixed in) is listed in `needsAi` too, and also in `external`, only so the UI can say it
 // "may come from another source". It is never put in `rules.unsupported`: only the AI step says that.
 // A DERIVED column - unexplained by any relation, yet determined by the input (bands on a number, a
-// category dependency; see analyze/derived.ts) - needs the AI step, and is not in `external`.
+// category dependency; see analyze/derived.ts) - needs the AI step, and is not in `external`. So does a
+// column banded on another output column the input computes (a class by a total, `onOut`, owner amendment
+// 2026-10-05): it is derived like any other, and the total column itself is built here as usual.
 //
 // Structure the strict path refuses outright is built here only where the analysis says exactly what
 // it is, and otherwise reported in `needsAiParts` instead of guessed:

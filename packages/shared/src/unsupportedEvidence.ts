@@ -13,6 +13,11 @@ import type { LearnResult, Rules } from './rules/schema';
 export interface ColumnEvidence {
   kind: string;
   inputs: number[];
+  /**
+   * Bands on a computed OUTPUT column (a `bands` hint's `onOut`, owner amendment 2026-10-05): that column's position. `inputs` are then the
+   * input columns it is computed from, and the message names it too - "built from Qty, Price" alone would hide that the bands are on Total.
+   */
+  onOut?: number;
 }
 
 /** The input columns a column hint reads: `in`, plus a window's group (`by`) and order columns. No duplicates, in order. */
@@ -36,8 +41,8 @@ function kindOf(h: ColumnHint): string {
  */
 export function evidenceByOutput(hints: readonly Hint[]): Map<number, ColumnEvidence> {
   const found = new Map<number, ColumnEvidence>();
-  const add = (out: number, kind: string, inputs: number[]): void => {
-    if (!found.has(out)) found.set(out, { kind, inputs });
+  const add = (out: number, kind: string, inputs: number[], onOut?: number): void => {
+    if (!found.has(out)) found.set(out, onOut !== undefined ? { kind, inputs, onOut } : { kind, inputs });
   };
   for (const h of hints) {
     if (h.rel === 'filter' || h.rel === 'dedupe') continue;
@@ -52,12 +57,22 @@ export function evidenceByOutput(hints: readonly Hint[]): Map<number, ColumnEvid
       }
       continue;
     }
-    add(h.out, kindOf(h), inputsOf(h));
+    add(h.out, kindOf(h), inputsOf(h), h.rel === 'bands' ? h.onOut : undefined);
   }
   return found;
 }
 
 const quoted = (names: readonly string[]): string => names.map((n) => `"${n}"`).join(', ');
+
+/**
+ * The kind as the message says it. Bands on a computed output column name that column by its header (headers are sent real, like the input
+ * headers the message names; never a value), or by its position (`i`, as in the payload) when the output has no header there.
+ */
+function kindText(found: ColumnEvidence, outputHeader: ReadonlyMap<number, string>): string {
+  if (found.onOut === undefined) return found.kind;
+  const header = outputHeader.get(found.onOut);
+  return `${found.kind} on output column ${header !== undefined && header !== '' ? `"${header}"` : found.onOut}`;
+}
 
 /**
  * One `unsupportedDespiteEvidence` problem for every output column that `rules` reports as unsupported (`from: null` plus an entry, any reason
@@ -78,6 +93,7 @@ export function unsupportedDespiteEvidence(
 
   const inputHeader = new Map(payload.input.columns.map((c) => [c.i, c.header] as const));
   const outputAt = new Map(payload.output.columns.map((c) => [c.header, c.i] as const));
+  const outputHeader = new Map(payload.output.columns.map((c) => [c.i, c.header] as const));
   const asked = payload.complete ? new Set(payload.complete.columns) : undefined;
 
   const problems: RepairProblem[] = [];
@@ -88,10 +104,11 @@ export function unsupportedDespiteEvidence(
     const found = evidence.get(out);
     if (!found) continue;
     const names = found.inputs.map((i) => inputHeader.get(i)).filter((n): n is string => n !== undefined);
+    const kind = kindText(found, outputHeader);
     const message =
       names.length > 0
-        ? `Column "${header}": the app found it is built from ${quoted(names)} (${found.kind}); write a rule for it.`
-        : `Column "${header}": the app found a rule for it (${found.kind}); write a rule for it.`;
+        ? `Column "${header}": the app found it is built from ${quoted(names)} (${kind}); write a rule for it.`
+        : `Column "${header}": the app found a rule for it (${kind}); write a rule for it.`;
     problems.push({ kind: 'unsupportedDespiteEvidence', out, message });
   }
   return problems;
