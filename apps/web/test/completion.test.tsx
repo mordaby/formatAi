@@ -580,12 +580,13 @@ describe('the owner\'s bug: a signed-in user\'s partial result shows "Finish wit
     let finish!: () => void;
     const { engine } = fakeEngine(() => new Promise<LearnOutput>((resolve) => (finish = () => resolve(partialOutput()))));
     renderApp({ api: fakeApi({ user: USER }), engine, route: '/result' });
-    await new Promise((r) => setTimeout(r, 40));
+    // The restore is under way once the engine was asked (not after a fixed delay: a busy machine starts it later).
+    await waitFor(() => expect(finish).toBeDefined(), { timeout: 15_000 });
     expect(clear).not.toHaveBeenCalled();
     expect(await store.load()).not.toBeNull();
     await act(async () => finish());
-    await screen.findByTestId('rules-map');
-    await waitFor(() => expect(clear).toHaveBeenCalled());
+    await screen.findByTestId('rules-map', {}, { timeout: 15_000 });
+    await waitFor(() => expect(clear).toHaveBeenCalled(), { timeout: 15_000 });
     expect(await store.load()).toBeNull();
   });
 
