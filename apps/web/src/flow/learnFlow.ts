@@ -244,7 +244,7 @@ export class LearnFlow {
           learnId = res.learnId;
           lastProblems = res.problems;
           ai = { learnId: res.learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, cached: res.cached };
-          return asCallResult(res.rules, res.problems, res.alternatives);
+          return asCallResult(res.rules, res.problems, res.alternatives, res.overfitRepaired);
         } catch (e) {
           hostError = e;
           throw e;
@@ -262,7 +262,7 @@ export class LearnFlow {
           await record({ kind: 'repair', payload, previousRules, problems, round: { n: round.round, of: round.maxRounds }, ...(rows.length > 0 ? { rows } : {}), ...(fresh ? { fresh: true } : {}) });
           const res = fresh
             ? await this.deps.api.learn(payload, { turnstileToken: await token(), noCache: true, signal: abort.signal })
-            : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, rows });
+            : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, rows, overfitRepaired: round.overfitRepaired });
           lastProblems = res.problems;
           // (the next round repairs the fresh learn, under its own learnId)
           if (fresh) learnId = (res as LearnResponse).learnId;
@@ -273,7 +273,7 @@ export class LearnFlow {
             failedAttempts: res.failedAttempts,
             quota: res.quota ?? ai?.quota,
           };
-          return asCallResult(res.rules, res.problems, res.alternatives);
+          return asCallResult(res.rules, res.problems, res.alternatives, res.overfitRepaired);
         } catch (e) {
           hostError = e;
           throw e;
@@ -341,8 +341,8 @@ export class LearnFlow {
 }
 
 /** What the engine's learn needs of an answer: the rules, the problems and (learn-v8) the alternatives, which it tests on every row. */
-function asCallResult(rules: LearnResult | null, problems: RepairProblem[], alternatives: LearnAlternative[] | undefined): LearnCallResult {
-  return { rules, problems, calls: [], ...(alternatives && alternatives.length > 0 ? { alternatives } : {}) };
+function asCallResult(rules: LearnResult | null, problems: RepairProblem[], alternatives: LearnAlternative[] | undefined, overfitRepaired: boolean | undefined): LearnCallResult {
+  return { rules, problems, calls: [], ...(alternatives && alternatives.length > 0 ? { alternatives } : {}), ...(overfitRepaired ? { overfitRepaired: true } : {}) };
 }
 
 function stateForProgress(p: LearnProgress, sent: readonly SentRecord[]): LearnFlowState {

@@ -44,6 +44,8 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     truncatedCalls: 0,
     callFailures: '',
     overfitSuspected: 0,
+    overfitFound: 0,
+    overfitFellBack: 0,
     formulaErrorCount: 0,
     firstCallFormulaErrors: 0,
     formulaFixedByRepair: false,
@@ -323,8 +325,18 @@ describe('token usage and cost (our own estimate)', () => {
     const [head, row] = buildCsvReport([learn]).trim().split('\n');
     const cols = head!.split(',');
     const at = cols.indexOf('alternatives');
-    expect(cols.slice(at + 1, at + 7)).toEqual(['unsupportedDespiteEvidence', 'unsupportedReasons', 'problemsByKind', 'truncatedCalls', 'callFailures', 'overfitSuspected']);
-    expect(row).toContain(',2,ambiguous 1,"diff 4, unsupportedDespiteEvidence 2",1,truncated 1,1,');
+    expect(cols.slice(at + 1, at + 9)).toEqual(['unsupportedDespiteEvidence', 'unsupportedReasons', 'problemsByKind', 'truncatedCalls', 'callFailures', 'overfitSuspected', 'overfitFound', 'overfitFellBack']);
+    expect(row).toContain(',2,ambiguous 1,"diff 4, unsupportedDespiteEvidence 2",1,truncated 1,1,0,0,');
+  });
+
+  it('the overfitting guards (SPEC 9.2 layer 6): what the calls found and what code reported, per learn and in the CSV', () => {
+    const learn = aiLearn({ case: 'fulfillment-external-column', problemsByKind: 'overfit 1', unsupportedReasons: 'overfit 1', overfitFound: 1, overfitFellBack: 1 });
+    const md = buildMarkdownReport([learn, aiLearn({ case: 'b' })], '2025-01-01T00:00:00.000Z');
+    expect(md).toContain('| overfit 1 | overfit 1 | - | 0 | found 1, fell back 1 |');
+    expect(md).toContain('| - | - | - | 0 | - |');
+    expect(md).toContain('"Copies rows"');
+    const [, row] = buildCsvReport([learn]).trim().split('\n');
+    expect(row).toContain(',0,overfit 1,overfit 1,0,,0,1,1,');
   });
 
   it('callsOf: counts from the call records and the kept answer only - never a message or a value', () => {
@@ -341,8 +353,18 @@ describe('token usage and cost (our own estimate)', () => {
       truncatedCalls: 1,
       callFailures: 'error:timeout 1, truncated 1',
       overfitSuspected: 1,
+      overfitFound: 0,
+      overfitFellBack: 0,
     });
-    expect(callsOf({ path: 'local', calls: [], rules: null } as never)).toEqual({ unsupportedDespiteEvidence: 0, unsupportedReasons: '', problemsByKind: '', truncatedCalls: 0, callFailures: '', overfitSuspected: 0 });
+    expect(callsOf({ path: 'local', calls: [], rules: null } as never)).toEqual({ unsupportedDespiteEvidence: 0, unsupportedReasons: '', problemsByKind: '', truncatedCalls: 0, callFailures: '', overfitSuspected: 0, overfitFound: 0, overfitFellBack: 0 });
+    // The overfitting guards: the overfit problems over every call, the kept answer's columns code reported; the fallbacks themselves
+    // (a count beside the problem kinds, like the dropped alternatives) are not a problem kind.
+    const guarded = {
+      path: 'llm' as const,
+      calls: [call('needsRepair', { overfit: 1 }), call('verified', { overfitFallback: 1 })],
+      rules: { unsupported: [{ outputColumn: 'W', reasonCode: 'overfit' }], assumptions: [] },
+    };
+    expect(callsOf(guarded as never)).toMatchObject({ problemsByKind: 'overfit 1', unsupportedReasons: 'overfit 1', overfitFound: 1, overfitFellBack: 1 });
   });
 
   it('shows n/a, never a guess, for a model with no price', () => {

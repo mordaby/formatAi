@@ -169,6 +169,21 @@ describe('LearnFlow', () => {
       learnOutcome: vi.fn(async (_id: string, outcome: string) => ({ counted: outcome === 'verified', quota: { remaining: 2, period: 'month' }, failedAttempts: outcome === 'verified' ? 0 : 1, exhausted: false })),
     });
 
+    it('passes the overfit repair on (SPEC 9.2 layer 6): the learn\'s answer says it was made, a round says so to the API', async () => {
+      let learned: unknown;
+      const { engine } = fakeEngine(async (_a, host) => {
+        learned = await host.callLearn(PAYLOAD);
+        const r = await host.callRepair(PAYLOAD, PREV_RULES, [{ kind: 'layout', message: 'r1' }], { ...ROUND1, overfitRepaired: true });
+        return result({ path: 'llm', rules: r.rules, loop: { rounds: 1, rowsSent: 1, end: 'verified' } });
+      });
+      const api = fakeApi({ learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false, overfitRepaired: true })) as unknown as Api['learn'] });
+      const { start } = makeFlow(engine, api);
+      await start();
+      await vi.waitFor(() => expect(api.repair).toHaveBeenCalledTimes(1));
+      expect(learned).toMatchObject({ overfitRepaired: true });
+      expect(api.repair.mock.calls[0]![4]).toMatchObject({ overfitRepaired: true });
+    });
+
     it('a learn that verifies in round 2: two rounds under the learn\'s id, the progress says which round, every round is in "see what we send", reported verified once', async () => {
       const rounds: unknown[] = [];
       const { engine } = fakeEngine(async (_a, host, opts) => {

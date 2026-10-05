@@ -351,13 +351,14 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
   lines.push('### Per learn', '');
   lines.push(
     '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user). "Alternatives" (learn-v8): the second rules the AI step gave, per column, as code found them on every row (bothPass = asked of the user; answerOnly / alternativeOnly = one fits and is the rule; bothFail), then the ones the API dropped (invalid). ' +
-      'The prompt audit\'s columns: "Gave up on hinted" (columns given up on despite a hint, over every call), "Unsupported" (the reason codes of the kept answer\'s unsupported columns), "Problems" (every problem kind the calls produced, counted), "Cut off / failed" (calls cut off at the output-token limit - X2 - or failed, by outcome), "Overfit" (the kept answer\'s overfitSuspected assumptions).',
+      'The prompt audit\'s columns: "Gave up on hinted" (columns given up on despite a hint, over every call), "Unsupported" (the reason codes of the kept answer\'s unsupported columns), "Problems" (every problem kind the calls produced, counted), "Cut off / failed" (calls cut off at the output-token limit - X2 - or failed, by outcome), "Overfit" (the kept answer\'s overfitSuspected assumptions). ' +
+      '"Copies rows" (the overfitting guards, SPEC 9.2 layer 6): the overfit problems the calls found - a condition on a row\'s position, a long list of one-row cases, each asking for the learn\'s one repair - and the kept answer\'s columns code then reported as unsupported (reason overfit).',
     '',
   );
   const learns = aiLearns(records).sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model) || Number(a.masking) - Number(b.masking) || a.run - b.run || (a.mode ?? '').localeCompare(b.mode ?? ''));
   lines.push(
     markdownTable(
-      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit'],
+      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit', 'Copies rows'],
       learns.map((r) => [
         r.case,
         ...(tagged ? [r.mode ?? 'full'] : []),
@@ -384,6 +385,7 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
         r.problemsByKind || '-',
         r.callFailures || '-',
         r.overfitSuspected ?? 0,
+        (r.overfitFound ?? 0) + (r.overfitFellBack ?? 0) > 0 ? `found ${r.overfitFound ?? 0}, fell back ${r.overfitFellBack ?? 0}` : '-',
       ]),
     ),
     '',
@@ -530,6 +532,8 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'truncatedCalls',
   'callFailures',
   'overfitSuspected',
+  'overfitFound',
+  'overfitFellBack',
   'formulaErrorCount',
   'firstCallFormulaErrors',
   'formulaFixedByRepair',

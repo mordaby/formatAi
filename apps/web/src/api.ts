@@ -17,13 +17,16 @@ export interface Api {
   session(signal?: AbortSignal): Promise<SessionResponse>;
   /** POST /api/learn. `turnstileToken` is required for anonymous visitors when Turnstile is configured. */
   learn(payload: LearnPayload, opts?: { turnstileToken?: string | undefined; noCache?: boolean; signal?: AbortSignal }): Promise<LearnResponse>;
-  /** POST /api/learn/repair: one round of the learning loop, at most `limits.llm.browserRepairCalls` per `learnId`. `rows`: every row the loop sent so far, masked. */
+  /**
+   * POST /api/learn/repair: one round of the learning loop, at most `limits.llm.browserRepairCalls` per `learnId`. `rows`: every row the loop sent
+   * so far, masked. `overfitRepaired`: the learn already had its one repair for a rule that copies rows (SPEC 9.2 layer 6).
+   */
   repair(
     learnId: string,
     payload: LearnPayload,
     previousRules: LearnResult,
     problems: RepairProblem[],
-    opts?: { signal?: AbortSignal; rows?: Sample[] | undefined },
+    opts?: { signal?: AbortSignal; rows?: Sample[] | undefined; overfitRepaired?: boolean | undefined },
   ): Promise<RepairResponse>;
   /** Sign-in: providers, who is signed in, sign out, the saved language, linking, the AI quota. */
   auth: AuthApi;
@@ -49,7 +52,7 @@ export function createApi(options: CreateApiOptions = {}): Api {
       return request<LearnResponse>('POST', '/api/learn', req, opts.signal);
     },
     repair: (learnId, payload, previousRules, problems, opts = {}) => {
-      const req: RepairRequest = { payload, previousRules, problems, learnId, ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}) };
+      const req: RepairRequest = { payload, previousRules, problems, learnId, ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}), ...(opts.overfitRepaired ? { overfitRepaired: true } : {}) };
       return request<RepairResponse>('POST', '/api/learn/repair', req, opts.signal);
     },
     auth: createAuthApi(request),

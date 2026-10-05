@@ -103,6 +103,11 @@ export interface LoopRound {
   rows: Sample[];
   /** How many rows of the example this round sends for the first time: the new ones in `rows`, and those over the byte cap that only its problems name. */
   newRows: number;
+  /**
+   * The learn had its one repair for a rule that copies rows of the example (SPEC 9.2 layer 6) - an earlier call, or this very round, sent an
+   * `overfit` problem: the repair request says so (`RepairRequest.overfitRepaired`), and such a rule is reported as unsupported from now on.
+   */
+  overfitRepaired?: boolean;
 }
 
 /** How a learn's loop went (`LearnFromExamplesResult.loop`): rounds made, rows sent by them, and how it ended. */

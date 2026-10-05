@@ -26,7 +26,8 @@ import { createMasker, maskRules, unmaskRules, type Masker } from './mask';
 import { partialRules, type PartialRulesResult } from './partial';
 import { preflight, type PreflightResult } from './preflight';
 import { aiReadiness, type AiReadiness } from './readiness';
-import { verifyAgainstExample, type VerifyResult, type WrongRow } from './verify';
+import { OVERFIT_REASON, overfitFindings, overfitProblems, withOverfitFallback } from './overfit';
+import { exampleTable, verifyAgainstExample, type VerifyResult, type WrongRow } from './verify';
 
 /** What `callLearn`/`callRepair` return - the shape of `apps/api/src/learn`'s
  * `LearnOutcome` (`learn()`/`repairFromBrowser()`), minus the `verified` flag this
@@ -42,6 +43,11 @@ export interface LearnCallResult<Call = unknown> {
   alternatives?: LearnAlternative[];
   problems: RepairProblem[];
   calls: Call[];
+  /**
+   * The learn had its one repair for a rule that copies rows of the example (SPEC 9.2 layer 6): a call behind this result sent an `overfit`
+   * problem (`LearnResponse.overfitRepaired`). From then on such a rule is reported as unsupported, never sent back again.
+   */
+  overfitRepaired?: boolean;
 }
 
 export interface LearnFromExamplesOptions<Call = unknown> {
@@ -433,12 +439,24 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     fill: { summary: FillSummary; ambiguities: FillAmbiguity[] };
     /** learn-v8: what each of its alternatives turned out to be on every row. */
     alternatives: AlternativeResult[];
+    /** The overfitting guards (SPEC 9.2 layer 6): the problems for a rule that copies rows, while the learn's one repair for it is unused. */
+    overfit: RepairProblem[];
+    /** What it was judged from, so the kept answer can be judged again with the fallback (`judge(answer, alternatives, true)`). */
+    source: { answer: LearnResult; alternatives: readonly LearnAlternative[] };
   }
   // The columns the free engine already asks about (a constant the input could write too): an alternative adds no second question there.
   let codeAsked: Set<string> | undefined;
   const askedByCode = (): Set<string> => (codeAsked ??= new Set(ambiguousColumns(analysis).map((q) => q.header)));
   const verifyColumn = columnVerifier(analysis, masker);
-  const judge = (answer: LearnResult, alternatives: readonly LearnAlternative[] = []): Judged => {
+  // The overfitting guards (SPEC 9.2 layer 6, `learn/overfit.ts`): ONE repair per learn for a rule that copies rows of the example - asked by
+  // the API's checks or by a round of this loop - and from then on the honest fallback: the column is reported as unsupported by code.
+  let overfitRepaired = learned.overfitRepaired === true;
+  const allRows = exampleTable(analysis);
+  // Completion mode: only the columns the AI step was asked for (the others are the user's own rules).
+  const askedHeaders = complete ? new Set(complete.columns.map((i) => complete.fixedRules.output.columns[i]?.header)) : null;
+  /** How much a rule that copies rows weighs when answers are compared: every row of its column wrong (it holds for none but these). */
+  const copyWeight = Math.max(1, analysis.alignment.rows.length);
+  const judge = (answer: LearnResult, alternatives: readonly LearnAlternative[] = [], fallBack = false): Judged => {
     let masked = answer;
     let rules: LearnResult = masker ? unmaskRules(masked, masker) : masked;
     let fixedProblems = fixedLock(rules);
@@ -448,6 +466,18 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
       masked = restoreFixed(masked, maskedFixed, asked);
       rules = masker ? unmaskRules(masked, masker) : masked;
       fixedProblems = fixedLock(rules);
+    }
+    // The overfitting guards, on the answer as the AI wrote it (before code fills anything) and every row of the example: an `overfit` problem
+    // for the next round while the learn's one repair for it is unused; after it - or for the answer kept at the end (`fallBack`) - the
+    // column is reported as unsupported by code, in both vocabularies, and the answer is checked without it.
+    const findings = overfitFindings(rules, { table: allRows }).filter((f) => askedHeaders === null || askedHeaders.has(f.outputColumn));
+    let overfit: RepairProblem[] = [];
+    if (findings.length > 0 && (overfitRepaired || fallBack)) {
+      masked = withOverfitFallback(masked, findings);
+      rules = withOverfitFallback(rules, findings);
+      fixedProblems = fixedLock(rules);
+    } else {
+      overfit = overfitProblems(findings);
     }
     // Code fills the data parameters from every row (`fillParams`, proposal 7.1), on the REAL rules: lookup tables, value maps and lists,
     // cut-offs, the day/month order, the duplicate kept, the values a filter drops. `masked` - what a repair round sends back - stays the
@@ -469,14 +499,31 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     }
     const sendFixed = fixedProblems.length > 0 && masker && asked && maskedFixed ? checkFixedLock(masked, maskedFixed, asked) : fixedProblems;
     const b = blamed(verification, rules);
-    return { masked, rules, verification, fixedProblems, sendFixed, passes: passes(verification, rules, fixedProblems), wrongRows: b.rows, wrong: wrongCount(b.rows, b.layout) + fixedProblems.length, fill, alternatives: results };
+    // DECISION: a rule that copies rows - one still to repair, or one code reported - never passes, and counts as wrong on every row of its
+    // column when answers are compared: otherwise the copy (which hides the rows it copied) would beat the honest rule with those rows wrong,
+    // and a reported column (not compared at all) would beat both.
+    const copied = overfit.length + rules.unsupported.filter((u) => u.reasonCode === OVERFIT_REASON).length;
+    return {
+      masked,
+      rules,
+      verification,
+      fixedProblems,
+      sendFixed,
+      passes: passes(verification, rules, fixedProblems) && copied === 0,
+      wrongRows: b.rows,
+      wrong: wrongCount(b.rows, b.layout) + fixedProblems.length + copied * copyWeight,
+      fill,
+      alternatives: results,
+      overfit,
+      source: { answer, alternatives },
+    };
   };
   /**
    * What a round tells the AI step besides the rows: the fixed lock's findings, then the row count and layout rows (not the diffs: the loop
    * picks those). Every value in them is masked like the samples (SPEC 7.2): the layout rows by the verification's masker, the lock on the
    * masked side.
    */
-  const otherProblems = (j: Judged): RepairProblem[] => [...j.sendFixed.slice(0, MAX_FIXED_PROBLEMS), ...j.verification.repairProblems.filter((p) => p.kind !== 'diff')];
+  const otherProblems = (j: Judged): RepairProblem[] => [...j.sendFixed.slice(0, MAX_FIXED_PROBLEMS), ...j.verification.repairProblems.filter((p) => p.kind !== 'diff'), ...j.overfit];
 
   const first = judge(learned.rules, learned.alternatives);
   // DECISION (an honest unsupported is not a mismatch, with one exception): a column the answer gives up on although the pair analysis found how
@@ -504,8 +551,11 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     const step = decided.step;
     stages.browserRepairUsed = true;
     const previous = answers[loop.best]!;
-    const repaired = await opts.callRepair(payload, previous.masked, step.problems, { round: step.round, maxRounds: caps.maxRounds, rows: loop.sent.map((r) => r.sample), newRows: step.rows.length + step.namedOnly.length });
+    // A round that carries an `overfit` problem is the learn's one repair for it: its answer, and every one after, falls back.
+    if (step.problems.some((p) => p.kind === 'overfit')) overfitRepaired = true;
+    const repaired = await opts.callRepair(payload, previous.masked, step.problems, { round: step.round, maxRounds: caps.maxRounds, rows: loop.sent.map((r) => r.sample), newRows: step.rows.length + step.namedOnly.length, overfitRepaired });
     calls.push(...repaired.calls);
+    if (repaired.overfitRepaired) overfitRepaired = true;
     const judged = repaired.rules ? judge(repaired.rules, repaired.alternatives) : null;
     answers.push(judged);
     decided = loopStep(
@@ -517,8 +567,10 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     );
     loop = decided.state;
   }
-  // The answer kept is the loop's best (the fewest wrong rows; ties keep the earliest).
-  const kept = answers[loop.best] ?? first;
+  // The answer kept is the loop's best (the fewest wrong rows; ties keep the earliest). One that still has a rule that copies rows - no round
+  // could repair it - is judged again with the honest fallback: never counted as verified by a copy of the example.
+  const best = answers[loop.best] ?? first;
+  const kept = best.overfit.length > 0 ? judge(best.source.answer, best.source.alternatives, true) : best;
   const { rules, fixedProblems } = kept;
   // (The wrong rows were the loop's to choose from; they hold real values and stay here.)
   const { wrongRows: _wrongRows, ...verification } = kept.verification;

@@ -93,6 +93,13 @@ export interface RunRecord {
   callFailures: string;
   /** The kept answer's `overfitSuspected` assumptions (the API's overfitting lint, SPEC 9.2 layer 6). */
   overfitSuspected: number;
+  /**
+   * The overfitting guards (SPEC 9.2 layer 6): the `overfit` problems the calls produced - a rule that copies rows of the example (a condition
+   * on a row's position, a long list of one-row cases), each asking for the learn's one repair for it - summed over every call.
+   */
+  overfitFound: number;
+  /** The kept answer's columns code reported as unsupported because their rule still copied rows after that repair (reason `overfit`). */
+  overfitFellBack: number;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
    * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
    * run's LLM calls produced, across the learn call and every repair/escalation call. */
@@ -253,7 +260,7 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
   // A round of the learning loop, exactly as the API's /api/learn/repair runs it: the answer checked on the samples plus every row sent.
   // (The loop itself - which rows, when to stop - is `learnFromExamples`' own, the same code the browser runs.)
   const callRepair: Parameters<typeof learnFromExamples<LlmCallRecord>>[0]['callRepair'] = async (payload, previousRules, problems, round) => {
-    const outcome = await repairFromBrowser(payload, previousRules, problems, { ...learnOpts, rows: round.rows });
+    const outcome = await repairFromBrowser(payload, previousRules, problems, { ...learnOpts, rows: round.rows, ...(round.overfitRepaired ? { overfitRepaired: true } : {}) });
     opts.onLearnOutcome?.(outcome);
     return outcome;
   };
@@ -403,6 +410,8 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     truncatedCalls: 0,
     callFailures: '',
     overfitSuspected: 0,
+    overfitFound: 0,
+    overfitFellBack: 0,
     ...formulaStats([]),
     error,
   };
@@ -420,16 +429,18 @@ function tallyLabel(counts: ReadonlyMap<string, number>): string {
 /**
  * The prompt audit's measurement columns (docs/proposals/prompt-audit-learn-v7.md section 5) - counts only, from the call records
  * (`problemCounts`, `outcome`) and the kept answer's own `unsupported` and `assumptions`: the columns given up on despite a hint, the problem
- * kinds, the calls cut off or failed (X2), the reasons given for unsupported columns, and the overfitting lint's findings.
+ * kinds, the calls cut off or failed (X2), the reasons given for unsupported columns, and the overfitting lint's findings. Then the overfitting
+ * guards (SPEC 9.2 layer 6): the `overfit` problems found over every call, and the kept answer's columns code reported for them.
  */
 export function callsOf(
   result: Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'calls' | 'rules'>,
-): Pick<RunRecord, 'unsupportedDespiteEvidence' | 'unsupportedReasons' | 'problemsByKind' | 'truncatedCalls' | 'callFailures' | 'overfitSuspected'> {
+): Pick<RunRecord, 'unsupportedDespiteEvidence' | 'unsupportedReasons' | 'problemsByKind' | 'truncatedCalls' | 'callFailures' | 'overfitSuspected' | 'overfitFound' | 'overfitFellBack'> {
   const calls = result.path === 'llm' ? result.calls : [];
   const kinds = new Map<string, number>();
   const failures = new Map<string, number>();
   for (const c of calls) {
-    for (const [kind, n] of Object.entries(c.problemCounts)) if (kind !== 'invalidAlternative') kinds.set(kind, (kinds.get(kind) ?? 0) + n);
+    // (Counts beside the problem kinds - the dropped alternatives, the columns code reported - are not problems.)
+    for (const [kind, n] of Object.entries(c.problemCounts)) if (kind !== 'invalidAlternative' && kind !== 'overfitFallback') kinds.set(kind, (kinds.get(kind) ?? 0) + n);
     if (c.outcome === 'truncated' || c.outcome.startsWith('error:')) failures.set(c.outcome, (failures.get(c.outcome) ?? 0) + 1);
   }
   const rules = result.path === 'llm' ? result.rules : null;
@@ -442,6 +453,8 @@ export function callsOf(
     truncatedCalls: failures.get('truncated') ?? 0,
     callFailures: tallyLabel(failures),
     overfitSuspected: (rules?.assumptions ?? []).filter((a) => a.reasonCode === 'overfitSuspected').length,
+    overfitFound: kinds.get('overfit') ?? 0,
+    overfitFellBack: reasons.get('overfit') ?? 0,
   };
 }
 
