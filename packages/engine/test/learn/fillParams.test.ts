@@ -284,6 +284,43 @@ describe('fillParams: bands', () => {
     ]);
     expect(verified(r.rules, a)).toBe(true);
   });
+
+  it('a band table on a COMPUTED column (a class by a total that is Qty * Price, owner amendment 2026-10-05) is settled the same way', () => {
+    // [qty, price]: totals 50, 400, 950 | 1200, 2600, 4700 | 5100, 8000, 12000, 700, 3000, 6500 - none of them is an input value.
+    const rows: [number, number][] = [[1, 50], [4, 100], [5, 190], [6, 200], [13, 200], [10, 470], [17, 300], [16, 500], [24, 500], [7, 100], [12, 250], [13, 500]];
+    const label = (x: number): string => (x < 1000 ? 'Small' : x < 5000 ? 'Medium' : 'Large');
+    const input: V[][] = [['Id', 'Qty', 'Price'], ...rows.map(([q, p], i): V[] => [`R${i}`, q, p])];
+    const output: V[][] = [['Id', 'Total', 'Size'], ...rows.map(([q, p], i): V[] => [`R${i}`, q * p, label(q * p)])];
+    const a = analysisOf(input, output);
+    const expr: Expr = {
+      op: 'switch',
+      cases: [
+        { when: { op: 'lt', args: [col('total'), num(600)] }, then: text('Small') },
+        { when: { op: 'lt', args: [col('total'), num(7000)] }, then: text('Medium') },
+      ],
+      else: text('Large'),
+    };
+    const answer = rulesOf({
+      inputs: [['Id', 'text'], ['Qty', 'integer'], ['Price', 'decimal']],
+      computed: [
+        { id: 'total', type: 'decimal', expr: { op: 'mul', args: [col('qty'), col('price')] } },
+        { id: 'size', type: 'text', expr },
+      ],
+      out: [['Id', 'id'], ['Total', 'total'], ['Size', 'size']],
+    });
+    expect(verified(answer, a)).toBe(false);
+    const r = fillParams(answer, a);
+    expect(r.filled).toEqual([{ kind: 'band', count: 2 }]);
+    expect(r.rules.validations.filter((v) => v.rule === 'cutoffRange')).toEqual([
+      { column: 'total', rule: 'cutoffRange', low: 950, high: 1200, value: 1000, includes: 'high', severity: 'flag' },
+      { column: 'total', rule: 'cutoffRange', low: 4700, high: 5100, value: 5000, includes: 'high', severity: 'flag' },
+    ]);
+    expect(verified(r.rules, a)).toBe(true);
+    // The check runs on the computed value next month: a total inside a range the example left open is flagged, Qty and Price are not compared.
+    const next = { sheetName: 'Sheet1', direction: 'ltr' as const, headers: ['Id', 'Qty', 'Price'], rows: [[{ v: 'N1' }, { v: 2 }, { v: 500 }], [{ v: 'N2' }, { v: 1 }, { v: 20000 }]], rowNumbers: [2, 3] };
+    const run = runRules(r.rules, next);
+    expect(run.ok && run.flags.map((f) => [f.rowNumber, f.messageKey])).toEqual([[2, 'flag.validation.cutoffRange']]);
+  });
 });
 
 // ---------------------------------------------------------------------------

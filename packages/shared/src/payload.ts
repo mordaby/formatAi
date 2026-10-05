@@ -130,8 +130,9 @@ type Round = { round?: number };
 
 /**
  * One band of a `bands` hint: the output value for input values below `lt` and/or at or above `gte`
- * (numbers for a numeric input column, ISO "YYYY-MM-DD" text for a date column). The first band has only
- * `lt`, the last only `gte`, the ones between have both.
+ * (numbers for a numeric input column, ISO "YYYY-MM-DD" text for a date column; numbers of the `onOut`
+ * output column when the hint has one). The first band has only `lt`, the last only `gte`, the ones
+ * between have both.
  */
 export interface Band {
   lt?: number | string;
@@ -166,7 +167,10 @@ export type ColumnHint = HintBase & { out: number } & (
   // `dependsOn`: the same values of the `in` columns always give the same output value.
   | { rel: 'dependsOn'; in: number[] }
   // `bands`: sorted by the `in` column, the output values form a few contiguous ranges (<= 5 breakpoints).
-  | { rel: 'bands'; in: [number]; bands: Band[] }
+  // Owner amendment 2026-10-05: with `onOut`, the rows are sorted by OUTPUT column `onOut` instead - a number the input computes on every
+  // row (its own hint, a `mul`, `sum` ..., is sent as well) - and `in` lists the input columns it is computed from (`Class` by `Total`,
+  // `Total = Qty * Price`: `in: [qty, price]`, `onOut: total`). The thresholds are values of that output column.
+  | { rel: 'bands'; in: number[]; onOut?: number; bands: Band[] }
   // `contains` (composition, beyond the light `template`): a text column composed from input values. The value of
   // each `in` column is inside the output cell on the coverage's share of the rows; `in` is ordered by where
   // the value first appears in the output text. The fixed text around the values is not sent: the samples show it.

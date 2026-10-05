@@ -6,7 +6,7 @@
 import type { RawWorkbook } from '../../types';
 import { gather, isoOfSerial, normFast, norms, type ColumnData } from './cells';
 import { alignRows } from './align';
-import { constantDerivation, findDerivation } from './derived';
+import { bandsOnComputed, computedOperands, constantDerivation, findDerivation, isExternalColumn } from './derived';
 import { analyzeDropped } from './dropped';
 import { detectFamilies, type CreatedData, type FamilyFinding } from './families';
 import { analyzeLayout } from './layout';
@@ -324,6 +324,21 @@ function analyzeSides(
       if (ca.unknown) ca.derived = guarded.derivableConstant ? constantDerivation(env, guarded.derivableConstant) : findDerivation(env, outA[o]!);
       columns.push(ca);
       progress('relations', 0.35 + (0.4 * (o + 1)) / Math.max(1, nCols));
+    }
+    // Owner amendment 2026-10-05 (SPEC 6.2 step 4, derived.ts (b')): bands on a COMPUTED output column. A class by a total, where the
+    // total is itself an output column (`Total = Qty * Price`, then `Class = Small / Medium / Big by Total`), is invisible to the bands
+    // test above: no input column holds the total. So once every column's relations are known, a column that is still EXTERNAL (unknown,
+    // no derivation, no across-row pattern) is tested once more, sorted by each other output column an arithmetic relation explains on
+    // every row. DECISION: only a column with no evidence at all is revisited, and the result is a derivation (a hint for the AI step),
+    // never a rule code builds - so this only adds evidence where there was none, and a band rule on an input column always wins (it is
+    // found first, and a column it explains is never revisited). Summary shapes and the fixed fan-out's positions are left as they are.
+    const operands = computedOperands(columns, outA);
+    if (operands.length > 0) {
+      for (const ca of columns) {
+        if (!isExternalColumn(ca)) continue;
+        const onComputed = bandsOnComputed(env, outA[ca.out]!, operands.filter((op) => op.out !== ca.out));
+        if (onComputed !== null) ca.derived = onComputed;
+      }
     }
     // Fixed fan-out: relations per position in the family.
     if (finding?.kind === 'fixedFanOut' && shape.kind === 'families' && shape.pattern.mode === 'fixedFanOut') {

@@ -111,6 +111,28 @@ describe('unsupportedDespiteEvidence', () => {
     expect(problems.map((p) => (p.kind === 'unsupportedDespiteEvidence' ? p.out : -1))).toEqual([1]);
   });
 
+  it('bands on a computed output column (onOut) name the input columns behind it AND that output column, by header', () => {
+    // A class by a total, where the total is an output column too (Qty * Price): owner amendment 2026-10-05.
+    const columns = {
+      input: { columns: [{ i: 0, header: 'Qty', type: 'integer' }, { i: 1, header: 'Price', type: 'decimal' }] },
+      output: { columns: [{ i: 0, header: 'Total', type: 'decimal' }, { i: 1, header: 'Class', type: 'text' }] },
+    };
+    const bands: Hint = { rel: 'bands', in: [0, 1], onOut: 0, bands: [{ lt: 1000, value: 'SECRET LOW' }, { gte: 1000, value: 'SECRET HIGH' }], out: 1, coverage: 1 };
+    const hints: Hint[] = [{ rel: 'mul', in: [0, 1], out: 0, coverage: 1 }, bands];
+    const giveUp = { output: { columns: [{ header: 'Total', from: 'total' }, { header: 'Class', from: null }] }, unsupported: [{ outputColumn: 'Class', reasonCode: 'externalData' }] } as never;
+    const problems = unsupportedDespiteEvidence(giveUp, payload(hints, columns as never));
+    expect(problems).toEqual([
+      { kind: 'unsupportedDespiteEvidence', out: 1, message: 'Column "Class": the app found it is built from "Qty", "Price" (bands on output column "Total"); write a rule for it.' },
+    ]);
+    expect(JSON.stringify(problems)).not.toMatch(/SECRET|1000/);
+    expect(evidenceByOutput(hints).get(1)).toEqual({ kind: 'bands', inputs: [0, 1], onOut: 0 });
+    // A headerless output: the column's position, as the payload numbers it.
+    const headerless = { ...columns, output: { columns: [{ i: 0, header: '', type: 'decimal' }, { i: 1, header: 'Class', type: 'text' }] } };
+    expect(unsupportedDespiteEvidence(giveUp, payload(hints, headerless as never))[0]).toMatchObject({
+      message: 'Column "Class": the app found it is built from "Qty", "Price" (bands on output column 0); write a rule for it.',
+    });
+  });
+
   it('the first hint that names a column is the evidence for it', () => {
     const hints: Hint[] = [
       { rel: 'padLeft', in: [1], length: 6, out: 0, coverage: 1 },

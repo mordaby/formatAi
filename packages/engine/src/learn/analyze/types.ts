@@ -373,7 +373,8 @@ export type Relation = RelationStats & RelationBody;
  * dependency with real evidence (see derived.ts) - or that is COMPOSED from input values (their text sits inside the
  * output cells, e.g. `<id> - <first> <last>`, beyond the light `template`). The AI can solve such a column (e.g.
  * `Size = "bulk" if Qty >= 10 else "single"`), so it is NOT external data: it is not skipped, and it counts as
- * "needs the AI step".
+ * "needs the AI step". Bands may also be on another OUTPUT column that the input computes exactly (`onOut`): a
+ * class by a total that is Qty * Price, where the total is an output column too.
  */
 export type Derivation = { coverage: number; /** Aligned rows where it fails, ascending, capped. */ failing: number[]; failCount: number } & (
   | {
@@ -385,8 +386,19 @@ export type Derivation = { coverage: number; /** Aligned rows where it fails, as
     }
   | {
       kind: 'bands';
-      in: [number];
-      /** Contiguous ranges of the input column with one output value each (<= 5 breakpoints). */
+      /**
+       * The input (or created family) column the rows are sorted by: one. With `onOut`, the columns that output column's relation
+       * reads instead (two for a `mul`, any number for a `sum`): the input the banded value is computed from, so a reader that names
+       * input columns (a hint's `in`, the `unsupportedDespiteEvidence` message) still names the right ones.
+       */
+      in: number[];
+      /**
+       * Owner amendment 2026-10-05 (SPEC 6.2 step 4): set when the banded value is an OUTPUT column, at this position - one that an
+       * arithmetic relation (`mul`, `add`, `sub`, `div`, `sum`, `mulConst`, `addConst`) computes from `in` on every row (coverage 1).
+       * `Class = Small / Medium / Big by Total`, where `Total = Qty * Price` is itself an output column. Absent: bands on `in[0]`.
+       */
+      onOut?: number;
+      /** Contiguous ranges of the input column (or of the `onOut` output column) with one output value each (<= 5 breakpoints). */
       bands: Band[];
     }
   | {

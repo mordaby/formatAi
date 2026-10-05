@@ -96,11 +96,14 @@ export function bestHintableRelation(ca: ColumnAnalysis): Relation | null {
 
 /** A derived column's hint (SPEC 6.2 step 4 v5): `bands` when the output is a few contiguous ranges of one input
  * column, `contains` when the output text is composed from input values (their text is inside the output cells),
- * else `dependsOn` (the same input values always give the same output value). */
+ * else `dependsOn` (the same input values always give the same output value).
+ * Owner amendment 2026-10-05: bands on a computed OUTPUT column carry `onOut` (that column's position), with `in` = the
+ * input columns it is computed from. DECISION: that column's own hint (its `mul`, `sum` ...) is sent as usual - it is
+ * how the model sees what `onOut` is - so nothing is folded into this one. */
 function derivedHintCandidate(out: number, d: Derivation): HintCandidate {
   const failingRows = d.coverage < 1 && d.failing.length > 0 ? d.failing : undefined;
   const base = { out, coverage: d.coverage, ...(failingRows ? { failingRows } : {}) };
-  if (d.kind === 'bands') return { rel: 'bands', in: d.in, bands: d.bands, ...base };
+  if (d.kind === 'bands') return { rel: 'bands', in: d.in, ...(d.onOut !== undefined ? { onOut: d.onOut } : {}), bands: d.bands, ...base };
   if (d.kind === 'composition') return { rel: 'contains', in: d.in, ...base };
   return { rel: 'dependsOn', in: d.in, ...base };
 }
