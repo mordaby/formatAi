@@ -173,6 +173,10 @@ describe('when to ask', () => {
     const q = ask(`if(rowNumber() = ${HAND + 1}, 0, ${REST})`).questions;
     expect(q.map((x) => [x.by, x.row, x.value, x.rest])).toEqual([['position', rowOf(HAND), 0, tenth(amountOf(HAND))]]);
     expect(ask(`if(and(rowNumber() = ${HAND + 1}, status = "Open"), 0, ${REST})`).questions.map((x) => x.by)).toEqual(['position']);
+    // A list of row positions: each value its own part - one question per row: the branch when it applies to that row alone (no row 99
+    // here), the value when the branch applies to other rows too.
+    expect(ask(`if(oneOf(rowNumber(), ${HAND + 1}, 99), 0, ${REST})`).questions.map((x) => [x.part.kind, x.by, x.row])).toEqual([['branch', 'position', rowOf(HAND)]]);
+    expect(ask(`if(oneOf(rowNumber(), ${HAND + 1}, 2), 0, ${REST})`).questions.map((x) => [x.part.kind, x.by, x.row])).toEqual([['listValue', 'position', rowOf(HAND)]]);
   });
 
   it('NOT a categorical value that merely appears once (Status "Cancelled"), in a branch, a list, a lookup or a value map; NOT a threshold that picks one row', () => {
@@ -249,6 +253,15 @@ describe('the guards: a row-position branch that is asked about is the user\'s q
   it('a position condition that is not one row\'s part (rowNumber() <= 3) stays the guard\'s', () => {
     const top = ordersRules(`if(rowNumber() <= 3, 0, ${REST})`);
     expect([...questionedPositions(top, ORDERS, overfitFindings(top, { table: null }))]).toEqual([]);
+  });
+
+  it('the finding says whether the position names exact rows (rowExact): only those are left to the browser by the API', () => {
+    const exact = (discount: string): boolean | undefined => overfitFindings(ordersRules(discount), { table: null })[0]?.rowExact;
+    expect(exact(`if(rowNumber() = ${HAND + 1}, 0, ${REST})`)).toBe(true);
+    expect(exact(`if(oneOf(rowNumber(), 3, ${HAND + 1}), 0, ${REST})`)).toBe(true);
+    expect(exact(`if(rowNumber() <= 3, 0, ${REST})`)).toBeUndefined();
+    expect(exact(`if(rowNumber() <> 1, ${REST}, 0)`)).toBeUndefined();
+    expect(exact(`if(rowNumber() = 1, 0, if(rowNumber() > 20, 1, ${REST}))`)).toBeUndefined();
   });
 });
 

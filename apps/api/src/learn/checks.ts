@@ -342,7 +342,10 @@ function checkParsed(answer: LearnResult, payload: LearnPayload, opts: ChecksOpt
   // column; `fallBack` (the learn's one repair for it was made): the column is reported as unsupported by code and checked no further.
   let overfitFallbacks = 0;
   const asked = payload.complete ? new Set(payload.output.columns.filter((c) => payload.complete!.columns.includes(c.i)).map((c) => c.header)) : null;
-  const findings = overfitFindings(rules, { table: gatesClean ? buildSampleInputTable(payload) : null }).filter((f) => asked === null || asked.has(f.outputColumn));
+  // DECISION (SPEC 21 v12 item 20): a position condition that names exact rows (`rowNumber() = 54`, `rowExact`) is left to the browser, which
+  // sees every row of the example: a row it explains alone may have been edited by hand once - the user is asked "a one-time change, or a
+  // rule we missed?" - and otherwise the browser's own guard makes the one repair and then falls back. The samples can tell neither.
+  const findings = overfitFindings(rules, { table: gatesClean ? buildSampleInputTable(payload) : null }).filter((f) => (asked === null || asked.has(f.outputColumn)) && !(f.kind === 'position' && f.rowExact));
   if (findings.length > 0 && opts.overfit === 'fallBack') {
     rules = withOverfitFallback(rules, findings);
     overfitFallbacks = new Set(findings.map((f) => f.outputColumn)).size;

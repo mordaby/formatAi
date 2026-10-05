@@ -21,7 +21,8 @@
 // A finding becomes one `overfit` repair problem per column (`overfitProblems`), at most once per learn; an answer that still has it after
 // that repair gets the column reported as unsupported by code (`withOverfitFallback`, reason `overfit`: "needs your input"), so a rule that
 // only copies rows is never counted as verified. The API runs the guards on the samples (and the loop's rows), the browser on every row of
-// the example (`learn/flow.ts`).
+// the example (`learn/flow.ts`). A position condition that names exact rows (`rowNumber() = 54`, `rowExact`) is the browser's alone: a
+// row it explains may be one edited by hand once, and the user is asked (SPEC 21 v12 item 20, `oneTimers.ts`).
 //
 // Pure and synchronous, like the rest of this package.
 import { limits, type Computed, type Expr, type ExprNode, type LearnResult, type RepairProblem, type Rules } from '@formatai/shared';
@@ -40,6 +41,12 @@ export interface OverfitFinding {
   id: string;
   /** caseList: how many cases the chain has. */
   cases?: number;
+  /**
+   * position: every position condition of the computed column names exact rows (`rowNumber() = 54`), none a range. DECISION (SPEC 21 v12
+   * item 20): such a finding is the browser's alone - the API's samples cannot tell whether that row was edited by hand once (a question for
+   * the user) or the rule copies rows (the browser's guard: one repair, then the fallback); the browser judges it on every row (`learn/flow.ts`).
+   */
+  rowExact?: true;
 }
 
 /** The unsupported reason code code writes for a column whose only rule copied rows (never offered to the AI step: `AI_UNSUPPORTED_REASON_CODES`). */
@@ -76,13 +83,35 @@ export function positionColumns(computed: readonly Computed[]): Set<string> {
 
 /** Whether `e` holds a comparison of a whole-file position with a constant (`rowNumber() = 1`, `rank(order: x) <= 3`, `oneOf(rowNumber(), 1, 2)`). */
 export function comparesPosition(e: Expr, positionIds: ReadonlySet<string>): boolean {
-  if (!isNode(e)) return false;
+  return positionComparisons(e, positionIds).length > 0;
+}
+
+/** Every comparison of a whole-file position with a constant in `e` (the comparison nodes themselves). */
+function positionComparisons(e: Expr, positionIds: ReadonlySet<string>, out: ExprNode[] = []): ExprNode[] {
+  if (!isNode(e)) return out;
   if (COMPARISONS.has(e.op)) {
     const [a, b] = (e as { args: [Expr, Expr] }).args;
-    if ((isPosition(a, positionIds) && isConstant(b)) || (isPosition(b, positionIds) && isConstant(a))) return true;
+    if ((isPosition(a, positionIds) && isConstant(b)) || (isPosition(b, positionIds) && isConstant(a))) {
+      out.push(e);
+      return out;
+    }
   }
-  if (e.op === 'oneOf' && isPosition(e.arg, positionIds)) return true;
-  return exprChildren(e).some((c) => comparesPosition(c, positionIds));
+  if (e.op === 'oneOf' && isPosition(e.arg, positionIds)) {
+    out.push(e);
+    return out;
+  }
+  for (const c of exprChildren(e)) positionComparisons(c, positionIds, out);
+  return out;
+}
+
+/**
+ * Whether every position comparison in `e` names exact rows - `rowNumber() = 54`, `oneOf(rowNumber(), 54, 99)` - and none a range
+ * (`rowNumber() <= 3`, `rowNumber() <> 1`). Such a condition picks single rows: whether each is a row edited by hand once, the user is asked
+ * (SPEC 21 v12 item 20, `oneTimers.ts`) - which only every row of the example can tell (`OverfitFinding.rowExact`).
+ */
+function exactRows(e: Expr, positionIds: ReadonlySet<string>): boolean {
+  const found = positionComparisons(e, positionIds);
+  return found.length > 0 && found.every((n) => n.op === 'eq' || n.op === 'oneOf');
 }
 
 // ---------------------------------------------------------------------------
@@ -257,16 +286,16 @@ export function overfitFindings(rules: AnyRules, opts: OverfitOptions): OverfitF
   const reached = outputsReached(rules);
   const findings: OverfitFinding[] = [];
   const seen = new Set<string>();
-  const add = (kind: OverfitKind, id: string, cases?: number): void => {
+  const add = (kind: OverfitKind, id: string, cases?: number, rowExact?: boolean): void => {
     for (const out of reached.get(id) ?? []) {
       const header = rules.output.columns[out]!.header;
       if (seen.has(`${kind}\u0000${header}`)) continue;
       seen.add(`${kind}\u0000${header}`);
-      findings.push({ kind, outputColumn: header, out, id, ...(cases !== undefined ? { cases } : {}) });
+      findings.push({ kind, outputColumn: header, out, id, ...(cases !== undefined ? { cases } : {}), ...(rowExact ? { rowExact: true as const } : {}) });
     }
   };
   for (const c of rules.transform.computed) {
-    if (comparesPosition(c.expr, positionIds)) add('position', c.id);
+    if (comparesPosition(c.expr, positionIds)) add('position', c.id, undefined, exactRows(c.expr, positionIds));
     if (looksUpByMeasure(c.expr, measureIds)) add('measureKey', c.id);
     const cases = caseListShape(c.expr, inputIds);
     if (cases && opts.table) {

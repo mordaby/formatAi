@@ -395,7 +395,12 @@ export function partSupport(rules: LearnResult, analysis: PairAnalysis): PartSup
       }
       continue;
     }
-    // A list value, a lookup key, a value-map entry: its column, and how many rows hold the value at all.
+    // A list value, a lookup key, a value-map entry: its column, and how many rows hold the value at all. (A list of row positions -
+    // `oneOf(rowNumber(), 54, 99)` - names its row by its position.)
+    if (s.part.kind === 'listValue' && comparesPosition({ op: 'oneOf', arg: s.part.arg, values: [s.part.value] }, positions)) {
+      s.by = 'position';
+      continue;
+    }
     const col = c.keyExpr ? inputColumnOf(rules, c.keyExpr) : undefined;
     if (!col || c.holders.size !== 1) continue;
     if (idLike.has(col.id)) {
@@ -508,7 +513,16 @@ export function oneTimeQuestions(rules: LearnResult, analysis: PairAnalysis, opt
  */
 export function oneTimeParts(rules: LearnResult, analysis: PairAnalysis, opts: OneTimeOptions = {}): { asked: (PartSupport & { rest: PayloadCell })[]; handedOff: OneTimeResult['handedOff'] } {
   const max = opts.maxQuestions ?? limits.learn.oneTimer.maxQuestions;
-  const single = partSupport(rules, analysis).filter((s) => s.by !== undefined && (opts.columns === undefined || opts.columns.has(s.header)));
+  // DECISION: one question per row of a column - a branch that applies to that row alone over the value of its own list that names it
+  // (`if(oneOf(rowNumber(), 54, 99), ...)` with no row 99: the branch is the part; taken out, nothing of it is left for a later file).
+  const seenRow = new Set<string>();
+  const single = partSupport(rules, analysis).filter((s) => {
+    if (s.by === undefined || (opts.columns !== undefined && !opts.columns.has(s.header))) return false;
+    const key = `${s.out}\u0000${s.explains[0]}`;
+    if (seenRow.has(key)) return false;
+    seenRow.add(key);
+    return true;
+  });
   const byColumn = new Map<number, PartSupport[]>();
   for (const s of single) byColumn.set(s.out, [...(byColumn.get(s.out) ?? []), s]);
   const chosen: PartSupport[] = [];

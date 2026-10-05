@@ -352,13 +352,14 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
   lines.push(
     '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user). "Alternatives" (learn-v8): the second rules the AI step gave, per column, as code found them on every row (bothPass = asked of the user; answerOnly / alternativeOnly = one fits and is the rule; bothFail), then the ones the API dropped (invalid). ' +
       'The prompt audit\'s columns: "Gave up on hinted" (columns given up on despite a hint, over every call), "Unsupported" (the reason codes of the kept answer\'s unsupported columns), "Problems" (every problem kind the calls produced, counted), "Cut off / failed" (calls cut off at the output-token limit - X2 - or failed, by outcome), "Overfit" (the kept answer\'s overfitSuspected assumptions). ' +
-      '"Copies rows" (the overfitting guards, SPEC 9.2 layer 6): the overfit problems the calls found - a condition on a row\'s position, a long list of one-row cases, each asking for the learn\'s one repair - and the kept answer\'s columns code then reported as unsupported (reason overfit).',
+      '"Copies rows" (the overfitting guards, SPEC 9.2 layer 6): the overfit problems the calls found - a condition on a row\'s position, a long list of one-row cases, each asking for the learn\'s one repair - and the kept answer\'s columns code then reported as unsupported (reason overfit). ' +
+      '"One-time" (SPEC 21 v12 item 20): the questions the Result screen would ask - a part of the kept rules that explains one row of the example only, by column, row and what singles it out (id, amount, date, position) - then the columns with more such parts than are asked (handed off to the guards), and the hold-out if every question were answered "a one-time change".',
     '',
   );
   const learns = aiLearns(records).sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model) || Number(a.masking) - Number(b.masking) || a.run - b.run || (a.mode ?? '').localeCompare(b.mode ?? ''));
   lines.push(
     markdownTable(
-      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit', 'Copies rows'],
+      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit', 'Copies rows', 'One-time'],
       learns.map((r) => [
         r.case,
         ...(tagged ? [r.mode ?? 'full'] : []),
@@ -386,6 +387,7 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
         r.callFailures || '-',
         r.overfitSuspected ?? 0,
         (r.overfitFound ?? 0) + (r.overfitFellBack ?? 0) > 0 ? `found ${r.overfitFound ?? 0}, fell back ${r.overfitFellBack ?? 0}` : '-',
+        r.oneTimeParts ? [r.oneTimeParts, r.oneTimeDefault].filter((s) => s).join('; ') : '-',
       ]),
     ),
     '',
@@ -534,6 +536,9 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'overfitSuspected',
   'overfitFound',
   'overfitFellBack',
+  'oneTimeAsked',
+  'oneTimeParts',
+  'oneTimeDefault',
   'formulaErrorCount',
   'firstCallFormulaErrors',
   'formulaFixedByRepair',
@@ -573,6 +578,8 @@ export function printSummary(records: RunRecord[], log: (line: string) => void =
       const proposed = aiLearns(records).filter((r) => r.model === g.model && r.masking === g.masking && (r.mode ?? 'full') === (g.mode ?? 'full'));
       const alternatives = proposed.reduce((n, r) => n + (r.alternativesProposed ?? 0), 0);
       if (alternatives > 0) log(`    alternatives: ${alternatives} proposed in ${proposed.filter((r) => (r.alternativesProposed ?? 0) > 0).length} learn(s) - ${outcomeCounts(proposed)}`);
+      const asking = proposed.filter((r) => (r.oneTimeAsked ?? 0) > 0);
+      if (asking.length > 0) log(`    one-time questions: ${asking.reduce((n, r) => n + (r.oneTimeAsked ?? 0), 0)} in ${asking.length} learn(s) - ${asking.map((r) => `${r.case}: ${r.oneTimeParts} (${r.oneTimeDefault})`).join('; ')}`);
     }
   }
   const failed = records.filter((r) => !r.expectationMet);
