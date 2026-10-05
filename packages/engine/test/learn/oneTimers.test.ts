@@ -154,6 +154,7 @@ describe('when to ask', () => {
         inputRow: rowOf(HAND),
         by: 'id',
         byColumn: 'Order',
+        key: 'ORD-1009',
         value: 0,
         rest: tenth(amountOf(HAND)),
         check: { column: 'discount', rule: 'sameAs', expr: f(REST), severity: 'flag', oneTime: true },
@@ -162,8 +163,8 @@ describe('when to ask', () => {
   });
 
   it('the unique amount, and the unique date', () => {
-    expect(ask(`if(amount = ${amountOf(HAND)}, 0, ${REST})`).questions.map((q) => [q.by, q.byColumn, q.row])).toEqual([['amount', 'Amount', rowOf(HAND)]]);
-    expect(ask(`if(day = date("2026-03-10"), 0, ${REST})`).questions.map((q) => [q.by, q.byColumn, q.row])).toEqual([['date', 'Day', rowOf(HAND)]]);
+    expect(ask(`if(amount = ${amountOf(HAND)}, 0, ${REST})`).questions.map((q) => [q.by, q.byColumn, q.key, q.row])).toEqual([['amount', 'Amount', amountOf(HAND), rowOf(HAND)]]);
+    expect(ask(`if(day = date("2026-03-10"), 0, ${REST})`).questions.map((q) => [q.by, q.byColumn, q.key, q.row])).toEqual([['date', 'Day', '2026-03-10', rowOf(HAND)]]);
     // In a list of the order IDs too (each value its own part).
     expect(ask(`if(oneOf(order, "ORD-1009", "ORD-1001"), 0, ${REST})`).questions.map((q) => [q.part.kind, q.by, q.row])).toEqual([['listValue', 'id', rowOf(HAND)]]);
   });

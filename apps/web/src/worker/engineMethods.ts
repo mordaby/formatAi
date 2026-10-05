@@ -166,6 +166,7 @@ async function loadExample(args: LoadExampleArgs): Promise<LoadExampleOutput> {
 function liveCheck(args: LiveCheckArgs): LiveCheckResult {
   return checkExample(getExample(args.exampleId), args.rules, {
     ...(args.exceptions ? { exceptions: args.exceptions } : {}),
+    ...(args.oneTime ? { oneTime: args.oneTime } : {}),
     ...(args.onlyColumns ? { onlyColumns: args.onlyColumns } : {}),
     subset: args.subset !== false,
   });
@@ -175,6 +176,7 @@ function liveCheck(args: LiveCheckArgs): LiveCheckResult {
 function fullCheck(args: Omit<LiveCheckArgs, 'subset'>): LiveCheckResult {
   return checkExample(getExample(args.exampleId), args.rules, {
     ...(args.exceptions ? { exceptions: args.exceptions } : {}),
+    ...(args.oneTime ? { oneTime: args.oneTime } : {}),
     ...(args.onlyColumns ? { onlyColumns: args.onlyColumns } : {}),
     subset: false,
   });

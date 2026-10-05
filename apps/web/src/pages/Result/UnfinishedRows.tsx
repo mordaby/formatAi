@@ -6,6 +6,9 @@
 // becomes "needs your input", today's best-we-can-do path). The preview below highlights the same rows.
 // DECISION (owner, open question 3 of the proposal): there is NO "keep these rows as they are" here - bringing rows edited by hand back as
 // exceptions waits for the owner's answer.
+// The rows the user said were a one-time change (SPEC 21 v12 item 20: the answer to "a one-time change, or a rule we missed?") are listed
+// here too, apart: "Rows that don't follow the rule", each with its column and its real values. They are not counted as differences (the
+// live check leaves those cells out, `LiveCheckResult.oneTime`), so this part has no "Fix the rule"; undo brings the rule's part back.
 import { useMemo } from 'react';
 import { Cell } from '../../components/Cell';
 import type { EditableRules } from '../../editor';
@@ -24,22 +27,56 @@ export interface UnfinishedRowsProps {
   rules: EditableRules;
   /** The live check of the rules on the example (real values: they are shown here and never sent). */
   live: LiveCheckResult | null;
+  /** The AI step could not finish: the rows that still differ are named, per column. False: only the one-time rows are listed (if any). */
+  unfinished?: boolean;
   /** "Fix the rule": opens the editor on that column. */
   onFix(header: string): void;
   /** "Leave it empty for now": the column becomes "needs your input". */
   onLeave(index: number, header: string): void;
 }
 
-export function UnfinishedRows({ rules, live, onFix, onLeave }: UnfinishedRowsProps) {
+export function UnfinishedRows({ rules, live, unfinished = true, onFix, onLeave }: UnfinishedRowsProps) {
   const { t, lang } = useI18n();
   const language = rules.output.language;
-  const groups = useMemo(() => columnMismatches(live, rules).filter((m) => rules.output.columns[m.index]?.from !== null), [live, rules]);
-  if (!live || groups.length === 0) return null;
+  const groups = useMemo(() => (unfinished ? columnMismatches(live, rules).filter((m) => rules.output.columns[m.index]?.from !== null) : []), [live, rules, unfinished]);
+  const oneTime = live?.oneTime ?? [];
+  if (!live || (groups.length === 0 && oneTime.length === 0)) return null;
   const number = (n: number): string => n.toLocaleString(lang === 'he' ? 'he-IL' : 'en-US');
   const show = (index: number, v: unknown): string => {
     if (v === null || v === undefined || v === '') return t('unfinished.empty');
     return formatPreview(rules.output.columns[index]?.format, v as never, language);
   };
+  const oneTimeRows =
+    oneTime.length > 0 ? (
+      <ul className="unfinished__rows" data-testid="one-time-rows">
+        {oneTime.map((x) => (
+          <li key={`${x.exampleRow}\u0000${x.column}`} data-row={x.exampleRow} data-column={x.column}>
+            <Marked
+              id="oneTime.rows.row"
+              nodes={{
+                row: <span className="tabular">{x.exampleRow}</span>,
+                column: <bdi className="sentence__name">{x.column}</bdi>,
+                expected: <Cell value={show(x.columnIndex, x.expected)} />,
+                actual: <Cell value={show(x.columnIndex, x.actual)} />,
+              }}
+            />
+          </li>
+        ))}
+      </ul>
+    ) : null;
+
+  // Only rows the user called one-time: their own short panel, not "we tried more than once".
+  if (groups.length === 0) {
+    return (
+      <section className="deep unfinished" aria-labelledby="unfinished-title" data-testid="unfinished-rows">
+        <h2 className="deep__title" id="unfinished-title">
+          {t('oneTime.rows.title')}
+        </h2>
+        <p className="deep__note">{t('oneTime.rows.lead')}</p>
+        {oneTimeRows}
+      </section>
+    );
+  }
 
   return (
     <section className="deep unfinished" data-tone="warn" aria-labelledby="unfinished-title" data-testid="unfinished-rows">
@@ -88,6 +125,14 @@ export function UnfinishedRows({ rules, live, onFix, onLeave }: UnfinishedRowsPr
             </div>
           );
         })}
+        {oneTimeRows ? (
+          <div className="unfinished__group" data-testid="one-time-group">
+            <p>
+              <strong>{t('oneTime.rows.title')}</strong> {t('oneTime.rows.lead')}
+            </p>
+            {oneTimeRows}
+          </div>
+        ) : null}
       </div>
     </section>
   );

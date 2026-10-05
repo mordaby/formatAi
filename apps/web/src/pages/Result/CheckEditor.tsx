@@ -40,10 +40,11 @@ export function CheckEditor({ ctx, index, onRemoved }: { ctx: EditorCtx; index: 
   if (!v) return null;
   // The marker of an open question (SPEC 8.8 `sameAs`, 21 v12 item 17): it says the other rule and can only be deleted - answering the
   // question on the column's line is what changes the rule (DECISION: its expression is not edited here).
+  // The check "Not sure" keeps on a one-time question (21 v12 item 20, `oneTime`) says what it is in its own words.
   if (v.rule === 'sameAs') {
     return (
       <div className="editor-form">
-        <p className="field__hint">{t('editor.check.sameAs', { other: printFormula(v.expr) })}</p>
+        <p className="field__hint">{t(v.oneTime ? 'editor.check.sameAs.oneTime' : 'editor.check.sameAs', { other: printFormula(v.expr) })}</p>
         <RemoveButton label={t('editor.check.remove')} onClick={() => edit.run({ type: 'removeValidation', index }) && onRemoved()} />
       </div>
     );

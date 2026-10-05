@@ -2,7 +2,7 @@
 // every save"): types only, re-exported from engineApi.ts so the rest of the app sees one worker surface.
 import type { LayoutProblem } from '@formatai/engine';
 import type { Format, LearnResult, PayloadCell, Rules, SourceStructure, Tier } from '@formatai/shared';
-import type { ExampleInputColumn } from '../editor/types';
+import type { ExampleInputColumn, OneTimeCell } from '../editor/types';
 import type { FileBytes } from './engineApi';
 
 // ---------- the example kept in worker memory ----------
@@ -27,6 +27,8 @@ export interface LiveCheckArgs {
   rules: LearnResult | Rules;
   /** 1-based example-output rows marked "fixed by hand": left out of every count. */
   exceptions?: number[];
+  /** SPEC 21 v12 item 20: cells the user said were a one-time change - not compared in that column; listed in `LiveCheckResult.oneTime`. */
+  oneTime?: OneTimeCell[];
   /** Allow a subset above 5,000 example rows (default true). `false` checks every row. */
   subset?: boolean;
   /** SPEC 21 v5 item 1 (the local partial result): compare only these output columns (0-based positions in `rules.output.columns`). */
@@ -80,6 +82,11 @@ export interface LiveCheckResult {
   /** Cell-level mismatches, capped (see `mismatchCount` for the real number). */
   mismatches: CellMismatch[];
   mismatchCount: number;
+  /**
+   * SPEC 21 v12 item 20: the one-time cells (`LiveCheckArgs.oneTime`) that differ from the example - rows that don't follow the rule, by the
+   * user's word. Not mismatches: not in `mismatches`, the counts or `differences`. Real values (shown on this computer only). Absent: none asked.
+   */
+  oneTime?: CellMismatch[];
   /** Mismatching rows first, then matching ones, capped. */
   preview: PreviewRow[];
   /** Titles, header, summary rows, blank rows, row count, file type, or a run that failed outright. */

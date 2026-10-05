@@ -84,8 +84,9 @@ export interface OneTimeQuestion {
   /** Its input row's number in the input file (1-based), for showing the row's own values. */
   inputRow: number;
   by: OneTimeBy;
-  /** `by` id / amount / date: the input column that singles the row out. */
+  /** `by` id / amount / date: the input column that singles the row out, and its value in that row (a real date as ISO text). */
   byColumn?: string;
+  key?: PayloadCell;
   /** The example's value in that row (what the part gives) and what the column's rule gives there without the part. Real values. */
   value: PayloadCell;
   rest: PayloadCell;
@@ -472,6 +473,15 @@ function payloadOf(cell: OutCell | undefined): PayloadCell {
  */
 export function oneTimeQuestions(rules: LearnResult, analysis: PairAnalysis, opts: OneTimeOptions = {}): OneTimeResult {
   const askable = oneTimeParts(rules, analysis, opts);
+  const src = mapHeaders(rules.input.columns, analysis.input.headers).src;
+  /** The input cell of column `header` (as the rules declare it) in input row `inRow`, as the example has it. */
+  const inputCell = (header: string, inRow: number): PayloadCell => {
+    const at = src[rules.input.columns.findIndex((c) => c.header === header)] ?? -1;
+    const cell = analysis.input.rows[inRow]?.[at];
+    if (!cell || cell.v === null) return null;
+    if (typeof cell.v === 'number' && cell.isDate) return isoOfSerial(Math.trunc(cell.v) + (analysis.input.date1904 ? 1462 : 0));
+    return cell.v;
+  };
   const questions = askable.asked.map((s): OneTimeQuestion => {
     const k = s.explains[0]!;
     const aligned = analysis.alignment.rows[k]!;
@@ -482,7 +492,7 @@ export function oneTimeQuestions(rules: LearnResult, analysis: PairAnalysis, opt
       row: (analysis.output.dataRows[aligned.out] ?? 0) + 1,
       inputRow: analysis.input.rowNumbers[aligned.in] ?? aligned.in + 1,
       by: s.by!,
-      ...(s.byColumn !== undefined ? { byColumn: s.byColumn } : {}),
+      ...(s.byColumn !== undefined ? { byColumn: s.byColumn, key: inputCell(s.byColumn, aligned.in) } : {}),
       value: exampleCellAt(analysis, k, s.out).v,
       rest: s.rest,
       check: oneTimeCheck(rules, s),
