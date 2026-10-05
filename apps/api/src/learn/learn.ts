@@ -2,15 +2,30 @@
 // learn. Every call is a single stateless request (no chat history) - see
 // `apps/api/src/llm`'s `complete()`, the one function every call goes through
 // (SPEC 9.6).
+//
+// AI code checks (learn-v9, docs/proposals/ai-code-checks.md; SPEC 21 v14): the first call of a learn - and of each step, which carries
+// every round so far - may answer with CHECKS instead of the rules. `learn()` then returns them (validated, capped: `acceptChecks`) with no
+// rules and no repair; the browser answers them on every row and calls again (`POST /api/learn/step`, `rounds`). The content blocks of a
+// step: the payload (cached), then one block per round - what the AI step asked and what code answered - the newest one cached too, so the
+// next step reads all of it from the cache; after the last allowed round one more block says "answer with the rules now". Every call of a
+// learn-v9 learn is sent the one step schema (`{ checks, rules }`), so the provider's cached prefix holds across them; a call that must
+// answer with the rules (the last round, a repair, the escalation) and asks checks anyway has a schema problem, and the repair round
+// answers with the rules. From the rules on, everything is as before (the checks, repair, escalation - which gets the rounds too).
 import { formulaRulesToWire } from '@formatai/engine';
 import {
+  acceptChecks,
   emptyEstimate,
   estimateCall,
   learnPromptOf,
   learnResultWireJsonSchema,
+  learnStepWireJsonSchema,
   limits,
+  RULES_NOW_INSTRUCTION_V9,
+  splitStepAnswer,
   toWire,
   withRows,
+  type Check,
+  type CheckRound,
   type LearnAlternative,
   type LearnPayload,
   type LearnPrompt,
@@ -83,6 +98,8 @@ export interface LlmCallRecord {
    * alternatives the answer gave that were dropped (`runChecks`; never a repair problem); `overfitFallback` the columns code
    * reported as unsupported because their rule copied rows (SPEC 9.2 layer 6; never a repair problem either). */
   problemCounts: ProblemCounts;
+  /** A `check` call (learn-v9): the checks the answer asked that the API kept, and the ones it dropped. Counts only; absent on any other call. */
+  checks?: { asked: number; dropped: number };
 }
 
 /** Every `RepairProblem` kind, for `problemCounts` (SPEC 15: counts only, never text). */
@@ -151,10 +168,22 @@ export interface LearnOptions {
    * 'fallBack'`: such a rule is reported as unsupported by code, never sent back again.
    */
   overfitRepaired?: boolean;
+  /**
+   * AI code checks (learn-v9, `prompt: 'learn-v9'`): every round of checks so far, this step's last - what the AI step asked and what code
+   * answered (`POST /api/learn/step`'s `rounds`). Empty or absent: the learn's first call. Ignored by a prompt version without checks.
+   */
+  rounds?: readonly CheckRound[];
 }
 
 export interface LearnOutcome {
   rules: LearnResult | null;
+  /**
+   * AI code checks (learn-v9): the AI step asked code to check ideas before it answers - `rules` is null, `verified` false, `problems` empty,
+   * and no repair was made. Validated and capped (`acceptChecks`). The caller answers them and makes the next step (`rounds`).
+   */
+  checks?: Check[];
+  /** With `checks`: one short line per check the API dropped, for the next round's `dropped`. */
+  droppedChecks?: string[];
   /** learn-v8: the alternatives of the kept answer that passed their checks (`runChecks`), in its own vocabulary. Never part of `rules`. */
   alternatives?: LearnAlternative[];
   /** True once an attempt passed every SPEC 9.2 check (layers 1-7) with zero
@@ -172,12 +201,36 @@ interface Attempt {
   problems: RepairProblem[];
   rules: LearnResult | null;
   alternatives: LearnAlternative[];
+  /** learn-v9: the answer asked these checks (where it may) instead of answering with the rules; `rules` is null. */
+  checks?: Check[];
+  droppedChecks?: string[];
 }
 
 function payloadBlock(payload: LearnPayload): ContentBlock {
   // LEARN_PROMPT §1: "serialized compactly with no pretty-printing."
   return { text: JSON.stringify(payload), cache: true };
 }
+
+/**
+ * learn-v9: the block of one round of checks, after the payload (LEARN_PROMPT §1, "Checking with code"): `{ round, checks, answers }`, and
+ * `dropped` when the API did not run some of what was asked. DECISION: the newest round carries a cache breakpoint as the payload does - the
+ * next step sends the same blocks again and one more, so it reads everything up to here from the cache (Anthropic: system, payload and
+ * newest round = 3 breakpoints of the 4 allowed; OpenAI caches the longest prefix it has seen, whatever is marked).
+ */
+function roundBlock(round: CheckRound, n: number, newest: boolean): ContentBlock {
+  const block = { round: n, checks: round.checks, answers: round.answers, ...(round.dropped && round.dropped.length > 0 ? { dropped: round.dropped } : {}) };
+  return { text: JSON.stringify(block), ...(newest ? { cache: true } : {}) };
+}
+
+/** learn-v9: the instruction block of a call that must answer with the rules - after the last round of checks, and the escalation's. */
+const RULES_NOW_BLOCK: ContentBlock = { text: RULES_NOW_INSTRUCTION_V9 };
+
+/** learn-v9: the problem of an answer that asked checks where it had to answer with the rules (a schema problem: the repair answers with rules). */
+const CHECKS_NOT_NOW: RepairProblem = {
+  kind: 'schema',
+  path: 'checks',
+  message: 'No more checks: answer with the rules ("checks": null, "rules": the rules file).',
+};
 
 /** The models whose cached prefix (system prompt + schema) this learn has already written: the first call on a model writes it,
  * every later call on that model reads it. A different model (the escalation) writes its own. */
@@ -216,17 +269,30 @@ async function callAndCheck(
   prompt: LearnPrompt,
   rows: readonly Sample[] = [],
   overfit: 'repair' | 'fallBack' = 'repair',
+  /** learn-v9: this call may answer with checks (the learn's first call or a step's, while rounds are left). */
+  checksAllowed = false,
 ): Promise<{ record: LlmCallRecord; attempt: Attempt }> {
-  const schema = learnResultWireJsonSchema({ alternatives: prompt.alternatives });
+  // learn-v9: one schema for every call of the learn (the cache); any other version, the rules schema it was written for.
+  const schema = prompt.checks ? learnStepWireJsonSchema() : learnResultWireJsonSchema({ alternatives: prompt.alternatives });
   const promptVersion = prompt.version;
 
   try {
     const result = await completeFn({ system: prompt.system, content, schema, model, purpose }, env);
+    // learn-v9: the answer unwrapped - its rules are checked as any answer; checks asked where they may be are validated and kept (no rules,
+    // no problem); checks where the rules were due, or neither, are a schema problem for the repair round.
+    const step = prompt.checks && !result.truncated ? splitStepAnswer(result.json) : null;
+    const asked = step?.kind === 'checks' && checksAllowed ? { ...acceptChecks(step.checks), raw: step.checks.length } : null;
+    const answer = step === null ? result.json : step.kind === 'rules' ? step.rules : null;
+    const noRules = { rules: null, alternatives: [], invalidAlternatives: 0, overfitFallbacks: 0 };
     // The learning loop: checked on the samples plus every row the browser sent (`withRows`); a problem on one of those rows names the row.
     // (A cut-off answer is not checked: there is nothing whole to check.)
     const checked = result.truncated
-      ? { problems: [TRUNCATED_PROBLEM], rules: null, alternatives: [], invalidAlternatives: 0, overfitFallbacks: 0 }
-      : runChecks(result.json, withRows(payload, rows), { tier, alternatives: prompt.alternatives, overfit });
+      ? { problems: [TRUNCATED_PROBLEM], ...noRules }
+      : asked
+        ? { problems: [], ...noRules }
+        : step !== null && step.kind !== 'rules'
+          ? { problems: [step.kind === 'checks' ? CHECKS_NOT_NOW : { kind: 'schema' as const, path: '', message: step.message }], ...noRules }
+          : runChecks(answer, withRows(payload, rows), { tier, alternatives: prompt.alternatives, overfit });
     const problems = rowsNamed(checked.problems, payload, rows);
     const { rules, alternatives } = checked;
     // The estimate counts the exact text sent (system prompt, schema, every content block) and received (the raw answer), priced as the
@@ -239,8 +305,10 @@ async function callAndCheck(
       prefixCache.has(prefixKey),
     );
     prefixCache.add(prefixKey);
+    // DECISION: a call that asked checks is recorded as purpose `check` and outcome `checks` (the request went out as the call it was - the
+    // learn's first, or a step's - and only the answer says what it became), with the checks it asked and the ones dropped: counts only.
     const record: LlmCallRecord = {
-      purpose,
+      purpose: asked ? 'check' : purpose,
       model: result.model,
       provider: result.provider,
       ...fallbackFields(result.fallback),
@@ -252,10 +320,14 @@ async function callAndCheck(
       costUsd: result.costUsd,
       estimate,
       latencyMs: result.latencyMs,
-      outcome: result.truncated ? 'truncated' : outcomeOf(problems),
+      outcome: result.truncated ? 'truncated' : asked ? 'checks' : outcomeOf(problems),
       problemCounts: countProblems(problems, checked.invalidAlternatives, checked.overfitFallbacks),
+      ...(asked ? { checks: { asked: asked.checks.length, dropped: asked.raw - asked.checks.length } } : {}),
     };
-    return { record, attempt: { raw: result.truncated ? null : result.json, problems, rules, alternatives } };
+    // (`raw` is what a repair sends back when nothing parsed: for learn-v9 the rules part of the answer, never a checks answer.)
+    const raw = result.truncated ? null : answer;
+    const attempt: Attempt = { raw, problems, rules, alternatives, ...(asked ? { checks: asked.checks, droppedChecks: asked.dropped } : {}) };
+    return { record, attempt };
   } catch (err) {
     const kind = err instanceof LlmError ? err.kind : 'providerError';
     const message = err instanceof Error ? err.message : 'unknown LLM error';
@@ -363,7 +435,8 @@ interface CallContext {
   completeFn: CompleteFn;
   env: Env;
   model: string;
-  block: ContentBlock;
+  /** What every call of the sequence starts with: the payload block, and (learn-v9) one block per round of checks. */
+  head: ContentBlock[];
   payload: LearnPayload;
   tier: Tier;
   prefixCache: PrefixCache;
@@ -392,7 +465,7 @@ async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt>
       ctx.env,
       'repair',
       ctx.model,
-      [ctx.block, repairContentBlock(current, current.problems, ctx.prompt)],
+      [...ctx.head, repairContentBlock(current, current.problems, ctx.prompt)],
       ctx.payload,
       ctx.tier,
       ctx.prefixCache,
@@ -434,6 +507,10 @@ function outcomeOfAttempts(ctx: CallContext): LearnOutcome {
  *    `serverRepairRounds` are configured - "then no further repair."
  * 4. Returns the attempt with the fewest problems across every call made (ties keep
  *    the earliest attempt), not necessarily the last one tried.
+ *
+ * learn-v9 (AI code checks, see the file header): when the first call (of the learn, or of a step: `opts.rounds`) answers with checks while
+ * rounds are left, that is the outcome - `checks`, no rules, no repair, no escalation. After the last round the call is told to answer with
+ * the rules; one that asks checks anyway gets the repair round like any schema problem. The repairs and the escalation get the rounds too.
  */
 export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<LearnOutcome> {
   const env = opts.env ?? loadEnv();
@@ -441,18 +518,37 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
   const block = payloadBlock(payload);
   const firstTryModel = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
   const prompt = learnPromptOf(opts.prompt);
-  const ctx: CallContext = { completeFn, env, model: firstTryModel, block, payload, tier: opts.tier, prefixCache: new Set(), rows: [], prompt, calls: [], attempts: [], opts, overfitRepaired: opts.overfitRepaired === true };
+  const rounds = prompt.checks ? (opts.rounds ?? []) : [];
+  const head = [block, ...rounds.map((round, i) => roundBlock(round, i + 1, i === rounds.length - 1))];
+  const checksLeft = prompt.checks === true && rounds.length < limits.learn.checks.maxRounds;
+  // learn-v9: a call that must answer with the rules says so in one more block (after the last round; the escalation).
+  const rulesNow = prompt.checks ? [RULES_NOW_BLOCK] : [];
+  const ctx: CallContext = { completeFn, env, model: firstTryModel, head, payload, tier: opts.tier, prefixCache: new Set(), rows: [], prompt, calls: [], attempts: [], opts, overfitRepaired: opts.overfitRepaired === true };
 
-  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, [block], payload, opts.tier, ctx.prefixCache, prompt, [], overfitMode(ctx));
+  const firstContent = checksLeft || !prompt.checks ? head : [...head, ...rulesNow];
+  const first = await callAndCheck(completeFn, env, 'learn', firstTryModel, firstContent, payload, opts.tier, ctx.prefixCache, prompt, [], overfitMode(ctx), checksLeft);
   ctx.calls.push(first.record);
   ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);
+
+  if (first.attempt.checks) {
+    const dropped = first.attempt.droppedChecks ?? [];
+    return {
+      rules: null,
+      checks: first.attempt.checks,
+      ...(dropped.length > 0 ? { droppedChecks: dropped } : {}),
+      verified: false,
+      problems: [],
+      calls: ctx.calls,
+      ...(ctx.overfitRepaired ? { overfitRepaired: true } : {}),
+    };
+  }
 
   const current = await serverRepairs(ctx, first.attempt);
 
   if (current.problems.length > 0 && !opts.signal?.aborted && !opts.noEscalation) {
     const escalationModel = opts.models?.escalation ?? resolveModel(env, 'escalation');
-    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [block], payload, opts.tier, ctx.prefixCache, prompt, [], overfitMode(ctx));
+    const escalated = await callAndCheck(completeFn, env, 'escalation', escalationModel, [...head, ...rulesNow], payload, opts.tier, ctx.prefixCache, prompt, [], overfitMode(ctx));
     ctx.calls.push(escalated.record);
     ctx.attempts.push(escalated.attempt);
     opts.onAttempt?.(escalated.attempt.problems);
@@ -493,7 +589,8 @@ export async function repairFromBrowser(
   // DECISION: this call always comes after the learn's own first call on the same model, so the cached prefix is already there.
   // (A round whose problems carry an `overfit` problem is the learn's one repair for it: its answers are checked with `fallBack`.)
   const overfitRepaired = opts.overfitRepaired === true || problems.some((p) => p.kind === 'overfit');
-  const ctx: CallContext = { completeFn, env, model, block, payload, tier: opts.tier, prefixCache: new Set([model]), rows: opts.rows ?? [], prompt, calls: [], attempts: [], opts, overfitRepaired };
+  // (learn-v9: a round of the learning loop answers with the rules - its repair instruction says so; it carries no rounds of checks.)
+  const ctx: CallContext = { completeFn, env, model, head: [block], payload, tier: opts.tier, prefixCache: new Set([model]), rows: opts.rows ?? [], prompt, calls: [], attempts: [], opts, overfitRepaired };
 
   const first = await callAndCheck(completeFn, env, 'repair', model, [block, repairContentBlock(previous, problems, prompt)], payload, opts.tier, ctx.prefixCache, prompt, ctx.rows, overfitMode(ctx));
   ctx.calls.push(first.record);

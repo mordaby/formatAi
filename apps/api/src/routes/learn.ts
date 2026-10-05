@@ -13,6 +13,17 @@
 // failed-attempt cap on its example pair, same outcome report), except that it never touches the structure cache - its answer contains
 // the user's own rules, so it is neither served from nor stored in it.
 //
+// AI code checks (learn-v9, SPEC 21 v14; docs/proposals/ai-code-checks.md): for the learns `LEARN_CHECKS` gives learn-v9 to (off / admin /
+// all; `limits.learn.checks.mode`), /api/learn may answer with CHECKS instead of the rules: `{ checks, droppedChecks?, learnId }`, no rules.
+// The browser answers them on every row and sends POST /api/learn/step `{ token: learnId, payload, rounds }` - the payload and every round so
+// far - and the AI step is called again with all of it: more checks while rounds are left, then the rules. The server stays stateless (the
+// browser resends everything) and keeps the caps by the signed learnId: a step counter per learn (`step:<uuid>`, at most
+// `limits.learn.checks.maxRounds`), the rounds' shape, rows and the payload byte cap on the whole body (`stepFits`). Quota: still ONE learn,
+// counted on success - DECISION: the unit reserved for a call that answers with checks is put back at once (an abandoned learn costs
+// nothing), and each step reserves it again before its call, so a user with no learn left gets no step either; the step that brings the
+// rules settles the learn exactly as /api/learn does. A learn whose rounds are non-empty is never stored in the structure cache, and the
+// cache never answers a step. The repairs of a learn-v9 learn use learn-v9 too (same system prompt, same schema: the cache).
+//
 // learn-v7 (issue #40): an answer may carry two optional notes on an unsupported column - a value-free function request and a plain-language
 // explanation (see `learn/notes.ts`). The request is value-filtered and recorded in `function_requests` before the answer goes back; the
 // explanation goes back to the browser (masked) and NOWHERE else: `stripAiNotes` takes both notes out before the structure cache is written.
@@ -23,16 +34,22 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
+  CheckRoundsSchema,
+  learnChecksModeOf,
   LearnPayloadSchema,
   LearnResultSchema,
   limits,
   loopRowsFit,
   LoopRowsSchema,
   promptVersion,
+  stepFits,
   stripAiNotes,
   sumEstimates,
   withRows,
   type ApiErrorBody,
+  type CheckRound,
+  type PromptVersion,
+  type StepResponse,
   type LearnOutcomeResponse,
   type LearnQuotaResponse,
   type LearnPayload,
@@ -61,7 +78,7 @@ import {
 } from '../protection/aiLearns.js';
 import { identityOf, ownerOf, type Identity } from '../protection/identity.js';
 import { normalizeIp } from '../protection/ip.js';
-import { aiQuotaOf, dayKey, repairKey, tierOf } from '../protection/keys.js';
+import { aiQuotaOf, dayKey, repairKey, stepKey, tierOf } from '../protection/keys.js';
 import { issueLearnId, verifyLearnId } from '../protection/learnId.js';
 import type { Protection } from '../protection/index.js';
 import { reserveLearn } from '../protection/reserve.js';
@@ -80,6 +97,12 @@ export interface RegisterLearnRoutesOptions {
 interface LearnRequestBody {
   payload?: unknown;
   noCache?: unknown;
+}
+
+interface StepRequestBody {
+  token?: unknown;
+  payload?: unknown;
+  rounds?: unknown;
 }
 
 interface RepairRequestBody {
@@ -131,6 +154,8 @@ function ledgerDocs(learnId: string, identity: Identity, calls: readonly LlmCall
     outcome: c.outcome,
     cacheHit: false,
     problemCounts: c.problemCounts,
+    // AI code checks: a `check` call's counts (how many checks it asked, how many were dropped) - never the checks themselves.
+    ...(c.checks ? { checks: c.checks } : {}),
   }));
 }
 
@@ -212,6 +237,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     payload: LearnPayload,
     outcome: LearnOutcome,
     now: Date,
+    version: PromptVersion = promptVersion,
   ): Promise<void> => {
     if (payload.complete !== undefined) return; // completion: the answer holds the user's own rules (see the file header)
     if (!outcome.verified || !outcome.rules) return;
@@ -219,7 +245,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const rules = stripAiNotes(outcome.rules);
     if (!isCacheable(rules, payload.masking)) return;
     try {
-      await store.putCachedRules({ owner, key, rules, promptVersion, createdAt: now });
+      await store.putCachedRules({ owner, key, rules, promptVersion: version, createdAt: now });
     } catch (err) {
       logFailure('failed to write the learn cache', err);
     }
@@ -247,6 +273,17 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     });
     return noted.rules === outcome.rules ? outcome : { ...outcome, rules: noted.rules };
   };
+
+  /**
+   * AI code checks (SPEC 21 v14): the prompt version a signed-in user's learn is sent - learn-v9 when `LEARN_CHECKS` gives it to them (`all`,
+   * or `admin` and they are an admin), otherwise the default (`promptVersion`, learn-v7). The same for the learn, its steps and its repairs.
+   * DECISION: a value that is no mode (the production check stops the start on it) means off here, so a typo never turns the checks on.
+   */
+  const checksFor = (identity: Identity): boolean => {
+    const mode = learnChecksModeOf(env.LEARN_CHECKS) ?? 'off';
+    return mode === 'all' || (mode === 'admin' && identity.kind === 'user' && identity.isAdmin === true);
+  };
+  const promptFor = (identity: Identity): PromptVersion => (checksFor(identity) ? 'learn-v9' : promptVersion);
 
   /** At least one model answered: a provider outage (every call an `error:*`) is nobody's failed attempt. */
   const modelAnswered = (calls: readonly LlmCallRecord[]): boolean => calls.some((c) => !c.outcome.startsWith('error:'));
@@ -326,9 +363,10 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     if (!check.ok) throw new Error('issued a learnId that does not verify'); // unreachable: signed just above
     const ctx = ctxOf(identity, now, check);
 
+    const prompt = promptFor(identity);
     let outcome: LearnOutcome;
     try {
-      outcome = await withRecordedRequests(await learn(payload, { tier: tierOf(identity), env, complete }), payload, owner, now);
+      outcome = await withRecordedRequests(await learn(payload, { tier: tierOf(identity), env, complete, prompt }), payload, owner, now);
     } catch (err) {
       // Something threw past the provider layer: nothing was learned, nothing counts.
       await releaseReservation(ctx).catch((e: unknown) => logFailure('failed to release an AI learn', e));
@@ -336,7 +374,28 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     }
 
     await recordCalls(check.uuid, identity, outcome.calls, now);
-    await saveToCache(owner, cacheKey, payload, outcome, now);
+
+    // AI code checks: the AI step asked checks before it answers - no rules yet. Nothing counts: the unit is put back (each step reserves it
+    // again), the learn stays open, and the browser makes the steps under this learnId.
+    if (outcome.checks) {
+      await releaseReservation(ctx).catch((e: unknown) => logFailure('failed to release an AI learn', e));
+      const res: LearnResponse = {
+        rules: null,
+        checks: outcome.checks,
+        ...(outcome.droppedChecks ? { droppedChecks: outcome.droppedChecks } : {}),
+        verified: false,
+        problems: [],
+        ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
+        learnId,
+        cached: false,
+        counted: false,
+        failedAttempts: (await stateOf(ctx)).failedAttempts,
+        quota: await quotaState(store, ctx.quota),
+      };
+      return reply.send(res);
+    }
+
+    await saveToCache(owner, cacheKey, payload, outcome, now, prompt);
 
     const settled = await settleLearn(ctx, { answered: modelAnswered(outcome.calls), verified: outcome.verified });
     if (settled.exhausted && settled.counted && !outcome.verified) {
@@ -354,6 +413,96 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
       learnId,
       cached: false,
+      counted: settled.counted,
+      failedAttempts: settled.failedAttempts,
+      quota: await quotaState(store, ctx.quota),
+    };
+    return reply.send(res);
+  });
+
+  // AI code checks (SPEC 21 v14): one step of a learn whose AI step asked checks - the payload and every round so far, under the learn's
+  // signed learnId. The answer is more checks (while rounds are left) or the rules, settled like /api/learn's.
+  app.post('/api/learn/step', { onRequest: rateLimit }, async (req, reply) => {
+    const identity = identify(req);
+    if (identity.kind !== 'user') return fail(reply, 403, { error: 'signInForAi' });
+    // Only learns that were sent learn-v9 make steps (`LEARN_CHECKS`).
+    if (!checksFor(identity)) return fail(reply, 400, { error: 'invalidRequest' });
+
+    const body = req.body as StepRequestBody | undefined;
+    const parsedPayload = LearnPayloadSchema.safeParse(body?.payload);
+    if (!parsedPayload.success) return fail(reply, 400, { error: 'invalidPayload' });
+    const payload = parsedPayload.data as unknown as LearnPayload;
+    if (payload.complete && !readCompleteFixed(payload.complete)) return fail(reply, 400, { error: 'invalidPayload' });
+    // The rounds: their shape (checks the gate accepts, one answer each, the answers' caps), at most `maxRounds`, the rows they show within
+    // the learn's row limit with the payload's own, and the whole body under the payload byte cap.
+    const parsedRounds = CheckRoundsSchema.safeParse(body?.rounds);
+    if (!parsedRounds.success) return fail(reply, 400, { error: 'invalidRounds' });
+    const rounds = parsedRounds.data as CheckRound[];
+    if (!stepFits(payload, rounds)) return fail(reply, 400, { error: 'invalidRounds' });
+
+    const owner = ownerOf(identity);
+    const now = protection.now();
+
+    // A step belongs to a learn this owner really ran (signed, owner-bound, unexpired).
+    const learnCheck = verifyLearnId(secret, owner, body?.token, now);
+    if (!learnCheck.ok) return fail(reply, 400, { error: 'invalidLearnId' });
+
+    if (await pairExhausted(store, owner, learnCheck.group)) return fail(reply, 409, { error: 'aiAttemptsExhausted', counted: false });
+
+    const refusal = await budgetRefusal(identity, now);
+    if (refusal) return fail(reply, refusal.status, refusal.body);
+
+    // Step N carries N rounds: a request may not skip ahead of the steps made (one sent again after a lost answer is fine: the counter caps it).
+    const made = await store.getCounter(stepKey(learnCheck.uuid));
+    if (rounds.length > made + 1) return fail(reply, 400, { error: 'invalidRounds' });
+    // At most `maxRounds` steps per learn; the `step:<uuid>` counter makes the cap atomic. A request refused above costs no step.
+    const steps = await store.incrementCounter(stepKey(learnCheck.uuid), 1, new Date(learnCheck.expiresAt.getTime() + HOUR_MS));
+    if (steps > limits.learn.checks.maxRounds) return fail(reply, 429, { error: 'limitHit', limit: 'stepsPerLearn' });
+
+    // The quota unit, reserved again for this call (see the file header): put back if the answer is more checks, settled if it is the rules.
+    const ctx = ctxOf(identity, now, learnCheck);
+    if (ctx.quota.spec) {
+      const reservation = await reserveLearn(store, [ctx.quota.spec]);
+      if (!reservation.ok) return fail(reply, 429, { error: 'limitHit', limit: reservation.limitCode, period: ctx.quota.period });
+    }
+
+    let outcome: LearnOutcome;
+    try {
+      outcome = await withRecordedRequests(await learn(payload, { tier: tierOf(identity), env, complete, prompt: 'learn-v9', rounds }), payload, owner, now);
+    } catch (err) {
+      await releaseReservation(ctx).catch((e: unknown) => logFailure('failed to release an AI learn', e));
+      throw err;
+    }
+
+    await recordCalls(learnCheck.uuid, identity, outcome.calls, now);
+    // (Never the structure cache: a learn whose rounds are non-empty is not stored there - see the file header.)
+
+    if (outcome.checks) {
+      await releaseReservation(ctx).catch((e: unknown) => logFailure('failed to release an AI learn', e));
+      const more: StepResponse = {
+        rules: null,
+        checks: outcome.checks,
+        ...(outcome.droppedChecks ? { droppedChecks: outcome.droppedChecks } : {}),
+        verified: false,
+        problems: [],
+        ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
+        counted: false,
+        failedAttempts: (await stateOf(ctx)).failedAttempts,
+        quota: await quotaState(store, ctx.quota),
+      };
+      return reply.send(more);
+    }
+
+    const settled = await settleLearn(ctx, { answered: modelAnswered(outcome.calls), verified: outcome.verified });
+    if (settled.exhausted && settled.counted && !outcome.verified) return fail(reply, 409, { error: 'aiAttemptsExhausted', counted: true });
+    if (settled.exhausted && !outcome.verified) return fail(reply, 409, { error: 'aiAttemptsExhausted', counted: false });
+
+    const res: StepResponse = {
+      rules: outcome.rules,
+      ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
+      verified: outcome.verified,
+      problems: outcome.problems,
+      ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
       counted: settled.counted,
       failedAttempts: settled.failedAttempts,
       quota: await quotaState(store, ctx.quota),
@@ -413,11 +562,14 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const previousRules: LearnResult = parsedRules.data;
     // (The rows are values of the user's own files too: a function request is filtered against them like against the samples.)
     const checked = withRows(payload, rows);
+    // (A learn-v9 learn's rounds are repaired with learn-v9 too: the same system prompt and schema, so the cached prefix still hits.)
+    const prompt = promptFor(identity);
     const outcome = await withRecordedRequests(
       await repairFromBrowser(payload, previousRules, body.problems, {
         tier: tierOf(identity),
         env,
         complete,
+        prompt,
         rows,
         overfitRepaired: body.overfitRepaired === true,
       }),
@@ -430,7 +582,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     await recordCalls(learnCheck.uuid, identity, outcome.calls, now);
     // The repaired rules replace the owner's entry for this structure, so a later cache hit returns
     // the better version rather than the one the browser had to repair.
-    await saveToCache(owner, learnCacheKey(payload), payload, outcome, now);
+    await saveToCache(owner, learnCacheKey(payload), payload, outcome, now, prompt);
 
     // A round whose answer passes the server checks makes the learn a success (a round never counts on its own, and however many rounds a
     // learn takes it counts once: `markSucceeded` is idempotent); one that does not changes nothing - the learn's failure was recorded when

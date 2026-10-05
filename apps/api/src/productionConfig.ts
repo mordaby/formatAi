@@ -3,6 +3,7 @@
 // the backstop for tests and other callers; this check is what the owner sees first, with EVERY missing setting in one
 // message instead of one per restart. It never prints a value: only names, and what a value must look like.
 import { existsSync } from 'node:fs';
+import { LEARN_CHECKS_MODES, learnChecksModeOf } from '@formatai/shared';
 import path from 'node:path';
 import { isTurnstileDisabled, repoRoot, type Env } from './env.js';
 import { PROVIDER_TABLE } from './auth/providers.js';
@@ -84,6 +85,11 @@ export function checkProductionConfig(
     problems.push(`LLM_FALLBACK_PROVIDER=${fallback} is for development: set LLM_FALLBACK_PROVIDER=openai (or anthropic) in production, or remove it for no fallback`);
   } else if (fallback && !apiKeyOf(env, fallback)) {
     problems.push(`${API_KEY_NAMES[fallback]} is not set (LLM_FALLBACK_PROVIDER=${fallback}; remove LLM_FALLBACK_PROVIDER for no fallback)`);
+  }
+
+  // AI code checks (SPEC 21 v14): who gets learn-v9. A value that is no mode is a typo that would silently mean "nobody".
+  if (learnChecksModeOf(env.LEARN_CHECKS) === null) {
+    problems.push(`LEARN_CHECKS must be one of ${LEARN_CHECKS_MODES.join(', ')} (or unset: off)`);
   }
 
   // Sign-in: at least one provider, and never half of one (a provider with only an id is silently not offered).

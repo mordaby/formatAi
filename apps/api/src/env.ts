@@ -77,6 +77,11 @@ const OPTIONAL_STRING_KEYS = [
   'IP_HASH_SECRET',
   /** How many proxy hops to trust for `req.ip` (an integer), or "true" to trust them all. Unset = trust none (req.ip is the socket address). */
   'TRUST_PROXY',
+  /**
+   * AI code checks (SPEC 21 v14): who gets prompt learn-v9 - `off` (nobody: learn-v7, as before), `admin` (the admin accounts), `all`. Unset:
+   * `limits.learn.checks.mode` (off). Read with `learnChecksModeOf`; in production any other value stops the start (`productionConfig.ts`).
+   */
+  'LEARN_CHECKS',
 ] as const;
 
 type OptionalStringKey = (typeof OPTIONAL_STRING_KEYS)[number];

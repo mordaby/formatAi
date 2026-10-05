@@ -197,7 +197,8 @@ export interface EventDoc {
   props: Record<string, unknown>;
 }
 
-export type LlmCallPurpose = 'learn' | 'repair' | 'escalation';
+/** `check`: a call whose answer asked AI code checks instead of the rules (learn-v9, SPEC 21 v14). */
+export type LlmCallPurpose = 'learn' | 'repair' | 'escalation' | 'check';
 
 export interface LlmCallDoc {
   _id?: ObjectId;
@@ -230,6 +231,8 @@ export interface LlmCallDoc {
    * straight from the ledger. learn-v8: `invalidAlternative`, the alternatives an answer gave that the checks dropped (absent on documents
    * written before it existed). */
   problemCounts: Record<RepairProblem['kind'], number> & { invalidAlternative?: number };
+  /** A `check` call (AI code checks): how many checks it asked that the API kept, and how many it dropped. Counts only; absent on every other call. */
+  checks?: { asked: number; dropped: number };
 }
 
 /**
