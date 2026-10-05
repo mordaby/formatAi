@@ -5,11 +5,16 @@
 // module only sequences them exactly as SPEC 5 flow A describes, steps 1-6 (step 7, "show
 // the rules map", and step 8, "saving", are UI/registry concerns outside the engine).
 //
-// Deliberately transport-agnostic: `callLearn`/`callRepair` are injected by the caller,
+// AI code checks (learn-v9, docs/proposals/ai-code-checks.md): when the answer is checks instead of rules, the flow answers them on every row
+// of the example (`learn/checks.ts`, masked like the samples, within the learn's row limit) and makes the next step (`callStep`, with every
+// round so far), until the rules come - at most `limits.learn.checks.maxRounds` rounds. From the rules on, nothing changes.
+//
+// Deliberately transport-agnostic: `callLearn`/`callRepair`/`callStep` are injected by the caller,
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import { aiNotesOf, isCodeCheck, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Format, type LearnAlternative, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
+import { aiNotesOf, isCodeCheck, limits, payloadRowCount, stepBytes, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Check, type CheckAnswer, type CheckRound, type Format, type LearnAlternative, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
+import { answerChecks, checkSummaryOf, withoutRows, type CheckSummary } from './checks';
 import { deepEqual } from '../registry/deepEqual';
 import { columnVerifier, resolveAlternatives, type AlternativeResult } from './alternatives';
 import { fillParams, type FillAmbiguity, type FillResult, type FillSummary } from './fillParams';
@@ -49,6 +54,13 @@ export interface LearnCallResult<Call = unknown> {
    * problem (`LearnResponse.overfitRepaired`). From then on such a rule is reported as unsupported, never sent back again.
    */
   overfitRepaired?: boolean;
+  /**
+   * AI code checks (learn-v9): the AI step asked code to check ideas on every row before it answers (`LearnResponse.checks`, as the API
+   * validated and capped them) - `rules` is then null. `learnFromExamples` answers them and makes the next step (`callStep`).
+   */
+  checks?: Check[];
+  /** With `checks`: one short line per check the API dropped, for the next round (`CheckRound.dropped`). */
+  droppedChecks?: string[];
 }
 
 export interface LearnFromExamplesOptions<Call = unknown> {
@@ -99,6 +111,19 @@ export interface LearnFromExamplesOptions<Call = unknown> {
    * so the fake<->real map, never leaves the browser). `round.rows` are every row the loop sent so far, masked (the request's `rows`).
    */
   callRepair?: (payload: LearnPayload, previousRules: LearnResult, problems: RepairProblem[], round: LoopRound) => Promise<LearnCallResult<Call>>;
+  /**
+   * AI code checks (learn-v9, docs/proposals/ai-code-checks.md): one step of a learn whose AI step asked checks - the browser's `POST
+   * /api/learn/step` (`{ token: learnId, payload, rounds }`), the eval's `learn()` with the rounds. `rounds` is every round so far, this one
+   * last: the checks as `callLearn` / the last step returned them and the answers code gave (masked like the samples). Its result is like
+   * `callLearn`'s: more checks (while rounds are left) or the rules. Without it a checks answer is no answer (no rules), and a learn that asks
+   * none runs exactly as before.
+   */
+  callStep?: (payload: LearnPayload, rounds: CheckRound[]) => Promise<LearnCallResult<Call>>;
+  /**
+   * The payload's pattern hints (`bands`, `dependsOn`, `contains`; `BuildPayloadOptions.patternHints`): default true, as always. False is the
+   * eval's `--no-pattern-hints`, which measures the AI code checks against them (docs/proposals/ai-code-checks.md section 8).
+   */
+  patternHints?: boolean;
   onProgress?: (p: AnalysisProgress) => void;
   /**
    * Called once with the successful pair analysis, before pre-flight. The web worker keeps it
@@ -209,6 +234,11 @@ export interface LearnFromExamplesResult<Call = unknown> {
   };
   /** The learning loop (path 'llm' with rules): rounds made, rows they sent, and how it ended. `rules` is its best answer. */
   loop?: LoopSummary;
+  /**
+   * Path 'llm': the AI code checks the AI step asked before it answered (learn-v9) - rounds, checks, rows shown, dropped, errors. Counts
+   * only, for the eval report and the UI's progress line. Absent when it asked none.
+   */
+  checks?: CheckSummary;
   /**
    * Path 'llm' with rules: what code filled in the kept answer from every row of the example (`fillParams`, proposal 7.1) - kinds and
    * counts only, never a value: for the UI's note ("we completed the branch table from your example: 48 entries") and the eval report.
@@ -346,6 +376,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     ...(masker ? { masker } : {}),
     ...(opts.target ? { target: opts.target } : {}),
     ...(complete ? { complete } : {}),
+    ...(opts.patternHints === false ? { patternHints: false } : {}),
   });
   stages.readinessChecked = true;
   const shownReadiness: AiReadiness = readiness.ready ? { ready: true } : readiness;
@@ -370,11 +401,36 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
 
   // ---- SPEC 5 A step 5: the learn call ----
   stages.llmCalled = true;
-  const learned = await opts.callLearn(payload);
+  let learned = await opts.callLearn(payload);
   const calls: Call[] = [...learned.calls];
+  const built = readiness.built!;
+
+  // ---- AI code checks (learn-v9, docs/proposals/ai-code-checks.md): while the AI step asks checks instead of answering, code answers them on
+  // every row of the example and the next step carries every round so far. The rows they show count toward the learn's row limit with the
+  // payload's own and the loop's (the loop below never sends them again). No `callStep`: a checks answer is no answer. ----
+  const rounds: CheckRound[] = [];
+  const checkRows: number[] = [];
+  while (learned.checks && !learned.rules && opts.callStep && rounds.length < limits.learn.checks.maxRounds) {
+    const next = nextCheckRound(learned.checks, learned.droppedChecks ?? [], {
+      analysis,
+      masker,
+      fixedRules: complete?.fixedRules,
+      payload,
+      rounds,
+      sent: new Set([...built.sampleRows.map((r) => r.in), ...built.droppedRows, ...checkRows]),
+      rowBudget: limits.learn.loop.maxRowsTotal - payloadRowCount(payload) - checkRows.length,
+    });
+    // (Even with counts only the step would pass the payload byte cap: no step can be made.)
+    if (!next) break;
+    rounds.push(next.round);
+    checkRows.push(...next.rowsShown);
+    learned = await opts.callStep(payload, [...rounds]);
+    calls.push(...learned.calls);
+  }
+  const checkSummary = rounds.length > 0 ? { checks: checkSummaryOf(rounds, checkRows.length) } : {};
 
   if (!learned.rules) {
-    return { path: 'llm', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls, stages, readiness: shownReadiness };
+    return { path: 'llm', preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls, stages, readiness: shownReadiness, ...checkSummary };
   }
 
   // ---- SPEC 5 A step 6 / 9.2 layer 8: full verification on the real, unmasked data ----
@@ -563,11 +619,10 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // ---- SPEC 5 A step 6 / 9.3: the learning loop (`learn/loop.ts`) - rounds of browser-triggered repairs, each with the rows still wrong ----
   // (Nothing to say to the AI step when there is no problem to name: an answer that produced no column at all is no verified learn, but
   // there is nothing in the example it differs from - the API's own checks already asked for more.)
-  const built = readiness.built!;
   const caps = opts.callRepair ? loopCaps() : { ...loopCaps(), maxRounds: 0 };
   const loopCtx = { analysis, payload, masker, caps };
   const answers: (Judged | null)[] = [first];
-  let loop = startLoop([...built.sampleRows.map((s) => s.in), ...built.droppedRows]);
+  let loop = startLoop([...built.sampleRows.map((s) => s.in), ...built.droppedRows], checkRows);
   let decided = loopStep(
     loop,
     { rules: true, passes: stages.verifiedFirstCall, wrong: first.wrong + evidence.length, wrongRows: first.wrongRows, otherProblems: [...otherProblems(first), ...evidence] },
@@ -625,6 +680,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     stages,
     readiness: shownReadiness,
     loop: loopSummary,
+    ...checkSummary,
     filled: kept.fill.summary,
     ...(kept.fill.ambiguities.length > 0 ? { ambiguities: kept.fill.ambiguities } : {}),
     ...(kept.alternatives.length > 0 ? { alternatives: kept.alternatives } : {}),
@@ -632,6 +688,34 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     ...(aiNotes.length > 0 ? { aiNotes } : {}),
     ...(complete ? { completion: { columns: [...complete.columns], parts: [...complete.parts], fixedProblems, matches: matchesExample(kept.verification, rules), produced: completionProduced(rules, complete.fixedRules, complete) } } : {}),
   };
+}
+
+/** What `nextCheckRound` needs: the example, the masker, the user's rules (completion), the step so far and the rows sent. */
+interface NextRoundContext {
+  analysis: PairAnalysis;
+  masker: Masker | undefined;
+  fixedRules: LearnResult | Rules | undefined;
+  payload: LearnPayload;
+  rounds: readonly CheckRound[];
+  sent: ReadonlySet<number>;
+  rowBudget: number;
+}
+
+/**
+ * The next round of checks: code's answers (`answerChecks`), and the lines the API sent for what it dropped. DECISION: the step must fit the
+ * payload byte cap with every round (the API refuses it otherwise, `stepFits`), so a round too large is sent with counts only (its rows
+ * withheld, and not counted), then - still too large - with an error for each check; null when even that does not fit.
+ */
+function nextCheckRound(checks: Check[], dropped: string[], ctx: NextRoundContext): { round: CheckRound; rowsShown: number[] } | null {
+  const answered = answerChecks(checks, { analysis: ctx.analysis, masker: ctx.masker, fixedRules: ctx.fixedRules, sent: ctx.sent, rowBudget: ctx.rowBudget });
+  const roundOf = (answers: CheckAnswer[]): CheckRound => ({ checks, answers, ...(dropped.length > 0 ? { dropped } : {}) });
+  const fits = (round: CheckRound): boolean => stepBytes(ctx.payload, [...ctx.rounds, round]) <= limits.payload.maxBytes;
+  const full = roundOf(answered.answers);
+  if (fits(full)) return { round: full, rowsShown: answered.rowsShown };
+  const countsOnly = roundOf(answered.answers.map(withoutRows));
+  if (fits(countsOnly)) return { round: countsOnly, rowsShown: [] };
+  const errors = roundOf(checks.map(() => ({ error: 'not sent: the answers did not fit the size limit of a request' })));
+  return fits(errors) ? { round: errors, rowsShown: [] } : null;
 }
 
 function withoutCodeChecks<R extends LearnResult | Rules>(rules: R): R {

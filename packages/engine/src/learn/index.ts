@@ -11,6 +11,7 @@ export * from './readings';
 export * from './payload';
 export * from './verify';
 export * from './loop';
+export * from './checks';
 export * from './fillParams';
 export * from './overfit';
 export * from './oneTimers';
