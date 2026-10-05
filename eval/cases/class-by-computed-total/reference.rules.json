@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "idNumber",
+        "header": "תז",
+        "type": "idLike",
+        "padLeft": 9
+      },
+      {
+        "id": "customerNo",
+        "header": "מספר לקוח",
+        "type": "integer",
+        "required": true
+      },
+      {
+        "id": "name",
+        "header": "שם",
+        "type": "text"
+      },
+      {
+        "id": "qty",
+        "header": "כמות",
+        "type": "integer",
+        "required": true
+      },
+      {
+        "id": "date",
+        "header": "תאריך",
+        "type": "date"
+      },
+      {
+        "id": "price",
+        "header": "מחיר",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "total",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "arg": {
+            "op": "mul",
+            "args": [
+              {
+                "col": "qty"
+              },
+              {
+                "col": "price"
+              }
+            ]
+          },
+          "digits": 2
+        }
+      },
+      {
+        "id": "dealClass",
+        "type": "text",
+        "expr": {
+          "op": "switch",
+          "cases": [
+            {
+              "when": {
+                "op": "lt",
+                "args": [
+                  {
+                    "col": "total"
+                  },
+                  {
+                    "const": 1000
+                  }
+                ]
+              },
+              "then": {
+                "const": "קטנה"
+              }
+            },
+            {
+              "when": {
+                "op": "lt",
+                "args": [
+                  {
+                    "col": "total"
+                  },
+                  {
+                    "const": 5000
+                  }
+                ]
+              },
+              "then": {
+                "const": "בינונית"
+              }
+            }
+          ],
+          "else": {
+            "const": "גדולה"
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "סיווג עסקאות",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "מספר לקוח",
+        "from": "customerNo"
+      },
+      {
+        "header": "כמות",
+        "from": "qty"
+      },
+      {
+        "header": "מחיר",
+        "from": "price",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "סך הכל",
+        "from": "total",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "סיווג עסקה",
+        "from": "dealClass"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "עסקאות -> סיווג לפי סך הכל",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

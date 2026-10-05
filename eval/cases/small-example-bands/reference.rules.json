@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "sku",
+        "header": "SKU",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "item",
+        "header": "Item",
+        "type": "text"
+      },
+      {
+        "id": "weight",
+        "header": "Weight",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "size",
+        "type": "text",
+        "expr": {
+          "op": "if",
+          "cond": {
+            "op": "lt",
+            "args": [
+              {
+                "col": "weight"
+              },
+              {
+                "const": 50
+              }
+            ]
+          },
+          "then": {
+            "const": "Small"
+          },
+          "else": {
+            "const": "Large"
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Items by size",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "SKU",
+        "from": "sku"
+      },
+      {
+        "header": "Item",
+        "from": "item"
+      },
+      {
+        "header": "Size",
+        "from": "size"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Items -> items by size",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

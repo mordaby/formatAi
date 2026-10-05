@@ -1,0 +1,18 @@
+{
+  "difficulty": "stress",
+  "domain": "customerDeals",
+  "features": [
+    "adversarial",
+    "hebrewHeaders",
+    "hebrewLabels",
+    "rtl",
+    "classByComputedTotal",
+    "bandsOnComputedOutput",
+    "narrowThresholdGap",
+    "roundThresholdPinned",
+    "threeClasses",
+    "droppedColumns"
+  ],
+  "expect": "verified",
+  "expectNote": "סך הכל = כמות x מחיר, rounded to 2 decimals; סיווג עסקה = קטנה below 1000, בינונית below 5000, else גדולה - on the TOTAL, a number the input does not hold (no column to band). In the example the totals nearest each cut-off are 990.00 | 1010.00 and 4990.00 | 5010.00 and none between, so 1000 and 5000 are the round values in the gaps; next month has nothing inside a gap (980 | 1020, 4980 | 5020). May break: the class is banded on the price or the quantity alone, a threshold taken from a row (990 or 1010) instead of 1000, \"<=\" for \"<\", the three Hebrew labels spelled differently, the total not rounded."
+}

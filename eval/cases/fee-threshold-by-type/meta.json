@@ -1,0 +1,15 @@
+{
+  "difficulty": "stress",
+  "domain": "shippingFees",
+  "features": [
+    "adversarial",
+    "thresholdDependsOnType",
+    "twoCutOffs",
+    "bothTypesNearBothCutOffs",
+    "narrowThresholdGap",
+    "roundThresholdPinned",
+    "newRowsNextMonth"
+  ],
+  "expect": "verified",
+  "expectNote": "Shipping is 0 when the type is Member and Total is 200 or more, or the type is Regular and Total is 500 or more; otherwise 25. The example has 90 rows, and for BOTH types a row just below and just above BOTH 200 and 500 (190 | 210 and 490 | 510, nothing else from 185 to 215 or 485 to 515), so only the pair \"Member from 200, Regular from 500\" fits: one cut-off for everyone, or Total alone, does not. Next month: 80 rows, nothing inside a gap (180 | 220, 480 | 520). May break: a single threshold (200 or 500) for both types, the cut-off of one type applied to the other, \"or\" written as \"and\", a value map on Type."
+}

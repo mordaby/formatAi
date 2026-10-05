@@ -1,0 +1,15 @@
+{
+  "difficulty": "stress",
+  "domain": "shipments",
+  "features": [
+    "adversarial",
+    "dateComparison",
+    "dateDiffDays",
+    "flagFromTwoDates",
+    "sameDayIsNotLate",
+    "zeroWhenNotLate",
+    "newRowsNextMonth"
+  ],
+  "expect": "verified",
+  "expectNote": "Late = Yes when Delivered is after Due (the day itself is NOT late), else No; Days Late = the days between Due and Delivered, 0 when not late (dateDiff on the two dates, never below 0). The example has 6 shipments a day early, 9 on the due day and 7 a day late, so \"after\" (not \"on or after\") and \"0 when early\" (not a negative count) are both shown. May break: \">=\" for \">\", a negative Days Late for an early delivery, Days Late counted from a text of the dates, a lookup on the date pairs of the example."
+}

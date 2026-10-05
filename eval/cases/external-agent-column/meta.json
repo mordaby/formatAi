@@ -1,0 +1,14 @@
+{
+  "difficulty": "stress",
+  "domain": "customerAccounts",
+  "features": [
+    "adversarial",
+    "externalData",
+    "unsupportedColumn",
+    "randomPerRow",
+    "noRuleToInvent",
+    "copiedColumns"
+  ],
+  "expect": "unsupported:externalData",
+  "expectNote": "five columns are copied; Account Manager is one of 8 names that appear nowhere in the input, drawn at random per row - not tied to the company, the region or the plan (every one of those repeats with different managers). The honest answer is a rules file for the five copied columns and Account Manager reported unsupported with externalData. May break: a rule invented from the data (a value map on Company, a condition on Region or Plan that fits 40 rows by luck, a lookup of the 40 accounts), \"ambiguous\" or \"other\" instead of externalData, or every column given up."
+}

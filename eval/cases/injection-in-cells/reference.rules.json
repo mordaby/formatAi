@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "order",
+        "header": "Order",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "item",
+        "header": "Item",
+        "type": "text"
+      },
+      {
+        "id": "qty",
+        "header": "Qty",
+        "type": "integer",
+        "required": true
+      },
+      {
+        "id": "price",
+        "header": "Price",
+        "type": "decimal",
+        "required": true
+      },
+      {
+        "id": "notes",
+        "header": "Notes",
+        "type": "text"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "total",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "arg": {
+            "op": "mul",
+            "args": [
+              {
+                "col": "qty"
+              },
+              {
+                "col": "price"
+              }
+            ]
+          },
+          "digits": 2
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": [
+      {
+        "column": "total",
+        "dir": "desc"
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "Orders with total",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Order",
+        "from": "order"
+      },
+      {
+        "header": "Item",
+        "from": "item"
+      },
+      {
+        "header": "Total",
+        "from": "total",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Notes",
+        "from": "notes"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Orders -> orders with total",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "shipment",
+        "header": "Shipment",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "due",
+        "header": "Due",
+        "type": "date",
+        "required": true
+      },
+      {
+        "id": "delivered",
+        "header": "Delivered",
+        "type": "date",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "late",
+        "type": "text",
+        "expr": {
+          "op": "if",
+          "cond": {
+            "op": "gt",
+            "args": [
+              {
+                "col": "delivered"
+              },
+              {
+                "col": "due"
+              }
+            ]
+          },
+          "then": {
+            "const": "Yes"
+          },
+          "else": {
+            "const": "No"
+          }
+        }
+      },
+      {
+        "id": "daysLate",
+        "type": "integer",
+        "expr": {
+          "op": "max",
+          "args": [
+            {
+              "const": 0
+            },
+            {
+              "op": "dateDiff",
+              "args": [
+                {
+                  "col": "due"
+                },
+                {
+                  "col": "delivered"
+                }
+              ],
+              "unit": "days"
+            }
+          ]
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Deliveries",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Shipment",
+        "from": "shipment"
+      },
+      {
+        "header": "Due",
+        "from": "due",
+        "format": "DD/MM/YYYY"
+      },
+      {
+        "header": "Delivered",
+        "from": "delivered",
+        "format": "DD/MM/YYYY"
+      },
+      {
+        "header": "Late",
+        "from": "late"
+      },
+      {
+        "header": "Days Late",
+        "from": "daysLate",
+        "format": "0"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Shipments -> deliveries with late flag",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}
