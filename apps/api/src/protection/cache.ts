@@ -13,7 +13,11 @@
 // browser session's random HMAC key, which is gone by the next session - unmasking it would produce
 // nonsense. So with masking on, an entry is stored and returned only when its rules contain no text
 // constants at all (`rulesHaveTextConstants`); otherwise it is a miss and the learn goes to the LLM.
-// With masking off every constant is real and reusable, so nothing is excluded.
+//
+// DECISION (owner, 2026-10-05): with masking OFF nothing is cached at all. Its constants would be REAL values from the user's
+// example (a name in a condition, a value-map entry) kept on the server even when the user never saves the format; the cache
+// only saves an LLM call, so it isn't worth holding real data for. (An entry written under the old rule is never served: the
+// read re-checks `isCacheable`; it expires with the TTL.)
 import { createHash } from 'node:crypto';
 import { promptVersion, type LearnPayload, type LearnResult } from '@formatai/shared';
 
@@ -109,5 +113,5 @@ export function rulesHaveTextConstants(rules: LearnResult): boolean {
 
 /** Whether `rules`, learned with this masking mode, may be stored in and served from the cache. */
 export function isCacheable(rules: LearnResult, masking: boolean): boolean {
-  return !masking || !rulesHaveTextConstants(rules);
+  return masking && !rulesHaveTextConstants(rules);
 }

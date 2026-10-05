@@ -188,9 +188,9 @@ describe('isCacheable', () => {
     r.transform.computed.push({ id: 'label', type: 'text', expr: { const: 'Paid' } });
   });
 
-  it('with masking off, everything is cacheable (constants are real)', () => {
-    expect(isCacheable(withConstant, false)).toBe(true);
-    expect(isCacheable(correctRules(), false)).toBe(true);
+  it('with masking off, nothing is cacheable: its constants would be real values from the example (owner decision 2026-10-05)', () => {
+    expect(isCacheable(withConstant, false)).toBe(false);
+    expect(isCacheable(correctRules(), false)).toBe(false);
   });
 
   it('with masking on, only rules without text constants are cacheable', () => {

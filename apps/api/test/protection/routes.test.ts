@@ -25,6 +25,10 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** A learn body with masking ON: the structure cache only holds (and serves) masking-ON rules without text constants, so every test
+ * of the cache itself learns with this (`basicPayload()` is masking OFF, which is never cached). */
+const masked = () => ({ payload: basicPayload({ masking: true }) });
+
 function defineProtectionSuite(kit: StoreKit): void {
   useKit(kit);
 
@@ -406,10 +410,10 @@ function defineProtectionSuite(kit: StoreKit): void {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
-      expect((await h.learn({}, { cookie })).statusCode).toBe(200);
+      expect((await h.learn(masked(), { cookie })).statusCode).toBe(200);
 
       await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd, false);
-      const hit = await h.learn({}, { cookie });
+      const hit = await h.learn(masked(), { cookie });
       expect(hit.statusCode).toBe(200);
       expect(hit.json().cached).toBe(true);
     });
@@ -424,12 +428,12 @@ function defineProtectionSuite(kit: StoreKit): void {
       const cookie = anonCookie(await h.get('/api/session'));
       const key = aiLearnsKey(TEST_USER, 'month', h.clock.current);
 
-      const first = (await h.learn({}, { cookie })).json();
+      const first = (await h.learn(masked(), { cookie })).json();
       expect(first.cached).toBe(false);
       expect(await h.handle.counter(key)).toBe(1);
       expect(await h.handle.cacheEntryCount()).toBe(1);
 
-      const hit = await h.learn({}, { cookie });
+      const hit = await h.learn(masked(), { cookie });
       expect(hit.statusCode).toBe(200);
       const body = hit.json();
       expect(body).toMatchObject({ verified: true, cached: true, problems: [] });
@@ -443,9 +447,9 @@ function defineProtectionSuite(kit: StoreKit): void {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
-      await h.learn({}, { cookie });
+      await h.learn(masked(), { cookie });
 
-      const other = basicPayload();
+      const other = basicPayload({ masking: true });
       other.samples = [{ in: ['Z1', 100], out: ['Z1', 200] }];
       const hit = await h.learn({ payload: other }, { cookie });
       expect(hit.json().cached).toBe(true);
@@ -455,8 +459,8 @@ function defineProtectionSuite(kit: StoreKit): void {
     it('records a cacheHit ledger entry: no model, no tokens, no cost', async () => {
       const h = await setup({ complete: makeComplete({ costUsd: 0.5 }).fn });
       const cookie = anonCookie(await h.get('/api/session'));
-      await h.learn({}, { cookie });
-      await h.learn({}, { cookie });
+      await h.learn(masked(), { cookie });
+      await h.learn(masked(), { cookie });
 
       const ledger = await h.handle.ledger();
       expect(ledger).toHaveLength(2);
@@ -481,8 +485,8 @@ function defineProtectionSuite(kit: StoreKit): void {
       const alice = testUserId(11);
       const bob = testUserId(12);
 
-      await h.learn({}, { user: alice });
-      const bobs = await h.learn({}, { user: bob });
+      await h.learn(masked(), { user: alice });
+      const bobs = await h.learn(masked(), { user: bob });
 
       expect(bobs.statusCode).toBe(200);
       expect(bobs.json().cached).toBe(false);
@@ -496,7 +500,7 @@ function defineProtectionSuite(kit: StoreKit): void {
       const llm = makeComplete({ json: wrongRoundingWireJson() });
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
-      expect((await h.learn({}, { cookie })).json().verified).toBe(false);
+      expect((await h.learn(masked(), { cookie })).json().verified).toBe(false);
       expect(await h.handle.cacheEntryCount()).toBe(0);
     });
 
@@ -504,8 +508,8 @@ function defineProtectionSuite(kit: StoreKit): void {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
-      await h.learn({}, { cookie });
-      const fresh = await h.learn({ noCache: true }, { cookie });
+      await h.learn(masked(), { cookie });
+      const fresh = await h.learn({ ...masked(), noCache: true }, { cookie });
       expect(fresh.json().cached).toBe(false);
       expect(llm.calls).toHaveLength(2);
       expect(await h.handle.counter(aiLearnsKey(TEST_USER, 'month', h.clock.current))).toBe(2);
@@ -515,10 +519,10 @@ function defineProtectionSuite(kit: StoreKit): void {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
-      await h.learn({}, { cookie });
+      await h.learn(masked(), { cookie });
 
       h.clock.current = new Date(h.clock.current.getTime() + (limits.cache.ttlDays + 1) * DAY_MS);
-      const after = await h.learn({}, { cookie });
+      const after = await h.learn(masked(), { cookie });
       expect(after.json().cached).toBe(false);
       expect(llm.calls).toHaveLength(2);
     });
@@ -528,8 +532,12 @@ function defineProtectionSuite(kit: StoreKit): void {
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
       await h.learn({ payload: basicPayload({ masking: false }) }, { cookie });
-      const masked = await h.learn({ payload: basicPayload({ masking: true }) }, { cookie });
-      expect(masked.json().cached).toBe(false);
+      const maskedFirst = await h.learn({ payload: basicPayload({ masking: true }) }, { cookie });
+      expect(maskedFirst.json().cached).toBe(false);
+      // And the other way round: the masked entry is not served to a masking-OFF learn of the same structure.
+      const off = await h.learn({ payload: basicPayload({ masking: false }) }, { cookie });
+      expect(off.json().cached).toBe(false);
+      expect(llm.calls).toHaveLength(3);
     });
 
     describe('masking rule (masked constants belong to an earlier session\'s key)', () => {
@@ -557,18 +565,35 @@ function defineProtectionSuite(kit: StoreKit): void {
         expect(llm.calls).toHaveLength(2);
       });
 
-      it('masking OFF + rules with text constants: cached and served (the constants are real)', async () => {
+      it('masking OFF + rules with text constants: never cached nor served (the constants are real values from the example)', async () => {
         const llm = makeComplete({ json: rulesWithTextConstantWireJson() });
         const h = await setup({ complete: llm.fn });
         const cookie = anonCookie(await h.get('/api/session'));
         const payload = basicPayload({ masking: false });
 
-        expect((await h.learn({ payload }, { cookie })).json().verified).toBe(true);
-        expect(await h.handle.cacheEntryCount()).toBe(1);
-        const hit = (await h.learn({ payload }, { cookie })).json();
-        expect(hit.cached).toBe(true);
-        expect(hit.rules.validations[0].values).toEqual(['A1', 'A2']);
-        expect(llm.calls).toHaveLength(1);
+        const first = (await h.learn({ payload }, { cookie })).json();
+        expect(first.verified).toBe(true);
+        expect(first.rules.validations[0].values).toEqual(['A1', 'A2']);
+        expect(await h.handle.cacheEntryCount()).toBe(0);
+        const second = (await h.learn({ payload }, { cookie })).json();
+        expect(second.cached).toBe(false);
+        expect(llm.calls).toHaveLength(2);
+      });
+
+      it('masking OFF, whatever the rules: a learn writes nothing to the cache, so the same request calls the LLM again', async () => {
+        const llm = makeComplete(); // rules without text constants: masking ON would cache them
+        const h = await setup({ complete: llm.fn });
+        const cookie = anonCookie(await h.get('/api/session'));
+        const payload = basicPayload({ masking: false });
+
+        const first = (await h.learn({ payload }, { cookie })).json();
+        expect(first).toMatchObject({ verified: true, cached: false });
+        expect(await h.handle.cacheEntryCount()).toBe(0);
+        const second = (await h.learn({ payload }, { cookie })).json();
+        expect(second.cached).toBe(false);
+        expect(llm.calls).toHaveLength(2);
+        expect(await h.handle.cacheEntryCount()).toBe(0);
+        expect(await h.handle.counter(aiLearnsKey(TEST_USER, 'month', h.clock.current))).toBe(2); // each one is a real, counted learn
       });
     });
 
@@ -576,10 +601,10 @@ function defineProtectionSuite(kit: StoreKit): void {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const cookie = anonCookie(await h.get('/api/session'));
-      const first = (await h.learn({}, { cookie })).json();
+      const first = (await h.learn(masked(), { cookie })).json();
       const repair = await h.post(
         '/api/learn/repair',
-        { payload: basicPayload(), previousRules: first.rules, problems: [], learnId: first.learnId },
+        { payload: basicPayload({ masking: true }), previousRules: first.rules, problems: [], learnId: first.learnId },
         { cookie },
       );
       expect(repair.statusCode).toBe(200);
