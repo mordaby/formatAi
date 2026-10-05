@@ -162,6 +162,9 @@ export const en = {
   'sendPanel.kind.learn': 'Learn request',
   'sendPanel.kind.repair': 'Fix request',
   'sendPanel.kind.round': 'Fix request, round {n} of {of}',
+  // A round of the learning loop sent as a new learn: the result came from an earlier learn of files laid out the same way (no learn to fix).
+  'sendPanel.kind.fresh': 'New learn request, instead of fix round {n} of {of}',
+  'sendPanel.fresh.note': 'Rules from an earlier learn of files laid out like these did not match every row of your example, so the AI learns again from the start. This request carries the same summary and nothing else: no rules, no rows it got wrong.',
   'sendPanel.rows.one': 'It carries 1 row of your example the rules got wrong (every row sent so far).',
   'sendPanel.rows.other': 'It carries {n} rows of your example the rules got wrong (every row sent so far).',
   // A step of AI code checks: the checks the AI asked and your computer's answers, every round so far.
@@ -350,6 +353,8 @@ export const he: Record<MessageKey, string> = {
   'sendPanel.kind.learn': 'בקשת למידה',
   'sendPanel.kind.repair': 'בקשת תיקון',
   'sendPanel.kind.round': 'בקשת תיקון, סבב {n} מתוך {of}',
+  'sendPanel.kind.fresh': 'בקשת למידה חדשה, במקום סבב תיקון {n} מתוך {of}',
+  'sendPanel.fresh.note': 'כללים מלמידה קודמת של קבצים באותו מבנה לא התאימו לכל שורה בדוגמה שלכם, ולכן ה-AI לומד מחדש מההתחלה. הבקשה הזו כוללת את אותו סיכום ותו לא: בלי כללים ובלי שורות שהם טעו בהן.',
   'sendPanel.rows.one': 'היא כוללת שורה אחת מהדוגמה שלכם שהכללים טעו בה (כל השורות שנשלחו עד כה).',
   'sendPanel.rows.other': 'היא כוללת {n} שורות מהדוגמה שלכם שהכללים טעו בהן (כל השורות שנשלחו עד כה).',
   'sendPanel.kind.step': 'תשובות לבדיקות של ה-AI, סבב {n} מתוך {of}',

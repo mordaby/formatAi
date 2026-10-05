@@ -8,7 +8,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Cell } from '../components/Cell';
 import { SheetDirection } from '../components/SheetDirection';
 import { flowErrorText } from '../flow/errors';
-import type { FileLike } from '../flow/learnFlow';
+import { sentBody, type FileLike } from '../flow/learnFlow';
 import { useConvert } from '../flow/useConvert';
 import { useLearnFlow } from '../flow/useLearnFlow';
 import { useI18n } from '../i18n';
@@ -238,7 +238,7 @@ export default function DevPage() {
               {rec.kind}
               {rec.fresh ? ' (fresh, uncached)' : ''} — {t('sendPanel.size', { kb: (rec.bytes / 1024).toFixed(1) })}
             </summary>
-            <pre dir="ltr">{JSON.stringify(rec.kind === 'learn' ? { payload: rec.payload } : rec.kind === 'step' ? { payload: rec.payload, rounds: rec.rounds } : { payload: rec.payload, previousRules: rec.previousRules, problems: rec.problems }, null, 2)}</pre>
+            <pre dir="ltr">{JSON.stringify(sentBody(rec), null, 2)}</pre>
           </details>
         ))}
         <p>{t('masking.always')}</p>

@@ -160,6 +160,25 @@ describe('LearningProgress', () => {
     expect(screen.getAllByTestId('send-record')[2]!.textContent).toContain('תשובות לבדיקות של ה-AI, סבב 2 מתוך 3');
   });
 
+  it('"See what we send" shows a loop round sent as a new learn as what it is: the summary only, no rules, no problems, no rows', () => {
+    const payload = { masking: true, samples: [] };
+    const sent = [
+      { kind: 'learn', bytes: 2048, payload },
+      { kind: 'repair', fresh: true, bytes: 2048, payload, round: { n: 1, of: 3 } },
+    ] as never;
+    show({ status: 'verifying', sent }, ['reading', 'checking', 'learning', 'verifying']);
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    const record = screen.getAllByTestId('send-record')[1]!;
+    expect(record.querySelector('.send-record__head')!.textContent).toBe('New learn request, instead of fix round 1 of 3 · 2.0 KB');
+    expect(record.textContent).toContain('This request carries the same summary and nothing else: no rules, no rows it got wrong.');
+    const json = JSON.parse(within(record).getByRole('region', { name: 'Data sent (JSON)' }).textContent!) as unknown;
+    expect(json).toEqual({ payload, noCache: true, rulesNow: true });
+    cleanup();
+    show({ status: 'verifying', sent }, ['reading', 'checking', 'learning', 'verifying'], 'he');
+    fireEvent.click(screen.getByRole('button', { name: 'מה אנחנו שולחים' }));
+    expect(screen.getAllByTestId('send-record')[1]!.textContent).toContain('בקשת למידה חדשה, במקום סבב תיקון 1 מתוך 3');
+  });
+
   it('"See what we send" lists every round, with the rows it carries, and says before anything is sent that rounds may follow', () => {
     const payload = { masking: true, samples: [] };
     const rows = [{ in: ['x'], out: ['y'] }, { in: ['z'], out: ['w'] }];

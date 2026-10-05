@@ -1,8 +1,8 @@
-import type { LearnPayload, LearnResult } from '@formatai/shared';
+import type { CheckRound, LearnPayload, LearnResult } from '@formatai/shared';
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, type Api } from '../src/api';
+import { ApiError, createApi, type Api } from '../src/api';
 import { flowErrorText, type FlowError } from '../src/flow/errors';
-import { LearnFlow, type FileLike, type LearnFlowDeps, type LearnFlowState } from '../src/flow/learnFlow';
+import { LearnFlow, sentBody, type FileLike, type LearnFlowDeps, type LearnFlowState } from '../src/flow/learnFlow';
 import { codeText, translate, type I18n } from '../src/i18n';
 import type { EngineCallOptions, EngineClient } from '../src/worker/engineClient';
 import type { LearnArgs, LearnHost, LearnOutput, LearnProgress } from '../src/worker/engineApi';
@@ -163,6 +163,51 @@ describe('LearnFlow', () => {
     expect((api.learn as ReturnType<typeof vi.fn>).mock.calls[1]![1]).toMatchObject({ noCache: true, rulesNow: true });
     expect((api.learn as ReturnType<typeof vi.fn>).mock.calls[0]![1]).not.toHaveProperty('rulesNow');
     expect(state(flow).sent[1]).toMatchObject({ kind: 'repair', fresh: true });
+  });
+
+  it('"see what we send" is exactly what left: each record is the body the API client posted (the fresh learn in a loop round: the payload, noCache, rulesNow - nothing else)', async () => {
+    const bodies: { path: string; body: Record<string, unknown> }[] = [];
+    let learns = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input).replace('https://api.test', '');
+      bodies.push({ path, body: JSON.parse(init!.body as string) as Record<string, unknown> });
+      const answer =
+        path === '/api/learn'
+          ? ++learns === 1
+            ? { rules: RULES, verified: true, problems: [], cached: true } // a cache hit: no learnId to repair
+            : { rules: RULES, verified: true, problems: [], learnId: 'L2', cached: false, counted: false, failedAttempts: 0 }
+          : path.endsWith('/outcome')
+            ? { counted: true, failedAttempts: 0, exhausted: false }
+            : { rules: RULES, verified: true, problems: [], counted: false, failedAttempts: 0 };
+      return new Response(JSON.stringify(answer), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const api = createApi({ baseUrl: 'https://api.test', fetch: fetchMock as unknown as typeof fetch });
+    const STEP_ROUND = { checks: [{ check: 'values', column: 'A' }], answers: [{ rows: 3, distinct: 2, empty: 0, top: [] }] } as unknown as CheckRound;
+    const { engine } = fakeEngine(async (_a, host) => {
+      await host.callLearn(PAYLOAD);
+      await host.callRepair(PAYLOAD, PREV_RULES, [{ kind: 'layout', message: 'r1' }], ROUND1); // -> a fresh learn
+      await host.callRepair(PAYLOAD, PREV_RULES, [{ kind: 'layout', message: 'r2' }], { ...ROUND2, overfitRepaired: true }); // -> a repair of L2
+      await host.callStep(PAYLOAD, [STEP_ROUND]);
+      return result({ path: 'llm' });
+    });
+    const { flow, start } = makeFlow(engine, api);
+    await start();
+
+    const sent = state(flow).sent;
+    const posted = bodies.filter((b) => !b.path.endsWith('/outcome'));
+    expect(posted.map((b) => b.path)).toEqual(['/api/learn', '/api/learn', '/api/learn/repair', '/api/learn/step']);
+    expect(sent).toHaveLength(posted.length);
+    // The fresh learn: exactly its body - no previous rules, no problems, no rows.
+    expect(sent[1]).toMatchObject({ kind: 'repair', fresh: true, round: { n: 1, of: 3 } });
+    expect(sentBody(sent[1]!)).toEqual(posted[1]!.body);
+    expect(posted[1]!.body).toEqual({ payload: PAYLOAD, noCache: true, rulesNow: true });
+    expect(sent[1]).not.toHaveProperty('previousRules');
+    expect(sent[1]).not.toHaveProperty('problems');
+    // Every record is its request's body, apart from the learn's id (a repair's learnId, a step's token).
+    const withoutId = ({ learnId: _l, token: _t, ...rest }: Record<string, unknown>) => rest;
+    expect(sent.map(sentBody)).toEqual(posted.map((b) => withoutId(b.body)));
+    expect(posted[2]!.body).toMatchObject({ learnId: 'L2', rows: [ROW_B], overfitRepaired: true });
+    expect(posted[3]!.body).toMatchObject({ token: 'L2' });
   });
 
   describe('the learning loop (SPEC 9.3): rounds of repairs, each with every row sent so far', () => {

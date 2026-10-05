@@ -27,8 +27,13 @@ import { isCancellation, toFlowError, type FlowError } from './errors';
  */
 export interface SentRecord {
   kind: 'learn' | 'repair' | 'step';
-  /** True when a learn was re-sent because a cached result failed full verification (the server has no `learnId` to repair). */
+  /**
+   * A round of the learning loop sent as a fresh learn, because a cached result failed full verification (the server has no `learnId` to
+   * repair): it carries the payload only (`noCache`, `rulesNow`) - no previous rules, no problems, no rows.
+   */
   fresh?: boolean;
+  /** A round of the learning loop: the learn already had its one repair for a rule that copies rows (the request's `overfitRepaired`). */
+  overfitRepaired?: boolean;
   payload: LearnPayload;
   previousRules?: LearnResult;
   problems?: RepairProblem[];
@@ -271,7 +276,12 @@ export class LearnFlow {
         if (fresh) rowsBeforeLearnId = round.rows.length;
         const rows = fresh ? [] : round.rows.slice(rowsBeforeLearnId);
         try {
-          await record({ kind: 'repair', payload, previousRules, problems, round: { n: round.round, of: round.maxRounds }, ...(rows.length > 0 ? { rows } : {}), ...(fresh ? { fresh: true } : {}) });
+          const n = { n: round.round, of: round.maxRounds };
+          await record(
+            fresh
+              ? { kind: 'repair', fresh: true, payload, round: n }
+              : { kind: 'repair', payload, previousRules, problems, round: n, ...(rows.length > 0 ? { rows } : {}), ...(round.overfitRepaired ? { overfitRepaired: true } : {}) },
+          );
           const res = fresh
             ? await this.deps.api.learn(payload, { turnstileToken: await token(), noCache: true, rulesNow: true, signal: abort.signal })
             : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, rows, overfitRepaired: round.overfitRepaired });
@@ -365,6 +375,29 @@ export class LearnFlow {
   private cancelRunning(): void {
     this.abort?.abort();
     this.abort = null;
+  }
+}
+
+/**
+ * The JSON body of the request a record stands for, exactly as `Api` sends it ("See what we send" shows it) - apart from the learn's id (a
+ * repair's `learnId`, a step's `token`) and the Turnstile token, which carry nothing from the files. A fresh learn in a loop round is a learn:
+ * the payload, `noCache` and `rulesNow`, nothing else.
+ */
+export function sentBody(rec: SentRecord): object {
+  switch (rec.kind) {
+    case 'learn':
+      return { payload: rec.payload };
+    case 'step':
+      return { payload: rec.payload, rounds: rec.rounds ?? [] };
+    case 'repair':
+      if (rec.fresh) return { payload: rec.payload, noCache: true, rulesNow: true };
+      return {
+        payload: rec.payload,
+        previousRules: rec.previousRules,
+        problems: rec.problems,
+        ...(rec.rows && rec.rows.length > 0 ? { rows: rec.rows } : {}),
+        ...(rec.overfitRepaired ? { overfitRepaired: true } : {}),
+      };
   }
 }
 

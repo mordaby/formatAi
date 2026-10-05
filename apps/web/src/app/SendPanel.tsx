@@ -1,5 +1,5 @@
 import { limits, newCheckRows } from '@formatai/shared';
-import type { SentRecord } from '../flow/learnFlow';
+import { sentBody, type SentRecord } from '../flow/learnFlow';
 import { useI18n } from '../i18n';
 import { CodeBlock, Panel } from '../ui';
 
@@ -25,18 +25,14 @@ export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
       ? t('sendPanel.kind.learn')
       : rec.kind === 'step'
         ? t('sendPanel.kind.step', { n: rec.round?.n ?? rec.rounds?.length ?? 1, of: rec.round?.of ?? limits.learn.checks.maxRounds })
-        : rec.round
-          ? t('sendPanel.kind.round', { n: rec.round.n, of: rec.round.of })
-          : t('sendPanel.kind.repair');
-  /** What the request carries (the step's token and the repair's learn id are not data from the files). */
-  const jsonOf = (rec: SentRecord): object =>
-    rec.kind === 'learn'
-      ? { payload: rec.payload }
-      : rec.kind === 'step'
-        ? { payload: rec.payload, rounds: rec.rounds ?? [] }
-        : { payload: rec.payload, previousRules: rec.previousRules, problems: rec.problems, ...(rec.rows ? { rows: rec.rows } : {}) };
+        : rec.fresh
+          ? t('sendPanel.kind.fresh', { n: rec.round?.n ?? 1, of: rec.round?.of ?? limits.learn.loop.maxRounds })
+          : rec.round
+            ? t('sendPanel.kind.round', { n: rec.round.n, of: rec.round.of })
+            : t('sendPanel.kind.repair');
   /** The rows of the example a request carries beyond the payload's own: a loop round's rows, or the rows a step's answers show. */
   const rowsNote = (rec: SentRecord): string | null => {
+    if (rec.fresh) return t('sendPanel.fresh.note');
     if (rec.kind === 'step') {
       const n = rec.rounds ? newCheckRows(rec.payload, rec.rounds) : 0;
       return n > 0 ? t(n === 1 ? 'sendPanel.checkRows.one' : 'sendPanel.checkRows.other', { n }) : null;
@@ -68,7 +64,7 @@ export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
                   {kindOf(rec)} · {t('sendPanel.size', { kb: (rec.bytes / 1024).toFixed(1) })}
                 </p>
                 {note ? <p className="muted">{note}</p> : null}
-                <CodeBlock label={t('sendPanel.json')} json={jsonOf(rec)} />
+                <CodeBlock label={t('sendPanel.json')} json={sentBody(rec)} />
               </div>
             );
           })}
