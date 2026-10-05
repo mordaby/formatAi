@@ -48,8 +48,17 @@ const OPTIONAL_STRING_KEYS = [
   'MICROSOFT_CLIENT_SECRET',
   /** Comma-separated Microsoft object ids (`oid`, or `tid:oid`) of admins - the Microsoft counterpart of ADMIN_EMAILS (SPEC 12). */
   'MICROSOFT_ADMIN_OIDS',
-  /** Public base URL of this API, used to build the OIDC redirect URIs (`<url>/api/auth/<provider>/callback`). Default http://localhost:<PORT>. Required in production when a provider is configured. */
+  /** Public base URL of this API, used to build the OIDC redirect URIs (`<url>/api/auth/<provider>/callback`). Default: `PUBLIC_ORIGIN`, else http://localhost:<PORT>. Required in production when a provider is configured. */
   'API_PUBLIC_URL',
+  /**
+   * Deployment (one service, one origin): the origin the browser sees, e.g. https://formatai.onrender.com. When set it is the default
+   * for both `WEB_ORIGIN` (CORS, sign-in redirects) and `API_PUBLIC_URL` (OIDC redirect URIs). Falls back to `RENDER_EXTERNAL_URL`.
+   */
+  'PUBLIC_ORIGIN',
+  /** Set by Render itself on a web service (its `onrender.com` URL); used when `PUBLIC_ORIGIN` is not. */
+  'RENDER_EXTERNAL_URL',
+  /** Folder of the built web app (`apps/web/dist`) that the API serves; relative paths are from the repo root. Default in production: apps/web/dist. */
+  'WEB_DIST',
   'ADMIN_EMAILS',
   'TURNSTILE_SECRET_KEY',
   'VITE_TURNSTILE_SITE_KEY',
@@ -89,6 +98,17 @@ function trimmedOrUndefined(raw: string | undefined): string | undefined {
   return trimmed === '' ? undefined : trimmed;
 }
 
+/** `https://host[:port]` from a URL a person typed (a trailing slash or a path is dropped), or throws naming `key`. */
+function originOf(key: string, raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('not http(s)');
+    return url.origin;
+  } catch {
+    throw new Error(`Invalid ${key} env var: expected an origin like https://formatai.onrender.com`);
+  }
+}
+
 function isLlmProviderName(value: string): value is LlmProviderName {
   return (LLM_PROVIDERS as readonly string[]).includes(value);
 }
@@ -107,10 +127,19 @@ function parseLlmProvider(raw: string | undefined): LlmProviderName {
  * which name the bad key, may include non-secret values like PORT.
  */
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
+  // One service, one origin (DECISION, SPEC 21 v13): PUBLIC_ORIGIN - or Render's own RENDER_EXTERNAL_URL - names the
+  // origin the browser sees, and both the web origin and the API's public URL default to it. Setting WEB_ORIGIN or
+  // API_PUBLIC_URL explicitly still wins (development: the web on :5173, the API on :8787).
+  const publicOrigin = trimmedOrUndefined(source.PUBLIC_ORIGIN)
+    ? originOf('PUBLIC_ORIGIN', source.PUBLIC_ORIGIN!.trim())
+    : trimmedOrUndefined(source.RENDER_EXTERNAL_URL)
+      ? originOf('RENDER_EXTERNAL_URL', source.RENDER_EXTERNAL_URL!.trim())
+      : undefined;
+
   const env: Env = {
     PORT: parsePort(source.PORT),
     NODE_ENV: trimmedOrUndefined(source.NODE_ENV) ?? 'development',
-    WEB_ORIGIN: trimmedOrUndefined(source.WEB_ORIGIN) ?? 'http://localhost:5173',
+    WEB_ORIGIN: trimmedOrUndefined(source.WEB_ORIGIN) ?? publicOrigin ?? 'http://localhost:5173',
     MONGODB_URI: trimmedOrUndefined(source.MONGODB_URI) ?? '',
     MONGODB_DB: trimmedOrUndefined(source.MONGODB_DB) ?? 'formatai',
     LLM_PROVIDER: parseLlmProvider(source.LLM_PROVIDER),
@@ -122,6 +151,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       env[key] = value;
     }
   }
+  if (env.API_PUBLIC_URL === undefined && publicOrigin !== undefined) env.API_PUBLIC_URL = publicOrigin;
 
   return env;
 }
