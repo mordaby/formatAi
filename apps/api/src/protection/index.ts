@@ -3,6 +3,7 @@
 // protected - so `buildServer` refuses to start rather than run them unprotected.
 import { limits } from '@formatai/shared';
 import type { AppDb } from '../db.js';
+import { isTurnstileDisabled } from '../env.js';
 import type { Env } from '../env.js';
 import { createRateLimiter, type RateLimiter } from './rateLimit.js';
 import { createMemoryStore, createMongoStore, type ProtectionStore } from './store.js';
@@ -60,6 +61,7 @@ export function createProtection(opts: CreateProtectionOptions): Protection {
     turnstile: createTurnstileVerifier({
       secret: env.TURNSTILE_SECRET_KEY,
       production,
+      disabledByOwner: isTurnstileDisabled(env),
       fetchFn: opts.fetchFn,
       warn: opts.warn,
     }),

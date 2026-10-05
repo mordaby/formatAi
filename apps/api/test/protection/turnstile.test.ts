@@ -52,6 +52,18 @@ describe('createTurnstileVerifier (SPEC 9.5)', () => {
     expect(fake.calls).toHaveLength(0);
   });
 
+  it('TURNSTILE_DISABLED: the owner switch turns it off in production too, whatever the secret (a placeholder included), with a warning', async () => {
+    const fake = makeTurnstileFetch(['good']);
+    const warn = vi.fn();
+    for (const secret of [undefined, 'pending']) {
+      const v = createTurnstileVerifier({ secret, production: true, disabledByOwner: true, fetchFn: fake.fn, warn });
+      expect(v.enabled).toBe(false);
+      expect(await v.verify(undefined, '203.0.113.7')).toBe(true);
+    }
+    expect(fake.calls).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('TURNSTILE_DISABLED'));
+  });
+
   it('is a startup error when the secret is unset in production', () => {
     expect(() => createTurnstileVerifier({ secret: undefined, production: true })).toThrow(/TURNSTILE_SECRET_KEY/);
     expect(() => createTurnstileVerifier({ secret: '', production: true })).toThrow(/TURNSTILE_SECRET_KEY/);

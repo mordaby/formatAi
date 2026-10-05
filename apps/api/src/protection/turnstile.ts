@@ -18,6 +18,8 @@ export interface CreateTurnstileVerifierOptions {
   /** `TURNSTILE_SECRET_KEY`. */
   secret: string | undefined;
   production: boolean;
+  /** `TURNSTILE_DISABLED=true` (env.ts): the owner turned Turnstile off on purpose - allowed in production, with a warning. */
+  disabledByOwner?: boolean;
   /** Defaults to the global `fetch`. */
   fetchFn?: typeof fetch;
   timeoutMs?: number;
@@ -35,6 +37,12 @@ export interface CreateTurnstileVerifierOptions {
 export function createTurnstileVerifier(opts: CreateTurnstileVerifierOptions): TurnstileVerifier {
   const { secret, production, warn } = opts;
   const timeoutMs = opts.timeoutMs ?? limits.protection.turnstileTimeoutMs;
+
+  // The owner's switch wins over the keys (a placeholder secret would otherwise reject every visitor).
+  if (opts.disabledByOwner) {
+    warn?.('Turnstile is OFF (TURNSTILE_DISABLED=true): requests and forms from visitors are protected by the rate limits only. Set TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY, then remove TURNSTILE_DISABLED.');
+    return { enabled: false, verify: async () => true };
+  }
 
   if (!secret) {
     if (production) {
