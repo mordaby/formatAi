@@ -116,6 +116,13 @@ export function AccountMenu() {
                 {t('account.myFormats')}
               </Link>
             </li>
+            {user.isAdmin ? (
+              <li>
+                <Link className="account__item" to="/admin" onClick={() => setOpen(false)}>
+                  {t('admin.nav')}
+                </Link>
+              </li>
+            ) : null}
             {otherProviders.map((provider) => (
               <li key={provider}>
                 <button type="button" className="account__item" onClick={() => void link(provider)}>

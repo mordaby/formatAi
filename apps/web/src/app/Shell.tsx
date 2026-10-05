@@ -43,6 +43,12 @@ export function Shell({ children }: { children: ReactNode }) {
                 <Link className="app-header__link" to="/formats">
                   {t('account.myFormats')}
                 </Link>
+                {/* SPEC 14.2: only an admin is shown the way in (the server checks every admin call whatever is drawn here). */}
+                {user.isAdmin ? (
+                  <Link className="app-header__link" to="/admin">
+                    {t('admin.nav')}
+                  </Link>
+                ) : null}
               </>
             ) : null}
             <LanguageToggle />
