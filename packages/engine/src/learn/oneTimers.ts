@@ -21,7 +21,8 @@
 // per learn, in output order; a column with more such parts than fit is not a few one-time edits - it asks nothing and is left to the
 // overfitting guards (`overfit.ts`: a memorized case list, a table of amounts fall back to "needs your input", never 13 or 150 questions).
 // DECISION (the guards, `learn/flow.ts`): the one guard a question replaces is `position`, for a column whose every position condition is
-// a part asked here (the row-position branch: `if(rowNumber() = 54, 0, ...)` - the user decides, no repair is spent on it).
+// a part asked here (the row-position branch: `if(rowNumber() = 54, 0, ...)` - the user decides, no repair is spent on it). The API leaves a
+// position condition that names exact rows to the browser (`OverfitFinding.rowExact`): only every row of the example can tell.
 //
 // Real values (the question shows the row's own values) - this runs in the browser and the eval, never on the server, and nothing here is
 // ever sent. Pure and synchronous, like the rest of this package.
