@@ -1,5 +1,6 @@
 // Wire types of the API endpoints the web app calls (M2). Type-only: no runtime code, so the
 // browser bundle can import them freely. The server's source of truth is `apps/api/src/routes`.
+import type { Check, CheckRound } from './checks';
 import type { ApiErrorCode, LimitCode } from './codes';
 import type { AiLearnPeriod, TierLimits } from './config/tiers';
 import type { LearnPayload, RepairProblem, Sample } from './payload';
@@ -71,7 +72,31 @@ export interface LearnResponse {
    * The browser says so in its later loop rounds (`RepairRequest.overfitRepaired`), so the learn never gets a second one.
    */
   overfitRepaired?: boolean;
+  /**
+   * AI code checks (learn-v9, SPEC 21 v14; docs/proposals/ai-code-checks.md): the AI step asked code to check ideas on every row of the
+   * example before it answers - there are no rules yet (`rules: null`, `verified: false`). The browser answers them (engine `answerChecks`,
+   * which `learnFromExamples` runs when it is given `callStep`) and sends `POST /api/learn/step` with `learnId` as the token. Nothing is
+   * counted yet: the learn counts once, on success, at the step that brings the rules. Absent on every answer with rules.
+   */
+  checks?: Check[];
+  /** With `checks`: one short line per check the API did not keep (past the cap, or not one of the checks), for the round's `dropped`. */
+  droppedChecks?: string[];
 }
+
+/**
+ * POST /api/learn/step body (AI code checks, SPEC 21 v14): one step of a learn whose AI step asked checks. `token` is the learn's `learnId`;
+ * `payload` the learn's payload, unchanged; `rounds` every round so far, this one last - what the AI step asked (as the API returned it) and
+ * what the browser answered (`answerChecks`), masked like the samples. At most `limits.learn.checks.maxRounds` steps per learn; the whole
+ * body within the payload byte cap; the rows the answers show within the learn's row limit (`stepFits`).
+ */
+export interface StepRequest {
+  token: string;
+  payload: LearnPayload;
+  rounds: CheckRound[];
+}
+
+/** POST /api/learn/step 200 body: more checks (`checks`, while rounds are left), or the rules - then exactly like a learn's answer. */
+export type StepResponse = Omit<LearnResponse, 'cached' | 'learnId'>;
 
 /** SPEC 21 v5: what is left of a signed-in user's AI learns. */
 export interface AiLearnQuotaState {
