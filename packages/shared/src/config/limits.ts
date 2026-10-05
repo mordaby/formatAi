@@ -30,6 +30,12 @@ export const limits = {
     /** SPEC 9.3 / 20.5. Default 1; set to 0 for exactly one LLM call per learn. Every loop round gets the same (`learn.loop`). */
     serverRepairRounds: 1,
     /**
+     * SPEC 9.1 "claude-cli" (the dev provider): how long one spawned CLI call may run before that child process - and only it, through its
+     * own handle - is stopped and the call recorded as failed (`error:timeout`), so the learn and the eval go on. DECISION: 5 minutes - a
+     * learn call takes well under one, and one CLI call once hung for over an hour and took an eval run down with it.
+     */
+    cliTimeoutMs: 300_000,
+    /**
      * SPEC 9.3: the browser-triggered repair calls of one learn - the rounds of the learning loop (`learn.loop`, owner decision
      * 2026-10-04: 3 rounds; it was 1 before the loop). The server refuses a fourth under the same learnId.
      */
