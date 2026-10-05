@@ -124,16 +124,16 @@ describe.skipIf(!mongoUri)('admin API (MongoDB)', () => {
       user(U3, { email: 'noa@corp.example', name: 'Noa Peretz', tier: 'paid', createdAt: at('2026-10-03T08:00:00Z'), lastSeenAt: at('2026-10-05T08:00:00Z') }),
     ]);
     await db.llmCalls.insertMany([
-      // L1: a learn that was repaired and verified (7 days)
-      call_({ learnId: 'learn-secret-id-1', ts: at('2026-10-04T09:00:00Z'), model: 'gpt-5', outcome: 'needsRepair' }, 0.01, { formula: 2, diff: 1 }),
-      call_({ learnId: 'learn-secret-id-1', ts: at('2026-10-04T09:01:00Z'), model: 'gpt-5', outcome: 'verified', purpose: 'repair' }, 0.02),
+      // L1: a learn that was repaired and verified (7 days), both calls made by the fallback provider (SPEC 9.6)
+      call_({ learnId: 'learn-secret-id-1', ts: at('2026-10-04T09:00:00Z'), model: 'gpt-5', provider: 'openai', fallback: true, fallbackReason: 'overloaded', outcome: 'needsRepair' }, 0.01, { formula: 2, diff: 1 }),
+      call_({ learnId: 'learn-secret-id-1', ts: at('2026-10-04T09:01:00Z'), model: 'gpt-5', provider: 'openai', fallback: true, fallbackReason: 'circuitOpen', outcome: 'verified', purpose: 'repair' }, 0.02),
       // L2: answered, never passed the checks
       call_({ learnId: 'learn-secret-id-2', ts: at('2026-10-03T09:00:00Z'), model: 'claude-haiku-4-5', outcome: 'needsRepair' }, 0.005, { formula: 1, schema: 1 }),
       // L3: the provider failed (one call on a model with no price, one written before estimates existed)
       call_({ learnId: 'learn-secret-id-3', ts: at('2026-10-02T09:00:00Z'), model: 'mystery-model', outcome: 'error:timeout' }, null),
       call_({ learnId: 'learn-secret-id-3', ts: at('2026-10-02T09:05:00Z'), model: 'claude-haiku-4-5', outcome: 'error:providerError' }, 'none'),
       // L4: in the 30 days, not in the 7
-      call_({ learnId: 'learn-secret-id-4', ts: at('2026-09-20T09:00:00Z'), model: 'claude-haiku-4-5', outcome: 'verified' }, 0.003),
+      call_({ learnId: 'learn-secret-id-4', ts: at('2026-09-20T09:00:00Z'), model: 'claude-haiku-4-5', provider: 'anthropic', fallback: true, fallbackReason: 'timeout', outcome: 'verified' }, 0.003),
       // two learns answered from the structure cache (no model: not calls)
       call_({ learnId: 'learn-secret-id-5', ts: at('2026-10-04T10:00:00Z'), model: 'cache', outcome: 'cacheHit', cacheHit: true }, 0),
       call_({ learnId: 'learn-secret-id-6', ts: at('2026-10-05T10:00:00Z'), model: 'cache', outcome: 'cacheHit', cacheHit: true }, 0),
@@ -275,6 +275,8 @@ describe.skipIf(!mongoUri)('admin API (MongoDB)', () => {
       expect(body.llm.calls).toBe(5);
       expect(body.llm.costUsd).toBeCloseTo(0.035, 6);
       expect(body.llm.unpriced).toBe(2);
+      // the fallback provider's calls: L1's two (L4's is older than the period)
+      expect(body.llm.fallbackCalls).toBe(2);
       expect(body.llm.byModel).toEqual([
         { model: 'claude-haiku-4-5', calls: 2, inputTokens: 1000, outputTokens: 100, costUsd: 0.005, unpriced: 1 },
         { model: 'gpt-5', calls: 2, inputTokens: 2000, outputTokens: 200, costUsd: 0.03, unpriced: 0 },
@@ -316,6 +318,7 @@ describe.skipIf(!mongoUri)('admin API (MongoDB)', () => {
       expect(body.learns).toMatchObject({ ai: 4, aiVerified: 2, aiFailed: 1, aiErrored: 1, cache: 2 });
       expect(body.llm.calls).toBe(6);
       expect(body.llm.costUsd).toBeCloseTo(0.038, 6);
+      expect(body.llm.fallbackCalls).toBe(3);
       expect(body.users).toMatchObject({ newInPeriod: 2, activeInPeriod: 3 });
     });
 
@@ -334,7 +337,7 @@ describe.skipIf(!mongoUri)('admin API (MongoDB)', () => {
       expect(status).toBe(200);
       expect(body.users).toEqual({ total: 0, registered: 0, paid: 0, newInPeriod: 0, activeInPeriod: 0 });
       expect(body.learns).toEqual({ ai: 0, aiVerified: 0, aiFailed: 0, aiErrored: 0, cache: 0, local: null });
-      expect(body.llm).toMatchObject({ calls: 0, costUsd: null, unpriced: 0, byModel: [] });
+      expect(body.llm).toMatchObject({ calls: 0, costUsd: null, unpriced: 0, fallbackCalls: 0, byModel: [] });
       expect(body.llm.byDay.every((d) => d.aiCalls === 0 && d.costUsd === null)).toBe(true);
       expect(body.problems).toEqual([]);
       expect(body.functionRequests).toEqual({ groups: 0, requests: 0, atThreshold: 0, issueOpened: 0, newInPeriod: 0 });

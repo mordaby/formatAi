@@ -132,6 +132,7 @@ function Numbers({ o }: { o: AdminOverview }) {
           rows={[
             { label: t('admin.ov.ai.calls'), value: num(o.llm.calls) },
             { label: t('admin.ov.ai.cost'), value: <span dir="ltr">{money(o.llm.costUsd)}</span> },
+            { label: t('admin.ov.ai.fallback'), value: num(o.llm.fallbackCalls) },
           ]}
         />
         <p className="muted admin-note">

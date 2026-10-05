@@ -33,7 +33,7 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
   const threshold = limits.learn.functionRequests.issueThreshold;
   const realCalls = { ts: { $gte: since }, cacheHit: false };
 
-  const [tiers, newUsers, activeUsers, learnRows, cacheLearns, byDayModel, problemRows, formats, formatsNew, ranInPeriod, runs, requestRows, eventRows, localEvents] =
+  const [tiers, newUsers, activeUsers, learnRows, cacheLearns, byDayModel, problemRows, formats, formatsNew, ranInPeriod, runs, requestRows, eventRows, localEvents, fallbackCalls] =
     await Promise.all([
       db.users.aggregate<{ _id: string; n: number }>([{ $group: { _id: '$tier', n: { $sum: 1 } } }]).toArray(),
       db.users.countDocuments({ createdAt: { $gte: since } }),
@@ -105,6 +105,8 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
         .aggregate<{ _id: string; n: number }>([{ $match: { ts: { $gte: since } } }, { $group: { _id: '$type', n: { $sum: 1 } } }, { $sort: { n: -1, _id: 1 } }, { $limit: 50 }])
         .toArray(),
       db.events.countDocuments({ ts: { $gte: since }, type: 'learn_completed', 'props.path': 'local' }),
+      // SPEC 9.6: the calls the fallback provider made (they are in the per-model rows under the fallback's own model too).
+      db.llmCalls.countDocuments({ ...realCalls, fallback: true }),
     ]);
 
   const tierCount = (tier: string): number => tiers.find((t) => t._id === tier)?.n ?? 0;
@@ -173,6 +175,7 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
       calls,
       costUsd: priced.length > 0 ? usd(priced.reduce((n, m) => n + (m.costUsd ?? 0), 0)) : null,
       unpriced,
+      fallbackCalls,
       byDay,
       byModel,
     },

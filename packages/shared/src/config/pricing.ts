@@ -45,6 +45,10 @@ export const tokenPrices: Readonly<Record<string, TokenPrice>> = {
   'claude-sonnet-5-5': SONNET,
   'gpt-5': openAiPrice(1.25, 0.125, 10),
   'gpt-5-mini': openAiPrice(0.25, 0.025, 2),
+  // The dated snapshots the OpenAI API reports as the model that served a call (each model page's "default snapshot", checked 2026-10-05):
+  // a fallback call (SPEC 9.6) is recorded and estimated under that id.
+  'gpt-5-2025-08-07': openAiPrice(1.25, 0.125, 10),
+  'gpt-5-mini-2025-08-07': openAiPrice(0.25, 0.025, 2),
   // DECISION: the Claude Code CLI's model aliases are priced as the API models they stand for ("haiku" = Haiku 4.5,
   // "sonnet" = Sonnet 5): the subscription is not metered, but the estimate says what the same tokens would cost on the API.
   haiku: HAIKU,

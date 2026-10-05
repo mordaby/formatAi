@@ -76,6 +76,23 @@ describe('checkProductionConfig', () => {
     expect(check({ LLM_PROVIDER: 'openai', OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: undefined }).problems).toEqual([]);
   });
 
+  it('SPEC 9.6: a fallback provider needs its own key (by name); unset is no fallback; the dev CLI and the fake are refused', () => {
+    expect(check({ LLM_FALLBACK_PROVIDER: undefined }).problems).toEqual([]);
+    const missing = check({ LLM_FALLBACK_PROVIDER: 'openai', OPENAI_API_KEY: undefined }).problems;
+    expect(missing).toHaveLength(1);
+    expect(missing[0]).toMatch(/OPENAI_API_KEY is not set \(LLM_FALLBACK_PROVIDER=openai/);
+    expect(check({ LLM_FALLBACK_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-proj-made-up' }).problems).toEqual([]);
+    expect(check({ LLM_FALLBACK_PROVIDER: 'claude-cli' }).problems.join()).toMatch(/LLM_FALLBACK_PROVIDER=claude-cli is for development/);
+    expect(check({ LLM_FALLBACK_PROVIDER: 'fake' }).problems.join()).toMatch(/LLM_FALLBACK_PROVIDER=fake is for development/);
+    // the other way round: an OpenAI primary with an Anthropic fallback
+    expect(check({ LLM_PROVIDER: 'openai', OPENAI_API_KEY: 'k', LLM_FALLBACK_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: undefined }).problems.join()).toMatch(
+      /ANTHROPIC_API_KEY is not set \(LLM_FALLBACK_PROVIDER=anthropic/,
+    );
+    // never a value
+    const text = formatProductionProblems(check({ LLM_FALLBACK_PROVIDER: 'openai', OPENAI_API_KEY: undefined, SESSION_SECRET: 'tiny-secret-value' }).problems)!;
+    for (const value of ['sk-ant-made-up', 'tiny-secret-value']) expect(text).not.toContain(value);
+  });
+
   it('needs one sign-in provider, and no provider with only half its credentials', () => {
     expect(check({ GOOGLE_CLIENT_ID: undefined, GOOGLE_CLIENT_SECRET: undefined }).problems.join()).toMatch(/no sign-in provider/);
     expect(check({ MICROSOFT_CLIENT_ID: 'ms-id' }).problems.join()).toMatch(/MICROSOFT_CLIENT_SECRET is not set/);

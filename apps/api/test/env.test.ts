@@ -43,6 +43,15 @@ describe('loadEnv - LLM config (SPEC 9.6)', () => {
     expect(env.LLM_MODEL_FIRST_TRY).toBeUndefined();
   });
 
+  it('SPEC 9.6: LLM_FALLBACK_PROVIDER is optional (unset or blank: no fallback), must name a provider, and has its own model overrides', () => {
+    expect(loadEnv({ ...process.env, LLM_FALLBACK_PROVIDER: undefined }).LLM_FALLBACK_PROVIDER).toBeUndefined();
+    expect(loadEnv({ ...process.env, LLM_FALLBACK_PROVIDER: '  ' }).LLM_FALLBACK_PROVIDER).toBeUndefined();
+    expect(loadEnv({ ...process.env, LLM_FALLBACK_PROVIDER: 'openai' }).LLM_FALLBACK_PROVIDER).toBe('openai');
+    expect(() => loadEnv({ ...process.env, LLM_FALLBACK_PROVIDER: 'gemini' })).toThrow(/LLM_FALLBACK_PROVIDER/);
+    const env = loadEnv({ ...process.env, LLM_FALLBACK_PROVIDER: 'openai', LLM_FALLBACK_MODEL_FIRST_TRY: 'gpt-5-nano', LLM_FALLBACK_MODEL_ESCALATION: 'gpt-5' });
+    expect([env.LLM_FALLBACK_MODEL_FIRST_TRY, env.LLM_FALLBACK_MODEL_ESCALATION]).toEqual(['gpt-5-nano', 'gpt-5']);
+  });
+
   it('passes through OPENAI_API_KEY and CLAUDE_CLI_PATH', () => {
     const env = loadEnv({
       ...process.env,

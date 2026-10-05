@@ -118,6 +118,8 @@ function ledgerDocs(learnId: string, identity: Identity, calls: readonly LlmCall
     learnId,
     purpose: c.purpose,
     model: c.model,
+    provider: c.provider,
+    ...(c.fallback ? { fallback: true as const, ...(c.fallbackReason ? { fallbackReason: c.fallbackReason } : {}) } : {}),
     promptVersion: c.promptVersion,
     masking: c.masking,
     tokensIn: c.tokensIn,

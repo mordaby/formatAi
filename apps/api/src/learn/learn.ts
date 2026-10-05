@@ -16,6 +16,7 @@ import {
   type LearnPrompt,
   type PromptVersion,
   type LearnResult,
+  type LlmProviderName,
   type PayloadCell,
   type RepairBlock,
   type RepairProblem,
@@ -28,10 +29,12 @@ import {
   complete as defaultComplete,
   LlmError,
   resolveModel,
+  type CallFallback,
   type CallPurpose,
   type CompleteRequest,
   type CompleteResult,
   type ContentBlock,
+  type FallbackReason,
 } from '../llm/index.js';
 import { runChecks } from './checks.js';
 
@@ -45,7 +48,14 @@ export type CompleteFn = (req: CompleteRequest, env?: Env) => Promise<CompleteRe
  * knows the request's identity and DB; this module only knows the call itself). */
 export interface LlmCallRecord {
   purpose: CallPurpose;
+  /** The model that answered (or, for a failed call, the one that was tried last: the fallback's when it was tried). */
   model: string;
+  /** The provider that answered (or was tried last), SPEC 9.6. */
+  provider: LlmProviderName;
+  /** SPEC 9.6 "Fallback": the call was made on the fallback provider, because the primary could not serve it (`fallbackReason`). */
+  fallback?: true;
+  /** Why: the primary's failure (`UnavailableReason`), or `circuitOpen` (the primary was not tried). Set with `fallback`. */
+  fallbackReason?: FallbackReason;
   promptVersion: string;
   masking: boolean;
   tokensIn: number;
@@ -173,6 +183,11 @@ function payloadBlock(payload: LearnPayload): ContentBlock {
  * every later call on that model reads it. A different model (the escalation) writes its own. */
 type PrefixCache = Set<string>;
 
+/** The ledger's fallback fields of a call (SPEC 13): `fallback: true` and the reason, or nothing on a call the primary served. */
+function fallbackFields(fallback: CallFallback | undefined): Pick<LlmCallRecord, 'fallback' | 'fallbackReason'> {
+  return fallback ? { fallback: true, fallbackReason: fallback.reason } : {};
+}
+
 function outcomeOf(problems: RepairProblem[]): string {
   return problems.length === 0 ? 'verified' : 'needsRepair';
 }
@@ -214,16 +229,21 @@ async function callAndCheck(
       : runChecks(result.json, withRows(payload, rows), { tier, alternatives: prompt.alternatives, overfit });
     const problems = rowsNamed(checked.problems, payload, rows);
     const { rules, alternatives } = checked;
-    // The estimate counts the exact text sent (system prompt, schema, every content block) and received (the raw answer).
+    // The estimate counts the exact text sent (system prompt, schema, every content block) and received (the raw answer), priced as the
+    // model that answered (the fallback's own prices on a fallback call). Its cached prefix is that model's: a fallback call writes the
+    // fallback model's prefix, never reads the primary's.
+    const prefixKey = result.fallback ? `${result.provider}:${result.model}` : model;
     const estimate = estimateCall(
       result.model,
       { prefix: [prompt.system, JSON.stringify(schema)], blocks: content.map((b) => b.text), answer: result.raw },
-      prefixCache.has(model),
+      prefixCache.has(prefixKey),
     );
-    prefixCache.add(model);
+    prefixCache.add(prefixKey);
     const record: LlmCallRecord = {
       purpose,
       model: result.model,
+      provider: result.provider,
+      ...fallbackFields(result.fallback),
       promptVersion,
       masking: payload.masking,
       tokensIn: result.usage.tokensIn,
@@ -245,9 +265,13 @@ async function callAndCheck(
       problems: [{ kind: 'schema', path: '', message: `LLM call failed: ${message}` }],
       alternatives: [],
     };
+    // A call that failed on the fallback too is recorded as the fallback's (the last provider tried), with why it was tried.
+    const failed = err instanceof LlmError ? err : null;
     const record: LlmCallRecord = {
       purpose,
-      model,
+      model: failed?.model ?? model,
+      provider: failed?.provider ?? env.LLM_PROVIDER,
+      ...fallbackFields(failed?.fallback),
       promptVersion,
       masking: payload.masking,
       tokensIn: 0,
@@ -255,7 +279,7 @@ async function callAndCheck(
       tokensCached: 0,
       costUsd: 0,
       // DECISION: a failed call counts nothing (like the provider fields above), and does not write the cached prefix.
-      estimate: emptyEstimate(model),
+      estimate: emptyEstimate(failed?.model ?? model),
       latencyMs: 0,
       outcome: `error:${kind}`,
       problemCounts: countProblems(attempt.problems),

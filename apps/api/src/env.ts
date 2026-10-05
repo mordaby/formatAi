@@ -41,6 +41,9 @@ const OPTIONAL_STRING_KEYS = [
    */
   'LLM_MODEL_FIRST_TRY',
   'LLM_MODEL_ESCALATION',
+  /** SPEC 9.6 "Fallback": the fallback provider's own model overrides (default: `config/models.ts` for `LLM_FALLBACK_PROVIDER`). */
+  'LLM_FALLBACK_MODEL_FIRST_TRY',
+  'LLM_FALLBACK_MODEL_ESCALATION',
   'SESSION_SECRET',
   'GOOGLE_CLIENT_ID',
   'GOOGLE_CLIENT_SECRET',
@@ -81,6 +84,8 @@ export type Env = {
   MONGODB_DB: string;
   /** SPEC 9.6: which LLM provider `apps/api/src/llm` selects. Defaults to "claude-cli" (dev). */
   LLM_PROVIDER: LlmProviderName;
+  /** SPEC 9.6 "Fallback": the provider a call goes to when the primary cannot serve it (`llm/fallback.ts`). Unset: no fallback. */
+  LLM_FALLBACK_PROVIDER?: LlmProviderName;
 } & Partial<Record<OptionalStringKey, string>>;
 
 function parsePort(raw: string | undefined): number {
@@ -121,6 +126,16 @@ function parseLlmProvider(raw: string | undefined): LlmProviderName {
   return trimmed;
 }
 
+/** `LLM_FALLBACK_PROVIDER`: unset (or empty) is no fallback; anything else must name a provider. */
+function parseFallbackProvider(raw: string | undefined): LlmProviderName | undefined {
+  const trimmed = trimmedOrUndefined(raw);
+  if (trimmed === undefined) return undefined;
+  if (!isLlmProviderName(trimmed)) {
+    throw new Error(`Invalid LLM_FALLBACK_PROVIDER env var: expected one of ${LLM_PROVIDERS.join(', ')} (or unset for no fallback), got "${raw}"`);
+  }
+  return trimmed;
+}
+
 /**
  * Parses and validates the process environment into a typed Env.
  * Never logs values (some are secrets) - only this module's own errors,
@@ -144,6 +159,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     MONGODB_DB: trimmedOrUndefined(source.MONGODB_DB) ?? 'formatai',
     LLM_PROVIDER: parseLlmProvider(source.LLM_PROVIDER),
   };
+  const fallbackProvider = parseFallbackProvider(source.LLM_FALLBACK_PROVIDER);
+  if (fallbackProvider !== undefined) env.LLM_FALLBACK_PROVIDER = fallbackProvider;
 
   for (const key of OPTIONAL_STRING_KEYS) {
     const value = trimmedOrUndefined(source[key]);

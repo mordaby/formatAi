@@ -127,7 +127,11 @@ function runProcess(
       } catch {
         // already gone: nothing to stop
       }
-      reject(new LlmError('timeout', 'claude-cli', `the claude CLI gave no answer within ${Math.round(timeoutMs / 1000)} s; that call was stopped`));
+      reject(
+        new LlmError('timeout', 'claude-cli', `the claude CLI gave no answer within ${Math.round(timeoutMs / 1000)} s; that call was stopped`, {
+          unavailable: 'timeout',
+        }),
+      );
     }, timeoutMs);
 
     child.on('error', (err) => {
@@ -271,7 +275,8 @@ export function createClaudeCliProvider(opts: CreateClaudeCliProviderOptions = {
           throw new LlmError('refused', 'claude-cli', message);
         }
         if (lower.includes('rate limit') || lower.includes('budget') || lower.includes('overloaded')) {
-          throw new LlmError('rateLimited', 'claude-cli', message);
+          // SPEC 9.6 "Fallback": the subscription cannot serve the call now (a developer's machine may have a fallback configured too).
+          throw new LlmError('rateLimited', 'claude-cli', message, { unavailable: lower.includes('overloaded') ? 'overloaded' : 'rateLimited' });
         }
         throw new LlmError('providerError', 'claude-cli', message);
       }

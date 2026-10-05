@@ -1,6 +1,7 @@
 // SPEC 9.6: the one LLM interface. Every provider adapter implements `LlmProvider`;
 // no provider SDK may be imported outside `apps/api/src/llm/providers/`.
 import type { LlmProviderName } from '@formatai/shared';
+import type { CallFallback } from './errors.js';
 
 export type { LlmProviderName };
 
@@ -27,7 +28,8 @@ export interface CompleteRequest {
   schema: Record<string, unknown>;
   model: string;
   purpose: CallPurpose;
-  /** Defaults to `limits.llm.maxTokens` (SPEC 9.1) when omitted - `limits.llm.maxTokensThinking` for an Anthropic model that always thinks. */
+  /** Defaults to `limits.llm.maxTokens` (SPEC 9.1) when omitted - `limits.llm.maxTokensThinking` for an Anthropic model that always thinks
+   * and for an OpenAI reasoning model (its reasoning tokens count toward the limit too). */
   maxTokens?: number;
 }
 
@@ -52,9 +54,12 @@ export interface CompleteResult {
   usage: LlmUsage;
   costUsd: number;
   latencyMs: number;
-  /** The model that actually served the call (may echo back `req.model`). */
+  /** The model that actually served the call (may echo back `req.model`; the fallback's model on a fallback call). */
   model: string;
+  /** The provider that actually served the call. */
   provider: LlmProviderName;
+  /** SPEC 9.6 "Fallback": set when the fallback provider served this call instead of the primary (`llm/fallback.ts`). */
+  fallback?: CallFallback;
 }
 
 export interface LlmProvider {

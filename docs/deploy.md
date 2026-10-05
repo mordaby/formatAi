@@ -7,7 +7,8 @@ Every secret goes into Render's environment (the Blueprint asks for it); none go
 `<host>` below is your service's hostname, e.g. `formatai.onrender.com`. Render shows it under the service name once the service
 exists; if `formatai` was taken, Render adds a suffix, and that is the host you use everywhere.
 
-Order: 1 Atlas, 2 Anthropic, 3 Render (this creates the host), 4 Google, 5 Turnstile, 6 Microsoft, 7 admin, 8 smoke test.
+Order: 1 Atlas, 2 Anthropic, 2b OpenAI (the fallback), 3 Render (this creates the host), 4 Google, 5 Turnstile, 6 Microsoft, 7 admin,
+8 smoke test.
 
 ## 1. MongoDB Atlas
 
@@ -31,6 +32,34 @@ Order: 1 Atlas, 2 Anthropic, 3 Render (this creates the host), 4 Google, 5 Turns
 2. **Set a monthly spend limit** (Console > Settings > Limits; SPEC 9.5 "also set a monthly spend limit in the provider's console").
    Pick an amount you could lose. The app has its own daily kill switch (`limits.budgets.dailyOverallUsd`, 50 USD a day today, a
    placeholder), which is far above any sane monthly cap, so this console limit is the one that protects your wallet.
+3. Check the key from your own computer before you put it in Render: in the repository's `.env`, set `ANTHROPIC_API_KEY`, then run
+   `pnpm --filter @formatai/api llm-check -- --provider anthropic`. It makes ONE small real learn call (a made-up customer list, masked)
+   and prints the model, the time, the tokens, whether the answer was cut off and whether it passed the checks. It never prints the key.
+
+## 2b. OpenAI (the fallback)
+
+When Anthropic cannot answer a call - an outage, a timeout, a rate limit, its "overloaded" error, or a key it rejects - the same call is
+made once more on OpenAI (`gpt-5-mini` for a first try or a repair, `gpt-5` for an escalation), and the user's learn goes on. After 3
+such failures in a row, every call goes straight to OpenAI for 5 minutes, then Anthropic is tried again (`limits.llm.fallback`). A wrong
+answer is never sent to OpenAI: only a call Anthropic could not serve. Each call in Atlas `llm_calls` says which provider and model
+answered, and a fallback call has `fallback: true` and the reason; the admin overview counts them ("Calls made by the fallback provider").
+
+1. platform.openai.com: first create a **project made for this app** (`formatai`), so its usage, rate limits and spend limit are its own.
+   In that project: **API keys** > Create new secret key, named `formatai-prod`. Give it an expiry date and put the date in your calendar
+   (OpenAI recommends keys that expire and a rotation habit). This is `OPENAI_API_KEY`. It is shown once.
+2. **Set a monthly limit** on the **Limits** page (platform.openai.com/settings/organization/limits, or the project's own limits): a
+   **spend alert** emails you past an amount, and a **hard spend limit** stops the project's calls at its cap (they get a 429; OpenAI's
+   "spend limits" guide explains it). Pick an amount you could lose. Billing information must be on the account for the key to work at
+   all. Like Anthropic's console limit (2.2), this is the one that protects your wallet.
+3. Check the key from your own computer: set `OPENAI_API_KEY` in the repository's `.env` and run
+   `pnpm --filter @formatai/api llm-check -- --provider openai` (one small call, as in 2.3).
+4. In Render it is asked for when the Blueprint is created (`OPENAI_API_KEY`, step 3.2). `render.yaml` already sets
+   `LLM_FALLBACK_PROVIDER=openai`: the start check refuses to start without the key.
+
+**Turning the fallback off:** Render > service > **Environment** > delete `LLM_FALLBACK_PROVIDER` > Save (Render redeploys). Every call then
+stays on Anthropic, and a call it cannot serve fails as before (it is never counted against the user). `OPENAI_API_KEY` can stay or go.
+To use other OpenAI models for it, set `LLM_FALLBACK_MODEL_FIRST_TRY` / `LLM_FALLBACK_MODEL_ESCALATION` (a model `apps/api/src/llm/providers/openai.ts`
+knows: the GPT-5 family; anything else needs its row there first).
 
 ## 3. Render
 
@@ -41,6 +70,7 @@ Order: 1 Atlas, 2 Anthropic, 3 Render (this creates the host), 4 Google, 5 Turns
    |---|---|
    | `MONGODB_URI` | the string from 1.4 |
    | `ANTHROPIC_API_KEY` | the key from 2.1 |
+   | `OPENAI_API_KEY` | the key from 2b.1 (the fallback; to run without one, see "Turning the fallback off" in 2b) |
    | `ADMIN_EMAILS` | your Google email (comma-separated for more). See 7 |
    | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | the word `pending` for now: you cannot have them before the host exists. Steps 4 and 5 replace them |
 
@@ -107,7 +137,8 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 2. **The page**: `https://<host>/` loads (Hebrew or English by your browser) and a deep link such as `https://<host>/formats` loads too. The browser console has no red errors.
 3. **Sign in**: Google, then Microsoft if configured. You come back to the site signed in, your name shows in the account menu, and `https://<host>/api/me` says `"isAdmin":true` for the admin.
 4. **A free learn**: sign out or stay in. Drop `orders-dedupe/input.xlsx` and `output.csv` > Learn the format: verified, "solved on your computer", no AI call (no `/api/learn` request in the Render log).
-5. **An AI learn**: signed in, drop `branch-lookup-50/input.xlsx` and `output.xlsx` > Learn with AI. The Turnstile check passes by itself and the answer verifies. Check that a row appeared in Atlas `llm_calls` and the spend in `budgets`, and the usage in the Anthropic console.
+5. **An AI learn**: signed in, drop `branch-lookup-50/input.xlsx` and `output.xlsx` > Learn with AI. The Turnstile check passes by itself and the answer verifies. Check that a row appeared in Atlas `llm_calls` (`provider: "anthropic"`, no `fallback`) and the spend in `budgets`, and the usage in the Anthropic console.
+   The fallback itself is checked from your computer (`llm-check`, 2b.3); a row with `fallback: true` in `llm_calls` later means Anthropic could not serve that call.
 6. **The Run screen**: save that format, open **Convert** (`/convert`), drop `next.input.xlsx` of the same case, create the file, and check it against `next.output.xlsx`.
 
 ## Rolling back
@@ -125,12 +156,14 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 | `NODE_ENV=production` | `render.yaml` | Secure cookies, no dev routes, the web app served by the API, the start check |
 | `NODE_VERSION=24` | `render.yaml` | Node version on Render |
 | `LLM_PROVIDER=anthropic` | `render.yaml` | The production LLM is the Anthropic API (the start check refuses `claude-cli` and `fake`) |
+| `LLM_FALLBACK_PROVIDER=openai` | `render.yaml` | The fallback for a call Anthropic cannot serve (2b). Delete it to turn the fallback off |
 | `TRUST_PROXY=true` | `render.yaml` | Real client IP behind Render's proxy for the per-IP limits (see Known limits) |
 | `MONGODB_DB=formatai` | `render.yaml` | Database name inside the cluster |
 | `SESSION_SECRET` | Render (generated) | Signs the session and sign-in cookies; 32+ characters; changing it signs everyone out |
 | `IP_HASH_SECRET` | Render (generated) | Keys the per-IP counters and learn ids; 32+ characters |
 | `MONGODB_URI` | you (3.2) | Atlas connection string (1.4) |
 | `ANTHROPIC_API_KEY` | you (3.2) | Anthropic console (2.1) |
+| `OPENAI_API_KEY` | you (3.2) | OpenAI platform, the app's own project (2b.1); required while `LLM_FALLBACK_PROVIDER=openai` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | you (4.3) | Google Cloud OAuth client |
 | `TURNSTILE_SITE_KEY` | you (5.2) | Cloudflare Turnstile widget, public; served to the browser at runtime |
 | `TURNSTILE_SECRET_KEY` | you (5.2) | Cloudflare Turnstile widget, secret |
@@ -142,6 +175,7 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 | `PORT` | Render | Render sets 10000; the API listens on it |
 | `WEB_DIST` | optional | Folder of the built web app; default `apps/web/dist` |
 | `LLM_MODEL_FIRST_TRY`, `LLM_MODEL_ESCALATION` | optional | Override the models in `packages/shared/src/config/models.ts` without a code change |
+| `LLM_FALLBACK_MODEL_FIRST_TRY`, `LLM_FALLBACK_MODEL_ESCALATION` | optional | The same for the fallback provider's two slots (default `gpt-5-mini`, `gpt-5`) |
 
 ## Known limits
 

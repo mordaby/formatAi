@@ -22,9 +22,9 @@ export const models: Record<LlmProviderName, ModelSlots> = {
     // picks the actual escalation model per SPEC 10's decision rule.
     escalation: 'claude-sonnet-5',
   },
-  // TODO(M1): placeholders - verify these are the current small/large OpenAI models
-  // (against the installed `openai` SDK's model types, or the OpenAI models page)
-  // before benchmarking. Not decisions yet, same as the Anthropic slots above.
+  // The fallback provider's slots (SPEC 9.6, owner request 2026-10-05: `LLM_FALLBACK_PROVIDER=openai`). Checked 2026-10-05 against
+  // OpenAI's model pages: both are available reasoning models (Responses API, structured outputs). OpenAI now recommends newer models
+  // (GPT-5.6 Terra, GPT-6 Astra); moving to one needs its row in `providers/openai.ts` (effort, sampling) and its prices first.
   openai: {
     firstTry: 'gpt-5-mini',
     escalation: 'gpt-5',
