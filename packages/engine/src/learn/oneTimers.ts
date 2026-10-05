@@ -58,8 +58,8 @@ import { normText } from '../pipeline/v1/values';
 import type { OutCell } from '../types';
 import { isoOfSerial } from './analyze/cells';
 import type { PairAnalysis } from './analyze';
-import { probeKeyText, probeTruthy, runWithProbes, valueListOf, type ProbedRun, type RunProbe } from './fillParams';
-import { comparesPosition, overfitFindings, positionColumns, type OverfitFinding } from './overfit';
+import { probeCellValue, probeKeyText, probeTruthy, runWithProbes, valueListOf, type ProbedRun, type RunProbe } from './fillParams';
+import { atomsOf, casesOf, comparesPosition, overfitFindings, positionColumns, type OverfitFinding } from './overfit';
 import { cellMatchesExample, exampleCellAt } from './verify';
 
 /** What singles the one row out: an ID (a key column of the example), an exact amount or date no other row has, its position in the file. */
@@ -124,9 +124,9 @@ export interface CopiedListQuestion {
   header: string;
   /** The input column (header) the list is keyed on: a different value on every row of the example the list applies to. */
   keyColumn: string;
-  /** The entries of the list the example's rows use: one per row (no key repeats), each giving that row's value. */
+  /** The entries of the list the example's rows use: one per row (no key repeats), each giving that row's value (a chain: its named values). */
   entries: number;
-  /** The list, for the answer "a one-time edit" (`withoutCopiedList`, shared). */
+  /** The list - a lookup table, a value map, or a chain of cases - for the answer "a one-time edit" (`withoutCopiedList`, shared). */
   list: CopiedListRule;
 }
 
@@ -551,9 +551,16 @@ export function oneTimeQuestions(rules: LearnResult, analysis: PairAnalysis, opt
 
 /** Whether a part is an entry of one of the copied lists asked about (that question covers it). */
 function inCopiedList(part: RulePart, lists: readonly CopiedListQuestion[]): boolean {
-  return lists.some((l) =>
-    l.list.kind === 'lookup' ? part.kind === 'lookupEntry' && part.table === l.list.table : part.kind === 'valueMapEntry' && part.column === l.list.column,
-  );
+  return lists.some((l) => {
+    switch (l.list.kind) {
+      case 'lookup':
+        return part.kind === 'lookupEntry' && part.table === l.list.table;
+      case 'valueMap':
+        return part.kind === 'valueMapEntry' && part.column === l.list.column;
+      case 'cases':
+        return (part.kind === 'branch' || part.kind === 'listValue') && part.computed === l.list.computed;
+    }
+  });
 }
 
 /**
@@ -633,11 +640,17 @@ export function questionedPositions(rules: LearnResult, analysis: PairAnalysis, 
  * The copied lists to ask about (call it on the rules as applied, after `fillParams`): for each output column whose value comes from a lookup
  * table or a value map (one code filled or the AI step wrote), on every row of the example the list applies to (its branch taken, a key on
  * the row), the key column takes a different value on each row - no key repeats - and at least `minListEntries` of those rows are the list's
- * entries, each giving that row's value of the example. One question per column at most (its list with the most entries), in output order.
+ * entries, each giving that row's value of the example. And the same list written out (owner amendment, 2026-10-06): a computed column an
+ * output column shows that is a chain of constants (`switch` / nested `if`, a constant else) whose every atom (`atomsOf`: an `or` disjunct,
+ * a `oneOf` value) is an equality of ONE plain input column with a value, that column different on every row of the example, no atom picking
+ * more than `limits.learn.overfit.maxRowsPerCase` rows, and at least `minListEntries` atoms giving their row its value - gpt-5's
+ * `switch(or(id = ..., 20 IDs), "Small", ...)` on one column. (The overfitting guard leaves a chain on one column alone; on two columns or
+ * more it is the guard's `caseList`.) One question per column at most (its list with the most entries), in output order.
  *
  * DECISIONS (conservative: code asks only what it can say plainly):
  *  - the key is a plain input column of the rules (the question names it); a key worked out by an expression is not asked about;
- *  - a key that is an amount (a decimal, currency or percent column) is the guards' (`measureKey`: one repair, then "needs your input");
+ *  - a lookup keyed on an amount (a decimal, currency or percent column) is the guards' (`measureKey`: one repair, then "needs your
+ *    input"); a chain on an amount column is no guard's, and is asked like any other;
  *  - completion mode: only the columns the AI step was asked for (`columns`), and never a lookup or a value map the user wrote (`fixed`: the
  *    same computed column, a table of the same name, a value map on the same column);
  *  - the threshold is the case list's (`limits.learn.overfit.minCases`, 6): a handful of rows each with its own key is no list to speak of,
@@ -682,7 +695,18 @@ export function copiedLists(rules: LearnResult, analysis: PairAnalysis, opts: On
     const list: CopiedListRule = s.kind === 'lookup' ? { kind: 'lookup', computed: s.computed, table: s.table } : { kind: 'valueMap', column: s.column };
     return [{ s, header, keyExpr, keyColumn: key.header, entries, list }];
   });
-  if (candidates.length === 0) return [];
+  // The same list written out (owner amendment, 2026-10-06): a computed column an output column shows that is a chain of constants naming one
+  // input column's values one by one. (The overfitting guard leaves a chain on ONE column alone - a value map or a band table written out.)
+  const mapped = new Set(rules.transform.valueMaps.map((m) => m.column));
+  const chains = rules.transform.computed.flatMap((c) => {
+    const out = rules.output.columns.findIndex((o) => o.from === c.id && o.agg === undefined);
+    const header = rules.output.columns[out]?.header ?? '';
+    if (out < 0 || mapped.has(c.id) || (opts.columns !== undefined && !opts.columns.has(header))) return [];
+    if (fixed && fixed.transform.computed.some((x) => x.id === c.id && deepEqual(x.expr, c.expr))) return [];
+    const chain = chainListOf(rules, c.expr);
+    return chain && chain.atoms.length >= min ? [{ computed: c.id, out, header, ...chain }] : [];
+  });
+  if (candidates.length === 0 && chains.length === 0) return [];
 
   const last = rules.transform.computed[rules.transform.computed.length - 1]?.id ?? null;
   const probes = new Probes(last);
@@ -691,10 +715,20 @@ export function copiedLists(rules: LearnResult, analysis: PairAnalysis, opts: On
     path: (c.s.kind === 'lookup' ? c.s.path : []).map((st) => ({ at: probes.add(st.expr, st.want === 'empty' ? 'text' : 'boolean'), want: st.want })),
     key: probes.add(c.keyExpr, 'text'),
   }));
+  // A chain: the key on each row, and which of its atoms is the first to hold there (0: none - the chain's else).
+  const chainPlan = chains.map((c) => ({
+    c,
+    key: probes.add({ col: c.column.id }, 'text'),
+    atom: probes.add({ op: 'switch', cases: c.atoms.map((when, i) => ({ when, then: { const: i + 1 } })), else: { const: 0 } }, 'integer'),
+  }));
   const run = runWithProbes(rules, analysis, probes.list);
   if (!run) return [];
 
   const best = new Map<number, CopiedListQuestion>();
+  const keep = (q: CopiedListQuestion): void => {
+    const known = best.get(q.out);
+    if (!known || known.entries < q.entries) best.set(q.out, q);
+  };
   for (const { c, path, key } of plan) {
     const seen = new Set<string>();
     let repeats = false;
@@ -708,11 +742,65 @@ export function copiedLists(rules: LearnResult, analysis: PairAnalysis, opts: On
       if (c.entries.has(t) && cellMatchesExample(analysis, k, c.s.out, row.cells[c.s.out])) explained += 1;
     });
     if (repeats || explained < min) continue;
-    const known = best.get(c.s.out);
-    if (known && known.entries >= explained) continue;
-    best.set(c.s.out, { kind: 'copiedList', out: c.s.out, header: c.header, keyColumn: c.keyColumn, entries: explained, list: c.list });
+    keep({ kind: 'copiedList', out: c.s.out, header: c.header, keyColumn: c.keyColumn, entries: explained, list: c.list });
+  }
+  // A chain applies to every row: the key differs on each, no atom picks more than `maxRowsPerCase` rows, and at least `min` atoms give their
+  // row its value of the example (the list's entries).
+  for (const { c, key, atom } of chainPlan) {
+    const seen = new Set<string>();
+    let repeats = false;
+    const picked = new Array<number>(c.atoms.length).fill(0);
+    const explained = new Set<number>();
+    run.rows.forEach((row, k) => {
+      if (!row) return;
+      const t = probeKey(run, k, key);
+      if (t !== null) {
+        if (seen.has(t)) repeats = true;
+        seen.add(t);
+      }
+      const at = probeCellValue(row.cells[run.at[atom]!]);
+      if (typeof at !== 'number' || at < 1 || at > c.atoms.length) return;
+      picked[at - 1]! += 1;
+      if (cellMatchesExample(analysis, k, c.out, row.cells[c.out])) explained.add(at - 1);
+    });
+    if (repeats || picked.some((n) => n > limits.learn.overfit.maxRowsPerCase) || explained.size < min) continue;
+    keep({ kind: 'copiedList', out: c.out, header: c.header, keyColumn: c.column.header, entries: explained.size, list: { kind: 'cases', computed: c.computed, column: c.column.id } });
   }
   return [...best.values()].sort((a, b) => a.out - b.out);
+}
+
+/** A constant: a literal, or a fixed date. */
+const isConstantExpr = (e: Expr): boolean => 'const' in e || (isNode(e) && e.op === 'dateLiteral');
+
+/** The column an atom names one value of: `column = constant` (either side) or `oneOf(column, value)`; undefined for anything else. */
+function namedColumn(atom: Expr): string | undefined {
+  if (!isNode(atom)) return undefined;
+  if (atom.op === 'eq') {
+    const [a, b] = atom.args;
+    if ('col' in a && isConstantExpr(b)) return a.col;
+    if ('col' in b && isConstantExpr(a)) return b.col;
+    return undefined;
+  }
+  return atom.op === 'oneOf' && 'col' in atom.arg && atom.values.length === 1 ? atom.arg.col : undefined;
+}
+
+/**
+ * A chain of constants that names one input column's values one by one: `switch(id = "A-1", "x", or(id = "A-2", id = "A-3"), "y", ...,
+ * "z")` or the same as nested ifs - every case and the else a constant, every atom of every condition (`atomsOf`) an equality of the same
+ * plain input column with a value. Its column and its atoms in order; null for anything else.
+ */
+function chainListOf(rules: LearnResult, e: Expr): { column: { id: string; header: string }; atoms: Expr[] } | null {
+  const cases = casesOf(e);
+  if (cases.length === 0) return null;
+  let last = e;
+  while (isNode(last) && (last.op === 'switch' || last.op === 'if')) last = last.else;
+  if (!isConstantExpr(last) || cases.some((c) => !isConstantExpr(c.then))) return null;
+  const atoms = cases.flatMap((c) => atomsOf(c.when));
+  const named = new Set(atoms.map(namedColumn));
+  const [id] = named;
+  if (named.size !== 1 || id === undefined) return null;
+  const column = inputColumnOf(rules, { col: id });
+  return column ? { column: { id: column.id, header: column.header }, atoms } : null;
 }
 
 // ---------------------------------------------------------------------------

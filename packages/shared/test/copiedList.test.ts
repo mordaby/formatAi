@@ -109,6 +109,30 @@ describe('withoutCopiedList: a value map', () => {
   });
 });
 
+describe('withoutCopiedList: a chain of cases on one column (owner amendment, 2026-10-06)', () => {
+  const eq = (v: string): Expr => ({ op: 'eq', args: [col('account'), { const: v }] });
+  const chain: Expr = { op: 'switch', cases: [{ when: { op: 'or', args: [eq('ACC-1'), eq('ACC-2')] }, then: { const: 'Priya' } }, { when: eq('ACC-3'), then: { const: 'Tobias' } }], else: { const: 'Amara' } };
+  const CASES: CopiedListRule = { kind: 'cases', computed: 'manager', column: 'account' };
+  const listed = (expr: Expr): LearnResult => {
+    const r = rules();
+    return { ...r, transform: { ...r.transform, computed: [r.transform.computed[2]!, { id: 'manager', type: 'text', expr }] } };
+  };
+
+  it('the column is empty and needs your input; its computed column goes with every value it named', () => {
+    const out = withoutCopiedList(listed(chain), 'Manager', CASES)!;
+    expect(out.output.columns[2]).toEqual({ header: 'Manager', from: null });
+    expect(out.unsupported).toEqual([{ outputColumn: 'Manager', reasonCode: 'overfit' }]);
+    expect(out.transform.computed.map((c) => c.id)).toEqual(['owner']);
+    expect(JSON.stringify(out)).not.toContain('ACC-');
+  });
+
+  it('only while the column is still that chain on that column', () => {
+    expect(hasCopiedList(listed(chain), 'Manager', CASES)).toBe(true);
+    expect(hasCopiedList(listed({ op: 'upper', arg: col('account') }), 'Manager', CASES)).toBe(false);
+    expect(hasCopiedList(listed(chain), 'Manager', { ...CASES, column: 'company' })).toBe(false);
+  });
+});
+
 describe('withColumnsTakenOut', () => {
   it('a column already reported keeps its entry; several columns at once; nothing freed, nothing removed', () => {
     const r = { ...rules(), unsupported: [{ outputColumn: 'Owner', reasonCode: 'externalData' as const }] };

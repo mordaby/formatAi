@@ -78,6 +78,18 @@ describe('a copied list (owner amendment, 2026-10-06): "is this the rule?"', () 
     expect(oneTimeState(rules(tenth), list, false)).toBe('closed');
   });
 
+  it('the same list written out as a chain of cases on one column: the same answers', () => {
+    const id = (v: string): Expr => ({ op: 'eq', args: [{ col: 'orderId' }, { const: v }] });
+    const chain = rules({ op: 'switch', cases: [{ when: { op: 'or', args: [id('ORD-1'), id('ORD-2')] }, then: { const: 5 } }], else: { const: 0 } });
+    const cases: OneTimeQuestion = { ...list, list: { kind: 'cases' as const, computed: 'discount', column: 'orderId' } };
+    expect(oneTimeState(chain, cases, false)).toBe('open');
+    expect(answerRule(chain, cases)).toBe(chain);
+    const out = answerOneTime(chain, cases, [])!;
+    expect([out.rules.output.columns[1], out.rules.transform.computed, out.oneTime]).toEqual([{ header: 'Discount', from: null }, [], []]);
+    expect(JSON.stringify(out.rules)).not.toContain('ORD-');
+    expect(oneTimeState(out.rules, cases, false)).toBe('closed');
+  });
+
   it('a key of its own on screen, beside the row questions of the same column', () => {
     expect(oneTimeKey(list)).not.toBe(oneTimeKey(q));
     expect(oneTimeKey(list)).toBe(oneTimeKey({ ...list, entries: 40 }));

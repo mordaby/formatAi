@@ -9,7 +9,7 @@ import { columnsWithRule, withoutCopiedList, type Expr, type LearnResult } from 
 import { fillParams } from '../../src/learn/fillParams';
 import { copiedLists, oneTimeQuestions, type CopiedListQuestion } from '../../src/learn/oneTimers';
 import { overfitFindings } from '../../src/learn/overfit';
-import { verifyAgainstExample } from '../../src/learn/verify';
+import { exampleTable, verifyAgainstExample } from '../../src/learn/verify';
 import { parseFormula } from '../../src/formula';
 import { runRules } from '../../src/pipeline/runRules';
 import type { InputTable } from '../../src/types';
@@ -163,6 +163,56 @@ describe('when a copied list is asked about', () => {
     // Their rules with neither: asked.
     const neither: LearnResult = { ...mine, transform: { ...mine.transform, computed: [mine.transform.computed[0]!], tables: [mine.transform.tables![0]!] } };
     expect(copiedLists(rules, ACCOUNTS, { columns: new Set(['Manager']), fixed: neither })).toEqual([MANAGER_LIST]);
+  });
+});
+
+describe('the same list written out: a chain of constants naming one column\'s values one by one (owner amendment, 2026-10-06)', () => {
+  /** Manager as the AI step might write it from the rows it saw: the accounts of each manager in an or-list (or a oneOf), the last one the else. */
+  const byName = (style: 'or' | 'oneOf'): string => {
+    const cases = MANAGERS.slice(0, -1).map((m) => {
+      const mine = Array.from({ length: N }, (_, i) => i).filter((i) => manager(i) === m);
+      const when = style === 'or' ? `or(${mine.map((i) => `account = "${account(i)}"`).join(', ')})` : `oneOf(account, ${mine.map((i) => `"${account(i)}"`).join(', ')})`;
+      return `${when}, "${m}"`;
+    });
+    return `switch(${cases.join(', ')}, "${MANAGERS[MANAGERS.length - 1]}")`;
+  };
+  const named = N - Array.from({ length: N }, (_, i) => i).filter((i) => manager(i) === MANAGERS[4]).length;
+  const CHAIN: CopiedListQuestion = { ...MANAGER_LIST, entries: named, list: { kind: 'cases', computed: 'manager', column: 'account' } };
+
+  it('on a column unique per row: the same question, its atoms no one-row parts of their own - and no guard\'s finding (one column)', () => {
+    for (const style of ['or', 'oneOf'] as const) {
+      const rules = accountsRules(byName(style));
+      expect(verifyAgainstExample(filled(rules), ACCOUNTS).verified).toBe(true);
+      expect(overfitFindings(rules, { table: exampleTable(ACCOUNTS) })).toEqual([]);
+      expect(oneTimeQuestions(filled(rules), ACCOUNTS), style).toEqual({ questions: [CHAIN], handedOff: [] });
+    }
+    // An if chain is the same chain.
+    const ifs = `if(account = "${account(0)}", "${manager(0)}", if(oneOf(account, "${account(1)}", "${account(2)}"), "${manager(1)}", "Team"))`;
+    expect(copiedLists(accountsRules(ifs), ACCOUNTS, { minListEntries: 1 }).map((q) => [q.entries, q.list])).toEqual([[2, { kind: 'cases', computed: 'manager', column: 'account' }]]);
+  });
+
+  it('NOT a chain on a column whose values repeat (a value map written out), nor one whose else is a rule, nor one on two columns', () => {
+    const perCompany = `switch(${COMPANIES.slice(0, -1).map((c, i) => `company = "${c}", "${OWNERS[i]}"`).join(', ')}, "${OWNERS[7]}")`;
+    expect(copiedLists(accountsRules(perCompany), ACCOUNTS)).toEqual([]);
+    expect(copiedLists(accountsRules(byName('or').replace(/, "Ingrid"\)$/, ', upper(company))')), ACCOUNTS)).toEqual([]);
+    expect(copiedLists(accountsRules(byName('or').replace('or(account = "ACC-1001"', 'or(company = "Acme", account = "ACC-1001"')), ACCOUNTS)).toEqual([]);
+  });
+
+  it('from 6 named values: 5 accounts named one by one is no question, 6 is', () => {
+    const firstOnes = (n: number): string => `switch(${Array.from({ length: n }, (_, i) => `account = "${account(i)}", "${manager(i)}"`).join(', ')}, "Team")`;
+    expect(copiedLists(accountsRules(firstOnes(5)), ACCOUNTS)).toEqual([]);
+    expect(copiedLists(accountsRules(firstOnes(6)), ACCOUNTS)).toEqual([{ ...CHAIN, entries: 6 }]);
+  });
+
+  it('"a one-time edit" takes the column out with every value it named; "a rule" keeps it', () => {
+    const rules = accountsRules(byName('or'));
+    const answered = withoutCopiedList(rules, 'Manager', CHAIN.list)!;
+    expect(answered.output.columns[3]).toEqual({ header: 'Manager', from: null });
+    expect(answered.unsupported).toEqual([{ outputColumn: 'Manager', reasonCode: 'overfit' }]);
+    expect(answered.transform.computed.map((c) => c.id)).toEqual(['owner']);
+    expect(JSON.stringify(answered)).not.toContain('ACC-');
+    expect(copiedLists(answered, ACCOUNTS)).toEqual([]);
+    expect(withoutCopiedList(answered, 'Manager', CHAIN.list)).toBeNull();
   });
 });
 

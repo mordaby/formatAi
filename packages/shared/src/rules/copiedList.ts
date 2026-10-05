@@ -7,7 +7,8 @@
 // nothing reads any more go with it.
 //
 // A copied list: a column whose value comes from a lookup table or a value map keyed on a column that is different on every row of the
-// example. Code fills such a list from every row (`fillParams`), and a copied list always reproduces the example it was copied from, so
+// example - or from a chain of constants that names that column's values one by one (`switch(or(id = "A-1", id = "A-2"), "x", ...)`, the
+// same list written out). Code fills such a list from every row (`fillParams`), and a copied list always reproduces the example it was copied from, so
 // the check on every row cannot tell a real mapping (recurring customers) from a copy (order numbers). The engine asks (`copiedLists`,
 // `learn/oneTimers.ts`); "a rule" keeps it as it is, "a one-time edit" is `withoutCopiedList`. Here, in the shared package, because both
 // sides apply it: the browser's main thread (which never loads the engine) and the eval.
@@ -18,10 +19,15 @@ import type { Expr, LearnResult, Rules } from './schema';
 
 type AnyRules = LearnResult | Rules;
 
-/** The list a copied-list question is about: a lookup table that the column's computed column looks up, or the value map on the column it reads. */
+/**
+ * The list a copied-list question is about: a lookup table that the column's computed column looks up, the value map on the column it reads,
+ * or (`cases`) the column's computed column itself - a chain of constants, one for each value of input column `column` it names
+ * (`switch(id = "A-1", "x", or(id = "A-2", id = "A-3"), "y", ..., "z")`).
+ */
 export type CopiedListRule =
   | { kind: 'lookup'; computed: string; table: string }
-  | { kind: 'valueMap'; column: string };
+  | { kind: 'valueMap'; column: string }
+  | { kind: 'cases'; computed: string; column: string };
 
 /**
  * The reason a column whose list was a one-time edit is reported with. DECISION: `overfit`, code's own reason for a column whose only rule
@@ -110,18 +116,24 @@ export function hasCopiedList(rules: AnyRules, header: string, list: CopiedListR
   if (!column || column.from === null) return false;
   if (list.kind === 'valueMap') return column.from === list.column && rules.transform.valueMaps.some((m) => m.column === list.column);
   const computed = rules.transform.computed.find((c) => c.id === list.computed);
-  return column.from === list.computed && computed !== undefined && looksUp(computed.expr as Expr, list.table) && (rules.transform.tables ?? []).some((t) => t.name === list.table);
+  if (column.from !== list.computed || computed === undefined) return false;
+  if (list.kind === 'cases') {
+    const e = computed.expr as { op?: string };
+    return (e.op === 'switch' || e.op === 'if') && idsRead(computed.expr, new Set()).has(list.column);
+  }
+  return looksUp(computed.expr as Expr, list.table) && (rules.transform.tables ?? []).some((t) => t.name === list.table);
 }
 
 /**
  * The answer "a one-time edit" to a copied-list question: the column's rule goes - it is reported as unsupported (`COPIED_LIST_REASON`,
- * "needs your input") and left empty - and the table nothing looks up any more goes with it; a value map goes when no output column reads
- * its column any more and no check reads it. Null when the column does not take its value from the list any more (`hasCopiedList`).
+ * "needs your input") and left empty - and the table nothing looks up any more goes with it (a chain of cases: its computed column, with the
+ * values it named); a value map goes when no output column reads its column any more and no check reads it. Null when the column does not
+ * take its value from the list any more (`hasCopiedList`).
  */
 export function withoutCopiedList<R extends AnyRules>(rules: R, header: string, list: CopiedListRule): R | null {
   if (!hasCopiedList(rules, header, list)) return null;
-  const next = withColumnsTakenOut(rules, new Set([header]), COPIED_LIST_REASON, list.kind === 'lookup' ? [list.computed] : []);
-  if (list.kind === 'lookup') return next;
+  const next = withColumnsTakenOut(rules, new Set([header]), COPIED_LIST_REASON, list.kind === 'valueMap' ? [] : [list.computed]);
+  if (list.kind !== 'valueMap') return next;
   const stillRead = next.output.columns.some((c) => c.from === list.column) || next.validations.some((v) => v.column === list.column);
   return stillRead ? next : ({ ...next, transform: { ...next.transform, valueMaps: next.transform.valueMaps.filter((m) => m.column !== list.column) } } as R);
 }
