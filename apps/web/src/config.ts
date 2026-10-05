@@ -6,7 +6,7 @@
 import { tiers, type Localized } from '@formatai/shared';
 
 /** Placeholder address until the owner has a real one (the legal pages, the Upgrade panel's fallback link). */
-const contactEmail = 'hello@formatai.example';
+const contactEmail = 'formatAI@gmail.com';
 
 export const webConfig = {
   /**
@@ -60,7 +60,7 @@ export const webConfig = {
     /** When the three texts last changed (ISO date): shown at the top of each page. Change it whenever the text changes. */
     updated: '2026-10-05',
     contactEmail,
-    operator: { en: '[Company name and address - to be completed by the owner]', he: '[שם החברה וכתובתה - להשלמה על ידי הבעלים]' } satisfies Localized,
+    operator: { en: 'FormatAI', he: '[שם החברה וכתובתה - להשלמה על ידי הבעלים]' } satisfies Localized,
     /** "Disputes will be decided only by ..." (the terms). */
     jurisdiction: { en: '[the competent courts of Tel Aviv-Jaffa, Israel - to be confirmed]', he: '[בתי המשפט המוסמכים בתל אביב-יפו - לאישור]' } satisfies Localized,
     hosting: { en: '[hosting and database providers - to be completed by the owner]', he: '[ספקי האחסון ומסד הנתונים - להשלמה על ידי הבעלים]' } satisfies Localized,

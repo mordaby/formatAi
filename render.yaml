@@ -12,9 +12,10 @@ services:
     runtime: node
     # DECISION: Frankfurt, the nearest Render region to Israel. Create the Atlas cluster in the same area (AWS eu-central-1).
     region: frankfurt
-    # DECISION: a paid instance. The free plan spins the service down after 15 idle minutes, and the first visitor after
-    # that (or the sign-in redirect coming back) waits about a minute. Change it in the dashboard if you want to try free.
-    plan: starter
+    # Owner decision (2026-10-05): start on the free plan to deploy and run the smoke test. It spins the service down after
+    # 15 idle minutes (the next visitor, or a sign-in redirect coming back, waits about a minute) and gives 750 hours a
+    # month per workspace. Move to `starter` (paid) when real users arrive.
+    plan: free
     # One instance only: the per-IP request limiter is in memory (a second instance would double the allowance).
     numInstances: 1
     # `--prod=false`: the build needs the dev tools (vite, tsc) whatever NODE_ENV or the package manager's own production

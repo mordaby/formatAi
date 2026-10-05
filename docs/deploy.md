@@ -34,7 +34,7 @@ Order: 1 Atlas, 2 Anthropic, 3 Render (this creates the host), 4 Google, 5 Turns
 
 ## 3. Render
 
-1. render.com > New > **Blueprint** > connect the GitHub repository > the branch that has `render.yaml` (`main` once the deploy work is merged).
+1. render.com > New > **Blueprint** > connect the GitHub repository > the branch that has `render.yaml` (`main` once the deploy work is merged). The service starts on Render's **free** plan (no payment method needed; it sleeps after 15 idle minutes and the next visitor waits about a minute). When real users arrive, change `plan: free` to `plan: starter` in `render.yaml` (or the instance type in the dashboard).
 2. Render lists the service `formatai` and asks for every `sync: false` value. Enter:
 
    | Question | Enter |
