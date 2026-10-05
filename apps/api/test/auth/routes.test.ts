@@ -769,6 +769,60 @@ function defineAuthSuite(kit: AuthKit): void {
       expect(sid).toMatch(/HttpOnly/i);
       expect(sid).toMatch(/SameSite=Lax/i);
     });
+
+    // One service, one origin (SPEC 21 v13): on Render only PUBLIC_ORIGIN (or Render's own RENDER_EXTERNAL_URL) is set.
+    describe.each([
+      ['PUBLIC_ORIGIN', { PUBLIC_ORIGIN: 'https://formatai.onrender.com' }],
+      ['RENDER_EXTERNAL_URL', { RENDER_EXTERNAL_URL: 'https://formatai.onrender.com' }],
+    ])('behind one public origin (%s)', (_name, origin) => {
+      const oneOrigin = { API_PUBLIC_URL: undefined, WEB_ORIGIN: undefined, ...origin };
+
+      it('builds both providers\' redirect URIs from it, signs in with Secure cookies and lands back on the same origin', async () => {
+        const t = await setup({ production: true, env: oneOrigin });
+        for (const provider of ['google', 'microsoft'] as const) {
+          const b = t.browser();
+          const start = await b.get(`/api/auth/${provider}/start?returnTo=${encodeURIComponent('/convert?resume=1')}`);
+          expect(start.location!.searchParams.get('redirect_uri'), provider).toBe(`https://formatai.onrender.com/api/auth/${provider}/callback`);
+          const flow = flowCookie(start.setCookies, `flow_${provider}`);
+          expect(flow).toMatch(/Secure/i);
+          expect(flow).toMatch(/HttpOnly/i);
+          expect(flow).toMatch(/SameSite=Lax/i);
+          expect(flow).toMatch(/Path=\/api\/auth/i);
+          const claims = provider === 'google' ? googleClaims() : microsoftClaims();
+          const res = await b.get(issuer.approve(start.location!.href, claims));
+          expect(res.location!.origin, provider).toBe('https://formatai.onrender.com');
+          expect(res.location!.pathname + res.location!.search, provider).toBe('/convert?resume=1');
+          const sid = flowCookie(res.setCookies, 'sid');
+          expect(sid, provider).toMatch(/Secure/i);
+          expect(sid, provider).toMatch(/SameSite=Lax/i);
+          expect((await me(b)).user, provider).not.toBeNull();
+        }
+      });
+
+      it('lets the web origin in through CORS and the sign-in origin check, and no other', async () => {
+        const t = await setup({ production: true, env: oneOrigin });
+        const b = t.browser();
+        await t.signIn(b, 'google', googleClaims());
+        const same = await b.post('/api/auth/logout', undefined, { origin: 'https://formatai.onrender.com' });
+        expect(same.status).toBe(200);
+        const other = await b.post('/api/auth/logout', undefined, { origin: 'https://evil.example.com' });
+        expect(other.status).toBe(403);
+      });
+    });
+
+    it('makes a Microsoft account an admin by its oid (or tenant:oid) - the claims the id token carries', async () => {
+      const t = await setup({ production: true, env: { API_PUBLIC_URL: undefined, WEB_ORIGIN: undefined, PUBLIC_ORIGIN: 'https://formatai.onrender.com', MICROSOFT_ADMIN_OIDS: 'Owner-Oid, tenant-9:other-oid' } });
+      const admin = async (claims: Record<string, unknown>): Promise<boolean | undefined> => {
+        const b = t.browser();
+        await t.signIn(b, 'microsoft', claims);
+        return (await me(b)).user?.isAdmin;
+      };
+      expect(await admin(microsoftClaims({ oid: 'owner-oid' }))).toBe(true);
+      expect(await admin(microsoftClaims({ oid: 'other-oid', tid: 'tenant-9' }))).toBe(true);
+      // An unlisted oid, and an account whose `sub` or email matches the list, are not admins.
+      expect(await admin(microsoftClaims({ oid: 'not-listed', tid: 'tenant-9' }))).toBe(false);
+      expect(await admin(microsoftClaims({ oid: 'someone', sub: 'owner-oid', email: 'owner@example.com' }))).toBe(false);
+    });
   });
 }
 

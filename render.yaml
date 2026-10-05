@@ -1,0 +1,83 @@
+# Render Blueprint: formatAI as ONE web service (docs/deploy.md is the owner's checklist; SPEC 21 v13).
+#
+# DECISION: one service, one origin. The Node process serves the built web app AND /api (apps/api/src/web.ts), so the
+# session cookie is first-party (no third-party-cookie problems), there is no CORS, and the sign-in providers need one
+# redirect URI on the one host. The service keeps its default https://<name>.onrender.com address until there is a domain.
+#
+# Secrets are NEVER in this file: `sync: false` makes Render ask for the value when the Blueprint is created, and it lives
+# only in Render's environment. Add or change one later in the dashboard (Environment).
+services:
+  - type: web
+    name: formatai
+    runtime: node
+    # DECISION: Frankfurt, the nearest Render region to Israel. Create the Atlas cluster in the same area (AWS eu-central-1).
+    region: frankfurt
+    # DECISION: a paid instance. The free plan spins the service down after 15 idle minutes, and the first visitor after
+    # that (or the sign-in redirect coming back) waits about a minute. Change it in the dashboard if you want to try free.
+    plan: starter
+    # One instance only: the per-IP request limiter is in memory (a second instance would double the allowance).
+    numInstances: 1
+    # `--prod=false`: the build needs the dev tools (vite, tsc) whatever NODE_ENV or the package manager's own production
+    # setting says (pnpm 10 installs them anyway; the flag keeps it that way). The shared and engine packages are used straight
+    # from their TypeScript source, so `pnpm build` builds the web app only (+ its pre-compressed copies).
+    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm build
+    # The API runs its TypeScript source through tsx, as in development (tsx is a dependency of apps/api). `exec` so the
+    # process receives Render's SIGTERM itself and shuts down cleanly.
+    startCommand: cd apps/api && exec node --import tsx src/index.ts
+    healthCheckPath: /api/health
+    # A deploy whose process fails to start (see the production config check in apps/api/src/productionConfig.ts) never
+    # takes over: Render keeps the previous version serving.
+    autoDeployTrigger: commit
+    envVars:
+      # ---- plain values (not secret) ----
+      - key: NODE_ENV
+        value: production
+      # DECISION: Node 24, an LTS line (package.json "engines" says >=24). If Render does not accept the short form, use a
+      # full version such as 24.11.0.
+      - key: NODE_VERSION
+        value: "24"
+      # The production LLM is the Anthropic API (the dev "claude-cli" provider cannot run here, and the start check refuses it).
+      - key: LLM_PROVIDER
+        value: anthropic
+      # Render's load balancer is in front of the process: without this every visitor looks like the proxy to the per-IP limits.
+      # (Render appends to X-Forwarded-For; see docs/deploy.md "Known limit" about "true" versus a hop count.)
+      - key: TRUST_PROXY
+        value: "true"
+      - key: MONGODB_DB
+        value: formatai
+      # The public origin (sign-in redirect URIs, CORS, redirects after sign-in) is Render's own RENDER_EXTERNAL_URL, which Render
+      # sets. When a custom domain is added, set PUBLIC_ORIGIN=https://that.domain here or in the dashboard: it wins.
+      # Cookies need no variable: with NODE_ENV=production they are httpOnly, Secure and SameSite=Lax.
+
+      # ---- generated once by Render, never shown in the repo or in chat ----
+      # (HMAC keys: they sign the session cookie / key the per-IP counters. Changing one signs everybody out / resets the
+      # counters. Render keeps the generated value across Blueprint syncs.)
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: IP_HASH_SECRET
+        generateValue: true
+
+      # ---- asked for once, when the Blueprint is created (sync: false) ----
+      - key: MONGODB_URI
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # Cloudflare Turnstile. The SITE key is public (the API hands it to the browser at runtime, GET /api/session): no build-time
+      # variable is needed. It is per hostname, which is why it is asked for here.
+      - key: TURNSTILE_SITE_KEY
+        sync: false
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+      # Comma-separated: who opens the admin view (a verified Google email).
+      - key: ADMIN_EMAILS
+        sync: false
+
+      # ---- Microsoft sign-in: add these in the dashboard (Environment) once the Entra app is registered (docs/deploy.md step 6) ----
+      # Not asked for at creation, so the first deploy does not wait for them; a provider is offered only when its id AND secret are set.
+      #   MICROSOFT_CLIENT_ID       the app's "Application (client) ID"
+      #   MICROSOFT_CLIENT_SECRET   the client secret VALUE
+      #   MICROSOFT_ADMIN_OIDS      comma-separated object ids (`oid`) of Microsoft admins
