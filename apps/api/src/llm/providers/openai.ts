@@ -29,13 +29,16 @@ export interface CreateOpenAiProviderOptions {
 // The more specific prefix is listed first. `gpt-5-mini-2025-08-07` (a dated snapshot) is matched by its family's prefix; `gpt-5.1` and
 // later are NOT (`gpt-5.` does not start with `gpt-5-`): their efforts and defaults differ, so they need their own row before use.
 //
-// DECISION (issue #45, as SPEC 9.1 does for Anthropic): the lowest effort the model accepts - `minimal` for the GPT-5 family. The answer is one
-// schema-constrained object the first-try model writes in one go; reasoning is billed as output and adds latency on every call. Whether more
-// effort pays for itself is an eval question.
+// DECISION (owner, 2026-10-05; was `minimal`, issue #45): `low` for the GPT-5 family. Measured in completion mode, masking on, gpt-5-mini:
+// at `minimal` a plain price cut-off (Size = Small / Medium / Big by price) failed all 3 calls - it wrote the bands as value-map keys
+// ("<200", ">=1000"), which match text exactly, and on the fixed "price" column - and the owner's own cut-off example came back with
+// nothing; at `low` it wrote `if(price < 200, ...)` and verified on the first call ($0.004, about the cost of ONE `minimal` call). Reasoning
+// is billed as output, so a call costs a little more; fewer repairs make up for it. A switch on two columns (eval `orders-priority`) still
+// fails on gpt-5-mini at `low`: whether `medium` (or the gpt-5 escalation) pays for itself is an eval question.
 const OPENAI_REASONING_MODELS: readonly { prefix: string; effort: OpenAI.ReasoningEffort }[] = [
-  { prefix: 'gpt-5-mini', effort: 'minimal' },
-  { prefix: 'gpt-5-nano', effort: 'minimal' },
-  { prefix: 'gpt-5', effort: 'minimal' },
+  { prefix: 'gpt-5-mini', effort: 'low' },
+  { prefix: 'gpt-5-nano', effort: 'low' },
+  { prefix: 'gpt-5', effort: 'low' },
 ];
 
 function isModel(model: string, prefix: string): boolean {
@@ -49,9 +52,9 @@ export interface OpenAiModelParams {
 }
 
 /**
- * The per-model parameters of a request (`maxTokens`: the request's own, when it set one). A reasoning model of the table gets its lowest
- * effort and `limits.llm.maxTokensThinking` (16,000) so that reasoning plus the answer fit. DECISION: 16,000, not the reasoning guide's
- * "reserve at least 25,000 when you start experimenting" - that is for the default (`medium`) effort; at `minimal` the reasoning is short,
+ * The per-model parameters of a request (`maxTokens`: the request's own, when it set one). A reasoning model of the table gets its
+ * effort (`low`) and `limits.llm.maxTokensThinking` (16,000) so that reasoning plus the answer fit. DECISION: 16,000, not the reasoning guide's
+ * "reserve at least 25,000 when you start experimenting" - that is for the default (`medium`) effort; at `low` the reasoning is short,
  * and the answer itself stays within `limits.llm.maxTokens` (4,000). A cut-off answer is still recorded as `truncated` and repaired.
  *
  * No request carries `temperature` / `top_p` (SPEC 9.1 "temperature 0 if the model supports it": no model here supports it). DECISION (a

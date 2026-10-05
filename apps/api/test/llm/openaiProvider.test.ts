@@ -80,10 +80,10 @@ describe('openai provider - request building', () => {
 });
 
 describe('openai provider - parameters per model (issue #45)', () => {
-  it('the two configured slots (gpt-5-mini, gpt-5): reasoning effort minimal, no temperature / top_p, the reasoning room for output', async () => {
+  it('the two configured slots (gpt-5-mini, gpt-5): reasoning effort low, no temperature / top_p, the reasoning room for output', async () => {
     for (const model of [models.openai.firstTry, models.openai.escalation]) {
       const params = await sentParams({ model });
-      expect(params.reasoning, model).toEqual({ effort: 'minimal' });
+      expect(params.reasoning, model).toEqual({ effort: 'low' });
       expect('temperature' in params, model).toBe(false);
       expect('top_p' in params, model).toBe(false);
       expect('top_logprobs' in params, model).toBe(false);
@@ -94,7 +94,7 @@ describe('openai provider - parameters per model (issue #45)', () => {
 
   it('a dated snapshot of the family and gpt-5-nano get the same settings; gpt-5.1 (another line) is not matched', () => {
     for (const model of ['gpt-5-mini-2025-08-07', 'gpt-5-2025-08-07', 'gpt-5-nano']) {
-      expect(openAiParamsOf(model), model).toEqual({ effort: 'minimal', maxOutputTokens: limits.llm.maxTokensThinking });
+      expect(openAiParamsOf(model), model).toEqual({ effort: 'low', maxOutputTokens: limits.llm.maxTokensThinking });
     }
     expect(openAiParamsOf('gpt-5.1')).toEqual({ maxOutputTokens: limits.llm.maxTokensThinking });
   });
@@ -109,7 +109,7 @@ describe('openai provider - parameters per model (issue #45)', () => {
   it('the request\'s own maxTokens still wins', async () => {
     const params = await sentParams({ maxTokens: 1234 });
     expect(params.max_output_tokens).toBe(1234);
-    expect(params.reasoning).toEqual({ effort: 'minimal' });
+    expect(params.reasoning).toEqual({ effort: 'low' });
   });
 
   it('does not store the response (store: false)', async () => {

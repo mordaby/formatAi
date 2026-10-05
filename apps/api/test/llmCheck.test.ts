@@ -120,7 +120,7 @@ describe('runLlmCheck + formatLlmCheckReport', () => {
     const report = await runLlmCheck(env, args, await buildCheckPayload(), p.provider);
     expect(p.create).toHaveBeenCalledTimes(1);
     const sent = p.create.mock.calls[0]![0];
-    expect(sent).toMatchObject({ model: 'gpt-5-mini', reasoning: { effort: 'minimal' } });
+    expect(sent).toMatchObject({ model: 'gpt-5-mini', reasoning: { effort: 'low' } });
     expect(report).toMatchObject({ provider: 'openai', model: 'gpt-5-mini', verified: true, masking: true, result: { model: 'gpt-5-mini-2025-08-07', truncated: false } });
     const text = formatLlmCheckReport(report);
     for (const part of ['served by:  gpt-5-mini-2025-08-07', 'tokens:     9000 in, 700 out', 'truncated:  no', 'verified:   yes']) expect(text).toContain(part);
