@@ -64,6 +64,12 @@ const OPTIONAL_STRING_KEYS = [
   'WEB_DIST',
   'ADMIN_EMAILS',
   'TURNSTILE_SECRET_KEY',
+  /**
+   * "true" turns Cloudflare Turnstile OFF, whatever the keys say (a placeholder such as "pending" included): an explicit owner
+   * switch for the first deploy, when the widget can't be made yet because Cloudflare wants a live hostname. Visitors' requests
+   * and forms are then protected by the rate limits only, and the start log says so. Remove it once the keys are set.
+   */
+  'TURNSTILE_DISABLED',
   'VITE_TURNSTILE_SITE_KEY',
   /** Public Turnstile site key served by GET /api/session; falls back to `VITE_TURNSTILE_SITE_KEY` (same repo-root .env). */
   'TURNSTILE_SITE_KEY',
@@ -141,6 +147,11 @@ function parseFallbackProvider(raw: string | undefined): LlmProviderName | undef
  * Never logs values (some are secrets) - only this module's own errors,
  * which name the bad key, may include non-secret values like PORT.
  */
+/** The owner's explicit `TURNSTILE_DISABLED=true` (or 1 / yes): Turnstile is off, whatever the keys say. */
+export function isTurnstileDisabled(env: Pick<Env, 'TURNSTILE_DISABLED'>): boolean {
+  return /^(true|1|yes)$/i.test((env.TURNSTILE_DISABLED ?? '').trim());
+}
+
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   // One service, one origin (DECISION, SPEC 21 v13): PUBLIC_ORIGIN - or Render's own RENDER_EXTERNAL_URL - names the
   // origin the browser sees, and both the web origin and the API's public URL default to it. Setting WEB_ORIGIN or

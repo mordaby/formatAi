@@ -4,7 +4,7 @@
 // message instead of one per restart. It never prints a value: only names, and what a value must look like.
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { repoRoot, type Env } from './env.js';
+import { isTurnstileDisabled, repoRoot, type Env } from './env.js';
 import { PROVIDER_TABLE } from './auth/providers.js';
 
 /** A signing secret shorter than this is a guess waiting to happen (`openssl rand -base64 48` gives 64). */
@@ -62,9 +62,14 @@ export function checkProductionConfig(
   secret('IP_HASH_SECRET', 'keys the per-IP counters and the learn ids');
 
   // Turnstile: the secret verifies the token, the site key is what the browser's widget needs (served by GET /api/session).
-  if (!env.TURNSTILE_SECRET_KEY) problems.push('TURNSTILE_SECRET_KEY is not set (Cloudflare Turnstile, the secret key)');
-  if (!env.TURNSTILE_SITE_KEY && !env.VITE_TURNSTILE_SITE_KEY) {
-    problems.push('TURNSTILE_SITE_KEY is not set (Cloudflare Turnstile, the public site key the browser shows the widget with)');
+  // TURNSTILE_DISABLED=true (the first deploy, before the widget can be made) turns it off on purpose: a warning, not a problem.
+  if (isTurnstileDisabled(env)) {
+    warnings.push('Turnstile is OFF (TURNSTILE_DISABLED=true): set TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY, then remove TURNSTILE_DISABLED');
+  } else {
+    if (!env.TURNSTILE_SECRET_KEY) problems.push('TURNSTILE_SECRET_KEY is not set (Cloudflare Turnstile, the secret key; for a first deploy without it set TURNSTILE_DISABLED=true)');
+    if (!env.TURNSTILE_SITE_KEY && !env.VITE_TURNSTILE_SITE_KEY) {
+      problems.push('TURNSTILE_SITE_KEY is not set (Cloudflare Turnstile, the public site key the browser shows the widget with)');
+    }
   }
 
   // The AI step: the dev CLI and the fake provider exist for a developer's machine.

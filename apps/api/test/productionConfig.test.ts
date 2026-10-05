@@ -36,6 +36,17 @@ describe('checkProductionConfig', () => {
     expect(check()).toEqual({ problems: [], warnings: [] });
   });
 
+  it('TURNSTILE_DISABLED=true (first deploy): missing Turnstile keys are a warning, not a problem; without it they stop the start', () => {
+    const off = check({ TURNSTILE_SECRET_KEY: undefined, TURNSTILE_SITE_KEY: undefined, TURNSTILE_DISABLED: 'true' });
+    expect(off.problems).toEqual([]);
+    expect(off.warnings).toEqual([expect.stringContaining('Turnstile is OFF')]);
+    const strict = check({ TURNSTILE_SECRET_KEY: undefined, TURNSTILE_SITE_KEY: undefined });
+    expect(strict.problems.some((p) => p.includes('TURNSTILE_SECRET_KEY'))).toBe(true);
+    expect(strict.problems.some((p) => p.includes('TURNSTILE_SITE_KEY'))).toBe(true);
+    // Keys present and the switch on: still off (the switch wins), still a warning.
+    expect(check({ TURNSTILE_DISABLED: 'true' }).warnings).toEqual([expect.stringContaining('Turnstile is OFF')]);
+  });
+
   it('lists every missing setting at once, by name', () => {
     const { problems } = check({
       MONGODB_URI: undefined,
