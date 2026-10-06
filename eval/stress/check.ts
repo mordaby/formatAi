@@ -504,6 +504,16 @@ function maskCheck(c: StressCase, analysis: PairAnalysis, res: LearnFromExamples
       const realOut = sheetRow !== undefined ? (analysis.output.sheet.rows[sheetRow] ?? []) : [];
       outRow.forEach((masked, col) => {
         const real = realOut[col]?.v ?? null;
+        // A number written as text in an output column masked as a number: sent real by design, even when the same number is also in
+        // an ID column that is masked (a customer number twice, once unique per row and once not) - the finding, as on the input side.
+        const outType = types.output[col];
+        if (typeof real === 'string' && outType !== undefined && NUMERIC_MASK_TYPES.has(outType) && /^-?\d+(\.\d+)?$/.test(real.trim())) {
+          if (masked === real && sensitive.has(real.trim()) && !m.reportedIdColumns.has(`out:${col}`)) {
+            m.reportedIdColumns.add(`out:${col}`);
+            findings.push({ kind: 'idNumberSentReal', detail: `output column ${col + 1} (masked as ${outType}) holds ${JSON.stringify(real)}, also a value of the ID column "${sensitive.get(real.trim())}" (sent real)` });
+          }
+          return;
+        }
         if (typeof real === 'string' && typeof masked === 'string') {
           const maskedWords = new Set(tokens(masked));
           for (const w of tokens(real)) if (checkable(w) && !allowed.has(w) && sensitive.has(w) && maskedWords.has(w)) leakOf(m, `samples[${i}].out[${col}] (word of "${sensitive.get(w)}")`, w);
