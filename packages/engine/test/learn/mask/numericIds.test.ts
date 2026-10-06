@@ -438,6 +438,19 @@ describe('repair rows and the learning loop\'s rows are masked the same way', ()
     }
   });
 
+  it('completion mode: an ID number in the rules to keep is sent as its fake, even one no sent row holds', () => {
+    const sent = new Set(built.sampleRows.map((s) => s.in));
+    const row = pair.customers.findIndex((_, i) => !sent.has(i));
+    const fixed = rules(CUT);
+    fixed.input.rowFilters = [{ column: 'customer', op: 'ne', value: pair.customers[row]! }];
+    const m = createMasker(key('complete'));
+    const { payload } = buildPayload(a, preflight(a, 'paid'), { masker: m, complete: { fixedRules: fixed, columns: [5], parts: [] } });
+    const json = JSON.stringify(payload.complete);
+    expect(leaked(json, all)).toEqual([]);
+    expect(json).toContain(String(m.maskCell(pair.customers[row]!, 'idLike')));
+    expect(json).toContain(String(CUT)); // a threshold: real
+  });
+
   it('the loop\'s rows and problems carry none either, with the same fake as the payload\'s samples for the same row', () => {
     const v = verifyAgainstExample(rules(1000), a, { wrongRows: true });
     const ctx: LoopContext = { analysis: a, payload: built.payload, masker, caps: { maxRounds: 3, rowsPerRound: 8, maxRowsTotal: 40, maxBytes: 49_152 } };

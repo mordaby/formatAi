@@ -11,11 +11,13 @@ import type {
   Format,
   Hint,
   LearnPayload,
+  LearnResult,
   OutputLayout,
   PayloadCell,
   PayloadColumn,
   ProfileType,
   RowHint,
+  Rules,
   Sample,
   SummaryRowLayout,
   TitleRowLayout,
@@ -27,7 +29,7 @@ import type { ColumnProfile, Family, PairAnalysis, SummaryRowAnalysis, TitleRowA
 import { isoOfSerial } from './analyze/cells';
 import { completePayloadOf, fixedLabelTexts, type CompleteOptions } from './complete';
 import { relationsToHints, type HintCandidate } from './hints';
-import { splitWords, type Masker } from './mask';
+import { mapRuleConstants, splitWords, type Masker } from './mask';
 import { inputMaskType, maskTypes, outputMaskType } from './maskTypes';
 import type { PreflightResult } from './preflight';
 import { normalizeText } from '../values/text';
@@ -447,6 +449,28 @@ function maskHintList(hints: readonly HintCandidate[], analysis: PairAnalysis, m
   });
 }
 
+/**
+ * Completion mode (amendment 2026-10-06): a number constant of the rules to keep that is a value of a column masked as an ID is masked
+ * here once, like that column's cells, so `maskRules` sends its fake (`Masker.fakeNumberOf`) - even when no row this payload sends holds it.
+ */
+function registerIdConstants(analysis: PairAnalysis, rules: LearnResult | Rules, masker: Masker): void {
+  const wanted = new Set<number>();
+  mapRuleConstants(rules, (s) => s, (n) => {
+    wanted.add(n);
+    return n;
+  });
+  if (wanted.size === 0) return;
+  const types = maskTypes(analysis);
+  const scan = (row: (RawCell | null)[] | undefined, kinds: readonly ProfileType[]): void => {
+    kinds.forEach((type, c) => {
+      const v = row?.[c]?.v;
+      if (type === 'idLike' && typeof v === 'number' && wanted.has(v)) masker.maskCell(v, type);
+    });
+  };
+  for (const row of analysis.input.rows) scan(row, types.input);
+  for (const sheetRow of analysis.output.dataRows) scan(analysis.output.sheet.rows[sheetRow], types.output);
+}
+
 /** SPEC 8.12/A2: `target`'s own header/title/summary-label words get the same
  * treatment as any other label - real unless the word also appears in a data
  * cell, in which case `masker.maskText` (having had every genuine label word
@@ -555,6 +579,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
   if (masker) masker.addLabelWords(labelWordsOf(analysis, extractWords(collectLabelTexts(analysis, opts.target, opts.complete))));
 
   const maskedHints = masker ? maskHintList(hints, analysis, masker) : hints;
+  if (masker && opts.complete) registerIdConstants(analysis, opts.complete.fixedRules, masker);
 
   const buildSamples = (): { samples: Sample[]; sampleRows: { in: number; out: number[] }[] } => {
     const built = isFamilies ? familyPriority.map((f) => buildFamilySample(analysis, f)) : pairPriority.map((k) => buildPairSample(analysis, k));
