@@ -4,10 +4,13 @@
 // without takes it out (the column needs your input, its copied values never sent); Cancel saves nothing; a format with no list saves with no
 // dialog. Every save path: the Result screen's Save format and Save changes, Add a source; the saved-source editor saves its own (the
 // server's) rules as before. Account Manager looked up by Account: a table code filled from the 40 rows of external-agent-column.
+// And (owner rule, 2026-10-06) a table nothing reads any more is never saved: "Leave empty" on the list's column sends no table at all - the
+// Result screen's saves go through the real registry client here (`request` is what is sent).
 import type { CopiedListQuestion } from '@formatai/engine';
 import type { Expr, LearnResult, Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRegistryApi } from '../src/api/registry';
 import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
 import { resumeLeaveGuard } from '../src/app/unloadPrompt';
 import type { LearnHost, LearnOutput } from '../src/worker/engineApi';
@@ -108,8 +111,11 @@ const patched = (version: number) => ({ conversion: conversionSummary({ id: 'C1'
 async function openResult(result: LearnOutput = aiResult(), lang: 'en' | 'he' = 'en') {
   const liveCheck = vi.fn(async (_id: string, r: LearnResult | Rules) => live(r));
   const fake = fakeEngine(async () => result, undefined, { liveCheck, fullCheck: liveCheck, convert: vi.fn(async () => converted()) });
-  const createFormat = vi.fn(async () => created);
-  const updateConversion = vi.fn(async (_id: string, body: { baseVersion: number }) => patched(body.baseVersion + 1));
+  // The real registry client over a fake server: `request` is what is SENT (the client's boundary applied), the mocks what the screen asked.
+  const request = vi.fn(async (method: string, _path: string, body: { baseVersion?: number }) => (method === 'POST' ? created : patched((body.baseVersion ?? 0) + 1)));
+  const registry = createRegistryApi(request as never);
+  const createFormat = vi.fn((body: Parameters<typeof registry.createFormat>[0]) => registry.createFormat(body));
+  const updateConversion = vi.fn((id: string, body: Parameters<typeof registry.updateConversion>[1]) => registry.updateConversion(id, body));
   const api = fakeApi({ user: USER, registry: { createFormat, updateConversion } });
   renderApp({ engine: fake.engine, api, lang, dataRouter: true });
   const en = lang === 'en';
@@ -121,7 +127,7 @@ async function openResult(result: LearnOutput = aiResult(), lang: 'en' | 'he' = 
   await act(async () => void fireEvent.click(learnButton));
   await screen.findByTestId('rules-map');
   await waitFor(() => expect(liveCheck).toHaveBeenCalled());
-  return { ...fake, api, liveCheck, createFormat, updateConversion };
+  return { ...fake, api, liveCheck, createFormat, updateConversion, request };
 }
 
 const SUMMARY = { rowsIn: ROWS, rowsOut: ROWS, rowsFiltered: 0, duplicatesRemoved: [], duplicatesFlagged: 0, blockedRows: [] };
@@ -351,6 +357,47 @@ describe('after the first save (the Result screen is the editor of the new sourc
     await answer('Keep it');
     await waitFor(() => expect(updateConversion).toHaveBeenCalledTimes(1));
     expect(bodyOf(updateConversion).rules.transform.tables).toEqual(listed().transform.tables);
+  });
+});
+
+describe('a list nothing reads any more is never saved (owner rule, 2026-10-06)', () => {
+  const sent = (request: ReturnType<typeof vi.fn>, at = 0): { method: string; path: string; rules: Rules } => {
+    const [method, path, body] = request.mock.calls[at] as [string, string, { rules: Rules }];
+    return { method, path, rules: body.rules };
+  };
+
+  it('"Leave empty" on the list column, then Save: nothing to ask, and no table and no copied value is sent', async () => {
+    const { request } = await openResult();
+    const row = document.querySelector('[data-line-id="col:Account Manager"]') as HTMLElement;
+    fireEvent.click(within(row).getAllByRole('button').find((b) => b.classList.contains('map-line__main'))!);
+    fireEvent.click(await screen.findByRole('radio', { name: 'Leave empty' }));
+    await waitFor(() => expect(badge()).toBe('1 column needs your input'));
+    await press('Save format');
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(dialog()).toBeNull();
+    const { method, path, rules } = sent(request);
+    expect([method, path]).toEqual(['POST', '/api/formats']);
+    expect(managerOf(rules)?.from).toBeNull();
+    expect(rules.transform.tables).toEqual([]);
+    expect(rules.transform.computed).toEqual([]);
+    noCopiedValues(rules);
+  });
+
+  it('a table that is still read is kept: "Keep it" sends the list as it is', async () => {
+    const { request } = await openResult();
+    await press('Save format');
+    await answer('Keep it');
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(sent(request).rules).toEqual(listed());
+  });
+
+  it('the save body of a normal format is unchanged', async () => {
+    const { request, createFormat } = await openResult(aiResult([], listed()));
+    await press('Save format');
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect((request.mock.calls[0] as unknown[])[2]).toEqual((createFormat.mock.calls[0] as unknown[])[0]);
+    // (the very rules the screen saved: nothing taken out)
+    expect(sent(request).rules).toBe(bodyOf(createFormat).rules);
   });
 });
 

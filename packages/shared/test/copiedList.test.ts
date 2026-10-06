@@ -2,7 +2,7 @@
 // and the answer "a one-time edit" to a copied-list question (owner amendment, 2026-10-06). The column is left empty and reported, and what
 // nothing reads any more goes with it: its computed column (and the helpers only it read), its lookup table, its value map.
 import { describe, expect, it } from 'vitest';
-import { COPIED_LIST_REASON, hasCopiedList, withColumnsTakenOut, withoutCopiedList, type CopiedListRule } from '../src/rules/copiedList';
+import { COPIED_LIST_REASON, hasCopiedList, withColumnsTakenOut, withoutCopiedList, withoutUnreadLists, type CopiedListRule } from '../src/rules/copiedList';
 import { LearnResultSchema, type Expr, type LearnResult } from '../src/rules/schema';
 
 const col = (id: string): Expr => ({ col: id });
@@ -145,5 +145,40 @@ describe('withColumnsTakenOut', () => {
     // (No computed column was named as freed: they stay - and so do the tables they look up.)
     expect(out.transform.computed).toHaveLength(3);
     expect(out.transform.tables).toHaveLength(2);
+  });
+});
+
+describe('withoutUnreadLists: what a save stores (owner rule, 2026-10-06)', () => {
+  it('a lookup table no lookup names any more is dropped (a list whose column was left empty by hand); one still read is kept', () => {
+    // Manager left empty by hand: the editor took its computed column out, its table stayed behind.
+    const left = rules({ computed: rules().transform.computed.filter((c) => c.id !== 'manager') }, [
+      { header: 'Account', from: 'account' },
+      { header: 'Owner', from: 'owner' },
+      { header: 'Manager', from: null },
+    ]);
+    const out = withoutUnreadLists(left);
+    expect(out.transform.tables!.map((t) => t.name)).toEqual(['owners']);
+    expect(JSON.stringify(out)).not.toMatch(/Priya|Tobias|ACC-/);
+    expect({ ...out, transform: { ...out.transform, tables: left.transform.tables } }).toEqual(left);
+  });
+
+  it('a value map on a column nothing reads any more is dropped; one read by an output column, an expression or a check is kept', () => {
+    const map = (column: string) => ({ column, map: { 'ACC-1': 'Priya', 'ACC-2': 'Tobias' }, onMissing: 'flag' as const });
+    const unread = rules({ valueMaps: [map('company')] });
+    // (company is read only by the computed column `owner`: kept - conservative, a reader anywhere keeps it)
+    expect(withoutUnreadLists(unread)).toBe(unread);
+    const none = rules({ computed: [], tables: [], valueMaps: [map('company')] }, [{ header: 'Account', from: 'account' }]);
+    expect(withoutUnreadLists(none).transform.valueMaps).toEqual([]);
+    const shown = rules({ computed: [], tables: [], valueMaps: [map('company')] }, [{ header: 'Company', from: 'company' }]);
+    expect(withoutUnreadLists(shown)).toBe(shown);
+    const checked = { ...none, validations: [{ column: 'company', rule: 'required' as const, severity: 'flag' as const }] } as LearnResult;
+    expect(withoutUnreadLists(checked)).toBe(checked);
+  });
+
+  it('rules whose every table and value map is read come back as they are (the same object)', () => {
+    const all = rules();
+    expect(withoutUnreadLists(all)).toBe(all);
+    const plain = rules({ computed: [], tables: undefined }, [{ header: 'Account', from: 'account' }]);
+    expect(withoutUnreadLists(plain)).toBe(plain);
   });
 });

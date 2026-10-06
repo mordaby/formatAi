@@ -22,8 +22,9 @@ import type {
   UpdateConversionRequest,
   UpdateConversionResponse,
 } from '@formatai/shared';
-import { stripAiNotes, type LearnResult, type Rules } from '@formatai/shared';
+import type { LearnResult, Rules } from '@formatai/shared';
 import type { HttpRequest } from './http';
+import { savedRules } from './savedRules';
 
 export interface RegistryApi {
   /** GET /api/formats */
@@ -56,17 +57,20 @@ export interface RegistryApi {
 
 const enc = encodeURIComponent;
 
-/** SPEC 15 (learn-v7): the AI's explanation and function request are never saved with a rules file. The editor's rules never carry them (they
- * live beside the rules, in the session), and the API strips them as well; this is the browser's own guarantee at the boundary. */
-function withoutAiNotes<B extends { rules?: Rules | LearnResult }>(body: B): B {
-  return body.rules ? { ...body, rules: stripAiNotes(body.rules) } : body;
+/**
+ * The rules of a save as they are stored (`savedRules`): SPEC 15 (learn-v7), the AI's explanation and function request are never saved with a
+ * rules file (the editor's rules never carry them - they live beside the rules, in the session - and the API strips them as well); and (owner
+ * rule, 2026-10-06) no lookup table or value map nothing reads any more. The browser's own guarantee at the boundary.
+ */
+function asSaved<B extends { rules?: Rules | LearnResult }>(body: B): B {
+  return body.rules ? { ...body, rules: savedRules(body.rules) } : body;
 }
 
 export function createRegistryApi(request: HttpRequest): RegistryApi {
   return {
     listFormats: async (signal) => (await request<ListFormatsResponse>('GET', '/api/formats', undefined, signal)).formats,
     getFormat: (id, signal) => request<GetFormatResponse>('GET', `/api/formats/${enc(id)}`, undefined, signal),
-    createFormat: (body) => request<CreateFormatResponse>('POST', '/api/formats', withoutAiNotes(body)),
+    createFormat: (body) => request<CreateFormatResponse>('POST', '/api/formats', asSaved(body)),
     renameFormat: async (id, name) => {
       const body: RenameFormatRequest = { name };
       return (await request<{ format: FormatSummary }>('PATCH', `/api/formats/${enc(id)}`, body)).format;
@@ -75,10 +79,10 @@ export function createRegistryApi(request: HttpRequest): RegistryApi {
       await request<{ deleted: true }>('DELETE', `/api/formats/${enc(id)}`);
     },
     // The whole answer (the source the save used comes with it).
-    attachSource: (formatId, body) => request<AttachSourceResponse>('POST', `/api/formats/${enc(formatId)}/conversions`, withoutAiNotes(body)),
+    attachSource: (formatId, body) => request<AttachSourceResponse>('POST', `/api/formats/${enc(formatId)}/conversions`, asSaved(body)),
     listSources: async (signal) => (await request<ListSourcesResponse>('GET', '/api/sources', undefined, signal)).sources,
     getConversion: async (id, signal) => (await request<{ conversion: ConversionDetail }>('GET', `/api/conversions/${enc(id)}`, undefined, signal)).conversion,
-    updateConversion: (id, body) => request<UpdateConversionResponse>('PATCH', `/api/conversions/${enc(id)}`, withoutAiNotes(body)),
+    updateConversion: (id, body) => request<UpdateConversionResponse>('PATCH', `/api/conversions/${enc(id)}`, asSaved(body)),
     deleteConversion: async (id) => {
       await request<{ deleted: true }>('DELETE', `/api/conversions/${enc(id)}`);
     },

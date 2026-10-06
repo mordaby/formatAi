@@ -5,9 +5,10 @@
 // SPEC 2/15: files never leave the browser. The bodies sent here are `{ rows, flagged }` (counts), `{ header, alias }` (a column name the
 // user confirmed), and - only when the user says "Do this every time?" in the row review (SPEC 5 C) - a conversion's rules saved as a new
 // version, carrying the one text of the file the user chose to keep and what they typed for it. There is no method that takes a file or a file name.
-import { stripAiNotes, type AddAliasRequest, type ConversionDetail, type IgnoreHeadersRequest, type RecordRunRequest, type SignatureEntry, type SignaturesResponse, type UpdateConversionRequest, type UpdateConversionResponse } from '@formatai/shared';
+import { type AddAliasRequest, type ConversionDetail, type IgnoreHeadersRequest, type RecordRunRequest, type SignatureEntry, type SignaturesResponse, type UpdateConversionRequest, type UpdateConversionResponse } from '@formatai/shared';
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import { createHttp, type CreateHttpOptions } from './http';
+import { savedRules } from './savedRules';
 
 export interface ConvertApi {
   /** GET /api/signatures: every saved SOURCE's input signature, with the conversions (formats) it feeds (matching runs in the browser). */
@@ -57,10 +58,11 @@ export function createConvertApi(options: CreateConvertApiOptions = {}): Convert
       const body: IgnoreHeadersRequest = { headers: headers.map(String) };
       await request('POST', `/api/sources/${encodeURIComponent(sourceId)}/ignored-headers`, body);
     },
-    // Built here, field by field. The rules carry the user's own words (what they typed for a text of the file), exactly as an editor save does.
+    // Built here, field by field. The rules carry the user's own words (what they typed for a text of the file), exactly as an editor save does
+    // - and are stored as every save stores them (`savedRules`).
     saveRules: (conversionId, req) => {
       const body: UpdateConversionRequest = {
-        ...(req.rules ? { rules: stripAiNotes(req.rules) } : {}),
+        ...(req.rules ? { rules: savedRules(req.rules) } : {}),
         ...(req.status ? { status: req.status } : {}),
         ...(req.acceptedDifferences !== undefined ? { acceptedDifferences: req.acceptedDifferences } : {}),
         ...(req.exampleExceptions ? { exampleExceptions: req.exampleExceptions } : {}),

@@ -14,6 +14,9 @@
 // it" is `withoutCopiedList`. Here, in the shared package, because both sides apply it: the browser's main thread (which never loads the
 // engine) and the eval.
 //
+// `withoutUnreadLists` is what every save stores (owner rule, 2026-10-06): a lookup table or a value map nothing in the rules reads any more
+// is never saved - a list whose column was left empty by hand goes with it (the browser's API client applies it, `api/savedRules.ts`).
+//
 // Pure: no I/O, no engine.
 import type { UnsupportedReasonCode } from '../codes';
 import type { Expr, LearnResult, Rules } from './schema';
@@ -90,13 +93,49 @@ export function withColumnsTakenOut<R extends AnyRules>(rules: R, headers: Reado
     }
   }
   // (A table of the example's values holds this file's rows: one nothing looks up is not kept.)
-  const tables = next.transform.tables;
-  if (tables && tables.length > 0) {
-    const text = JSON.stringify({ ...next, transform: { ...next.transform, tables: [] } });
-    const used = tables.filter((t) => text.includes(`"table":${JSON.stringify(t.name)}`));
-    if (used.length < tables.length) next = { ...next, transform: { ...next.transform, tables: used } } as R;
-  }
-  return next;
+  return withoutUnreadTables(next);
+}
+
+/** The rules without the lookup tables no `lookup` names any more (the rules themselves when every table is read). */
+export function withoutUnreadTables<R extends AnyRules>(rules: R): R {
+  const tables = rules.transform.tables;
+  if (!tables || tables.length === 0) return rules;
+  const text = JSON.stringify({ ...rules, transform: { ...rules.transform, tables: [] } });
+  const used = tables.filter((t) => text.includes(`"table":${JSON.stringify(t.name)}`));
+  return used.length < tables.length ? ({ ...rules, transform: { ...rules.transform, tables: used } } as R) : rules;
+}
+
+/**
+ * The rules without the value maps on a column nothing reads any more. DECISION (conservative: a map that is read is never dropped): the
+ * column's id anywhere in the rules, as text, counts as a reader - an output column, an expression (a computed column too, although it reads
+ * before the value maps run), a filter, a sort, a group, a summary, a check, a title - except where it is only declared (the input columns,
+ * a computed column's own id) and in the value maps and tables themselves.
+ */
+function withoutUnreadValueMaps<R extends AnyRules>(rules: R): R {
+  const maps = rules.transform.valueMaps;
+  if (!Array.isArray(maps) || maps.length === 0) return rules;
+  const { valueMaps: _maps, tables: _tables, computed, ...transform } = rules.transform;
+  const readers = JSON.stringify({
+    input: { ...rules.input, columns: [] },
+    transform: { ...transform, computed: (computed ?? []).map(({ id: _id, ...c }) => c) },
+    output: rules.output,
+    validations: rules.validations,
+  });
+  const read = maps.filter((m) => readers.includes(JSON.stringify(m.column)));
+  return read.length < maps.length ? ({ ...rules, transform: { ...rules.transform, valueMaps: read } } as R) : rules;
+}
+
+/**
+ * What a save stores (owner rule, 2026-10-06): a lookup table or a value map that nothing in the rules reads any more is never saved - a
+ * list copied from the example whose column was left empty by hand goes with it. The file made is the same with or without them
+ * (DECISION: a dropped value map's only other effect was a flag for a value missing from it, in a column nothing reads - the editor drops
+ * such a map too, `pruneValueMaps`). The browser's API client applies it to the rules of every save; the rules themselves when everything
+ * is read.
+ */
+export function withoutUnreadLists<R extends AnyRules>(rules: R): R {
+  // (defensive, like `stripAiNotes`: a boundary helper - something that is not rules-shaped is returned as it is)
+  if (typeof rules !== 'object' || rules === null || typeof rules.transform !== 'object' || rules.transform === null) return rules;
+  return withoutUnreadValueMaps(withoutUnreadTables(rules));
 }
 
 /** Whether `e` looks a value up in table `table`. */
