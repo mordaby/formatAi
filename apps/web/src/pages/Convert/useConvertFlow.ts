@@ -35,6 +35,7 @@ import {
   formatsNeeding,
   newColumns,
   requiredAcross,
+  fixesWithout,
   readAsFixes,
   reviewRows,
   runCounts,
@@ -214,8 +215,12 @@ export interface UseConvertFlow {
   keepAll(): void;
   skipAll(): void;
   clearChoices(): void;
-  /** "Create the file": converts with the decisions. */
-  create(): void;
+  /**
+   * "Create the file": converts with the decisions. `notKept`: fixes the user said "Do this every time?" to that are NOT saved as rules after
+   * all - "Save without" in the popup about an identifier-shaped fix (docs/proposals/saved-format-contents.md section 5); they still fix this
+   * file, like any one-off fix.
+   */
+  create(opts?: { notKept?: readonly ReadAsFix[] }): void;
   download(): void;
   /** One format's file from the results screen. */
   downloadOne(conversionId: string): void;
@@ -739,7 +744,9 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
    * tab) and only the kept fixes are added to them, with that version as the base: a conversion changed meanwhile is a refusal, never an overwrite.
    * Never throws but for a cancelled run: a save that fails says so (`saved: null`) and the fixes still apply to this file.
    * No copied-list question here (owner decision 2026-10-06, asked at Save): these rules are the server's own plus `readAs`, so a list copied
-   * from the example in them was stored by the Save that asked about it - nothing new is stored, and nothing is asked again.
+   * from the example in them was stored by the Save that asked about it - nothing new is stored, and nothing is asked again. A fix that keeps
+   * an identifier-shaped value was asked about before `create` (the Run screen's Save popup, docs/proposals/saved-format-contents.md section
+   * 5): the ones the user said "Save without" to are not here (`notKept`).
    */
   const saveKept = useCallback(
     async (target: Target, fixes: ReadAsFix[], signal: AbortSignal): Promise<KeptRules> => {
@@ -763,7 +770,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     [api],
   );
 
-  const create = useCallback(() => {
+  const create = useCallback((opts: { notKept?: readonly ReadAsFix[] } = {}) => {
     const current = phaseRef.current;
     const f = fileRef.current;
     const job = jobRef.current;
@@ -778,7 +785,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         // it runs with, and the cells it was typed for leave the per-run fixes (the rule reads them now).
         let rules = target.rules;
         let choices = current.choices;
-        const fixes = readAsFixes(target.rules, current.rowInputs, current.choices);
+        const fixes = fixesWithout(readAsFixes(target.rules, current.rowInputs, current.choices), opts.notKept ?? []);
         if (fixes.length > 0) {
           const kept = await saveKept(target, fixes, signal);
           if (runId !== runRef.current) return;

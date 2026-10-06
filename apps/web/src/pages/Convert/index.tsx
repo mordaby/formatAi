@@ -15,7 +15,8 @@ import { ChooseFormats } from './ChooseFormats';
 import { ChooseSource } from './ChooseSource';
 import { convertErrorText } from './errors';
 import { AccountGate } from './Gate';
-import { isolate } from './logic';
+import { CopiedListDialog } from '../Result/CopiedListSave';
+import { fixIdentifiers, isolate, readAsFixes, type ReadAsFix } from './logic';
 import { MapColumns } from './MapColumns';
 import { MissingColumns } from './MissingColumns';
 import { ReviewRows } from './ReviewRows';
@@ -90,6 +91,22 @@ function ConvertTool({ tier }: { tier: Tier }) {
   const { entries } = flow;
   const restrictedName = formatId && sources.status === 'ready' ? sources.entries.flatMap((e) => e.conversions).find((c) => c.formatId === formatId)?.formatName : undefined;
   const target = targetOf(phase);
+
+  // "Do this every time?" keeps a fix in the saved rules (SPEC 8.4a): one that holds an identifier-shaped value - an ID number, a phone, an
+  // email, a card or bank account number (docs/proposals/saved-format-contents.md section 5) - is asked about first, in the Save popup, before
+  // anything is saved: Keep saves it as a rule, "Save without" keeps it for this file only, Cancel goes back to the review. A fix with no such
+  // value is saved at the one click, as before.
+  const [askingFixes, setAskingFixes] = useState<ReturnType<typeof fixIdentifiers> | null>(null);
+  const create = (): void => {
+    if (phase.kind !== 'review') return;
+    const found = fixIdentifiers(readAsFixes(phase.target.rules, phase.rowInputs, phase.choices));
+    if (found.lines.length === 0) flow.create();
+    else setAskingFixes(found);
+  };
+  const answerFixes = (notKept: readonly ReadAsFix[] | null): void => {
+    setAskingFixes(null);
+    if (notKept) flow.create({ notKept });
+  };
 
   /** To the rules editor of one conversion, with the way back (the caller has put the file aside). */
   const openEditor = (format: { formatId: string; conversionId: string }): void => {
@@ -226,7 +243,7 @@ function ConvertTool({ tier }: { tier: Tier }) {
             onClear={flow.clearChoices}
             onChangeRule={changeRule}
             {...(phase.target.status !== 'needsReview' ? { keepRule: { formats: phase.target.sourceFormats } } : {})}
-            onCreate={flow.create}
+            onCreate={create}
           />
         ) : null}
         {phase.kind === 'done' ? (
@@ -284,6 +301,15 @@ function ConvertTool({ tier }: { tier: Tier }) {
         </p>
       ) : null}
       {body}
+      {askingFixes ? (
+        <CopiedListDialog
+          findings={askingFixes.lines}
+          identifiersIn="fixes"
+          onKeep={() => answerFixes([])}
+          onWithout={() => answerFixes(askingFixes.fixes)}
+          onCancel={() => answerFixes(null)}
+        />
+      ) : null}
     </>
   );
 }

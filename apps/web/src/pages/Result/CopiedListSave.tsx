@@ -104,6 +104,11 @@ function SaveWhenChecked({ info, waiting, onDone }: { info: WorkbenchInfo; waiti
 
 interface DialogProps {
   findings: readonly SaveFinding[];
+  /**
+   * Where the identifier-shaped values are: in the rules (the Save of a format or a source), or in the fixes "Do this every time?" is about to
+   * save on the Run screen ("Qty keeps an ID number in its fixes"). Default `rules`.
+   */
+  identifiersIn?: 'rules' | 'fixes';
   onKeep(): void;
   onWithout(): void;
   onCancel(): void;
@@ -114,7 +119,7 @@ interface DialogProps {
  * column and the kind found) - never a value; and one answer for all. The question and the answers follow what is asked about: one list, one
  * value, several lists, or several findings of any kind.
  */
-export function CopiedListDialog({ findings, onKeep, onWithout, onCancel }: DialogProps) {
+export function CopiedListDialog({ findings, identifiersIn = 'rules', onKeep, onWithout, onCancel }: DialogProps) {
   const { t, lang } = useI18n();
   const many = findings.length > 1;
   const form = many ? (findings.every(isListFinding) ? 'other' : 'these') : isListFinding(findings[0]!) ? 'one' : 'value';
@@ -134,7 +139,7 @@ export function CopiedListDialog({ findings, onKeep, onWithout, onCancel }: Dial
         }}
       />
     ) : (
-      <Marked id="copiedList.identifier" nodes={{ column: column(f.header), what: t(`copiedList.what.${f.idKind}`) }} />
+      <Marked id={identifiersIn === 'fixes' ? 'copiedList.identifier.fix' : 'copiedList.identifier'} nodes={{ column: column(f.header), what: t(`copiedList.what.${f.idKind}`) }} />
     );
   const keyOf = (f: SaveFinding): string => (isListFinding(f) ? `list:${f.header}` : `${f.idKind}:${f.header}`);
   return (

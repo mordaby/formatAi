@@ -183,6 +183,8 @@ export const resultEn = {
   // docs/proposals/saved-format-contents.md section 6: one popup, a line per finding - a list of fixed values, an identifier-shaped value.
   'copiedList.line': '{column} is a list of {n} fixed values taken from your example (one for each {key}).',
   'copiedList.identifier': '{column} keeps {what} in its rules.',
+  // (the Run screen's "Do this every time?": a fix about to be saved as a rule)
+  'copiedList.identifier.fix': '{column} keeps {what} in its fixes.',
   'copiedList.what.israeliId': 'an ID number',
   'copiedList.what.phone': 'a phone number',
   'copiedList.what.email': 'an email address',
@@ -696,6 +698,7 @@ export const resultHe: Record<keyof typeof resultEn, string> = {
   'copiedList.title': 'לשמור את הפורמט?',
   'copiedList.line': 'העמודה {column} היא רשימה של {n} ערכים קבועים שנלקחו מהדוגמה שלכם (אחד לכל {key}).',
   'copiedList.identifier': 'הכללים של העמודה {column} שומרים {what}.',
+  'copiedList.identifier.fix': 'התיקונים של העמודה {column} שומרים {what}.',
   'copiedList.what.israeliId': 'מספר זהות',
   'copiedList.what.phone': 'מספר טלפון',
   'copiedList.what.email': 'כתובת אימייל',
