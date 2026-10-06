@@ -1,7 +1,7 @@
 # Proposal: what a saved format may keep
 
-Status: **proposal, for the owner's review** (2026-10-06). It writes down the model agreed in chat on 2026-10-06; decisions still
-open are in section 9, my recommendation in bold. It generalizes the copied-list question built in #55 and builds on the identifier
+Status: **approved, being built** (2026-10-06). It writes down the model agreed in chat on 2026-10-06; the owner took every
+recommendation of section 9 (the bold options). It generalizes the copied-list question built in #55 and builds on the identifier
 masking of #56.
 
 **In one paragraph.** A format is saved on our server, so whatever its rules contain is stored there. A good rule contains almost
