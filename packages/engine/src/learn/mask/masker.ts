@@ -10,6 +10,10 @@
 // cell is a number, and the server's sample run and the browser's verification compare typed, so a fake written as text would ask the
 // rules for text where the real file wants a number (and a repair diff of the two would look the same once masked). Which columns
 // are ID columns - `idLike` ones, and integer columns the pair analysis shows to be identifiers - is the caller's (`learn/maskTypes.ts`).
+//
+// Amendment 2026-10-06 (leading zeros survive masking): a run of digits is masked as its leading zeros, kept, plus the fake of its
+// significant digits, so every zero-padded form of a value - and its number - shares one fake and a padding rule stays visible
+// (`maskDigits`).
 
 import { maskingIdentifiers, maskingVocabulary, type PayloadCell, type ProfileType } from '@formatai/shared';
 import { MONTH_NAMES, WEEKDAY_NAMES, monthOfName } from '../../values/dates';
@@ -71,6 +75,12 @@ function vocabularyWords(tokens: readonly { isWord: boolean; text: string }[]): 
 // used as-is rather than looping forever.
 const MAX_COLLISION_ATTEMPTS = 8;
 
+/** A word or cell of digits only (ASCII digits: the only ones `buildWordFromBytes` replaces). */
+const DIGITS_ONLY = /^[0-9]+$/;
+const LEADING_ZEROS = /^0+/;
+/** Inside text, a run of digits is masked as an Israeli ID from this many significant digits on: short numbers in text (a quantity, a code) keep plain digit masking. */
+const MIN_ID_DIGITS_IN_TEXT = 5;
+
 export interface CreateMaskerOptions {
   /** Words from title/summary labels that don't appear in any data cell (SPEC 7.2)
    * and so are sent real. Can also be extended later with `addLabelWords`. */
@@ -86,10 +96,11 @@ export interface Masker {
    */
   maskText(s: string): string;
   /**
-   * Masks an ID-like cell: digits stay digits. When the value is (after
-   * left-padding) a valid Israeli ID, the fake is also a valid Israeli ID of
-   * the same length (leading zeros, if the value had any, are preserved
-   * because length is preserved exactly).
+   * Masks an ID-like cell: digits stay digits. A cell of digits only keeps its
+   * leading zeros as they are, and its significant digits get the same fake in
+   * every form ("12345", "000012345" and the number 12345: amendment
+   * 2026-10-06). When the value is (after left-padding) a valid Israeli ID,
+   * the fake is also a valid Israeli ID of the same length.
    */
   maskIdLike(s: string): string;
   /**
@@ -176,12 +187,8 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
   }
 
   function maskWord(word: string): string {
-    // Same real ID -> same fake everywhere: a digit word inside a text cell that is a valid Israeli
-    // ID goes through the ID generator, exactly like that ID in an idLike column. Otherwise
-    // "312345002 - Cohen" and the ID column would carry different fakes and the AI could not see
-    // that one is built from the other. DECISION: 5+ digits, so short numbers in text (quantities,
-    // codes) keep plain word masking.
-    if (/^\d{5,9}$/.test(word) && isValidIsraeliId(word)) return maskValidIsraeliId(word);
+    // A word of digits only is masked as its leading zeros and its significant digits (amendment 2026-10-06, `maskDigits`).
+    if (DIGITS_ONLY.test(word)) return maskDigits(word, false);
     const key = normalizeText(word);
     seenReal.add(key);
 
@@ -194,6 +201,14 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
     // it stays masked for consistency even if later registered as a label.
     if (labelWords.has(key)) return word;
 
+    return fakeWord(key, word);
+  }
+
+  /** The fake of a word (`key` normalized; `word` as written, whose characters give the shape: `buildWordFromBytes`), cached under `word:`. */
+  function fakeWord(key: string, word: string = key): string {
+    const cachedNamespacedKey = `word:${key}`;
+    const cached = realToFake.get(cachedNamespacedKey);
+    if (cached !== undefined) return cached;
     const chars = Array.from(word);
     const fake = pickCandidate(key, (attempt) => {
       const label = `word:${key}${attempt > 0 ? `:retry${attempt}` : ''}`;
@@ -206,25 +221,56 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
     return fake;
   }
 
-  // DECISION: "keep length; leading zeros kept when present" (SPEC 7.2) is
-  // satisfied here by always returning a string of the exact same length as
-  // the input (see forcedZeros below, which forces only the *padding*
-  // positions --- the ones a real 9-digit id would gain from padStart --- to
-  // stay zero, since those are the positions "lost" by stats.leadingZerosLost
-  // in the first place). A stored value that is itself a full 9-character
-  // id and happens to start with a literal '0' isn't specially pinned to
-  // still start with '0' after masking: a single leading zero digit in an
-  // otherwise free 9-digit id is not reliably distinguishable from a random
-  // digit, and forcing it would leak one digit of the real id's shape.
-  function maskValidIsraeliId(s: string): string {
-    const real = normalizeText(s);
+  /**
+   * Amendment 2026-10-06 (leading zeros survive masking): a run of digits - a whole ID cell, a number in an ID column, a word of digits
+   * inside text - is masked as its leading zeros, kept as they are, followed by the fake of its significant digits (the digits from
+   * the first non-zero one on). So "12345", "012345", "000012345" and the number 12345 share one significant fake ("83920", "083920",
+   * "000083920", 83920), and a rule that pads with zeros, or strips them, stays visible in the masked samples. A run of zeros only
+   * hides nothing and is sent as it is.
+   *
+   * The significant digits are masked like an Israeli ID (`maskValidIsraeliId`: another valid ID of the same length) when they are
+   * one: in an ID column at any length (as `maskIdLike` always did), inside text from 5 digits on (as `maskWord` did, so that short
+   * numbers in text - a quantity, a code - keep plain digit masking). Validity is a property of the significant digits alone: the
+   * check digit is computed on the 9-digit form padded with zeros, and a zero adds nothing to the sum. So the real "012345674" (text,
+   * 9 digits) and its Excel number 12345674 (8 digits, the zero lost) are the same ID with the same significant digits; their fakes are
+   * "0" + F and F, where F is a valid ID once padded - and "0" + F is that padded form exactly, a valid 9-digit ID. Every other run gets
+   * plain digit masking (`fakeWord`). Either way the significant fake never starts with 0 (`keepsLeadingDigit`), so the zeros in front
+   * of a fake are exactly the real ones.
+   *
+   * Both forms map back (`fakeToReal`): the fake of the significant digits to the significant digits, and the whole fake to the whole
+   * real run. A word of digits that is a label word (SPEC 7.2) is sent as it is, unless it is an Israeli ID, as before.
+   */
+  function maskDigits(digits: string, idColumn: boolean): string {
+    const significant = digits.replace(LEADING_ZEROS, '');
+    if (significant === '') return digits;
+    const zeros = digits.slice(0, digits.length - significant.length);
+    const asId = (idColumn || significant.length >= MIN_ID_DIGITS_IN_TEXT) && significant.length <= 9 && isValidIsraeliId(significant);
+    seenReal.add(digits);
+    if (!asId) {
+      const cached = realToFake.get(`digits:${digits}`);
+      if (cached !== undefined) return cached;
+      if (labelWords.has(digits)) return digits;
+    }
+    seenReal.add(significant);
+    const fake = zeros + (asId ? maskValidIsraeliId(significant) : fakeWord(significant));
+    if (!asId) realToFake.set(`digits:${digits}`, fake);
+    if (zeros !== '') fakeToReal.set(fake, digits);
+    return fake;
+  }
+
+  // The fake of the SIGNIFICANT digits of an ID (`maskDigits`: no leading zero, at most 9 digits, a valid check digit once padded):
+  // `length - 1` free digits behind the `9 - length` zeros a 9-digit form would have, then the check digit, so the fake is another
+  // valid ID once padded, of the same length. Leading zeros the real value had in front are added back by `maskDigits`, kept as they are
+  // (owner, 2026-10-06: a rule that pads or strips them must stay visible; this replaces the earlier choice of drawing a 9-digit ID's
+  // leading "0" freely).
+  function maskValidIsraeliId(real: string): string {
     const cachedNamespacedKey = `id:${real}`;
     const cached = realToFake.get(cachedNamespacedKey);
     if (cached !== undefined) return cached;
     seenReal.add(real);
 
     const length = real.length;
-    const forcedZeros = 9 - length; // "keep length; leading zeros kept when present"
+    const forcedZeros = 9 - length;
     const randomDigitCount = 8 - forcedZeros; // = length - 1
 
     const fake = pickCandidate(real, (attempt) => {
@@ -258,14 +304,17 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
 
   function maskIdLike(s: string): string {
     if (s === '') return s;
-    // DECISION: only a pure digit string of plausible ID length is checked
-    // for Israeli-ID validity; anything else (letters mixed in, separators,
-    // too long) falls back to generic word masking, which already satisfies
-    // "digits -> digits" character-by-character for any digit runs it contains.
-    const fake = /^\d{1,9}$/.test(s) && isValidIsraeliId(s) ? maskValidIsraeliId(s) : maskText(s);
-    if (/^\d+$/.test(s) && /^\d+$/.test(fake) && fake !== s) {
-      idDigitsFakeToReal.set(fake, s);
-      idDigitsRealToFake.set(s, fake);
+    // A cell of digits only: its leading zeros and its significant digits (`maskDigits`; an Israeli ID stays a valid one). Anything
+    // else (letters mixed in, separators) is masked as text, which keeps "digits -> digits" for every digit run it holds.
+    if (!DIGITS_ONLY.test(s)) return maskText(s);
+    const fake = maskDigits(s, true);
+    // The fakes of whole IDs made of digits, by their significant digits: the only fakes a NUMBER constant is unmasked from
+    // (`realNumberOf`; a number has no leading zero, and the AI may write 83920 for the ID it saw as "000083920").
+    const significant = s.replace(LEADING_ZEROS, '');
+    const fakeSignificant = fake.slice(s.length - significant.length);
+    if (significant !== '' && fakeSignificant !== significant) {
+      idDigitsFakeToReal.set(fakeSignificant, significant);
+      idDigitsRealToFake.set(significant, fakeSignificant);
     }
     return fake;
   }
