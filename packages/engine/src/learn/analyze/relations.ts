@@ -352,14 +352,20 @@ function stage1(env: RelationEnv, out: ColumnData, guard: ConstantGuard): Cand[]
   return cands;
 }
 
-/** Which case change (if any) a normalize relation makes. */
+/**
+ * Which case change (if any) a normalize relation makes. The rows whose texts differ beyond case are skipped on the cached normalized
+ * texts (`norms`) first: found by the engine stress test (eval/STRESS.md), normalizing every row of every text column again for every
+ * output column took 9 of the 15 seconds of a 15,000-row learn.
+ */
 function normalizeCase(a: ColumnData, out: ColumnData, total: number): 'upper' | 'lower' | undefined {
+  const na = norms(a);
+  const nb = norms(out);
   let upper = true;
   let lower = true;
   let changed = false;
   let seen = 0;
   for (let k = 0; k < total && seen < 500; k++) {
-    if (a.kind[k] !== TEXT || out.kind[k] === EMPTY) continue;
+    if (a.kind[k] !== TEXT || out.kind[k] === EMPTY || na[k] !== nb[k]) continue;
     const n = normFast(a.text[k]!);
     const o = out.text[k]!.trim();
     if (normFast(o).toLowerCase() !== n.toLowerCase()) continue;
