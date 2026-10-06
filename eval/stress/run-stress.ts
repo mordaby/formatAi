@@ -13,6 +13,7 @@ import { readWorkbook } from '@formatai/engine';
 import { checkCase, type CaseResult } from './check';
 import { buildCase, GenError, type SizeProfile, type StressCase } from './gen';
 import { delimitedText } from './files';
+import { newFailures, OPEN_FINDINGS, openFindingOf } from './open';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT = path.join(HERE, '..', 'reports', 'stress');
@@ -115,10 +116,12 @@ interface GenFailure {
 }
 
 function summarize(results: CaseResult[], genFailures: GenFailure[], args: Args, elapsedMs: number): { text: string; json: unknown } {
-  const failing = results.filter((r) => r.failures.length > 0);
-  const failureKinds = countBy(results.flatMap((r) => [...new Set(r.failures.map((f) => `${f.invariant}:${f.kind}`))].map((k) => ({ k }))), (x) => x.k);
+  // New failures, and the open findings (open.ts) the run reproduced: a run is clean when it has no new failure.
+  const failing = results.filter((r) => newFailures(r).length > 0);
+  const failureKinds = countBy(results.flatMap((r) => [...new Set(newFailures(r).map((f) => `${f.invariant}:${f.kind}`))].map((k) => ({ k }))), (x) => x.k);
+  const openSeen = OPEN_FINDINGS.map((o) => ({ o, seeds: results.filter((r) => r.failures.some((f) => openFindingOf(f, r) === o)).map((r) => r.seed) })).filter((x) => x.seeds.length > 0);
   const findingKinds = countBy(results.flatMap((r) => [...new Set(r.findings.map((f) => f.kind))].map((k) => ({ k }))), (x) => x.k);
-  const seedsOf = (kind: string): number[] => results.filter((r) => r.failures.some((f) => `${f.invariant}:${f.kind}` === kind)).map((r) => r.seed);
+  const seedsOf = (kind: string): number[] => results.filter((r) => newFailures(r).some((f) => `${f.invariant}:${f.kind}` === kind)).map((r) => r.seed);
   const findingSeeds = (kind: string): number[] => results.filter((r) => r.findings.some((f) => f.kind === kind)).map((r) => r.seed);
   const paths = countBy(results, (r) => r.path);
   const features = countBy(results.flatMap((r) => r.features.map((f) => ({ f }))), (x) => x.f);
@@ -132,13 +135,18 @@ function summarize(results: CaseResult[], genFailures: GenFailure[], args: Args,
   const lines: string[] = [];
   lines.push(`# Stress run: ${results.length + genFailures.length} cases (profile ${args.profile}${args.only ? `, seeds ${args.only.join(',')}` : `, seeds ${args.seed}-${args.seed + args.n - 1}`}) in ${(elapsedMs / 1000).toFixed(0)} s`);
   lines.push('');
-  lines.push(`Passed: ${results.length - failing.length}; failed: ${failing.length}; generator errors: ${genFailures.length}`);
+  lines.push(`Passed: ${results.length - failing.length}; failed (new): ${failing.length}; open findings reproduced: ${openSeen.reduce((n, x) => n + x.seeds.length, 0)} case(s); generator errors: ${genFailures.length}`);
+  lines.push(failing.length === 0 && genFailures.length === 0 ? 'CLEAN apart from the open findings' : 'NOT CLEAN: new failures or generator errors');
   lines.push(`Sizes: ${sizes.rows.min}-${sizes.rows.max} rows, ${sizes.cols.min}-${sizes.cols.max} columns`);
   lines.push(`Paths: ${paths.map(([k, n]) => `${k} ${n}`).join(', ')}`);
   lines.push('');
   lines.push('## Failures by kind (invariant:kind - cases - seeds)');
   for (const [k, n] of failureKinds) lines.push(`- ${k}: ${n} - ${seedsOf(k).slice(0, 15).join(', ')}${seedsOf(k).length > 15 ? ' ...' : ''}`);
   if (failureKinds.length === 0) lines.push('- none');
+  lines.push('');
+  lines.push('## Open findings reproduced (eval/STRESS.md; open.ts) - cases - seeds');
+  for (const { o, seeds } of openSeen) lines.push(`- ${o.id} ${o.title}: ${seeds.length} - ${seeds.slice(0, 15).join(', ')}${seeds.length > 15 ? ' ...' : ''}`);
+  if (openSeen.length === 0) lines.push('- none');
   lines.push('');
   lines.push('## Findings (not failures) by kind - cases - seeds');
   for (const [k, n] of findingKinds) lines.push(`- ${k}: ${n} - ${findingSeeds(k).slice(0, 15).join(', ')}${findingSeeds(k).length > 15 ? ' ...' : ''}`);
@@ -156,7 +164,7 @@ function summarize(results: CaseResult[], genFailures: GenFailure[], args: Args,
   lines.push('');
   lines.push('## Generator coverage (feature - cases)');
   lines.push(features.map(([k, n]) => `${k} ${n}`).join(', '));
-  const json = { args, elapsedMs, cases: results.length, failing: failing.length, genFailures, paths, failureKinds, findingKinds, features, results: results.map(({ learned: _l, ...r }) => r) };
+  const json = { args, elapsedMs, cases: results.length, failing: failing.length, open: openSeen.map(({ o, seeds }) => ({ id: o.id, seeds })), genFailures, paths, failureKinds, findingKinds, features, results: results.map(({ learned: _l, ...r }) => r) };
   return { text: lines.join('\n'), json };
 }
 
@@ -205,12 +213,14 @@ async function main(): Promise<void> {
       };
     }
     results.push(r);
-    const status = r.failures.length === 0 ? 'ok' : `FAIL ${[...new Set(r.failures.map((f) => f.kind))].join(',')}`;
-    if (!args.quiet || r.failures.length > 0) {
+    const fresh = newFailures(r);
+    const open = [...new Set(r.failures.map((f) => openFindingOf(f, r)?.id).filter((x): x is string => x !== undefined))];
+    const status = fresh.length > 0 ? `FAIL ${[...new Set(fresh.map((f) => f.kind))].join(',')}` : open.length > 0 ? `ok (open ${open.join(',')})` : 'ok';
+    if (!args.quiet || fresh.length > 0) {
       console.log(`seed ${seed}: ${r.rowsIn}x${r.cols} ${r.fileType}->${r.outFileType} ${r.path} ${r.solved}/${r.outCols} learn ${r.ms.learn}ms convert ${r.ms.convert}ms ${status}${r.findings.length > 0 ? ` (${[...new Set(r.findings.map((f) => f.kind))].join(',')})` : ''}`);
     }
     if (r.failures.length > 0 || (args.dumpFindings && r.findings.length > 0)) {
-      for (const f of r.failures.slice(0, 3)) console.log(`    [${f.invariant}:${f.kind}] ${f.detail.slice(0, 300)}`);
+      for (const f of fresh.slice(0, 3)) console.log(`    [${f.invariant}:${f.kind}] ${f.detail.slice(0, 300)}`);
       await writeRepro(path.join(args.out, `seed-${seed}`), c, r);
     }
   }
