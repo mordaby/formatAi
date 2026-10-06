@@ -50,19 +50,21 @@ function cellRawText(cell: OutCell): string {
   return v;
 }
 
+const PLAIN_NUMBER_RE = /^-?\d+(\.\d+)?$/;
+
 /**
  * Formula-injection guard (SPEC 15), shared by csv and txt: a text cell
- * starting with = + - @ gets a leading apostrophe, unless the column is
- * numeric or the value is itself a number (a genuinely numeric value can't
- * carry a formula).
+ * starting with = + - @ gets a leading apostrophe, unless the value is itself
+ * a number (a genuinely numeric value can't carry a formula). A numeric column
+ * exempts only text that is a plain number ("-123"): it still holds text - a
+ * value its type could not read is kept as it is (and flagged), and its header,
+ * title and summary-label cells are text - and "=SUM(A1:A9)" there is as live
+ * as anywhere else.
  */
 function applyInjectionGuard(text: string, cell: OutCell, column: OutputColumn | undefined): string {
-  const isNumberValue = typeof cell.v === 'number';
-  const columnIsNumeric = column?.numeric === true;
-  if (!isNumberValue && !columnIsNumeric && INJECTION_PREFIX_RE.test(text)) {
-    return `'${text}`;
-  }
-  return text;
+  if (typeof cell.v === 'number' || !INJECTION_PREFIX_RE.test(text)) return text;
+  if (column?.numeric === true && PLAIN_NUMBER_RE.test(text)) return text;
+  return `'${text}`;
 }
 
 // DECISION (quote: "minimal"): quote a field when it contains the delimiter,

@@ -9,6 +9,7 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json",
     "catalogue": "tsx catalogue/run-catalogue.ts",
+    "stress": "tsx stress/run-stress.ts",
     "learn": "tsx try/learn.ts",
     "convert": "tsx try/convert.ts"
   },

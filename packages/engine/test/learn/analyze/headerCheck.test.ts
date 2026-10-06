@@ -231,3 +231,28 @@ describe('decideHeader', () => {
     expect(decideHeader(null, null)).toBe('unknown');
   });
 });
+
+// Found by the engine stress test (eval/STRESS.md): a headerless csv whose first row has one empty cell ("0000" | "") is no header row,
+// so the header reading took the SECOND row as the header and the first as a title. The pair check tested row 0 - the title, unexplained
+// (its key is empty) - and kept that reading: the rules then wrote a fixed title and a fixed "header" made of one data row every month.
+// It is the header reading's header row that must not be explained as data.
+describe('decideHeader: a header reading with a title row above its header', () => {
+  it('the row taken as the header is a data row: headerless', () => {
+    const input: V[][] = [['Name', 'Dept']];
+    const lines: string[][] = [];
+    for (let i = 0; i < 20; i++) {
+      const name = i === 0 ? '' : `${cap(word(i, 4))} ${cap(word(i + 500, 6))}`;
+      input.push([name, ['ops', 'hr', 'it'][i % 3]!]);
+      lines.push(['0000', name.toUpperCase()]);
+    }
+    const out = delimited(lines, 'csv');
+    const asHeader = analyzeOk(xlsx(input), out, { outputFileSpec: { type: 'csv', delimiter: ',', header: true } });
+    expect(asHeader.output.headerRow).toBe(1); // the setup: row 0 is no header row, so row 1 is taken, row 0 a title
+    const asData = analyzeOk(xlsx(input), out, { outputFileSpec: { type: 'csv', delimiter: ',', header: false } });
+    expect(firstRowExplained(asData)).toBe(false); // row 0's key is empty: not aligned
+    expect(decideHeader(asHeader, asData)).toBe('data');
+    const a = analyzeOk(xlsx(input), out);
+    expect(a.output.headerless).toBe(true);
+    expect(a.layout.titleRows).toEqual([]);
+  });
+});

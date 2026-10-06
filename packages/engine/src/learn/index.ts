@@ -4,6 +4,7 @@
 
 export * from './analyze';
 export * from './mask';
+export * from './maskTypes';
 export * from './preflight';
 export * from './hints';
 export * from './fastPath';

@@ -1,8 +1,8 @@
 // Amendment 2026-10-06 (SPEC 7.2): identifiers stored as numbers are masked. The type each column of the example is MASKED as - the
 // one `Masker.maskCell` is given - which is the profile's type, except:
 //   - an INTEGER input column the pair analysis shows to be an identifier, not a measure, is masked as `idLike` (`identifierColumns`);
-//   - an output column that copies an ID column is masked as `idLike` too, so a sample's `in` and `out` carry the same fake and the AI
-//     step still sees the copy.
+//   - an output column that copies an ID column is masked as `idLike` too, whatever its profile type (a text one too: stress test), so a
+//     sample's `in` and `out` carry the same fake and the AI step still sees the copy.
 // `idLike` columns are ID columns whatever their cells hold (the masker masks a number in one as its digits). A measure (an amount, a
 // quantity) stays real: rules cannot be learned without it, and the server's sample run computes on the values the payload carries.
 //
@@ -134,7 +134,8 @@ export function maskTypes(analysis: PairAnalysis): MaskTypes {
   const input = analysis.input.profile.map((p): ProfileType => (ids.has(p.i) ? 'idLike' : p.type));
   const copied = copiedInputs(analysis);
   const output = analysis.output.profile.map((p, o): ProfileType => {
-    if (p.type === 'text' || p.type === 'idLike') return p.type;
+    // (A text column too - a copy with "n/a" on a row: a number in a text column is sent real. `idLike` masks its words as text.)
+    if (p.type === 'idLike') return p.type;
     const copiesId = [...(copied.get(o) ?? [])].some((i) => input[i] === 'idLike');
     return copiesId ? 'idLike' : p.type;
   });

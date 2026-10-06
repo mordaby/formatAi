@@ -229,9 +229,12 @@ const GUARD_DATE_RENDERINGS = ['MM', 'M', 'MMM', 'YY'];
  *  (a) an input column holds the same value (a copy is as possible as a constant);
  *  (b) a date input column, formatted with an output date format the free engine writes (the month, the year, ...), gives it
  *      - each cell is read on its own, so a column mixing date formats counts (dateReadings.ts);
- *  (c) a fixed part of an input text (a prefix, a suffix, a fixed position, one part of a split) is that value.
- * (c) is the existing `substr` / `split` detection run on this column, not new code; `template` and `concat` need input values
- * INSIDE the output, and a constant has none, so they cannot write it.
+ *  (c) a fixed part of an input text (a prefix, a suffix, a fixed position, one part of a split) is that value;
+ *  (d) fixed text around the value of an input column that holds ONE value on every row ("Area " + a Group that is "North"
+ *      throughout): the `template` the free engine writes (short fixed text, `limits.learn.template`) gives the same constant.
+ * (c) is the existing `substr` / `split` detection run on this column, not new code. A template over input columns that VARY cannot
+ * write a constant; over a column that does not, it can (d): found by the engine stress test (eval/STRESS.md), built as a constant
+ * the template was wrong on the first row next month that holds another value.
  * A truly fixed value that also happens to appear in the data goes to the AI step too: acceptable, the AI step or the user decides.
  * Returns the source columns (indices into `env.src`, input columns first) that can write the value; none = a real constant.
  */
@@ -270,6 +273,26 @@ function constantSources(env: RelationEnv, out: ColumnData, value: string): numb
     for (let k = 0; k < total && holds; k++) holds = cand.test(k) === 1;
     if (holds) found.add(s);
   }
+
+  // (d) fixed text around the one value of an input column (a template of a column that does not vary in the example)
+  const T = limits.learn.template;
+  env.src.forEach((a, s) => {
+    if (found.has(s) || total === 0) return;
+    let w: string | null = null;
+    for (let k = 0; k < total; k++) {
+      const kind = a.kind[k];
+      if (kind === EMPTY || kind === DATE) return;
+      const t = a.text[k]!.trim();
+      if (w === null) w = t;
+      else if (t !== w) return;
+    }
+    if (w === null || w.length < limits.learn.compositionMinValueLength || w === v) return;
+    const at = v.indexOf(w);
+    if (at < 0) return;
+    const before = at;
+    const after = v.length - at - w.length;
+    if (before <= T.maxLiteralChars && after <= T.maxLiteralChars && before + after <= T.maxTotalLiteralChars) found.add(s);
+  });
   return [...found].sort((x, y) => x - y);
 }
 
@@ -329,14 +352,20 @@ function stage1(env: RelationEnv, out: ColumnData, guard: ConstantGuard): Cand[]
   return cands;
 }
 
-/** Which case change (if any) a normalize relation makes. */
+/**
+ * Which case change (if any) a normalize relation makes. The rows whose texts differ beyond case are skipped on the cached normalized
+ * texts (`norms`) first: found by the engine stress test (eval/STRESS.md), normalizing every row of every text column again for every
+ * output column took 9 of the 15 seconds of a 15,000-row learn.
+ */
 function normalizeCase(a: ColumnData, out: ColumnData, total: number): 'upper' | 'lower' | undefined {
+  const na = norms(a);
+  const nb = norms(out);
   let upper = true;
   let lower = true;
   let changed = false;
   let seen = 0;
   for (let k = 0; k < total && seen < 500; k++) {
-    if (a.kind[k] !== TEXT || out.kind[k] === EMPTY) continue;
+    if (a.kind[k] !== TEXT || out.kind[k] === EMPTY || na[k] !== nb[k]) continue;
     const n = normFast(a.text[k]!);
     const o = out.text[k]!.trim();
     if (normFast(o).toLowerCase() !== n.toLowerCase()) continue;
@@ -351,22 +380,34 @@ function normalizeCase(a: ColumnData, out: ColumnData, total: number): 'upper' |
 
 // ---------- stage 2: text shapes and formats ----------
 
+/**
+ * DECISION (found by the engine stress test, eval/STRESS.md): "pad to a length" needs an example that shows a length. When every
+ * padded text has the same length, padding it with "X" to a fixed length and a fixed "X" in front write the same output - but not on
+ * next month's shorter code ("XXREF/3780"). Any character but "0" therefore pads only when the example pads by different amounts (the
+ * template or the AI step takes the rest); zeros keep padding an ID to its length, the usual meaning of leading zeros.
+ */
 function padCands(env: RelationEnv, out: ColumnData): Cand[] {
   if (kindShare(out, TEXT) < 0.5) return [];
   const cands: Cand[] = [];
   env.src.forEach((a, s) => {
     const counts = new Map<string, number>();
+    const padded = new Map<string, Set<number>>();
     for (const k of bothRows(env, a, out, 200)) {
       const t = textAt(a, k);
       const o = out.text[k]!.trim();
       if (t === '' || o.length <= t.length || !o.endsWith(t)) continue;
       const ch = o[0]!;
       if (o.slice(0, o.length - t.length) !== ch.repeat(o.length - t.length)) continue;
-      bump(counts, `${o.length}\u0000${ch}`);
+      const key = `${o.length}\u0000${ch}`;
+      bump(counts, key);
+      const amounts = padded.get(key) ?? new Set<number>();
+      amounts.add(o.length - t.length);
+      padded.set(key, amounts);
     }
     const best = mode(counts);
     if (best === null) return;
     const [lenText, ch] = best.split('\u0000') as [string, string];
+    if (ch !== '0' && (padded.get(best)?.size ?? 0) < 2) return;
     const length = Number(lenText);
     cands.push({
       body: { rel: 'padLeft', in: [s], length, char: ch },
@@ -382,10 +423,19 @@ function padCands(env: RelationEnv, out: ColumnData): Cand[] {
   return cands;
 }
 
+/** Whether position `i` of `t` is a cut that leaves every run of digits whole (no digit on both sides). */
+function wholeDigitsAt(t: string, i: number): boolean {
+  return i <= 0 || i >= t.length || !(/\d/.test(t[i - 1]!) && /\d/.test(t[i]!));
+}
+
 function substrCands(env: RelationEnv, out: ColumnData): Cand[] {
   const cands: Cand[] = [];
   env.src.forEach((a, s) => {
     if (kindShare(a, DATE) > 0) return;
+    // DECISION (found by the engine stress test, eval/STRESS.md): a part of a date written as text is a whole day, month or year. A cut
+    // inside one is luck: the 5th character of "17/06/2026" is the month on every row of an example whose months are 1-9, and "0" in
+    // October. Such a column is left to the rest of the analysis (or the AI step).
+    const cut = a.textDate !== null ? (t: string, from: number, to: number): boolean => wholeDigitsAt(t, from) && wholeDigitsAt(t, to) : (): boolean => true;
     const pre = new Map<number, number>();
     const suf = new Map<number, number>();
     const fix = new Map<string, number>();
@@ -393,10 +443,10 @@ function substrCands(env: RelationEnv, out: ColumnData): Cand[] {
       const t = textAt(a, k);
       const o = textAt(out, k);
       if (o === '' || o === t || o.length >= t.length) continue;
-      if (t.startsWith(o)) bump(pre, o.length);
-      if (t.endsWith(o)) bump(suf, o.length);
+      if (t.startsWith(o) && cut(t, 0, o.length)) bump(pre, o.length);
+      if (t.endsWith(o) && cut(t, t.length - o.length, t.length)) bump(suf, o.length);
       const at = t.indexOf(o, 1);
-      if (at > 0 && at + o.length < t.length) bump(fix, `${at + 1}:${o.length}`);
+      if (at > 0 && at + o.length < t.length && cut(t, at, at + o.length)) bump(fix, `${at + 1}:${o.length}`);
     }
     const both = (k: number): number | null => {
       const ea = a.kind[k] === EMPTY;
@@ -1201,16 +1251,41 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
 
 const MAX_MAP_VALUES = 50;
 
+const REPEATED_ROWS = new WeakMap<ColumnData[], Uint8Array>();
+
+/** 1 on a row whose every source column holds what an earlier row's does (an exact repeat of a row), per row; cached per source list. */
+function repeatedRows(env: RelationEnv): Uint8Array {
+  const cached = REPEATED_ROWS.get(env.src);
+  if (cached) return cached;
+  const n = env.total;
+  const flags = new Uint8Array(n);
+  const cols = env.src.map((c) => keys(c));
+  const seen = new Set<string>();
+  for (let k = 0; k < n; k++) {
+    const sig = cols.map((ks) => ks[k] ?? '\u0000').join('\u001f');
+    if (seen.has(sig)) flags[k] = 1;
+    else seen.add(sig);
+  }
+  REPEATED_ROWS.set(env.src, flags);
+  return flags;
+}
+
 function valueMapCands(env: RelationEnv, out: ColumnData): Cand[] {
   const outDistinct = new Set<string>();
   for (let k = 0; k < out.n; k++) if (out.kind[k] !== EMPTY) outDistinct.add(out.text[k]!);
   if (outDistinct.size < 2) return [];
   const cands: Cand[] = [];
+  // DECISION (found by the engine stress test, eval/STRESS.md): a row that repeats an earlier row in every column (a duplicate
+  // row) is the same evidence again, not a key that confirms the mapping on another row.
+  const repeated = repeatedRows(env);
+  let distinctRows = 0;
+  for (let k = 0; k < env.total; k++) if (repeated[k] === 0) distinctRows++;
   env.src.forEach((a, s) => {
     const ks = keys(a);
     const table = new Map<string, Map<string, number>>();
     const display = new Map<string, string>();
     for (let k = 0; k < a.n; k++) {
+      if (repeated[k] === 1) continue;
       const key = ks[k] ?? '';
       let m = table.get(key);
       if (!m) {
@@ -1221,21 +1296,26 @@ function valueMapCands(env: RelationEnv, out: ColumnData): Cand[] {
       }
       bump(m, out.kind[k] === EMPTY ? '' : out.text[k]!);
     }
-    if (table.size >= a.n || table.size < 2) return;
+    if (table.size >= distinctRows || table.size < 2) return;
     // DECISION: a value map is evidence only when its keys repeat — rows whose key was already
     // seen confirm the mapping. With (almost) one row per key, any column "maps" onto any other
     // (e.g. 19 dates → 19 warehouses assigned by another system): that is memorizing, not a rule,
     // and must stay `unknown` so pre-flight can report it. Require on average ≥ 1.5 rows per key.
-    const confirmingRows = a.n - table.size;
+    const confirmingRows = distinctRows - table.size;
     if (confirmingRows < Math.max(2, Math.ceil(table.size / 2))) return;
     const map = new Map<string, string>();
     let identity = true;
+    // DECISION (found by the engine stress test, eval/STRESS.md): the repeats must confirm at least two of the values the map
+    // writes. When only one value's keys repeat ("Low" on 28 rows) and every other value is written once ("High" on two
+    // names seen once), the map is "mostly Low" with the exceptions memorized - any column with repeating names "maps" so.
+    const confirmedValues = new Set<string>();
     for (const [key, m] of table) {
       const to = mode(m)!;
       map.set(key, to);
+      if ((m.get(to) ?? 0) >= 2) confirmedValues.add(to);
       if (normFast(display.get(key)!).toLowerCase() !== normFast(to).toLowerCase()) identity = false;
     }
-    if (identity) return;
+    if (identity || confirmedValues.size < 2) return;
     const pairs: [string, string][] = [...map.entries()]
       .map(([key, to]) => [display.get(key)!, to] as [string, string])
       .sort((p, q) => (p[0] < q[0] ? -1 : p[0] > q[0] ? 1 : 0));

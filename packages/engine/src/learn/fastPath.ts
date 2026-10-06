@@ -252,7 +252,8 @@ export function layoutIssue(analysis: PairAnalysis): FastPathFailure | null {
   const layout = analysis.layout;
   if (layout.groupBy !== null) return fail('layoutUnsupported', { part: 'group' });
   if (layout.summaryRows.length > 0) return fail('layoutUnsupported', { part: 'summaryRows' });
-  if (layout.sort !== null) return fail('layoutUnsupported', { part: 'sort' });
+  // An order no sort explains (`orderMatchesInput` false, no sort found) is no more built than a sort: the input's order is not the example's.
+  if (layout.sort !== null || !layout.orderMatchesInput) return fail('layoutUnsupported', { part: 'sort' });
   if (layout.titleRows.some((t) => t.containsDate !== undefined)) return fail('layoutUnsupported', { part: 'dateTitle' });
   if (layout.unexplainedBlankRows.length > 0) return fail('layoutUnsupported', { part: 'blankRows' });
   return null;
@@ -303,6 +304,76 @@ function outputHoldsNonText(analysis: PairAnalysis, out: number): boolean {
     if (cell && cell.v !== null && (typeof cell.v === 'number' || cell.isDate === true)) return true;
   }
   return false;
+}
+
+/** The kind every non-empty cell of the example's output column `out` holds: numbers, text, or null for a mix (or dates, booleans). */
+function outputCellKind(analysis: PairAnalysis, out: number): 'number' | 'text' | null {
+  let kind: 'number' | 'text' | null = null;
+  for (const sheetRow of analysis.output.dataRows) {
+    const v = analysis.output.sheet.rows[sheetRow]?.[out];
+    if (!v || v.v === null || v.v === '') continue;
+    const k = typeof v.v === 'number' && v.isDate !== true ? 'number' : typeof v.v === 'string' ? 'text' : null;
+    if (k === null || (kind !== null && k !== kind)) return null;
+    kind = k;
+  }
+  return kind;
+}
+
+const NUMBER_COLUMN_TYPES: ReadonlySet<ColumnType> = new Set(['integer', 'decimal', 'currency', 'percent']);
+
+/**
+ * The text form the example's output column writes its dates in ("YYYY-MM-DD"), when the column is date TEXT in one unambiguous form:
+ * what a date the rules make must be written with to show the same text. Undefined for real date cells (their own number format says
+ * it) and for text whose day and month could be either way round.
+ */
+function outputDateText(analysis: PairAnalysis, out: number): string | undefined {
+  const p = analysis.output.profile[out];
+  if (p?.type !== 'date' || p.dateFormat === undefined || p.dateFormat === 'excel' || p.dateFormat === 'excelSerial' || p.dayMonthAmbiguous === true) return undefined;
+  return p.dateFormat;
+}
+
+/**
+ * The format of a built output column: the example's own (a workbook's number format), or - for a csv/txt example, which has none - the
+ * text form its dates are written in, so that a date the rules make is written the same way (a delimited file writes a date with its
+ * column's format, the engine's default "DD/MM/YYYY" without one).
+ */
+export function builtOutputFormat(analysis: PairAnalysis, out: number): string | undefined {
+  const own = analysis.output.profile[out]?.format;
+  if (own !== undefined) return own;
+  return analysis.layout.file.type === 'xlsx' ? undefined : outputDateText(analysis, out);
+}
+
+/**
+ * A copy in the kind of value the example shows. The `copy` relation takes a number and text that reads as the same number for one value
+ * (a csv export's "9455433" is the workbook's 9455433), but the rule writes its input column's DECLARED type: a column of long numbers or
+ * of same-length digit text is declared `idLike` (written as text), a number column as numbers. When every cell of the example's output
+ * (a workbook: a csv shows both the same) is the other kind, the copy converts - `toNumber` to numbers, `toText` to text - instead of
+ * writing what the example does not hold. Null: a plain copy writes the right kind.
+ */
+function typedCopy(ctx: Ctx, analysis: PairAnalysis, i: number, out: number, outHeader: string): string | null {
+  if (analysis.layout.file.type !== 'xlsx' || i >= analysis.input.columnCount) return null;
+  const inputId = ensureInputColumn(ctx, analysis, i);
+  const type = declaredType(ctx, i);
+  const want = outputCellKind(analysis, out);
+  let expr: Expr | null = null;
+  let computedType: ColumnType = 'text';
+  if (want === 'number' && (type === 'idLike' || type === 'text')) {
+    // IDs stored as whole numbers are declared `integer` instead (`declareNumericIds`, which a computed column reading them would stop).
+    if (type === 'idLike' && inputHoldsWholeNumbers(analysis, i)) return null;
+    // (`toNumber` gives a decimal; a whole number is written the same either way)
+    expr = { op: 'toNumber', arg: { col: inputId } };
+    computedType = 'decimal';
+  } else if (want === 'text' && NUMBER_COLUMN_TYPES.has(type)) {
+    expr = { op: 'toText', arg: { col: inputId } };
+  } else if (want === 'text' && type === 'date') {
+    // Date text copied as it is: the input is declared a date (to be read), and written back as the text the example holds.
+    const format = outputDateText(analysis, out);
+    if (format !== undefined) expr = { op: 'toText', arg: { col: inputId }, format };
+  }
+  if (expr === null) return null;
+  const id = newComputedId(ctx, outHeader);
+  ctx.computed.push({ id, type: computedType, expr });
+  return id;
 }
 
 /** A constant of a calculation that is only right after rounding must be this round (significant digits) to be taken as a rate. */
@@ -411,7 +482,7 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
   switch (rel.rel) {
     case 'copy': {
       use(rel.in[0]);
-      return plainRead(ctx, analysis, rel.in[0], outHeader);
+      return typedCopy(ctx, analysis, rel.in[0], rel.out, outHeader) ?? plainRead(ctx, analysis, rel.in[0], outHeader);
     }
     case 'normalize': {
       use(rel.in[0]);
@@ -913,7 +984,8 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
 
     const outProfile = analysis.output.profile[ca.out];
     const col: { header: string; from: string; format?: string; width?: number } = { header: headerFor(analysis, ca, rel), from };
-    if (outProfile?.format !== undefined) col.format = outProfile.format;
+    const format = builtOutputFormat(analysis, ca.out);
+    if (format !== undefined) col.format = format;
     if (outProfile?.width !== undefined) col.width = outProfile.width;
     outputColumns.push(col);
   }

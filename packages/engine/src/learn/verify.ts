@@ -162,6 +162,8 @@ function actualCellValue(cell: OutCell | undefined): PayloadCell {
 interface Seen {
   v: PayloadCell;
   date: boolean;
+  /** A date the rules made: the text a csv / txt file writes for it (its column's date format), when known. */
+  text?: string;
 }
 
 function expectedSeen(cell: RawCell | null | undefined, date1904 = false): Seen {
@@ -169,7 +171,8 @@ function expectedSeen(cell: RawCell | null | undefined, date1904 = false): Seen 
 }
 
 function actualSeen(cell: OutCell | undefined): Seen {
-  return { v: actualCellValue(cell), date: cell?.isDate === true && typeof cell.v === 'number' };
+  const date = cell?.isDate === true && typeof cell.v === 'number';
+  return { v: actualCellValue(cell), date, ...(date && cell?.text !== undefined ? { text: cell.text } : {}) };
 }
 
 /** Numbers compare with a small epsilon (a decimal.js value that round-trips through
@@ -194,9 +197,11 @@ const PLAIN_NUMBER_TEXT = /^-?\d+(\.\d+)?$/;
  * The one exception is a csv/txt example output: its cells are always strings (`RawCell.v`: "CSV cells are always
  * strings"), so a real "12" cell matches the engine's own number 12, which the delimited writer writes as plain
  * digits. Only such a plain digit string qualifies - never one with a currency sign, grouping or a percent sign,
- * which the writer would not reproduce.
+ * which the writer would not reproduce. A date the rules make is compared the same way, by the text the writer
+ * writes for it (its column's date format): "2024-09-28" in the example is not the date written "28/09/2024".
  */
 function cellsMatch(expected: Seen, actual: Seen, delimited: boolean): boolean {
+  if (delimited && actual.date && !expected.date && actual.text !== undefined) return typeof expected.v === 'string' && expected.v === actual.text;
   if (expected.date !== actual.date && !(delimited && !expected.date)) return false;
   if (valuesEqual(expected.v, actual.v)) return true;
   if (delimited && typeof expected.v === 'string' && typeof actual.v === 'number') {
@@ -468,9 +473,10 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
 
   const repairProblems: RepairProblem[] = [];
   let diffCount = 0;
-  const pushDiff = (p: Extract<RepairProblem, { kind: 'diff' }>): boolean => {
+  // (Built only when kept: masking every wrong row's cells to keep 10 took 30 s on a 15,000-row file - engine stress test, STRESS.md.)
+  const pushDiff = (build: () => Extract<RepairProblem, { kind: 'diff' }>): boolean => {
     if (diffCount >= MAX_DIFF_PROBLEMS) return false;
-    repairProblems.push(p);
+    repairProblems.push(build());
     diffCount++;
     return true;
   };
@@ -519,14 +525,14 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
         const actualCells = actualRow!.cells.map(actualCellValue);
         wrong = wrongRowOf(inRow, wrong);
         wrong?.extra.push(actualCells);
-        pushDiff({
+        pushDiff(() => ({
           kind: 'diff',
           out: 0,
           row: { in: maskCells(inputCellsFor(inRow), types.input, masker), out: [] },
           made: maskCells(actualCells, types.output, masker),
           expected: null,
           actual: maskOutputCell(actualCells[0] ?? null, 0, types.output, masker),
-        });
+        }));
         continue;
       }
 
@@ -554,13 +560,13 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
           mismatches.push({ exampleRow, column: header, expected, actual });
           wrong = wrongRowOf(inRow, wrong);
           wrong?.cells.push({ out: c, outRow: outIdx, expected, actual });
-          pushDiff({
+          pushDiff(() => ({
             kind: 'diff',
             out: c,
             row: { in: maskCells(inputCellsFor(inRow), types.input, masker), out: maskCells(expectedCells, types.output, masker) },
             expected: maskOutputCell(expected, c, types.output, masker),
             actual: maskOutputCell(actual, c, types.output, masker),
-          });
+          }));
         }
       }
       if (rowOk) matched++;
@@ -576,14 +582,14 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
       const actualCells = actualRow.cells.map(actualCellValue);
       wrong = wrongRowOf(inRow, wrong);
       wrong?.extra.push(actualCells);
-      pushDiff({
+      pushDiff(() => ({
         kind: 'diff',
         out: 0,
         row: { in: maskCells(inputCellsFor(inRow), types.input, masker), out: [] },
         made: maskCells(actualCells, types.output, masker),
         expected: null,
         actual: maskOutputCell(actualCells[0] ?? null, 0, types.output, masker),
-      });
+      }));
     }
   }
 

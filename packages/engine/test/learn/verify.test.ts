@@ -8,7 +8,7 @@ import { createMasker } from '../../src/learn/mask';
 import { fastPath } from '../../src/learn/fastPath';
 import { preflight } from '../../src/learn/preflight';
 import { verifyAgainstExample } from '../../src/learn/verify';
-import { delimited, xlsx, type V } from './analyze/helpers';
+import { date, delimited, xlsx, type V } from './analyze/helpers';
 
 function analyzeOkResult(inHeaders: string[], inRows: V[][], outHeaders: string[], outRows: V[][]): PairAnalysis {
   const a = analyzePair(xlsx([inHeaders, ...inRows]), xlsx([outHeaders, ...outRows]));
@@ -336,6 +336,48 @@ describe('verifyAgainstExample: numeric values stored as text (csv/txt example o
   });
 });
 
+// Found by the engine stress test (eval/STRESS.md): a date the rules make was compared with a csv/txt example's text by its ISO form, not
+// by the text the writer writes for it. A rules file writing "28/09/2024" verified against an example showing "2024-09-28" (wrong file,
+// reported verified), and one writing exactly the example's "28/09/2024" did not verify.
+describe('verifyAgainstExample: dates in a csv/txt example output', () => {
+  const inHeaders = ['ID', 'Paid'];
+  const inRows: V[][] = [
+    [101, date(2024, 9, 28)],
+    [102, date(2025, 1, 3)],
+    [103, date(2026, 12, 31)],
+    [104, date(2024, 2, 29)],
+  ];
+  const dateRules = (format?: string): LearnResult => ({
+    schemaVersion: 1,
+    input: { sheet: { pick: 'first' }, headerRow: 'auto', columns: [{ id: 'id', header: 'ID', type: 'integer' }, { id: 'paid', header: 'Paid', type: 'date' }] },
+    transform: { computed: [], valueMaps: [], sort: [] },
+    output: { file: { type: 'csv', encoding: 'utf8' }, sheetName: 'out', direction: 'ltr', language: 'en', titleRows: [], columns: [{ header: 'ID', from: 'id' }, { header: 'Paid', from: 'paid', ...(format ? { format } : {}) }] },
+    validations: [],
+    unsupported: [],
+    assumptions: [],
+  });
+  const analysisWith = (texts: string[]): PairAnalysis => {
+    const outRows = inRows.map((r, i) => [r[0] as number, texts[i]!]);
+    const a = analyzePair(xlsx([inHeaders, ...inRows]), delimited([inHeaders, ...outRows], 'csv'));
+    if (!a.ok) throw new Error(`analysis failed: ${JSON.stringify(a.issues)}`);
+    return a;
+  };
+  const iso = ['2024-09-28', '2025-01-03', '2026-12-31', '2024-02-29'];
+  const dayFirst = ['28/09/2024', '03/01/2025', '31/12/2026', '29/02/2024'];
+
+  it('a date written as the example writes it verifies', () => {
+    expect(verifyAgainstExample(dateRules(), analysisWith(dayFirst)).verified).toBe(true);
+    expect(verifyAgainstExample(dateRules('YYYY-MM-DD'), analysisWith(iso)).verified).toBe(true);
+  });
+
+  it('a date written in another format than the example shows does not verify', () => {
+    const v = verifyAgainstExample(dateRules(), analysisWith(iso));
+    expect(v.verified).toBe(false);
+    expect(v.mismatches[0]).toMatchObject({ column: 'Paid', expected: '2024-09-28' });
+    expect(verifyAgainstExample(dateRules('YYYY-MM-DD'), analysisWith(dayFirst)).verified).toBe(false);
+  });
+});
+
 describe('verifyAgainstExample: a headerless example output (SPEC 8.13)', () => {
   it('does not flag the engine\'s own internal header row as an extra layout row', () => {
     const inHeaders = ['ID', 'Name'];
@@ -400,5 +442,28 @@ describe('verifyAgainstExample: empty text cells', () => {
     };
     const v = verifyAgainstExample(blankName, a);
     expect(v.mismatches.length).toBe(5);
+  });
+});
+
+// Found by the engine stress test (eval/STRESS.md): every wrong row's cells were masked to build a repair problem, then all but the
+// first 10 thrown away - 30 s on a 15,000-row file of long notes. Only the problems kept are built.
+describe('verifyAgainstExample: masks only the repair problems it keeps', () => {
+  it('rules wrong on every row of 400: at most 10 diff problems, and only their cells masked', () => {
+    const inRows: V[][] = Array.from({ length: 400 }, (_, i) => [i + 1, `name${i} street${i} city${i}`]);
+    const a = analyzeOkResult(['Customer ID', 'Customer Name'], inRows, ['Name', 'ID'], inRows.map((r) => [r[1]!, r[0]!]));
+    const fp = fastPath(a, preflight(a, 'registered'));
+    if (!('rules' in fp)) throw new Error('fastPath failed');
+    const wrong: LearnResult = {
+      ...fp.rules,
+      transform: { ...fp.rules.transform, computed: [...fp.rules.transform.computed, { id: 'x', type: 'text', expr: { const: 'nobody' } }] },
+      output: { ...fp.rules.output, columns: fp.rules.output.columns.map((c) => (c.header === 'Name' ? { header: 'Name', from: 'x' } : c)) },
+    };
+    const real = createMasker(new TextEncoder().encode('count-key'));
+    let calls = 0;
+    const counting = { ...real, maskCell: (v: Parameters<typeof real.maskCell>[0], t: Parameters<typeof real.maskCell>[1]) => (calls++, real.maskCell(v, t)) };
+    const v = verifyAgainstExample(wrong, a, { masker: counting });
+    expect(v.mismatches).toHaveLength(400);
+    expect(v.repairProblems.filter((p) => p.kind === 'diff')).toHaveLength(10);
+    expect(calls).toBeLessThanOrEqual(10 * 6); // per kept problem: 2 input cells, 2 expected cells, expected and actual
   });
 });
