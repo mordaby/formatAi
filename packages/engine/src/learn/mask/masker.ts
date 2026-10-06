@@ -4,8 +4,14 @@
 // per session) and never leaves this object; the fake<->real map
 // (`fakeToReal`) is exposed only so the caller can unmask constants that come
 // back from the LLM (unmaskRules.ts) — it is never serialized into a payload.
+//
+// Amendment 2026-10-06 (SPEC 7.2): an ID stored as a NUMBER is masked too. A number in an ID column is masked as its digits, exactly
+// like the same digits as text (a valid Israeli ID stays a valid one, the length is kept), and is sent as a number again: the example's
+// cell is a number, and the server's sample run and the browser's verification compare typed, so a fake written as text would ask the
+// rules for text where the real file wants a number (and a repair diff of the two would look the same once masked). Which columns
+// are ID columns - `idLike` ones, and integer columns the pair analysis shows to be identifiers - is the caller's (`learn/maskTypes.ts`).
 
-import { maskingVocabulary, type PayloadCell, type ProfileType } from '@formatai/shared';
+import { maskingIdentifiers, maskingVocabulary, type PayloadCell, type ProfileType } from '@formatai/shared';
 import { MONTH_NAMES, WEEKDAY_NAMES, monthOfName } from '../../values/dates';
 import { isValidIsraeliId, makeValidIsraeliId } from '../../values/israeliId';
 import { normalizeText } from '../../values/text';
@@ -86,7 +92,11 @@ export interface Masker {
    * because length is preserved exactly).
    */
   maskIdLike(s: string): string;
-  /** Masks a cell per SPEC 7.2: only `text` and `idLike` columns are masked. */
+  /**
+   * Masks a cell per SPEC 7.2: only `text` and `idLike` columns are masked. In an `idLike` column a NUMBER is masked too (amendment
+   * 2026-10-06): as its digits, like `maskIdLike` of the same digits, and returned as a number of the same length (as text only in
+   * the rare case its fake does not read back as the same digits: a fraction, a number too long to hold exactly).
+   */
   maskCell(value: PayloadCell, columnType: ProfileType): PayloadCell;
   /** Registers more words (e.g. discovered later) that should pass through unmasked. */
   addLabelWords(words: Iterable<string>): void;
@@ -95,6 +105,19 @@ export interface Masker {
    * never put into a payload (SPEC 15: "the masking map stays local").
    */
   readonly fakeToReal: ReadonlyMap<string, string>;
+  /**
+   * Amendment 2026-10-06: the real number behind a NUMBER constant the AI wrote, when `n` is the fake of a whole ID made of digits (a
+   * number in an ID column, or digit text in one) of at least `maskingIdentifiers.minUnmaskDigits` digits; else undefined. Only those:
+   * a short number in a rule (a rate, a threshold, `round`'s digits) is far more likely a real constant than a short fake ID.
+   */
+  realNumberOf(n: number): number | undefined;
+  /** The inverse, for `maskRules` (the constants a completion call sends): the fake of a real ID number this masker has masked, else undefined. */
+  fakeNumberOf(n: number): number | undefined;
+}
+
+/** The digits of a whole number (no sign, no exponent), or null: the only numbers `realNumberOf`/`fakeNumberOf` map. */
+function digitsOf(n: number): string | null {
+  return Number.isSafeInteger(n) && n >= 0 ? String(n) : null;
 }
 
 export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): Masker {
@@ -109,6 +132,10 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
   // through as a label word — used for best-effort collision avoidance below.
   const seenReal = new Set<string>();
   const labelWords = new Set<string>();
+  // Amendment 2026-10-06: the fakes of whole IDs made of digits (from `maskIdLike`, which every ID cell goes through, a number's digits
+  // included), both ways - the only fakes a NUMBER constant is unmasked from (`realNumberOf`), and the reals `maskRules` masks.
+  const idDigitsFakeToReal = new Map<string, string>();
+  const idDigitsRealToFake = new Map<string, string>();
 
   if (opts?.labelWords) {
     for (const w of opts.labelWords) labelWords.add(normalizeText(w));
@@ -116,8 +143,9 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
 
   /**
    * Returns the first candidate from `makeCandidate` that (a) isn't already
-   * the fake for a *different* real value, and (b) — best effort — doesn't
-   * equal a real word/id already seen in the data.
+   * the fake for a *different* real value, (b) — best effort — doesn't
+   * equal a real word/id already seen in the data, and (c) keeps the real
+   * value's leading digit non-zero when it is (see `keepsLeadingDigit`).
    *
    * DECISION: (b) can only be checked against words seen so far, not ones the
    * masker will encounter later; SPEC 7.2 asks to avoid this "when feasible",
@@ -131,9 +159,20 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
       const existingReal = fakeToReal.get(candidate);
       if (existingReal !== undefined && existingReal !== realKey) continue;
       if (seenReal.has(candidate) && candidate !== realKey) continue;
+      if (!keepsLeadingDigit(realKey, candidate)) continue;
       return candidate;
     }
     return last;
+  }
+
+  /**
+   * Amendment 2026-10-06: a run of digits that does not start with 0 gets a fake that does not either - the same shape (a "0" in front
+   * is a different shape: a code whose leading zeros matter), and the condition for a number to stay a number of the same length once
+   * masked. A candidate that breaks it is skipped like a collision; the first candidate is kept whenever it already holds, so most fakes
+   * are what they were. (8 tries that each fail 1 time in 10: the last candidate is used as-is about once in 10^8.)
+   */
+  function keepsLeadingDigit(real: string, candidate: string): boolean {
+    return !/^[1-9][0-9]*$/.test(real) || !candidate.startsWith('0');
   }
 
   function maskWord(word: string): string {
@@ -223,14 +262,25 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
     // for Israeli-ID validity; anything else (letters mixed in, separators,
     // too long) falls back to generic word masking, which already satisfies
     // "digits -> digits" character-by-character for any digit runs it contains.
-    if (/^\d{1,9}$/.test(s) && isValidIsraeliId(s)) {
-      return maskValidIsraeliId(s);
+    const fake = /^\d{1,9}$/.test(s) && isValidIsraeliId(s) ? maskValidIsraeliId(s) : maskText(s);
+    if (/^\d+$/.test(s) && /^\d+$/.test(fake) && fake !== s) {
+      idDigitsFakeToReal.set(fake, s);
+      idDigitsRealToFake.set(s, fake);
     }
-    return maskText(s);
+    return fake;
+  }
+
+  /** Amendment 2026-10-06: a number in an ID column, masked as its digits and sent as a number again (see `Masker.maskCell`). */
+  function maskIdNumber(n: number): PayloadCell {
+    if (!Number.isFinite(n)) return n;
+    const fake = maskIdLike(String(n));
+    const back = Number(fake);
+    return String(back) === fake ? back : fake;
   }
 
   function maskCell(value: PayloadCell, columnType: ProfileType): PayloadCell {
-    if (typeof value !== 'string') return value; // numbers, booleans, null: sent real regardless of type
+    if (typeof value === 'number') return columnType === 'idLike' ? maskIdNumber(value) : value; // a number in any other column: sent real (SPEC 7.2)
+    if (typeof value !== 'string') return value; // booleans, null: sent real regardless of type
     if (columnType === 'text') return maskText(value);
     if (columnType === 'idLike') return maskIdLike(value);
     return value; // integer/decimal/currency/percent/date/boolean/empty: sent real (SPEC 7.2)
@@ -240,11 +290,32 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
     for (const w of words) labelWords.add(normalizeText(w));
   }
 
+  /** The digits of `n` when it is long enough to be mapped as an ID (see `realNumberOf`), else null. */
+  function idDigits(n: number): string | null {
+    const digits = digitsOf(n);
+    return digits !== null && digits.length >= maskingIdentifiers.minUnmaskDigits ? digits : null;
+  }
+
+  function realNumberOf(n: number): number | undefined {
+    const digits = idDigits(n);
+    const real = digits === null ? undefined : idDigitsFakeToReal.get(digits);
+    return real === undefined ? undefined : Number(real);
+  }
+
+  function fakeNumberOf(n: number): number | undefined {
+    const digits = idDigits(n);
+    const fake = digits === null ? undefined : idDigitsRealToFake.get(digits);
+    // (a fake that starts with 0 has no number of the same length: left as it is)
+    return fake === undefined || fake.startsWith('0') ? undefined : Number(fake);
+  }
+
   return {
     maskText,
     maskIdLike,
     maskCell,
     addLabelWords,
     fakeToReal,
+    realNumberOf,
+    fakeNumberOf,
   };
 }

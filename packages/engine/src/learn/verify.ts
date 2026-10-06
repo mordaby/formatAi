@@ -29,6 +29,7 @@ import type { InputTable, OutCell, OutRow, OutRowKind, OutputFileSpec, RawCell }
 import { isoOfSerial } from './analyze/cells';
 import type { OutputRowKind, PairAnalysis } from './analyze';
 import type { Masker } from './mask';
+import { maskTypes, type MaskTypes } from './maskTypes';
 
 /** LEARN_PROMPT §4: "At most 10 diff problems are sent." Same cap as the API's sample
  * run (`apps/api/src/learn/sampleRun.ts`), enforced here for the same reason: a repair
@@ -210,14 +211,15 @@ function rowToPayloadCells(row: (RawCell | null)[] | undefined, count: number, d
   return out;
 }
 
-function maskCells(cells: PayloadCell[], profiles: readonly { type: ProfileType }[], masker: Masker | undefined): PayloadCell[] {
+/** A row's cells masked like the samples' cells of their columns (`types`: `maskTypes`, an identifier stored as a number masked as an ID). */
+function maskCells(cells: PayloadCell[], types: readonly ProfileType[], masker: Masker | undefined): PayloadCell[] {
   if (!masker) return cells;
-  return cells.map((v, i) => masker.maskCell(v, profiles[i]?.type ?? 'text'));
+  return cells.map((v, i) => masker.maskCell(v, types[i] ?? 'text'));
 }
 
 /** One output cell's value, masked like the samples' cells of that column (the rules' own value too: it is made from real words). */
-function maskOutputCell(v: PayloadCell, column: number, profiles: readonly { type: ProfileType }[], masker: Masker | undefined): PayloadCell {
-  return masker ? masker.maskCell(v, profiles[column]?.type ?? 'text') : v;
+function maskOutputCell(v: PayloadCell, column: number, types: readonly ProfileType[], masker: Masker | undefined): PayloadCell {
+  return masker ? masker.maskCell(v, types[column] ?? 'text') : v;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,8 +304,10 @@ const LAYOUT_CODE: Record<LayoutCategory, LayoutProblemCode> = { title: 'titleRo
  * real), and numbers, booleans and real dates are sent real as everywhere. `undefined`: a value that cannot be masked, which the message
  * then leaves out (it says only where the difference is).
  */
-function layoutValue(seen: Seen, masker: Masker | undefined, headers: ReadonlySet<string> | null): string | undefined {
+function layoutValue(seen: Seen, masker: Masker | undefined, headers: ReadonlySet<string> | null, maskType?: ProfileType): string | undefined {
   const v = seen.v;
+  // A number in a column masked as an ID (amendment 2026-10-06: the first or last ID of a group, in a summary row) is masked like its cells.
+  if (masker && typeof v === 'number' && maskType === 'idLike' && !seen.date) return JSON.stringify(masker.maskCell(v, maskType));
   if (!masker || v === null || typeof v === 'number' || typeof v === 'boolean' || seen.date) return JSON.stringify(v);
   if (typeof v !== 'string') return undefined;
   return JSON.stringify(headers?.has(v) ? v : masker.maskText(v));
@@ -327,6 +331,7 @@ function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]
   const issues: LayoutIssue[] = [];
   const plain = (code: LayoutProblemCode, message: string): void => void issues.push({ code, message, repair: message });
   const knownHeaders = new Set(analysis.output.headers);
+  const outTypes = masker ? maskTypes(analysis).output : [];
   const len = Math.max(expected.length, actual.length);
   for (let i = 0; i < len; i++) {
     const exp = expected[i];
@@ -352,7 +357,8 @@ function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]
       const actualVal = actualSeen(act.row.cells[c]);
       if (!cellsMatch(expectedVal, actualVal, delimited)) {
         const where = `${exp.category} row (row ${exp.sheetRow + 1}), column ${c + 1}`;
-        const [e, a] = [layoutValue(expectedVal, masker, headers), layoutValue(actualVal, masker, headers)];
+        const maskType = exp.category === 'summary' ? outTypes[c] : undefined;
+        const [e, a] = [layoutValue(expectedVal, masker, headers, maskType), layoutValue(actualVal, masker, headers, maskType)];
         issues.push({
           code: LAYOUT_CODE[exp.category],
           message: `${where}: expected ${JSON.stringify(expectedVal.v)}, the rules produce ${JSON.stringify(actualVal.v)}`,
@@ -485,7 +491,8 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   }
 
   const inputCellsFor = (inRow: number): PayloadCell[] => rowToPayloadCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904);
-  const outProfile = analysis.output.profile;
+  // The type each column is masked as in a repair problem: the same as in the payload's samples (`maskTypes`).
+  const types: MaskTypes = masker ? maskTypes(analysis) : { input: [], output: [] };
   // The learning loop's wrong rows (only when asked for), one per input row, in file order.
   const wrongRows: WrongRow[] | undefined = opts.wrongRows ? [] : undefined;
   const wrongRowOf = (inRow: number, current: WrongRow | null): WrongRow | null => {
@@ -515,10 +522,10 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
         pushDiff({
           kind: 'diff',
           out: 0,
-          row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: [] },
-          made: maskCells(actualCells, outProfile, masker),
+          row: { in: maskCells(inputCellsFor(inRow), types.input, masker), out: [] },
+          made: maskCells(actualCells, types.output, masker),
           expected: null,
-          actual: maskOutputCell(actualCells[0] ?? null, 0, outProfile, masker),
+          actual: maskOutputCell(actualCells[0] ?? null, 0, types.output, masker),
         });
         continue;
       }
@@ -550,9 +557,9 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
           pushDiff({
             kind: 'diff',
             out: c,
-            row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: maskCells(expectedCells, outProfile, masker) },
-            expected: maskOutputCell(expected, c, outProfile, masker),
-            actual: maskOutputCell(actual, c, outProfile, masker),
+            row: { in: maskCells(inputCellsFor(inRow), types.input, masker), out: maskCells(expectedCells, types.output, masker) },
+            expected: maskOutputCell(expected, c, types.output, masker),
+            actual: maskOutputCell(actual, c, types.output, masker),
           });
         }
       }
@@ -572,10 +579,10 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
       pushDiff({
         kind: 'diff',
         out: 0,
-        row: { in: maskCells(inputCellsFor(inRow), analysis.input.profile, masker), out: [] },
-        made: maskCells(actualCells, outProfile, masker),
+        row: { in: maskCells(inputCellsFor(inRow), types.input, masker), out: [] },
+        made: maskCells(actualCells, types.output, masker),
         expected: null,
-        actual: maskOutputCell(actualCells[0] ?? null, 0, outProfile, masker),
+        actual: maskOutputCell(actualCells[0] ?? null, 0, types.output, masker),
       });
     }
   }
