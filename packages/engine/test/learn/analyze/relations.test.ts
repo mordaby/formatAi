@@ -283,4 +283,29 @@ describe('value maps need repeated keys (no memorizing)', () => {
     expect(findRel(a, 2, 'valueMap')).toBeUndefined();
     expect(a.columns[2]?.unknown).toBe(true);
   });
+
+  // Found by the engine stress test (eval/STRESS.md): a "High"/"Low" band on an amount, "Low" on almost every row. Supplier names
+  // repeat, so the names "map" onto the band - but only "Low" is ever confirmed by a repeat; the two "High" rows are two names seen
+  // once. Next month a known name with a high amount would be written "Low" with no flag.
+  it('the repeats confirm at least two of the values written: "mostly one value" plus memorized exceptions is not a map', () => {
+    const names = ['North', 'South', 'East', 'West', 'Centre'];
+    const inRows: V[][] = [['Ref', 'Supplier', 'Amount']];
+    const outRows: V[][] = [['Ref', 'Band']];
+    for (let i = 0; i < 20; i++) {
+      const high = i === 6 || i === 13;
+      inRows.push([`R${100 + i}`, high ? `Rare ${i}` : names[i % names.length]!, high ? 9000 + i : 100 + i * 37]);
+      outRows.push([`R${100 + i}`, high ? 'High' : 'Low']);
+    }
+    const a = analyzeOk(xlsx(inRows), xlsx(outRows));
+    expect(findRel(a, 1, 'valueMap')).toBeUndefined();
+
+    // The same names with the band confirmed on both sides: a map.
+    const inOk: V[][] = [['Ref', 'Supplier']];
+    const outOk: V[][] = [['Ref', 'Band']];
+    for (let i = 0; i < 20; i++) {
+      inOk.push([`R${100 + i}`, names[i % names.length]!]);
+      outOk.push([`R${100 + i}`, i % names.length === 2 ? 'High' : 'Low']);
+    }
+    expect(findRel(analyzeOk(xlsx(inOk), xlsx(outOk)), 1, 'valueMap')).toMatchObject({ coverage: 1 });
+  });
 });

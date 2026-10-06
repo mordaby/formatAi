@@ -1265,12 +1265,17 @@ function valueMapCands(env: RelationEnv, out: ColumnData): Cand[] {
     if (confirmingRows < Math.max(2, Math.ceil(table.size / 2))) return;
     const map = new Map<string, string>();
     let identity = true;
+    // DECISION (found by the engine stress test, eval/STRESS.md): the repeats must confirm at least two of the values the map
+    // writes. When only one value's keys repeat ("Low" on 28 rows) and every other value is written once ("High" on two
+    // names seen once), the map is "mostly Low" with the exceptions memorized - any column with repeating names "maps" so.
+    const confirmedValues = new Set<string>();
     for (const [key, m] of table) {
       const to = mode(m)!;
       map.set(key, to);
+      if ((m.get(to) ?? 0) >= 2) confirmedValues.add(to);
       if (normFast(display.get(key)!).toLowerCase() !== normFast(to).toLowerCase()) identity = false;
     }
-    if (identity) return;
+    if (identity || confirmedValues.size < 2) return;
     const pairs: [string, string][] = [...map.entries()]
       .map(([key, to]) => [display.get(key)!, to] as [string, string])
       .sort((p, q) => (p[0] < q[0] ? -1 : p[0] > q[0] ? 1 : 0));
