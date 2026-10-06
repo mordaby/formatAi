@@ -1,0 +1,18 @@
+{
+  "difficulty": "stress",
+  "domain": "customerNotes",
+  "features": [
+    "adversarial",
+    "keywordInFreeText",
+    "caseInsensitive",
+    "maskingSplitsSpellings",
+    "decoyWords",
+    "freeText",
+    "newRowsNextMonth"
+  ],
+  "expect": {
+    "masking_on": "verified",
+    "masking_off": "verified"
+  },
+  "expectNote": "VIP = Yes when Notes contains \"vip\" in any letter case, else No. Masking OFF: the general rule contains(lower(Notes), \"vip\") is there to write. Masking ON: free text is masked word by word and a word is its exact spelling, so \"VIP\", \"vip\" and \"Vip\" become three unrelated fakes (an upper-case 3-letter word, a lower-case one, a capital + 2 lower-case) and no \"vip\" is left to find; but the vocabulary is enough: the rule is \"one of the three fakes that always come with Yes\" (an or of three contains, which the unmask turns into the three real spellings) and it holds on next month's file, which only uses the same three spellings. Hard on purpose: the No rows have decoy words in the same place with the same lengths and spellings (NEW new New, OLD old Old, BIG big Big), so only \"comes with Yes\" tells the keyword from them. Where it stops: a spelling first seen next month (\"vIp\"), or \"vip\" inside a longer word (\"VIPs\"), would be invisible with masking on - the file has none, so this case is not the hiddenByMasking one. May break: one spelling found and the other two missed (rows wrongly No), a decoy taken for a keyword, a lookup on whole Notes texts."
+}

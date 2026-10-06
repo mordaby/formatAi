@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "order",
+        "header": "Order",
+        "type": "idLike",
+        "required": true
+      },
+      {
+        "id": "type",
+        "header": "Type",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "total",
+        "header": "Total",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "shipping",
+        "type": "decimal",
+        "expr": {
+          "op": "if",
+          "cond": {
+            "op": "or",
+            "args": [
+              {
+                "op": "and",
+                "args": [
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "col": "type"
+                      },
+                      {
+                        "const": "Member"
+                      }
+                    ]
+                  },
+                  {
+                    "op": "gte",
+                    "args": [
+                      {
+                        "col": "total"
+                      },
+                      {
+                        "const": 200
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "op": "and",
+                "args": [
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "col": "type"
+                      },
+                      {
+                        "const": "Regular"
+                      }
+                    ]
+                  },
+                  {
+                    "op": "gte",
+                    "args": [
+                      {
+                        "col": "total"
+                      },
+                      {
+                        "const": 500
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "then": {
+            "const": 0
+          },
+          "else": {
+            "const": 25
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Orders with shipping",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Order",
+        "from": "order"
+      },
+      {
+        "header": "Type",
+        "from": "type"
+      },
+      {
+        "header": "Total",
+        "from": "total",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "Shipping",
+        "from": "shipping",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Orders -> orders with shipping",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

@@ -603,6 +603,25 @@ const FAMILY_NOMINAL: Record<'numeric' | 'text' | 'date' | 'boolean', SigType> =
 
 // ---------- The public entry point ----------
 
+/**
+ * The type each computed column's formula gives, in order - each seeing the input columns as declared and every earlier computed column as
+ * what ITS formula gives (not as declared). For code that writes computed columns nobody declared a type for: the AI's code checks
+ * (`learn/checks.ts`) declare what this says, and `typeCheck` then reports only the real mismatches inside the formulas. `undefined`: no type
+ * could be found (an unknown reference, a mismatch inside, an empty literal) - `typeCheck` / `checkRules` say what. Rules with `expand` are
+ * not read here (the ids it creates are not in scope).
+ */
+export function inferComputedTypes(rules: LearnResult | Rules): (SigType | undefined)[] {
+  const ignored: TypeProblem[] = [];
+  const ctx = buildContext(rules, ignored);
+  const colTypes = new Map<string, SigType>();
+  for (const col of rules.input.columns) colTypes.set(col.id, columnTypeToValueType(col.type));
+  return rules.transform.computed.map((c, i) => {
+    const t = inferType(c.expr, { colTypes }, ctx, `transform.computed[${i}].expr`, ignored);
+    if (t !== undefined) colTypes.set(c.id, t);
+    return t;
+  });
+}
+
 export function typeCheck(rules: LearnResult | Rules, opts?: TypeCheckOptions): TypeProblem[] {
   const problems: TypeProblem[] = [];
   const ctx = buildContext(rules, problems);

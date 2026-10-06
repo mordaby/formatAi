@@ -3,7 +3,7 @@
 // format, or a saved source opened for editing - or what "save" means there: the caller passes the header's actions, banners
 // and (when there is no example in memory) what replaces the preview.
 import { missingParts, type AiColumnNote, type AiStepPartCode, type Format, type SourceStructure, type Tier } from '@formatai/shared';
-import type { AmbiguousColumn, OneTimeQuestion as OneTimeQuestionData, PartialInfo } from '@formatai/engine';
+import type { AmbiguousColumn, OneTimeRowQuestion as OneTimeQuestionData, PartialInfo } from '@formatai/engine';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LeaveGuard } from '../../app/LeaveGuard';
 import { answerOneTime, answerRule, answerUnsure, applyReading, availableInputs, lineIds, lockProblem, oneTimeKey, oneTimeState, questionOpen, useEditor, useLiveCheck, metaStatusOf, differencesOf, type ApplyActionOptions, type EditLock, type EditableRules, type EditAction, type EditorStore, type ExampleInputColumn, type SaveStatus, type UseEditor, type UseLiveCheck } from '../../editor';

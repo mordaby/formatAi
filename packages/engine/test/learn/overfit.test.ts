@@ -178,6 +178,48 @@ describe('caseList: a long chain of cases, each giving a constant to one or two 
     expect(overfitFindings(rulesWith(text), { table: GRID })).toEqual([]);
   });
 
+  // -------------------------------------------------------------------------
+  // Atoms, not cases (owner amendment, 2026-10-06): gpt-5's escalation on the owner's 100-row file wrote a class by total as
+  // switch(or(id = ..., 20 IDs), "Small", or(... 11 IDs), "Big", or(3 IDs), "Medium", id = ..., ... 5 single IDs, qty = 24, "Big",
+  // oneOf(qty, 1, 4, 5, 10), "Small", "Medium") - each case picks many rows, so the per-case count let it through. Synthetic IDs here.
+  // -------------------------------------------------------------------------
+
+  /** 48 rows, one person each (a column unique per row), supplier x item four times, quantities 1..48. */
+  const PEOPLE = table(Array.from({ length: 48 }, (_, i) => [`P-${100 + i}`, SUPPLIERS[i % 3]!, ITEMS[i % 4]!, i + 1, (i + 1) * 100]));
+  const ids = (from: number, to: number): string => Array.from({ length: to - from }, (_, k) => `customer = "P-${100 + from + k}"`).join(', ');
+  const MEMORIZED = `switch(or(${ids(0, 20)}), "Small", or(${ids(20, 31)}), "Big", or(${ids(31, 34)}), "Medium", ${[34, 35, 36, 37, 38].map((i) => `customer = "P-${100 + i}", "Medium"`).join(', ')}, qty = 24, "Big", oneOf(qty, 1, 4, 5, 10), "Small", "Medium")`;
+
+  it('counts atoms: the memorized class list (or-lists of IDs, single IDs, quantities) is found, and says how many values it names', () => {
+    const rules = rulesWith(MEMORIZED);
+    expect(overfitFindings(rules, { table: PEOPLE })).toEqual([{ kind: 'caseList', outputColumn: 'Value', out: 1, id: 'value', cases: 10, atoms: 39 }]);
+    expect(overfitProblems(overfitFindings(rules, { table: PEOPLE }))[0]!.message).toBe(
+      'Column "Value": this rule copies particular rows of the example (it is a list of 10 cases whose conditions name 39 values one by one, each picking one or two rows; a real mapping is a value map or a lookup table); write a rule that holds for any row, or report the column as unsupported.',
+    );
+    // The fallback takes the IDs out with the rule: nothing of them is left to be saved.
+    const fallback = withOverfitFallback(rules, overfitFindings(rules, { table: PEOPLE }));
+    expect(fallback.unsupported).toEqual([{ outputColumn: 'Value', reasonCode: 'overfit' }]);
+    expect(JSON.stringify(fallback)).not.toContain('P-1');
+  });
+
+  it('a case list the cases already show (every case on a row or two) has no atom count: the server can judge it too', () => {
+    expect(overfitFindings(rulesWith(sixCombos), { table: GRID })[0]).not.toHaveProperty('atoms');
+  });
+
+  it('NOT a real rule whose or-lists each pick many rows', () => {
+    const lists = 'switch(oneOf(supplier, "North", "Global"), "A", oneOf(item, "Bolt", "Nut", "Panel"), "B", or(supplier = "Acme", item = "Motor"), "C", "D")';
+    expect(overfitFindings(rulesWith(lists), { table: PEOPLE })).toEqual([]);
+  });
+
+  it(`NOT 3 special IDs beside a rule (fewer than ${limits.learn.overfit.minCases} atoms)`, () => {
+    expect(overfitFindings(rulesWith(`switch(oneOf(customer, "P-100", "P-101", "P-102"), "Big", qty > 40, "Big", "Small")`), { table: PEOPLE })).toEqual([]);
+  });
+
+  it('only when the atoms that pin rows are at least half of all the atoms (a real rule may list a rare value or two)', () => {
+    const wide = 'oneOf(item, "Bolt", "Nut", "Panel", "Motor"), "B", oneOf(supplier, "North", "Global", "Acme"), "C"';
+    expect(overfitFindings(rulesWith(`switch(or(${ids(0, 6)}), "A", ${wide}, "D")`), { table: PEOPLE })).toEqual([]);
+    expect(label(overfitFindings(rulesWith(`switch(or(${ids(0, 7)}), "A", ${wide}, "D")`), { table: PEOPLE }))).toEqual(['caseList:Value']);
+  });
+
   it('never a correct threshold rule or a status rule (the false positive the old lint gave in the browser)', async () => {
     expect(overfitFindings(rulesWith('if(amount >= 5000, "Urgent", "Normal")'), { table: GRID })).toEqual([]);
     const { rules } = keptFrom('cmp-learn-v8-full/orders-priority.full');

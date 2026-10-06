@@ -68,8 +68,13 @@ function producedMatches(result: LearnFromExamplesResult): boolean {
  * An honest "cannot produce this column" is the expected answer, not a failure: the expectation is met when the report is there AND
  * everything else the answer produced matches the example (`producedMatches`) - a partial, correct rules file beats a complete, wrong one.
  * An answer that reports every column as unsupported produced nothing, so it never meets it.
+ *
+ * DECISION (owner amendment, 2026-10-06): `answered` are the columns the case's own answers took out (`meta.answers`, `applyCaseAnswers`:
+ * "Save without it" to a list copied from the example, asked at save, which code reports with `overfit`). Such a column counts as the
+ * expected report: the user said at save what the AI step did not, and the column needs their input - the end state the case expects. An `overfit` the
+ * guards wrote is not one (the AI step copied rows even after its repair).
  */
-export function expectationMet(meta: CaseMeta, masking: boolean, result: LearnFromExamplesResult, classification: Classification): boolean {
+export function expectationMet(meta: CaseMeta, masking: boolean, result: LearnFromExamplesResult, classification: Classification, answered: readonly string[] = []): boolean {
   const expect = expectationFor(meta, masking);
 
   if (expect === 'verified') return classification.kind === 'verified';
@@ -81,7 +86,8 @@ export function expectationMet(meta: CaseMeta, masking: boolean, result: LearnFr
 
   if (expect.startsWith('unsupported:')) {
     const code = expect.slice('unsupported:'.length);
-    return classification.kind === 'unsupported' && classification.codes.includes(code) && producedMatches(result);
+    const reported = classification.kind === 'unsupported' && (classification.codes.includes(code) || result.unsupported.some((u) => answered.includes(u.outputColumn)));
+    return reported && producedMatches(result);
   }
 
   return false;

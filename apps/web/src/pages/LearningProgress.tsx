@@ -4,7 +4,7 @@ import { Cell } from '../components/Cell';
 import type { LearnFlowState } from '../flow/learnFlow';
 import { useI18n } from '../i18n';
 import { Button, Icon, Progress, Spinner } from '../ui';
-import { roundText, STEP_LABELS, type StepKey } from './learningSteps';
+import { checkRoundText, roundText, STEP_LABELS, type StepKey } from './learningSteps';
 
 export interface LearningProgressProps {
   state: LearnFlowState;
@@ -53,6 +53,10 @@ export function LearningProgress({ state, steps, inputName, outputName, masking,
                 {active && key === 'checking' && state.status === 'checking' && <Progress value={state.fraction} label={t('flow.checking')} />}
                 {active && key === 'learningRepair' && state.status === 'learning' && state.round ? (
                   <span className="steps__note" data-testid="loop-round">{roundText(t, state.round)}</span>
+                ) : null}
+                {/* AI code checks (SPEC 21 v14): before it answers, the AI step asked code to check an idea on every row. */}
+                {active && key === 'learning' && state.status === 'learning' && state.checkRound ? (
+                  <span className="steps__note" data-testid="check-round">{checkRoundText(t, state.checkRound)}</span>
                 ) : null}
                 {active && (key === 'learning' || key === 'learningRepair') && <span className="steps__note">{t('learning.wait')}</span>}
                 {/* SPEC 6.4 (informational, never a stop): columns code found no trace of in the input go to the AI step like the rest. */}

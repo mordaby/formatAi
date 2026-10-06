@@ -33,6 +33,8 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     loopRounds: 0,
     loopRowsSent: 0,
     loopEnd: '',
+    checkRounds: 0,
+    checksAsked: 0,
     filledByCode: '',
     ambiguities: '',
     prompt: 'learn-v8',

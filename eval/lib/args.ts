@@ -1,7 +1,7 @@
 // CLI argument parsing for `pnpm eval` (SPEC 10): "pnpm eval --models <a>,<b>
 // --masking on,off --runs 3 [--provider anthropic|openai|claude-cli|fake]
 // [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]
-// [--prompt learn-v7|learn-v8|learn-v8-noE1|learn-v8.1|learn-v8.1-noE1]".
+// [--prompt learn-v7|learn-v8|learn-v8-noE1|learn-v8.1|learn-v8.1-noE1|learn-v9] [--no-pattern-hints]".
 //
 // Kept dependency-free (no argv-parsing package) since the surface is tiny and fixed.
 import { isPromptVersion, LLM_PROVIDERS, PROMPT_VERSIONS, type LlmProviderName, type PromptVersion } from '@formatai/shared';
@@ -29,6 +29,11 @@ export interface EvalArgs {
   modes: EvalMode[];
   /** `--prompt`: the prompt version to send (default: the current one, `promptVersion`), so two versions can be compared on the same code. */
   prompt?: PromptVersion;
+  /**
+   * `--no-pattern-hints` (AI code checks, docs/proposals/ai-code-checks.md section 8): the payload leaves out the pattern hints - bands,
+   * dependsOn, contains - and keeps the facts code proved, to measure the checks (`--prompt learn-v9`) against those hints.
+   */
+  noPatternHints: boolean;
 }
 
 function isLlmProviderName(v: string): v is LlmProviderName {
@@ -47,10 +52,10 @@ export class EvalArgsError extends Error {}
 
 /**
  * Parses `process.argv.slice(2)`-shaped args. Every flag is `--name value` or
- * `--name=value`; `--no-escalation` is a bare boolean flag.
+ * `--name=value`; `--no-escalation` and `--no-pattern-hints` are bare boolean flags.
  */
 export function parseArgs(argv: readonly string[]): EvalArgs {
-  const args: EvalArgs = { masking: ['on', 'off'], runs: 1, noEscalation: false, modes: ['full'] };
+  const args: EvalArgs = { masking: ['on', 'off'], runs: 1, noEscalation: false, modes: ['full'], noPatternHints: false };
 
   let i = 0;
   const next = (flag: string): string => {
@@ -65,6 +70,10 @@ export function parseArgs(argv: readonly string[]): EvalArgs {
     i++;
     if (raw === '--no-escalation') {
       args.noEscalation = true;
+      continue;
+    }
+    if (raw === '--no-pattern-hints') {
+      args.noPatternHints = true;
       continue;
     }
     const eq = raw.indexOf('=');

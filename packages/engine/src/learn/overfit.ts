@@ -7,10 +7,13 @@
 //     It singles out the rows that happen to sit there in this file. `rowNumber()` as a column's VALUE (a line number) is no condition and
 //     stays allowed, and so does a position within a group (`rowNumber(by: customer) = 1`, the first row of each customer: it holds for
 //     any number of groups, so the full verification judges it like any rule).
-//   - caseList: a computed column that is a long chain of cases (`switch`, or `if` nested in the else), each case giving a constant to
-//     the rows an equality or range of input columns picks, and each case picking at most a couple of the rows code can see. A real
-//     mapping is a value map or a lookup table (code fills those from every row and flags a new key at run time); a case list like this
-//     only repeats the example's answers. See `limits.learn.overfit` for the thresholds.
+//   - caseList: a computed column that is a chain of cases (`switch`, or `if` nested in the else), each case giving a constant to the rows
+//     an equality or range of input columns picks, whose conditions name rows one by one. A real mapping is a value map or a lookup table
+//     (code fills those from every row and flags a new key at run time); a case list like this only repeats the example's answers. Counted
+//     by ATOM, not by case (owner amendment, 2026-10-06): a case's condition is split into its top-level `or` disjuncts and the values of a
+//     `oneOf` (an `and` stays one atom), so `or(id = "274...", id = "297...", ... 20 IDs) -> "Small"` is 20 atoms of one row each, not one
+//     case of 20 rows - gpt-5's escalation wrote exactly that on the owner's 100-row file, 37 national IDs in a dozen cases, and it verified.
+//     See `limits.learn.overfit` for the thresholds.
 //   - measureKey: a lookup table keyed on a measure - a decimal, currency or percent column, an amount (`lookup("t", amount, "x")`). An
 //     amount is no category: next month's file brings new ones, so a table of amounts only holds this file's rows (and code's fill, which
 //     completes a lookup from every row, would copy every one of them). learn-v8.1 wrote exactly this for a hand-edited row in its first
@@ -22,10 +25,11 @@
 // that repair gets the column reported as unsupported by code (`withOverfitFallback`, reason `overfit`: "needs your input"), so a rule that
 // only copies rows is never counted as verified. The API runs the guards on the samples (and the loop's rows), the browser on every row of
 // the example (`learn/flow.ts`). A position condition that names exact rows (`rowNumber() = 54`, `rowExact`) is the browser's alone: a
-// row it explains may be one edited by hand once, and the user is asked (SPEC 21 v12 item 20, `oneTimers.ts`).
+// row it explains may be one edited by hand once, and the user is asked (SPEC 21 v12 item 20, `oneTimers.ts`). So is a case list only its
+// atoms show (`atoms`): on a dozen sample rows a real list of categories names rows one by one too.
 //
 // Pure and synchronous, like the rest of this package.
-import { limits, type Computed, type Expr, type ExprNode, type LearnResult, type RepairProblem, type Rules } from '@formatai/shared';
+import { limits, withColumnsTakenOut, type Computed, type Expr, type ExprNode, type LearnResult, type RepairProblem, type Rules } from '@formatai/shared';
 import { runRules } from '../pipeline/runRules';
 import { exprChildren } from '../pipeline/v1/expr';
 import type { InputTable } from '../types';
@@ -41,6 +45,12 @@ export interface OverfitFinding {
   id: string;
   /** caseList: how many cases the chain has. */
   cases?: number;
+  /**
+   * caseList found only by counting atoms (some case's `or` / `oneOf` picks more rows as a whole than `maxRowsPerCase`): how many atoms
+   * pin rows. DECISION: such a finding is the browser's alone (like `rowExact`): on the payload's dozen sample rows a real list of
+   * categories (`oneOf(plan, "Basic", "Standard", "Pro")`) has every value on a row or two as well; only every row of the example tells.
+   */
+  atoms?: number;
   /**
    * position: every position condition of the computed column names exact rows (`rowNumber() = 54`), none a range. DECISION (SPEC 21 v12
    * item 20): such a finding is the browser's alone - the API's samples cannot tell whether that row was edited by hand once (a question for
@@ -124,7 +134,7 @@ interface Case {
 }
 
 /** The cases of a `switch`, or of an `if` chain nested in the else (`if(c1, v1, if(c2, v2, ...))`), in order; [] for anything else. */
-function casesOf(e: Expr): Case[] {
+export function casesOf(e: Expr): Case[] {
   const cases: Case[] = [];
   let at = e;
   for (;;) {
@@ -171,33 +181,45 @@ function picksRows(e: Expr, inputIds: ReadonlySet<string>, read: Set<string>): b
 }
 
 /**
- * The shape of a memorized case list, before the rows are counted: at least `minCases` cases, each giving a constant, each picking rows by
- * equalities or ranges of input columns, and together reading at least two input columns. DECISION: a chain on ONE column is a value map or
- * a band table written out (`switch(amount < 100, "A", amount < 200, "B", ...)`) - one key, one answer each, a rule that holds for any row -
- * so it is left to the full verification; a row of the example is pinned by a COMBINATION of its values. (One column that is a key of the
- * file would pin rows too, but a special value in it - a house account - is a real rule as often as not: no finding.)
+ * The atoms of a case's condition (owner amendment, 2026-10-06): its top-level `or` disjuncts, and each value of a `oneOf` as its own
+ * (`oneOf(qty, 1, 4)` is `oneOf(qty, 1)` and `oneOf(qty, 4)`); an `and` stays one atom - a combination pins one row as a whole.
  */
-function caseListShape(e: Expr, inputIds: ReadonlySet<string>): Case[] | null {
+export function atomsOf(when: Expr): Expr[] {
+  if (isNode(when) && when.op === 'or') return when.args.flatMap(atomsOf);
+  if (isNode(when) && when.op === 'oneOf' && when.values.length > 1) return when.values.map((v) => ({ op: 'oneOf', arg: when.arg, values: [v] }) satisfies Expr);
+  return [when];
+}
+
+/**
+ * The shape of a memorized case list, before the rows are counted: cases each giving a constant, each picking rows by equalities or ranges
+ * of input columns, together reading at least two input columns, and at least `minCases` atoms (`atomsOf`) in all. DECISION: a chain on ONE
+ * column is a value map or a band table written out (`switch(amount < 100, "A", amount < 200, "B", ...)`) - one key, one answer each, a rule
+ * that holds for any row - so it is left to the full verification; a row of the example is pinned by a COMBINATION of its values. (One column
+ * that is a key of the file pins rows too: that list is the user's question, not a guard's - `copiedLists`, `learn/oneTimers.ts`.)
+ */
+function caseListShape(e: Expr, inputIds: ReadonlySet<string>): { cases: Case[]; atoms: Expr[] } | null {
   const cases = casesOf(e);
-  if (cases.length < limits.learn.overfit.minCases) return null;
+  if (cases.length === 0) return null;
   const read = new Set<string>();
   for (const c of cases) {
     if (!isConstant(c.then) || !picksRows(c.when, inputIds, read)) return null;
   }
-  return read.size >= 2 ? cases : null;
+  const atoms = cases.flatMap((c) => atomsOf(c.when));
+  return read.size >= 2 && atoms.length >= limits.learn.overfit.minCases ? { cases, atoms } : null;
 }
 
 const PROBE = '__overfitProbe';
 
 /**
- * How many of the rows code can see each case is the one taken for: the rules run on `table` with a hidden column that is the number of the
- * case taken (0: none), and only that column read. Sort, groups and summary rows are left out (they never change which case a row takes);
+ * How many of the rows code can see each condition is the first to hold for, in order (for a case list's atoms, the cases' order: a row
+ * goes to the first atom of the first case that takes it): the rules run on `table` with a hidden column that is the number of that
+ * condition (0: none), and only that column read. Sort, groups and summary rows are left out (they never change which case a row takes);
  * filters, duplicates and expand stay (they decide which rows there are). Null when the rules cannot run.
  */
-function caseCounts(rules: AnyRules, cases: readonly Case[], table: InputTable): number[] | null {
+export function conditionCounts(rules: AnyRules, conditions: readonly Expr[], table: InputTable): number[] | null {
   let id = PROBE;
   while (rules.transform.computed.some((c) => c.id === id) || rules.input.columns.some((c) => c.id === id)) id = `_${id}`;
-  const probe: Expr = { op: 'switch', cases: cases.map((c, i) => ({ when: c.when, then: { const: i + 1 } })), else: { const: 0 } };
+  const probe: Expr = { op: 'switch', cases: conditions.map((when, i) => ({ when, then: { const: i + 1 } })), else: { const: 0 } };
   const { group: _group, ...transform } = rules.transform;
   const { summaryRows: _summaryRows, grandTotal: _grandTotal, ...output } = rules.output;
   const probed = {
@@ -208,13 +230,36 @@ function caseCounts(rules: AnyRules, cases: readonly Case[], table: InputTable):
   } as AnyRules;
   const result = runRules(probed, table);
   if (!result.ok) return null;
-  const counts = new Array<number>(cases.length).fill(0);
+  const counts = new Array<number>(conditions.length).fill(0);
   for (const row of result.sheet.rows) {
     if (row.kind !== 'data') continue;
     const v = row.cells[0]?.v;
-    if (typeof v === 'number' && v >= 1 && v <= cases.length) counts[v - 1]! += 1;
+    if (typeof v === 'number' && v >= 1 && v <= conditions.length) counts[v - 1]! += 1;
   }
   return counts;
+}
+
+/**
+ * Whether a case list copies rows, from its atoms' counts (owner amendment, 2026-10-06): at least `minCases` atoms each pin rows - pick one
+ * to `maxRowsPerCase` of the rows code can see - and those row-pinning atoms are at least half of all the atoms (a real rule may list a rare
+ * value or two beside its categories). DECISION: an atom that picks no row pins nothing (a value the earlier atoms already took, or one this
+ * file does not have); it still counts among all the atoms. Or, as before atoms were counted, at least `minCases` cases each picking at most
+ * `maxRowsPerCase` rows (`perCase`, which the samples can judge too). Null: no finding; `atoms`: how many atoms pin rows.
+ */
+function copiesRows(counts: readonly number[], shape: { cases: readonly Case[]; atoms: readonly Expr[] }): { atoms: number; perCase: boolean } | null {
+  const { minCases, maxRowsPerCase } = limits.learn.overfit;
+  let at = 0;
+  const perCase =
+    shape.cases.length >= minCases &&
+    shape.cases.every((c) => {
+      const n = atomsOf(c.when).length;
+      const rows = counts.slice(at, at + n).reduce((a, b) => a + b, 0);
+      at += n;
+      return rows <= maxRowsPerCase;
+    });
+  const pinning = counts.filter((n) => n >= 1 && n <= maxRowsPerCase).length;
+  const byAtoms = pinning >= minCases && pinning * 2 >= counts.length;
+  return perCase || byAtoms ? { atoms: pinning, perCase } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,21 +331,22 @@ export function overfitFindings(rules: AnyRules, opts: OverfitOptions): OverfitF
   const reached = outputsReached(rules);
   const findings: OverfitFinding[] = [];
   const seen = new Set<string>();
-  const add = (kind: OverfitKind, id: string, cases?: number, rowExact?: boolean): void => {
+  const add = (kind: OverfitKind, id: string, more: Partial<Pick<OverfitFinding, 'cases' | 'atoms' | 'rowExact'>> = {}): void => {
     for (const out of reached.get(id) ?? []) {
       const header = rules.output.columns[out]!.header;
       if (seen.has(`${kind}\u0000${header}`)) continue;
       seen.add(`${kind}\u0000${header}`);
-      findings.push({ kind, outputColumn: header, out, id, ...(cases !== undefined ? { cases } : {}), ...(rowExact ? { rowExact: true as const } : {}) });
+      findings.push({ kind, outputColumn: header, out, id, ...more });
     }
   };
   for (const c of rules.transform.computed) {
-    if (comparesPosition(c.expr, positionIds)) add('position', c.id, undefined, exactRows(c.expr, positionIds));
+    if (comparesPosition(c.expr, positionIds)) add('position', c.id, exactRows(c.expr, positionIds) ? { rowExact: true } : {});
     if (looksUpByMeasure(c.expr, measureIds)) add('measureKey', c.id);
-    const cases = caseListShape(c.expr, inputIds);
-    if (cases && opts.table) {
-      const counts = caseCounts(rules, cases, opts.table);
-      if (counts && counts.every((n) => n <= limits.learn.overfit.maxRowsPerCase)) add('caseList', c.id, cases.length);
+    const shape = caseListShape(c.expr, inputIds);
+    if (shape && opts.table) {
+      const counts = conditionCounts(rules, shape.atoms, opts.table);
+      const found = counts ? copiesRows(counts, shape) : null;
+      if (found) add('caseList', c.id, { cases: shape.cases.length, ...(found.perCase ? {} : { atoms: found.atoms }) });
     }
   }
   return findings;
@@ -316,7 +362,9 @@ function whatWasFound(f: OverfitFinding): string {
     case 'position':
       return 'it compares a row position (rowNumber or rank) with a constant';
     case 'caseList':
-      return `it is a list of ${f.cases ?? 'many'} cases, each giving a constant to one or two rows; a real mapping is a value map or a lookup table`;
+      return f.atoms !== undefined
+        ? `it is a list of ${f.cases ?? 'many'} cases whose conditions name ${f.atoms} values one by one, each picking one or two rows; a real mapping is a value map or a lookup table`
+        : `it is a list of ${f.cases ?? 'many'} cases, each giving a constant to one or two rows; a real mapping is a value map or a lookup table`;
     case 'measureKey':
       return 'it looks values up by an amount, and the next file brings new amounts; a real mapping is keyed on a code or a category';
   }
@@ -336,45 +384,19 @@ export function overfitProblems(findings: readonly OverfitFinding[]): RepairProb
   }));
 }
 
-/** Every id the rules mention outside the computed column `id` itself (its readers, filters, sort, group, validations, output ...). */
-function referencedElsewhere(rules: AnyRules, id: string): boolean {
-  const rest = { ...rules, transform: { ...rules.transform, computed: rules.transform.computed.filter((c) => c.id !== id) } };
-  const text = JSON.stringify(rest);
-  return text.includes(JSON.stringify(id));
-}
-
 /**
  * The honest fallback: every output column with a finding is reported as unsupported by code (`from: null`, reason `overfit`: "needs your
  * input", like an `externalData` column the AI step reports itself), and the computed columns nothing reads any more are taken out, so the
- * rows the rule copied are never shown or saved as a rule. Everything else is kept as it is. The rules themselves when there is no finding.
+ * rows the rule copied are never shown or saved as a rule - and so are the lookup tables nothing looks up any more (a table of the example's
+ * amounts holds this file's rows). Everything else is kept as it is. The rules themselves when there is no finding. (`withColumnsTakenOut`,
+ * shared: "Save without it" for a list copied from the example takes a column out the same way.)
  */
 export function withOverfitFallback<R extends AnyRules>(rules: R, findings: readonly OverfitFinding[]): R {
   if (findings.length === 0) return rules;
-  const headers = new Set(findings.map((f) => f.outputColumn));
-  const columns = rules.output.columns.map((c) => (headers.has(c.header) ? { ...c, from: null } : c));
-  const unsupported = [
-    ...rules.unsupported,
-    ...[...headers].filter((h) => !rules.unsupported.some((u) => u.outputColumn === h)).map((outputColumn) => ({ outputColumn, reasonCode: OVERFIT_REASON })),
-  ];
-  let next = { ...rules, output: { ...rules.output, columns }, unsupported } as R;
-  // The computed columns the dropped rules read, when nothing else reads them now (one at a time: a helper may free another).
-  const candidates = new Set(findings.map((f) => f.id));
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const c of next.transform.computed) {
-      if (!candidates.has(c.id) || referencedElsewhere(next, c.id)) continue;
-      for (const id of idsRead(c.expr, new Set())) candidates.add(id);
-      next = { ...next, transform: { ...next.transform, computed: next.transform.computed.filter((x) => x.id !== c.id) } } as R;
-      changed = true;
-      break;
-    }
-  }
-  // ... and the lookup tables nothing looks up any more (a table of the example's amounts holds this file's rows).
-  const tables = next.transform.tables;
-  if (tables && tables.length > 0) {
-    const text = JSON.stringify({ ...next, transform: { ...next.transform, tables: [] } });
-    const used = tables.filter((t) => text.includes(`"table":${JSON.stringify(t.name)}`));
-    if (used.length < tables.length) next = { ...next, transform: { ...next.transform, tables: used } } as R;
-  }
-  return next;
+  return withColumnsTakenOut(
+    rules,
+    new Set(findings.map((f) => f.outputColumn)),
+    OVERFIT_REASON,
+    findings.map((f) => f.id),
+  );
 }

@@ -1,13 +1,19 @@
 // Saving edits of a saved source (SPEC 8.11 "Saving", 8.12): PATCH /api/conversions/:id writes a new version, and a change to the
 // output side is a change to the FORMAT - said before saving and after. Shared by the saved-source editor and by the Result screen
 // once a learn has been saved (from then on it is the editor of that source).
+// A list copied from the example (owner decision 2026-10-06) is asked about at Save, before anything is sent (`CopiedListSave`): only a list of
+// the learn on screen that the rules still hold and the server does not hold yet - one an earlier save stored was asked about then. The
+// saved-source editor has no learn (its rules are the server's own): it saves as it always did.
+import type { CopiedListQuestion } from '@formatai/engine';
 import type { UpdateConversionRequest, UpdateConversionResponse } from '@formatai/shared';
 import { useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Cell } from '../../components/Cell';
+import { listsToConfirm } from '../../editor';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Button, InlineMessage } from '../../ui';
+import { useCopiedListGate, type CopiedListGate } from '../Result/CopiedListSave';
 import { SaveFailureMessage } from '../Result/SaveMessages';
 import { useSave, type SaveFailure, type UseSave } from '../Result/useSave';
 import type { WorkbenchInfo } from '../Result/Workbench';
@@ -19,8 +25,10 @@ export interface SourceSaver {
   failure: SaveFailure | undefined;
   /** Someone else saved a newer version in the meantime. */
   conflict: boolean;
-  /** Saves `info.rules` as a new version of the source (nothing when it cannot be saved right now). */
+  /** Saves `info.rules` as a new version of the source (nothing when it cannot be saved right now); a new copied list is asked about first. */
   doSave(info: WorkbenchInfo): void;
+  /** The copied-list question at Save (rendered by `SaveChangesActions`). */
+  gate: CopiedListGate;
   /** The source is now at this version (opened from the server, or restored). */
   setVersion(version: number): void;
 }
@@ -32,9 +40,11 @@ export interface SourceSaveOptions {
   version: number;
   /** After a successful save (the editor is marked saved before this is called). */
   onSaved(res: UpdateConversionResponse): void;
+  /** The lists copied from the example the learn on screen found (the Result screen once saved); none for the saved-source editor. */
+  copiedLists?: readonly CopiedListQuestion[] | undefined;
 }
 
-export function useSourceSave({ conversionId, version, onSaved }: SourceSaveOptions): SourceSaver {
+export function useSourceSave({ conversionId, version, onSaved, copiedLists }: SourceSaveOptions): SourceSaver {
   const { api } = useServices();
   const save = useSave<UpdateConversionResponse>();
   const current = useRef(version);
@@ -45,7 +55,9 @@ export function useSourceSave({ conversionId, version, onSaved }: SourceSaveOpti
     setSavedVersion(next);
   };
 
-  const doSave = (info: WorkbenchInfo): void => {
+  const gate = useCopiedListGate();
+
+  const persist = (info: WorkbenchInfo): void => {
     if (!info.metaStatus) return;
     const body: UpdateConversionRequest = {
       rules: info.rules,
@@ -64,9 +76,15 @@ export function useSourceSave({ conversionId, version, onSaved }: SourceSaveOpti
     });
   };
 
+  // (what the server holds now is what was last saved, or opened: a list in it is not asked about again)
+  const doSave = (info: WorkbenchInfo): void => {
+    if (!info.metaStatus) return;
+    gate.save(info, listsToConfirm(info.rules, copiedLists ?? [], info.editor.state.saved.rules), persist);
+  };
+
   const failure = save.state.status === 'error' ? save.state.error : undefined;
   const conflict = failure?.kind === 'api' && failure.code === 'versionConflict';
-  return { save, savedVersion, failure, conflict, doSave, setVersion };
+  return { save, savedVersion, failure, conflict, doSave, gate, setVersion };
 }
 
 /** "Save changes" (only while there is something to save), and - `extra` - the other buttons beside it. */
@@ -75,12 +93,18 @@ export function SaveChangesActions({ info, saver, extra }: { info: WorkbenchInfo
   return (
     <>
       <div className="result-head__buttons">
-        <Button variant="primary" loading={saver.save.state.status === 'saving'} disabled={!info.dirty || info.metaStatus === null} onClick={() => saver.doSave(info)}>
+        <Button
+          variant="primary"
+          loading={saver.save.state.status === 'saving' || saver.gate.waiting}
+          disabled={!info.dirty || info.metaStatus === null}
+          onClick={() => saver.doSave(info)}
+        >
           {t('edit.save')}
         </Button>
         {extra}
       </div>
       {!info.dirty ? <p className="muted">{t('edit.nothingToSave')}</p> : null}
+      {saver.gate.view(info)}
     </>
   );
 }

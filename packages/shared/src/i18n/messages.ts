@@ -239,6 +239,10 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
     en: 'Something went wrong with this request. Please try again.',
     he: 'משהו השתבש בבקשה הזו. אנא נסו שוב.',
   },
+  invalidRounds: {
+    en: 'Something went wrong with this request. Please try again.',
+    he: 'משהו השתבש בבקשה הזו. אנא נסו שוב.',
+  },
   turnstileFailed: {
     en: "We couldn't confirm you're not a robot. Refresh the page and try again.",
     he: 'לא הצלחנו לוודא שאתם לא רובוט. רעננו את הדף ונסו שוב.',
@@ -348,6 +352,10 @@ export const limitMessages: Record<LimitCode, Localized> = {
   repairsPerLearn: {
     en: 'We already tried every extra fix for this one.',
     he: 'כבר ניסינו את כל התיקונים הנוספים עבור הלמידה הזו.',
+  },
+  stepsPerLearn: {
+    en: 'The AI already checked every idea it may for this learn.',
+    he: 'ה-AI כבר בדק את כל הרעיונות שמותר לו בלמידה הזו.',
   },
   // SPEC 21 v5: generic text; `aiLearnsLimitMessages` has one per `period`.
   aiLearns: {

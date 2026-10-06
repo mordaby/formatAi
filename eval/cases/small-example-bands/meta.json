@@ -1,0 +1,15 @@
+{
+  "difficulty": "stress",
+  "domain": "productCatalog",
+  "features": [
+    "adversarial",
+    "tinyExample",
+    "twoBands",
+    "narrowThresholdGap",
+    "roundThresholdPinned",
+    "chanceBands",
+    "newRowsNextMonth"
+  ],
+  "expect": "verified",
+  "expectNote": "Size = Small when Weight is under 50, else Large - from an example of only 10 rows (5 under 50, 5 from 50 up; the nearest are 48 | 52, so 50 is the round value in the gap). Ten rows are few: two bands this clean are also what a shuffled column would sometimes give, so the hint may or may not be there. Next month: 30 rows, none from 48 to 52. May break: the threshold taken from a row (48 or 52), \"<=\" for \"<\", the 10 SKUs or Items learned as a lookup, the rule given up as \"ambiguous\" for lack of rows."
+}

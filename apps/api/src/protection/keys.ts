@@ -26,6 +26,9 @@ export function dailyCounterExpiry(now: Date): Date {
 /** The rounds of the learning loop (browser-triggered repairs) one learn has used (SPEC 9.3, `limits.llm.browserRepairCalls`). */
 export const repairKey = (learnUuid: string): string => `repair:${learnUuid}`;
 
+/** The steps of AI code checks one learn has made (learn-v9, SPEC 21 v14; at most `limits.learn.checks.maxRounds`). */
+export const stepKey = (learnUuid: string): string => `step:${learnUuid}`;
+
 /**
  * A signed-in user's AI-learn counter for the period `now` falls in (SPEC 13, 21 v5): `lifetime` has no date
  * part (and never expires), `month` is `yyyy-mm`, `day` is `yyyy-mm-dd`.

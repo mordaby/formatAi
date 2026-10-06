@@ -1,7 +1,7 @@
 // What a one-time question says, in the rules map's own words (SPEC 8.11, 21 v12 item 20): "Row 54: Discount is 0 instead of <the rest of
 // the rule>" - the rest is the column's rule with the part taken out, described as the map describes the column (the part after the arrow),
 // so whatever the rule is, the question can say it.
-import type { OneTimeQuestion } from '@formatai/engine';
+import type { OneTimeRowQuestion as OneTimeQuestion } from '@formatai/engine';
 import { withoutRulePart } from '@formatai/shared';
 import type { EditableRules } from '../../editor';
 import { describeRules, type Part, type RulesTextLang } from '../../rulesText';

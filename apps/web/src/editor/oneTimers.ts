@@ -9,7 +9,7 @@
 //   - not sure: the part stays, and the question's check (`sameAs`, `oneTime`) goes in, so a later row the part applies to is flagged. The
 //     check is the answer's marker: while it is in the rules the question is folded ("Not sure yet ..."), undo or deleting it opens it again.
 // Pure; no engine code (types only: the main thread never loads the engine, see boundaries.test.ts).
-import type { OneTimeQuestion } from '@formatai/engine';
+import type { OneTimeRowQuestion as OneTimeQuestion } from '@formatai/engine';
 import { canonicalJson, hasRulePart, withoutRulePart, type Validation } from '@formatai/shared';
 import type { EditableRules, OneTimeCell } from './types';
 

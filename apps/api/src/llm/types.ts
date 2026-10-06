@@ -16,8 +16,12 @@ export interface ContentBlock {
   cache?: boolean;
 }
 
-/** SPEC 9.1/9.3/9.4: why this call is being made, logged with the ledger entry. */
-export type CallPurpose = 'learn' | 'repair' | 'escalation';
+/**
+ * SPEC 9.1/9.3/9.4: why this call is being made, logged with the ledger entry. `check` (AI code checks, learn-v9; SPEC 21 v14): a call whose
+ * answer asked code to check ideas instead of answering with the rules - it is recorded so once the answer is known (the request itself goes
+ * out as a `learn`: the same model slot).
+ */
+export type CallPurpose = 'learn' | 'repair' | 'escalation' | 'check';
 
 export interface CompleteRequest {
   /** The fixed system prompt (LEARN_PROMPT §2), always cached. */

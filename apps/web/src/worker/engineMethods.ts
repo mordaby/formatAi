@@ -16,6 +16,7 @@ import {
   verifyAgainstExample,
   type LearnCallResult,
 } from '@formatai/engine';
+import { limits } from '@formatai/shared';
 import type { AnalysisProgress, PairAnalysis } from '@formatai/engine';
 import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress, VerifyArgs, VerifyOutput } from './engineApi';
 import type { LiveCheckArgs, LiveCheckResult, LoadExampleArgs, LoadExampleOutput, StaticChecksArgs, StaticProblem } from './editorApi';
@@ -46,6 +47,20 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
   const emit = (p: LearnProgress): void => ctx.progress(p);
   emit({ phase: 'reading' });
   let analysis: PairAnalysis | undefined;
+  const maxCheckRounds = limits.learn.checks.maxRounds;
+  /**
+   * The first try's progress: SPEC 6.4, the columns code found no trace of in the input are said while the AI step works on them (in completion
+   * mode the user has seen them on the map); with `checkRound`, the round of AI code checks it is in.
+   */
+  const firstTry = (checkRound?: number): LearnProgress => {
+    const unexplained = analysis && !args.complete ? analysis.columns.filter(isExternalColumn).map((c) => c.header || `#${c.out + 1}`) : [];
+    return {
+      phase: 'learning',
+      attempt: 'learn',
+      ...(unexplained.length > 0 ? { unexplained } : {}),
+      ...(checkRound !== undefined ? { checkRound: { n: checkRound, of: maxCheckRounds } } : {}),
+    };
+  };
   const result = await learnFromExamples({
     input: { bytes: new Uint8Array(args.input.bytes), name: args.input.name },
     output: { bytes: new Uint8Array(args.output.bytes), name: args.output.name },
@@ -61,11 +76,19 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
       analysis = a;
     },
     callLearn: async (payload) => {
-      // SPEC 6.4: the columns code found no trace of in the input are said while the AI step works on them (in completion mode the user has seen them on the map).
-      const unexplained = analysis && !args.complete ? analysis.columns.filter(isExternalColumn).map((c) => c.header || `#${c.out + 1}`) : [];
-      emit({ phase: 'learning', attempt: 'learn', ...(unexplained.length > 0 ? { unexplained } : {}) });
+      emit(firstTry());
       const out = await ctx.host<LearnCallResult>('callLearn', payload);
-      emit({ phase: 'verifying' });
+      // AI code checks: an answer with checks has no rules to verify yet - code answers them on every row now (round 1), then the step goes.
+      emit(asksChecks(out) ? firstTry(1) : { phase: 'verifying' });
+      return out;
+    },
+    callStep: async (payload, rounds) => {
+      // AI code checks (learn-v9): the answers of round `rounds.length` go to the AI step with every round before it.
+      const n = rounds.length;
+      emit(firstTry(n));
+      const out = await ctx.host<LearnCallResult>('callStep', payload, rounds);
+      // More checks while rounds are left (the engine stops at the cap: past it the answer is no answer); otherwise the rules are verified.
+      emit(asksChecks(out) && n < maxCheckRounds ? firstTry(n + 1) : { phase: 'verifying' });
       return out;
     },
     callRepair: async (payload, previousRules, problems, round) => {
@@ -92,6 +115,11 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     exampleOutputColumns: analysis.output.columnCount,
     ...(ambiguous.length > 0 ? { ambiguous } : {}),
   };
+}
+
+/** The AI step asked checks instead of answering (AI code checks, `LearnResponse.checks`): there are no rules yet. */
+function asksChecks(out: LearnCallResult): boolean {
+  return out.checks !== undefined && !out.rules;
 }
 
 async function convert(args: ConvertArgs): Promise<Transfer<ConvertOutput> | ConvertOutput> {

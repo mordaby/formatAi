@@ -1,6 +1,6 @@
 // Issue #45: the schema every learn call really sends (`learnResultWireJsonSchema`), against OpenAI's strict-mode rules (the structured
 // outputs guide, "Supported schemas", checked 2026-10-05), and the round trip of an answer through what OpenAI would return for it.
-import { learnResultWireJsonSchema, wireAnswerSchema } from '@formatai/shared';
+import { learnResultWireJsonSchema, learnStepWireJsonSchema, wireAnswerSchema, wireStepSchema } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { stripOpenAiNulls, toOpenAiStrictSchema } from '../../src/llm/schema/toOpenAiStrictSchema.js';
 
@@ -122,9 +122,18 @@ function nodesOf(root: unknown, path = '$', depth = 0, out: { path: string; node
   return out;
 }
 
-for (const alternatives of [true, false]) {
-  describe(`issue #45: the real wire schema (alternatives: ${alternatives}) meets OpenAI's strict rules`, () => {
-    const original = learnResultWireJsonSchema({ alternatives });
+/**
+ * The schemas the API really sends: the rules answer (learn-v8 and later with `alternatives`, learn-v7 without) and the learn-v9 step answer
+ * (`{ checks, rules }`, AI code checks - every call of a learn-v9 learn). `wrap` puts a rules answer where that schema has it.
+ */
+const SCHEMAS: { label: string; original: JsonNode; zod: ReturnType<typeof wireStepSchema>; wrap: (rules: JsonNode) => JsonNode; rulesOf: (answer: JsonNode) => JsonNode }[] = [
+  { label: 'alternatives: true', original: learnResultWireJsonSchema({ alternatives: true }), zod: wireAnswerSchema({ alternatives: true }), wrap: (r) => r, rulesOf: (a) => a },
+  { label: 'alternatives: false', original: learnResultWireJsonSchema({ alternatives: false }), zod: wireAnswerSchema({ alternatives: false }), wrap: (r) => r, rulesOf: (a) => a },
+  { label: 'learn-v9 step { checks, rules }', original: learnStepWireJsonSchema(), zod: wireStepSchema(), wrap: (r) => ({ checks: null, rules: r }), rulesOf: (a) => a.rules as JsonNode },
+];
+
+for (const { label, original, zod, wrap, rulesOf } of SCHEMAS) {
+  describe(`issue #45: the real wire schema (${label}) meets OpenAI's strict rules`, () => {
     const strict = toOpenAiStrictSchema(original);
     const nodes = nodesOf(strict);
 
@@ -187,7 +196,7 @@ for (const alternatives of [true, false]) {
     });
 
     it('a length bound became the same pattern: an empty id is still refused, any other text accepted', () => {
-      const id = nodes.find((n) => n.path === '$.transform.computed[].id')!.node;
+      const id = nodes.find((n) => n.path.endsWith('.transform.computed[].id'))!.node;
       expect(id.minLength).toBeUndefined();
       expect(valid(id, '')).toBe(false);
       expect(valid(id, 'x')).toBe(true);
@@ -202,7 +211,6 @@ for (const alternatives of [true, false]) {
     });
 
     it('round trip on every union branch, with every optional field and with none: OpenAI could return it, and it maps back to the same answer, which parses', () => {
-      const zod = wireAnswerSchema({ alternatives });
       const widest = Math.max(...nodesOf(original).map(({ node }) => ((node.oneOf ?? node.anyOf ?? node.enum ?? []) as unknown[]).length));
       let checked = 0;
       for (let branch = 0; branch < widest; branch++) {
@@ -224,7 +232,7 @@ for (const alternatives of [true, false]) {
     });
 
     it("round trip of a real answer (crm-rename-reorder's rules, in wire form)", () => {
-      const answer = {
+      const rules = {
         schemaVersion: 1,
         input: {
           sheet: { pick: 'first' },
@@ -253,16 +261,40 @@ for (const alternatives of [true, false]) {
         unsupported: [],
         assumptions: [],
       };
-      const zod = wireAnswerSchema({ alternatives });
+      const answer = wrap(rules);
       const parsed = zod.safeParse(answer);
       expect(parsed.success, JSON.stringify(parsed.error?.issues.slice(0, 3))).toBe(true);
       const fromOpenAi = fillLikeOpenAi(strict, answer);
       expect(valid(strict, fromOpenAi)).toBe(true);
-      expect((fromOpenAi as { input: JsonNode }).input).toMatchObject({ stopAt: null, rowFilters: null });
+      expect((rulesOf(fromOpenAi as JsonNode) as { input: JsonNode }).input).toMatchObject({ stopAt: null, rowFilters: null });
       expect(stripOpenAiNulls(original, fromOpenAi)).toEqual(answer);
     });
   });
 }
+
+describe('learn-v9: a checks answer through the strict rewrite and back', () => {
+  const original = learnStepWireJsonSchema();
+  const strict = toOpenAiStrictSchema(original);
+
+  it('each check, with its optional let / where absent or present, comes back as it was; rules stays null', () => {
+    const answers: JsonNode[] = [
+      { checks: [{ check: 'test', column: 'Class', rule: 'if(out2 < 1000, "Small", "Big")' }], rules: null },
+      { checks: [{ check: 'ranges', column: 'Class', by: 'total', let: [{ id: 'total', expr: 'in2 * in3' }], where: 'in4 = "Open"' }], rules: null },
+      { checks: [{ check: 'dependsOn', column: 'Class', on: ['in1', 'in4'] }, { check: 'values', column: 'Class' }, { check: 'rows', where: 'in2 > 3', limit: 2 }], rules: null },
+    ];
+    for (const answer of answers) {
+      expect(wireStepSchema().safeParse(answer).success).toBe(true);
+      const fromOpenAi = fillLikeOpenAi(strict, answer);
+      expect(valid(strict, fromOpenAi)).toBe(true);
+      expect(stripOpenAiNulls(original, fromOpenAi)).toEqual(answer);
+    }
+  });
+
+  it('both top-level fields stay required and nullable after the rewrite: their nulls are kept (they are not optional fields)', () => {
+    expect(strict.required).toEqual(['checks', 'rules']);
+    expect(stripOpenAiNulls(original, { checks: null, rules: null })).toEqual({ checks: null, rules: null });
+  });
+});
 
 describe('toOpenAiStrictSchema - the rewrites on their own', () => {
   it('oneOf -> anyOf, a nested union flattened, and a nullable union flattened too', () => {

@@ -16,7 +16,7 @@ import { useSignIn } from '../../app/SignIn';
 import { useFileInfo } from '../../app/useFileInfo';
 import { useLoad } from '../../app/useLoad';
 import { webConfig } from '../../config';
-import { EditorStore } from '../../editor';
+import { copiedListsOf, EditorStore, listsToConfirm } from '../../editor';
 import type { AiInfo } from '../../flow/learnFlow';
 import { useLearnFlow } from '../../flow/useLearnFlow';
 import { Cell } from '../../components/Cell';
@@ -30,6 +30,7 @@ import { LearningPreflight } from '../LearningPreflight';
 import { LearningProgress } from '../LearningProgress';
 import { isRunning, useProgressVisible, useStepHistory } from '../learningSteps';
 import { TextField } from '../Result/fields';
+import { useCopiedListGate } from '../Result/CopiedListSave';
 import { compareOutput, fileTypeOfName, type OutputMismatch, type OutputFileType } from '../Result/matchFormat';
 import { SaveFailureMessage } from '../Result/SaveMessages';
 import { defaultFormatName } from '../Result/session';
@@ -383,6 +384,9 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
   const rules = result.rules!;
   const [store] = useState(() => new EditorStore(rules));
   const save = useSave<AttachSourceResponse>();
+  // A list copied from the example (owner decision 2026-10-06): asked at Save only, before the source is stored (`CopiedListSave`).
+  const copied = useMemo(() => copiedListsOf(result.path === 'llm' ? result.oneTimers?.questions : undefined), [result]);
+  const gate = useCopiedListGate();
   // What the header calls the result before it is saved: the name typed, or - when the server will pick it - the file's.
   const shownName = sourceName !== '' ? sourceName : defaultFormatName(input?.name, t('result.untitled'));
 
@@ -446,12 +450,20 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
     }
     const label = info.differences && info.differences > 0 ? t(info.differences === 1 ? 'save.differences.one' : 'save.differences.other', { n: info.differences }) : t('add.save');
     return (
-      <div className="result-head__buttons">
-        <Button variant="primary" loading={save.state.status === 'saving'} disabled={info.metaStatus === null} onClick={() => doSave(info)}>
-          {label}
-        </Button>
-        {downloadButton(info)}
-      </div>
+      <>
+        <div className="result-head__buttons">
+          <Button
+            variant="primary"
+            loading={save.state.status === 'saving' || gate.waiting}
+            disabled={info.metaStatus === null}
+            onClick={() => gate.save(info, listsToConfirm(info.rules, copied), doSave)}
+          >
+            {label}
+          </Button>
+          {downloadButton(info)}
+        </div>
+        {gate.view(info)}
+      </>
     );
   };
 

@@ -42,6 +42,12 @@ describe.each(['en', 'he'] as const)('error code -> message (%s)', (lang) => {
     expect(errorView(i18n, api('turnstileFailed'))).toMatchObject({ tone: 'block', action: 'reload' });
   });
 
+  it('the limits of one learn (the loop\'s rounds, the steps of AI code checks) are an amber block with Try again, never a sign-in nudge', () => {
+    for (const limit of ['repairsPerLearn', 'stepsPerLearn'] as const) {
+      expect(errorView(i18n, api('limitHit', { limit }))).toEqual({ tone: 'block', text: limitMessages[limit][lang], action: 'tryAgain' });
+    }
+  });
+
   it('rate limiting says when to try again, when the server said', () => {
     const plain = errorView(i18n, api('rateLimited'));
     expect(plain).toMatchObject({ tone: 'block', action: 'tryAgain', text: apiErrorMessages.rateLimited[lang] });

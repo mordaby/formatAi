@@ -1,6 +1,6 @@
 // Small pure helpers of the Result screen: which "please check" entries a line owns, what the example shows for a
 // column, and defaults for the things the map's "Add" buttons create.
-import type { AmbiguousColumn, OneTimeQuestion } from '@formatai/engine';
+import type { AmbiguousColumn, OneTimeQuestion, OneTimeRowQuestion } from '@formatai/engine';
 import type { PayloadCell } from '@formatai/shared';
 import { effectiveEndSummaryRows, lineIds, sourceOptions, type EditableRules, type EditAction } from '../../editor';
 import { editorConfig } from '../../editor/config';
@@ -14,9 +14,13 @@ export function questionsOf(...lists: (readonly AmbiguousColumn[] | undefined)[]
   return all.length > 0 ? all : undefined;
 }
 
-/** The one-time questions on screen (SPEC 21 v12 item 20): the completion's answer's first, then the learn's; one per row of a column. */
-export function oneTimeQuestionsOf(...lists: (readonly OneTimeQuestion[] | undefined)[]): OneTimeQuestion[] | undefined {
-  const all = lists.flatMap((l) => l ?? []).filter((q, i, a) => a.findIndex((x) => x.header === q.header && x.row === q.row) === i);
+/**
+ * The one-time questions on screen (SPEC 21 v12 item 20): the completion's answer's first, then the learn's; one per row of a column. A list
+ * copied from the example is not asked on screen: it is asked at Save (owner decision 2026-10-06, `copiedListsOf`, `CopiedListSave`).
+ */
+export function oneTimeQuestionsOf(...lists: (readonly OneTimeQuestion[] | undefined)[]): OneTimeRowQuestion[] | undefined {
+  const rows = lists.flatMap((l) => l ?? []).filter((q): q is OneTimeRowQuestion => q.kind !== 'copiedList');
+  const all = rows.filter((q, i, a) => a.findIndex((x) => x.header === q.header && x.row === q.row) === i);
   return all.length > 0 ? all : undefined;
 }
 

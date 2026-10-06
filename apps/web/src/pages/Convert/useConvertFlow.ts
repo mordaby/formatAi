@@ -738,6 +738,8 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
    * for the source and every format it feeds). The rules are read from the server again first (an alias saved a minute ago, an edit from another
    * tab) and only the kept fixes are added to them, with that version as the base: a conversion changed meanwhile is a refusal, never an overwrite.
    * Never throws but for a cancelled run: a save that fails says so (`saved: null`) and the fixes still apply to this file.
+   * No copied-list question here (owner decision 2026-10-06, asked at Save): these rules are the server's own plus `readAs`, so a list copied
+   * from the example in them was stored by the Save that asked about it - nothing new is stored, and nothing is asked again.
    */
   const saveKept = useCallback(
     async (target: Target, fixes: ReadAsFix[], signal: AbortSignal): Promise<KeptRules> => {

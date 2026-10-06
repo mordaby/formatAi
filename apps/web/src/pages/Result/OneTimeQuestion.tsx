@@ -4,7 +4,7 @@
 // no amber, no modal): "Row 54: Discount is 0 instead of Amount × 0.1, rounded to 2 decimals." The row's own values are shown here, read from
 // the learn on this computer; nothing is sent. Three answers: a one-time change (the part goes, the row is listed as one that doesn't follow
 // the rule), a rule (it stays), not sure (it stays, with a check that flags a later row it applies to - the question folds into one line).
-import type { OneTimeQuestion as Question } from '@formatai/engine';
+import type { OneTimeRowQuestion as Question } from '@formatai/engine';
 import type { PayloadCell } from '@formatai/shared';
 import { useMemo } from 'react';
 import { Cell } from '../../components/Cell';
