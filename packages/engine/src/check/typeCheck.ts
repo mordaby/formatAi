@@ -522,8 +522,10 @@ function checkValidationParam(
       }
       return;
     case 'israeliIdChecksum':
-      if (!fits(colType, 'text')) {
-        problems.push({ kind: 'type', path, message: `israeliIdChecksum applies to a text/idLike column; "${v.column}" is ${colType}` });
+      // An integer column too (amendment 2026-10-06): an ID stored as a number has lost its leading zero, and the check pads it to 9
+      // digits, as it always has at run time.
+      if (!fits(colType, 'text') && colType !== 'integer') {
+        problems.push({ kind: 'type', path, message: `israeliIdChecksum applies to a text/idLike or integer column; "${v.column}" is ${colType}` });
       }
       return;
     case 'required':

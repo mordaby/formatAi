@@ -755,6 +755,58 @@ export function buildValidations(analysis: PairAnalysis, ctx: Ctx, outputColumns
 }
 
 // ---------------------------------------------------------------------------
+// IDs stored as numbers (amendment 2026-10-06: numeric IDs on the free path)
+// ---------------------------------------------------------------------------
+
+/** Every non-empty cell of input column `i` is a whole number stored as a number (not text, not a date), and there is one at least. */
+function inputHoldsWholeNumbers(analysis: PairAnalysis, i: number): boolean {
+  let any = false;
+  for (const row of analysis.input.rows) {
+    const cell = row?.[i];
+    if (!cell || cell.v === null || cell.v === '') continue;
+    if (typeof cell.v !== 'number' || cell.isDate === true || !Number.isSafeInteger(cell.v)) return false;
+    any = true;
+  }
+  return any;
+}
+
+/** Every non-empty cell of the example's output column `out` is a number (not text, not a date), and there is one at least. */
+function outputHoldsNumbers(analysis: PairAnalysis, out: number): boolean {
+  let any = false;
+  for (const sheetRow of analysis.output.dataRows) {
+    const cell = analysis.output.sheet.rows[sheetRow]?.[out];
+    if (!cell || cell.v === null || cell.v === '') continue;
+    if (typeof cell.v !== 'number' || cell.isDate === true) return false;
+    any = true;
+  }
+  return any;
+}
+
+/**
+ * The bug (amendment 2026-10-06): the profile calls a column of identifiers `idLike` whatever its cells hold - an Israeli ID, a number
+ * of 8 digits or more - and the free path declared the input column with that type. But a declared `idLike` is a READING: the engine
+ * reads every cell as text (so that `padLeft` can restore zeros) and writes text, while the example output, a copy of IDs stored as
+ * numbers, holds numbers - and the verification compares typed (a number is never equal to text that reads like it). A file that only
+ * copied a numeric ID column could never pass without the AI.
+ *
+ * Now an input column the profile calls `idLike` whose cells are all whole numbers stored as numbers is declared `integer`, so it is
+ * read and written as the numbers it holds, when every output column that copies it holds numbers in the example and nothing else
+ * reads it but a row filter or a dedupe key. A column that is padded (`padLeft`: zero-padded text, which stays text), cut, joined,
+ * mapped or written into a template keeps `idLike`, and so does one an output column shows as text. `outputColumns[k]` is the output
+ * column built for `analysis.columns[k]` (the fast path and the partial result build them in that order); `alsoReads` is any other part
+ * of the rules that names input columns (the checks of an ambiguous column, the partial result's `expand`).
+ */
+export function declareNumericIds(analysis: PairAnalysis, ctx: Ctx, outputColumns: readonly BuiltOutputColumn[], alsoReads?: unknown): void {
+  const otherReaders = JSON.stringify({ computed: ctx.computed, valueMaps: ctx.valueMaps, alsoReads: alsoReads ?? null });
+  for (const [i, col] of ctx.inputColumns) {
+    if (col.type !== 'idLike' || col.padLeft !== undefined || ctx.templateCols.has(i)) continue;
+    if (otherReaders.includes(JSON.stringify(col.id)) || !inputHoldsWholeNumbers(analysis, i)) continue;
+    const copies = analysis.columns.map((ca, k) => ({ out: ca.out, from: outputColumns[k]?.from })).filter((c) => c.from === col.id);
+    if (copies.length > 0 && copies.every((c) => outputHoldsNumbers(analysis, c.out))) col.type = 'integer';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Assembly (shared with the local partial result, partial.ts)
 // ---------------------------------------------------------------------------
 
@@ -870,6 +922,7 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
   if ('reason' in droppedResult) return droppedResult;
   const { build: dropped, assumptions } = droppedResult;
 
+  declareNumericIds(analysis, ctx, outputColumns, ambiguous);
   const validations = [...buildValidations(analysis, ctx, outputColumns), ...readingChecks(ambiguous)];
 
   const rules = assembleRules(analysis, ctx, outputColumns, dropped, validations, assumptions);
