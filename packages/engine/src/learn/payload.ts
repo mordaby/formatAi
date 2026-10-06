@@ -330,6 +330,11 @@ function collectLabelTexts(analysis: PairAnalysis, target?: Format, complete?: C
   return texts;
 }
 
+/** The significant digits of a word of digits only (its leading zeros dropped), else null. */
+function significantDigitsOf(word: string): string | null {
+  return /^[0-9]+$/.test(word) ? word.replace(/^0+/, '') : null;
+}
+
 /**
  * The label words among `candidates` (normalized words of the title, summary-label and other label texts): those that appear in no text or
  * ID-like data cell of the example, input or output, in any row (SPEC 7.2). Scans until every candidate has turned up in a cell. A number
@@ -339,13 +344,25 @@ function collectLabelTexts(analysis: PairAnalysis, target?: Format, complete?: C
 function labelWordsOf(analysis: PairAnalysis, candidates: ReadonlySet<string>): Set<string> {
   const left = new Set(candidates);
   const types = maskTypes(analysis);
+  // Amendment 2026-10-06 (leading zeros survive masking): the masker masks a run of digits by its significant digits, so "12345" in a
+  // title and "000012345" in a cell are the same value - a title word of digits is data when any cell holds those digits, zero-padded or not.
+  const digitCandidates = new Map<string, string[]>();
+  for (const w of candidates) {
+    const significant = significantDigitsOf(w);
+    if (significant !== null) digitCandidates.set(significant, [...(digitCandidates.get(significant) ?? []), w]);
+  }
+  const seen = (word: string): void => {
+    left.delete(word);
+    const significant = significantDigitsOf(word);
+    if (significant !== null) for (const w of digitCandidates.get(significant) ?? []) left.delete(w);
+  };
   const scan = (row: (RawCell | null)[] | undefined, kinds: readonly ProfileType[]): void => {
     if (!row) return;
     kinds.forEach((type, c) => {
       const cell = row[c];
       if (!cell || (type !== 'text' && type !== 'idLike')) return;
       const text = typeof cell.v === 'string' ? cell.v : typeof cell.v === 'number' && type === 'idLike' ? String(cell.v) : null;
-      if (text !== null) for (const tok of splitWords(text)) if (tok.isWord) left.delete(normalizeText(tok.text));
+      if (text !== null) for (const tok of splitWords(text)) if (tok.isWord) seen(normalizeText(tok.text));
     });
   };
   for (const row of analysis.input.rows) {

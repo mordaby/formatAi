@@ -27,8 +27,10 @@ const wordsOf = (text: string): string[] => splitWords(text).flatMap((t) => (t.i
 
 /**
  * The words masking must hide: every word of a text or ID-like data cell of the example, input or output - with letters in it and 4
- * characters or more, or all digits and 6 or more (so a fake word, or a number sent real, can't match one by chance) - less the words sent
- * real by design: the headers and sheet names.
+ * characters or more, or all digits with 6 significant digits or more (so a fake word, or a number sent real, can't match one by chance;
+ * the leading zeros are sent as they are - amendment 2026-10-06, leading zeros survive masking - so a policy number "00000008" is masked
+ * as "0000000" and one digit, and its fake may well be another policy number of the example) - less the words sent real by design: the
+ * headers and sheet names.
  */
 function realWords(a: PairAnalysis): Set<string> {
   const words = new Set<string>();
@@ -36,7 +38,7 @@ function realWords(a: PairAnalysis): Set<string> {
     profile.forEach((p, c) => {
       const v = row?.[c]?.v;
       if (typeof v !== 'string' || (p.type !== 'text' && p.type !== 'idLike')) return;
-      for (const w of wordsOf(v)) if ((w.length >= 4 && /\p{L}/u.test(w)) || (w.length >= 6 && /^\d+$/.test(w))) words.add(w);
+      for (const w of wordsOf(v)) if ((w.length >= 4 && /\p{L}/u.test(w)) || (/^\d+$/.test(w) && w.replace(/^0+/, '').length >= 6)) words.add(w);
     });
   };
   for (const row of a.input.rows) add(row, a.input.profile);

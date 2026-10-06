@@ -30,6 +30,7 @@ import {
   buildValidations,
   chooseColumn,
   columnFrom,
+  declareNumericIds,
   ensureInputColumn,
   fail,
   freshId,
@@ -233,6 +234,9 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
 
   // ---- input columns: the schema needs at least one ----
   if (ctx.inputColumns.size === 0 && analysis.input.columnCount > 0) ensureInputColumn(ctx, analysis, 0);
+
+  // An ID column stored as numbers that the output copies as numbers is read as numbers (amendment 2026-10-06, see fastPath.ts).
+  declareNumericIds(analysis, ctx, outputColumns, { expand, ambiguous });
 
   // A columns-to-rows expand removes the columns it turns into rows, so no input-side check can name them.
   const consumed = new Set(expand?.mode === 'columnsToRows' ? expand.columns : []);
