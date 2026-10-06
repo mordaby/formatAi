@@ -374,22 +374,34 @@ function normalizeCase(a: ColumnData, out: ColumnData, total: number): 'upper' |
 
 // ---------- stage 2: text shapes and formats ----------
 
+/**
+ * DECISION (found by the engine stress test, eval/STRESS.md): "pad to a length" needs an example that shows a length. When every
+ * padded text has the same length, padding it with "X" to a fixed length and a fixed "X" in front write the same output - but not on
+ * next month's shorter code ("XXREF/3780"). Any character but "0" therefore pads only when the example pads by different amounts (the
+ * template or the AI step takes the rest); zeros keep padding an ID to its length, the usual meaning of leading zeros.
+ */
 function padCands(env: RelationEnv, out: ColumnData): Cand[] {
   if (kindShare(out, TEXT) < 0.5) return [];
   const cands: Cand[] = [];
   env.src.forEach((a, s) => {
     const counts = new Map<string, number>();
+    const padded = new Map<string, Set<number>>();
     for (const k of bothRows(env, a, out, 200)) {
       const t = textAt(a, k);
       const o = out.text[k]!.trim();
       if (t === '' || o.length <= t.length || !o.endsWith(t)) continue;
       const ch = o[0]!;
       if (o.slice(0, o.length - t.length) !== ch.repeat(o.length - t.length)) continue;
-      bump(counts, `${o.length}\u0000${ch}`);
+      const key = `${o.length}\u0000${ch}`;
+      bump(counts, key);
+      const amounts = padded.get(key) ?? new Set<number>();
+      amounts.add(o.length - t.length);
+      padded.set(key, amounts);
     }
     const best = mode(counts);
     if (best === null) return;
     const [lenText, ch] = best.split('\u0000') as [string, string];
+    if (ch !== '0' && (padded.get(best)?.size ?? 0) < 2) return;
     const length = Number(lenText);
     cands.push({
       body: { rel: 'padLeft', in: [s], length, char: ch },
