@@ -74,11 +74,38 @@ describe('writeCsv', () => {
       expect(text).toBe('-5');
     });
 
-    it('does not guard columns marked numeric: true', () => {
+    it('does not guard a plain number kept as text in a column marked numeric: true', () => {
       const columns: OutputSheet['columns'] = [{ header: 'Code', numeric: true }];
       const bytes = writeCsv(sheet([[{ v: '-123' }]], columns));
       const text = decode(bytes).replace(/^﻿/, '').trim();
       expect(text).toBe('-123');
+    });
+
+    // Found by the engine stress test (eval/STRESS.md): a number column keeps a cell it cannot read as it is (and flags it), so a numeric
+    // column can still hold text - "=SUM(A1:A9)" in an Amount column went out live.
+    it('guards formula-like text in a column marked numeric: true (a value its type could not read is kept as text)', () => {
+      const columns: OutputSheet['columns'] = [{ header: 'Amount', numeric: true }];
+      const bytes = writeCsv(sheet([[{ v: '=SUM(A1:A9)' }], [{ v: '+972-50-1234567' }], [{ v: '@cmd' }], [{ v: '-5 units' }], [{ v: 12.5 }], [{ v: -3 }]], columns));
+      const text = decode(bytes).replace(/^﻿/, '').trim();
+      expect(text.split('\r\n')).toEqual(["'=SUM(A1:A9)", "'+972-50-1234567", "'@cmd", "'-5 units", '12.5', '-3']);
+    });
+
+    it('guards a header, title or summary label that starts like a formula, in a numeric column too', () => {
+      const s: OutputSheet = {
+        name: 'Sheet1',
+        direction: 'ltr',
+        language: 'en',
+        columns: [{ header: '=Amount', numeric: true }],
+        rows: [
+          { kind: 'title', cells: [{ v: '+Report' }] },
+          { kind: 'header', cells: [{ v: '=Amount' }] },
+          { kind: 'data', cells: [{ v: 7 }] },
+          { kind: 'summaryRow', cells: [{ v: '@Total' }] },
+        ],
+        merges: [],
+      };
+      const text = decode(writeCsv(s)).replace(/^﻿/, '').trim();
+      expect(text.split('\r\n')).toEqual(["'+Report", "'=Amount", '7', "'@Total"]);
     });
   });
 });
