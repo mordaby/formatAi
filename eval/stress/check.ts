@@ -11,6 +11,7 @@
 //   6. Time: learn and convert within budget (10 s each on 20,000 x 20).
 import {
   aiReadiness,
+  ambiguousColumns,
   convertFile,
   counterexampleSample,
   createMasker,
@@ -57,6 +58,7 @@ export type FindingKind =
   | 'localNotVerified'
   | 'partialMismatchReported'
   | 'holdoutAssumed'
+  | 'holdoutAsked'
   | 'idNumberSentReal'
   | 'csvLeadingControl'
   | 'payloadNotBuilt';
@@ -701,7 +703,17 @@ export async function checkCase(c: StressCase, opts: CheckOptions = {}): Promise
     const reported = new Set(res.verification?.mismatches.map((x) => x.column) ?? []);
     const judged = solvedIdx.filter((i) => !reported.has(rules.output.columns[i]?.header ?? ''));
     const { diffs, onlyExpected, onlyActual } = diffColumns(c.refNext.sheet.rows, next.sheet.rows, judged, delimited);
-    const silent = diffs.filter((d) => d.actual?.flagged !== true && !flagged.has(d.sourceRow));
+    const unflagged = diffs.filter((d) => d.actual?.flagged !== true && !flagged.has(d.sourceRow));
+    // A column the free engine ASKS about (the example fits more than one rule: `ambiguousColumns`, the Result screen's question) is
+    // reported, not silent: the user picks the reading. Its hold-out cells are a finding.
+    const asked = new Set(analysis ? ambiguousColumns(analysis).map((q) => q.header) : []);
+    const isAsked = (d: CellDiff): boolean => asked.has(rules.output.columns[d.col]?.header ?? '');
+    const askedDiffs = unflagged.filter(isAsked);
+    if (askedDiffs.length > 0) {
+      const d = askedDiffs[0]!;
+      findings.push({ kind: 'holdoutAsked', detail: `${askedDiffs.length} hold-out cell(s) differ in column(s) the engine asks about, e.g. input row ${d.sourceRow}, "${rules.output.columns[d.col]?.header}": expected ${show(d.expected)}, got ${show(d.actual)}` });
+    }
+    const silent = unflagged.filter((d) => !isAsked(d));
     if (silent.length > 0) {
       const d = silent[0]!;
       const header = rules.output.columns[d.col]?.header ?? `column${d.col + 1}`;
