@@ -473,9 +473,10 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
 
   const repairProblems: RepairProblem[] = [];
   let diffCount = 0;
-  const pushDiff = (p: Extract<RepairProblem, { kind: 'diff' }>): boolean => {
+  // (Built only when kept: masking every wrong row's cells to keep 10 took 30 s on a 15,000-row file - engine stress test, STRESS.md.)
+  const pushDiff = (build: () => Extract<RepairProblem, { kind: 'diff' }>): boolean => {
     if (diffCount >= MAX_DIFF_PROBLEMS) return false;
-    repairProblems.push(p);
+    repairProblems.push(build());
     diffCount++;
     return true;
   };
@@ -524,14 +525,14 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
         const actualCells = actualRow!.cells.map(actualCellValue);
         wrong = wrongRowOf(inRow, wrong);
         wrong?.extra.push(actualCells);
-        pushDiff({
+        pushDiff(() => ({
           kind: 'diff',
           out: 0,
           row: { in: maskCells(inputCellsFor(inRow), types.input, masker), out: [] },
           made: maskCells(actualCells, types.output, masker),
           expected: null,
           actual: maskOutputCell(actualCells[0] ?? null, 0, types.output, masker),
-        });
+        }));
         continue;
       }
 
@@ -559,13 +560,13 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
           mismatches.push({ exampleRow, column: header, expected, actual });
           wrong = wrongRowOf(inRow, wrong);
           wrong?.cells.push({ out: c, outRow: outIdx, expected, actual });
-          pushDiff({
+          pushDiff(() => ({
             kind: 'diff',
             out: c,
             row: { in: maskCells(inputCellsFor(inRow), types.input, masker), out: maskCells(expectedCells, types.output, masker) },
             expected: maskOutputCell(expected, c, types.output, masker),
             actual: maskOutputCell(actual, c, types.output, masker),
-          });
+          }));
         }
       }
       if (rowOk) matched++;
@@ -581,14 +582,14 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
       const actualCells = actualRow.cells.map(actualCellValue);
       wrong = wrongRowOf(inRow, wrong);
       wrong?.extra.push(actualCells);
-      pushDiff({
+      pushDiff(() => ({
         kind: 'diff',
         out: 0,
         row: { in: maskCells(inputCellsFor(inRow), types.input, masker), out: [] },
         made: maskCells(actualCells, types.output, masker),
         expected: null,
         actual: maskOutputCell(actualCells[0] ?? null, 0, types.output, masker),
-      });
+      }));
     }
   }
 

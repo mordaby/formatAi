@@ -444,3 +444,26 @@ describe('verifyAgainstExample: empty text cells', () => {
     expect(v.mismatches.length).toBe(5);
   });
 });
+
+// Found by the engine stress test (eval/STRESS.md): every wrong row's cells were masked to build a repair problem, then all but the
+// first 10 thrown away - 30 s on a 15,000-row file of long notes. Only the problems kept are built.
+describe('verifyAgainstExample: masks only the repair problems it keeps', () => {
+  it('rules wrong on every row of 400: at most 10 diff problems, and only their cells masked', () => {
+    const inRows: V[][] = Array.from({ length: 400 }, (_, i) => [i + 1, `name${i} street${i} city${i}`]);
+    const a = analyzeOkResult(['Customer ID', 'Customer Name'], inRows, ['Name', 'ID'], inRows.map((r) => [r[1]!, r[0]!]));
+    const fp = fastPath(a, preflight(a, 'registered'));
+    if (!('rules' in fp)) throw new Error('fastPath failed');
+    const wrong: LearnResult = {
+      ...fp.rules,
+      transform: { ...fp.rules.transform, computed: [...fp.rules.transform.computed, { id: 'x', type: 'text', expr: { const: 'nobody' } }] },
+      output: { ...fp.rules.output, columns: fp.rules.output.columns.map((c) => (c.header === 'Name' ? { header: 'Name', from: 'x' } : c)) },
+    };
+    const real = createMasker(new TextEncoder().encode('count-key'));
+    let calls = 0;
+    const counting = { ...real, maskCell: (v: Parameters<typeof real.maskCell>[0], t: Parameters<typeof real.maskCell>[1]) => (calls++, real.maskCell(v, t)) };
+    const v = verifyAgainstExample(wrong, a, { masker: counting });
+    expect(v.mismatches).toHaveLength(400);
+    expect(v.repairProblems.filter((p) => p.kind === 'diff')).toHaveLength(10);
+    expect(calls).toBeLessThanOrEqual(10 * 6); // per kept problem: 2 input cells, 2 expected cells, expected and actual
+  });
+});
