@@ -143,7 +143,7 @@ function layoutParts(analysis: PairAnalysis): Set<AiStepPartCode> {
   const layout = analysis.layout;
   if (layout.groupBy !== null) parts.add('group');
   if (layout.summaryRows.length > 0) parts.add('summaryRows');
-  if (layout.sort !== null) parts.add('sort');
+  if (layout.sort !== null || !layout.orderMatchesInput) parts.add('sort');
   if (layout.titleRows.some((t) => t.containsDate !== undefined)) parts.add('dateTitle');
   if (layout.unexplainedBlankRows.length > 0) parts.add('blankRows');
   return parts;

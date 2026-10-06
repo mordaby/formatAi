@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { typeCheck } from '../../src/check';
 import { analyzePair, type PairAnalysis } from '../../src/learn/analyze';
 import { fastPath, type FastPathResult } from '../../src/learn/fastPath';
+import { partialRules } from '../../src/learn/partial';
 import { preflight } from '../../src/learn/preflight';
 import { runOk, table, values, type CellInput } from '../pipeline/helpers';
 import { bold, date, delimited, rng, xlsx, type V } from './analyze/helpers';
@@ -310,6 +311,28 @@ describe('fastPath: refuses and reports why', () => {
     expect(a.layout.sort).not.toBeNull();
     const pf = preflight(a, 'registered');
     expect(fastPath(a, pf)).toMatchObject({ reason: 'layoutUnsupported' });
+  });
+
+  // Found by the engine stress test (eval/STRESS.md): rows sorted by a date written as text, compared as text ("01-02-2025" before
+  // "03-01-2024"), which no sort the analysis tries explains. The fast path built no sort, the verification (which pairs rows by input
+  // row) passed, and the result was "verified" in the input's order. An order nothing explains is a sort the free engine cannot build.
+  it('layoutUnsupported: rows in an order no sort explains (and the partial result says the order needs the AI step)', () => {
+    const r = rng(41);
+    const inRows: [string, number][] = [];
+    for (let i = 0; i < 10; i++) inRows.push([`B${i}`, Math.round(r() * 1000)]);
+    const order = [3, 0, 7, 1, 9, 4, 2, 8, 5, 6];
+    const a = analyzeOkResult(
+      ['Batch', 'Yield'],
+      inRows.map((x) => [...x]),
+      ['Batch', 'Yield'],
+      order.map((k) => [...inRows[k]!]),
+    );
+    expect(a.layout).toMatchObject({ sort: null, orderMatchesInput: false });
+    const pf = preflight(a, 'registered');
+    expect(fastPath(a, pf)).toMatchObject({ reason: 'layoutUnsupported', params: { part: 'sort' } });
+    const p = partialRules(a, pf);
+    if ('reason' in p) throw new Error('partialRules refused');
+    expect(p.needsAiParts).toContain('sort');
   });
 
   it('layoutUnsupported: a title built from a date', () => {

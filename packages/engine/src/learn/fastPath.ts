@@ -252,7 +252,8 @@ export function layoutIssue(analysis: PairAnalysis): FastPathFailure | null {
   const layout = analysis.layout;
   if (layout.groupBy !== null) return fail('layoutUnsupported', { part: 'group' });
   if (layout.summaryRows.length > 0) return fail('layoutUnsupported', { part: 'summaryRows' });
-  if (layout.sort !== null) return fail('layoutUnsupported', { part: 'sort' });
+  // An order no sort explains (`orderMatchesInput` false, no sort found) is no more built than a sort: the input's order is not the example's.
+  if (layout.sort !== null || !layout.orderMatchesInput) return fail('layoutUnsupported', { part: 'sort' });
   if (layout.titleRows.some((t) => t.containsDate !== undefined)) return fail('layoutUnsupported', { part: 'dateTitle' });
   if (layout.unexplainedBlankRows.length > 0) return fail('layoutUnsupported', { part: 'blankRows' });
   return null;
