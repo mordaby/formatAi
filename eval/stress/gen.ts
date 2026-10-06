@@ -448,11 +448,17 @@ export function ruleProblems(rules: Rules): string[] {
 // Rows
 // ---------------------------------------------------------------------------
 
+const isBlankCell = (c: GenCell | undefined): boolean => c === null || c === undefined || ('s' in c && c.s.trim() === '');
+const isBlankRow = (row: GenCell[]): boolean => row.every((c) => isBlankCell(c));
+
 function genRows(rng: Rng, cols: InCol[], n: number, variant: 'example' | 'next', layout: InputLayout, st: ValueState): GenCell[][] {
 
   const rows: GenCell[][] = [];
   for (let i = 0; i < n; i++) {
-    rows.push(cols.map((c) => cellValue(rng, c, st, variant)));
+    const row = cols.map((c) => cellValue(rng, c, st, variant));
+    // (A row blank in every column splits the table in two: the engine reads a second table, rightly. Not what a case tests.)
+    if (isBlankRow(row)) continue;
+    rows.push(row);
     // An exact duplicate of an earlier row.
     if (layout.dupRate > 0 && rows.length > 1 && chance(rng, layout.dupRate)) rows.push([...rows[randInt(rng, 0, rows.length - 2)]!]);
   }
@@ -518,6 +524,33 @@ function cleanUnshownMess(rows: GenCell[][], example: GenCell[][], cols: InCol[]
       }
     }
   });
+}
+
+/** Fair hold-outs, continued: a column empty on every example row stays empty next month - a copy of it and an empty column (or any rule
+ * on it) write the same example. */
+function keepEmptyColumnsEmpty(rows: GenCell[][], example: GenCell[][], cols: InCol[]): void {
+  cols.forEach((_, i) => {
+    if (!example.every((r) => isBlankCell(r[i]))) return;
+    for (const r of rows) r[i] = null;
+  });
+}
+
+/** Fair hold-outs, continued: a column a value map reads takes next month only the keys its example shows - the example cannot say what
+ * an unseen key maps to ("Closed" -> "K5" in a map whose every shown entry keeps its value). */
+function keepShownMapKeys(rows: GenCell[][], example: GenCell[][], cols: InCol[], rules: Rules, rng: Rng): void {
+  for (const vm of rules.transform.valueMaps) {
+    const expr = rules.transform.computed.find((c) => c.id === vm.column)?.expr;
+    const id = expr !== undefined && 'col' in expr ? expr.col : vm.column;
+    const i = cols.findIndex((c) => c.id === id);
+    if (i < 0) continue;
+    const seen = [...new Set(example.map((r) => r[i]).filter((c): c is { s: string } => c !== null && c !== undefined && 's' in c).map((c) => c.s))];
+    const keys = new Set(seen.map((s) => s.trim()));
+    if (seen.length === 0) continue;
+    for (const r of rows) {
+      const c = r[i];
+      if (c && 's' in c && !keys.has(c.s.trim())) r[i] = { s: pick(rng, seen) };
+    }
+  }
 }
 
 /** Fair hold-outs, continued: an ID column stored as numbers whose example shows no ID that lost its leading zero (every one 9 digits)
@@ -622,6 +655,9 @@ export async function buildCase(seed: number, opts: BuildOptions = {}): Promise<
   makeFair(nextRows, exampleRows, cols, filterCol, filterCut, nextRng);
   cleanUnshownMess(nextRows, exampleRows, cols);
   keepShownIdLengths(nextRows, exampleRows, cols, nextRng);
+  keepShownMapKeys(nextRows, exampleRows, cols, reference, nextRng);
+  keepEmptyColumnsEmpty(nextRows, exampleRows, cols);
+  for (let k = nextRows.length - 1; k >= 0; k--) if (isBlankRow(nextRows[k]!)) nextRows.splice(k, 1);
 
   const headers = cols.map((c) => c.header);
   // Windows-1255 holds Hebrew, not emoji or Arabic: a file that cannot be written in it is written in UTF-8 (as a real export would be).
