@@ -9,7 +9,7 @@ import { ApiError } from '../src/api';
 import type { AdminApi } from '../src/api/admin';
 import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
 import { fakeApi, renderApp, USER } from './helpers/renderApp';
-// The registered plan's AI formats a month, from the config (it changes: owner decision 2026-10-06, 500 for the beta).
+// The registered plan's AI formats a month, from the config (a product number that may change).
 const REG_AI = tiers.registered.aiLearns.count;
 
 beforeEach(() => {

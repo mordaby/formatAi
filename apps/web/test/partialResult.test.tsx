@@ -10,7 +10,7 @@ import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLea
 import { ordersRules } from '../src/editor/testkit';
 import type { LearnOutput } from '../src/worker/engineApi';
 import { csv, fakeApi, fakeEngine, learnResult, liveResult, renderApp, USER } from './helpers/renderApp';
-// The registered plan's AI formats a month, from the config (it changes: owner decision 2026-10-06, 500 for the beta).
+// The registered plan's AI formats a month, from the config (a product number that may change).
 const REG_AI = tiers.registered.aiLearns.count;
 
 const { redirectTo } = vi.hoisted(() => ({ redirectTo: vi.fn() }));

@@ -12,7 +12,7 @@ import { ordersRules } from '../src/editor/testkit';
 import type { LearnOutput } from '../src/worker/engineApi';
 import { conversionSummary, createFormatResponse, formatSummary } from './helpers/registryKit';
 import { csv, fakeApi, fakeEngine, learnResult, renderApp, USER } from './helpers/renderApp';
-// The registered plan's AI formats a month, from the config (it changes: owner decision 2026-10-06, 500 for the beta).
+// The registered plan's AI formats a month, from the config (a product number that may change).
 const REG_AI = tiers.registered.aiLearns.count;
 
 vi.mock('../src/app/redirect', () => ({ redirectTo: vi.fn() }));
