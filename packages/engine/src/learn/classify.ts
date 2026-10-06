@@ -4,7 +4,7 @@
 //   1. Value shapes (shared `identifierShapeOf`: validator.js, the same checks as the Save popup): when most non-empty cells have one
 //      identifier shape (`columnClassification.shapeShare`), the column is an `identifier`.
 //   2. The column's name (`columnNames`, he + en): a measure word keeps a numeric column a `measure`, however long its numbers (a 1,000,000
-//      price stays real); otherwise an identifier word makes any column but a date an `identifier`, even when its numbers repeat.
+//      price stays real); otherwise an identifier word makes any column but a date or a boolean an `identifier`, even when its numbers repeat.
 //   3. The profile type: text -> `text`; numbers -> `measure`; dates -> `date`; `idLike` -> `identifier`; booleans -> `category`.
 // Then an external classification, when the caller gives one (`ColumnClassHints`, by header: the AI step's, later) may tighten anything to
 // masked, and loosen a text column to a `category` only when code confirms it (few values, each on 2 rows or more, no identifier shape, no

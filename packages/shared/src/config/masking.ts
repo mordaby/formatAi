@@ -47,7 +47,7 @@ export const columnNames = {
     'מחיר', 'סכום', 'סה"כ', 'כמות', 'שיעור', 'עמלה', 'עמלת', 'עלות', 'יתרה', 'יתרת',
     'price', 'amount', 'total', 'qty', 'quantity', 'rate', 'fee', 'cost', 'sum', 'balance',
   ],
-  /** A person: what an external classification may never loosen to a category (with an identifier word: `ColumnHints` in the engine). */
+  /** A person: a column an external classification may never loosen to a category (nor one with an identifier word: `ColumnClassHints`). */
   person: ['שם', 'משפחה', 'איש קשר', 'כתובת', 'לקוח', 'עובד', 'name', 'surname', 'contact', 'address', 'customer', 'employee'],
 } as const;
 
