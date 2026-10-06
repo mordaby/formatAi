@@ -262,8 +262,8 @@ export interface LearnFromExamplesResult<Call = unknown> {
    * one row of the example, singled out by something unique to it (its ID, an exact amount or date, its position), for the Result screen's
    * question (at most `limits.learn.oneTimer.maxQuestions`; completion mode: the asked columns only), and the columns that had more such parts
    * than fit (handed to the overfitting guards, not asked). With them (owner amendment, 2026-10-06), `kind: 'copiedList'`: a column whose
-   * lookup table or value map is keyed on a column that is different on every row of the example ("<column>: is this the rule?"; no cell
-   * value). Real values: the browser's and the eval's only. Absent when there is neither.
+   * lookup table or value map is keyed on a column that is different on every row of the example (asked at Save: "Keep this list in the
+   * saved format?"; no cell value). Real values: the browser's and the eval's only. Absent when there is neither.
    */
   oneTimers?: OneTimeResult;
 }

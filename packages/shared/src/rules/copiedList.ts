@@ -1,17 +1,18 @@
 // Taking a column's rule out, and a list copied from the example (owner amendment, 2026-10-06; SPEC "Amendment (owner, 2026-10-06): a list
-// copied from the example is a question").
+// copied from the example is asked at Save").
 //
 // `withColumnsTakenOut` is the one way code turns a column into "needs your input" (8.10): the overfitting guards' honest fallback (engine
-// `withOverfitFallback`, reason `overfit`) and the answer "a one-time edit" to a copied-list question. The output column reads nothing
+// `withOverfitFallback`, reason `overfit`) and the answer "Save without it" for a list copied from the example. The output column reads nothing
 // (`from: null`, its values left empty), it is reported as unsupported with the reason given, and the computed columns and lookup tables
 // nothing reads any more go with it.
 //
 // A copied list: a column whose value comes from a lookup table or a value map keyed on a column that is different on every row of the
 // example - or from a chain of constants that names that column's values one by one (`switch(or(id = "A-1", id = "A-2"), "x", ...)`, the
 // same list written out). Code fills such a list from every row (`fillParams`), and a copied list always reproduces the example it was copied from, so
-// the check on every row cannot tell a real mapping (recurring customers) from a copy (order numbers). The engine asks (`copiedLists`,
-// `learn/oneTimers.ts`); "a rule" keeps it as it is, "a one-time edit" is `withoutCopiedList`. Here, in the shared package, because both
-// sides apply it: the browser's main thread (which never loads the engine) and the eval.
+// the check on every row cannot tell a real mapping (recurring customers) from a copy (order numbers). The engine finds it (`copiedLists`,
+// `learn/oneTimers.ts`) and the user is asked at Save (owner decision 2026-10-06, fewer clicks): "Keep it" keeps it as it is, "Save without
+// it" is `withoutCopiedList`. Here, in the shared package, because both sides apply it: the browser's main thread (which never loads the
+// engine) and the eval.
 //
 // Pure: no I/O, no engine.
 import type { UnsupportedReasonCode } from '../codes';
@@ -30,7 +31,7 @@ export type CopiedListRule =
   | { kind: 'cases'; computed: string; column: string };
 
 /**
- * The reason a column whose list was a one-time edit is reported with. DECISION: `overfit`, code's own reason for a column whose only rule
+ * The reason a column whose list was saved without it is reported with. DECISION: `overfit`, code's own reason for a column whose only rule
  * copies rows of the example ("needs your input", 8.10) - the user has just said so. Never `externalData`: that is the AI step's word for
  * values that come from elsewhere, and code does not know where they come from.
  */
@@ -125,7 +126,7 @@ export function hasCopiedList(rules: AnyRules, header: string, list: CopiedListR
 }
 
 /**
- * The answer "a one-time edit" to a copied-list question: the column's rule goes - it is reported as unsupported (`COPIED_LIST_REASON`,
+ * The answer "Save without it" for a list copied from the example: the column's rule goes - it is reported as unsupported (`COPIED_LIST_REASON`,
  * "needs your input") and left empty - and the table nothing looks up any more goes with it (a chain of cases: its computed column, with the
  * values it named); a value map goes when no output column reads its column any more and no check reads it. Null when the column does not
  * take its value from the list any more (`hasCopiedList`).

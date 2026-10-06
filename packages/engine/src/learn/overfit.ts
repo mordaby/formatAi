@@ -389,7 +389,7 @@ export function overfitProblems(findings: readonly OverfitFinding[]): RepairProb
  * input", like an `externalData` column the AI step reports itself), and the computed columns nothing reads any more are taken out, so the
  * rows the rule copied are never shown or saved as a rule - and so are the lookup tables nothing looks up any more (a table of the example's
  * amounts holds this file's rows). Everything else is kept as it is. The rules themselves when there is no finding. (`withColumnsTakenOut`,
- * shared: the answer "a one-time edit" to a copied-list question takes a column out the same way.)
+ * shared: "Save without it" for a list copied from the example takes a column out the same way.)
  */
 export function withOverfitFallback<R extends AnyRules>(rules: R, findings: readonly OverfitFinding[]): R {
   if (findings.length === 0) return rules;

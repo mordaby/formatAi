@@ -70,8 +70,8 @@ function producedMatches(result: LearnFromExamplesResult): boolean {
  * An answer that reports every column as unsupported produced nothing, so it never meets it.
  *
  * DECISION (owner amendment, 2026-10-06): `answered` are the columns the case's own answers took out (`meta.answers`, `applyCaseAnswers`:
- * "a one-time edit" to a copied-list question, which code reports with `overfit`). Such a column counts as the expected report: the user
- * said on the Result screen what the AI step did not, and the column needs their input - the end state the case expects. An `overfit` the
+ * "Save without it" to a list copied from the example, asked at save, which code reports with `overfit`). Such a column counts as the
+ * expected report: the user said at save what the AI step did not, and the column needs their input - the end state the case expects. An `overfit` the
  * guards wrote is not one (the AI step copied rows even after its repair).
  */
 export function expectationMet(meta: CaseMeta, masking: boolean, result: LearnFromExamplesResult, classification: Classification, answered: readonly string[] = []): boolean {

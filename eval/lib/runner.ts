@@ -130,7 +130,7 @@ export interface RunRecord {
   /**
    * A one-time edit or a rule? (SPEC 21 v12 item 20, `result.oneTimers`): the questions the Result screen would ask about the kept answer - a
    * part that explains one row of the example only, singled out by its ID, an exact amount or date, or its position - and (owner amendment,
-   * 2026-10-06) a column whose list is copied from the example, keyed on a column that is different on every row. 0 when none.
+   * 2026-10-06) a column whose list is copied from the example, keyed on a column that is different on every row, asked at save. 0 when none.
    */
   oneTimeAsked: number;
   /**
@@ -533,9 +533,10 @@ export async function oneTimeOf(
 }
 
 /**
- * The case's own answers to the Result screen's questions (`meta.answers`, owner amendment 2026-10-06), applied to the kept rules exactly as
- * the screen applies them, before the run is scored. Today one: `copiedList: "oneTime"` answers every copied-list question "a one-time edit"
- * (`withoutCopiedList`: the column needs your input, reason `overfit`, its list gone); `"rule"` - or no answer - keeps the rules as they are.
+ * The case's own answers to the questions the user is asked (`meta.answers`, owner amendment 2026-10-06), applied to the kept rules exactly as
+ * the web app applies them, before the run is scored. Today one: `copiedList: "oneTime"` answers every list copied from the example, asked at
+ * save, "Save without it" (`withoutCopiedList`: the column needs your input, reason `overfit`, its list gone); `"rule"` ("Keep it") - or no
+ * answer - keeps the rules as they are.
  * A plain learn's answer is verified again on the columns that still have a rule, as the flow verifies one (a column taken out matched the
  * example on every row it explained; one of its other rows may not have); a completion keeps its own verdict (`completion`), which never
  * counts a column that has no rule. `answered`: the columns taken out. The result as it is when nothing was answered.

@@ -24,13 +24,14 @@
 // a part asked here (the row-position branch: `if(rowNumber() = 54, 0, ...)` - the user decides, no repair is spent on it). The API leaves a
 // position condition that names exact rows to the browser (`OverfitFinding.rowExact`): only every row of the example can tell.
 //
-// The second kind of question (owner amendment, 2026-10-06: "a list copied from the example is a question"): a column whose value comes
+// The second kind of question (owner amendment, 2026-10-06: "a list copied from the example is asked at Save"): a column whose value comes
 // from a lookup table or a value map keyed on a column that takes a different value on every row the list applies to. Code's fill completes
 // such a list from every row, and a copied list always reproduces the example it was copied from - the guards catch one keyed on an amount
 // (`measureKey`), not one keyed on an account or an order number. Such a list is sometimes exactly right (recurring customers) and
-// sometimes useless (order numbers); code cannot tell which, so it asks, neutrally: "Account Manager: is this the rule?" (`copiedLists`).
-// "Yes" keeps it as it is (a new key is flagged at run time, as for any lookup); "a one-time edit" takes the column's rule out - the column
-// needs the user's input (`withoutCopiedList`, shared).
+// sometimes useless (order numbers); code cannot tell which, so the user is asked, neutrally - at Save only, before the rules are stored
+// (owner decision, same day: fewer clicks; the web app's "Save this format?"). `copiedLists` finds them. "Keep it" keeps the list as it is (a
+// new key is flagged at run time, as for any lookup); "Save without it" takes the column's rule out - the column needs the user's input
+// (`withoutCopiedList`, shared).
 //
 // Real values (the question shows the row's own values) - this runs in the browser and the eval, never on the server, and nothing here is
 // ever sent. Pure and synchronous, like the rest of this package.
@@ -114,8 +115,8 @@ export interface OneTimeRowQuestion {
 }
 
 /**
- * The second kind (owner amendment, 2026-10-06): "<column>: is this the rule?" - "We learned <column> as a list taken from your example: one
- * value for each <key column> (<entries> entries)." What the screen needs, and no cell value.
+ * The second kind (owner amendment, 2026-10-06), asked at Save: "<column> was learned as a list copied from your example (<entries> values,
+ * one for each <key column>). Keep this list in the saved format?" What the dialog needs, and no cell value.
  */
 export interface CopiedListQuestion {
   kind: 'copiedList';
@@ -126,7 +127,7 @@ export interface CopiedListQuestion {
   keyColumn: string;
   /** The entries of the list the example's rows use: one per row (no key repeats), each giving that row's value (a chain: its named values). */
   entries: number;
-  /** The list - a lookup table, a value map, or a chain of cases - for the answer "a one-time edit" (`withoutCopiedList`, shared). */
+  /** The list - a lookup table, a value map, or a chain of cases - for the answer "Save without it" (`withoutCopiedList`, shared). */
   list: CopiedListRule;
 }
 
