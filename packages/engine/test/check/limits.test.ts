@@ -211,17 +211,17 @@ describe('checkLimits: function/table counts, table rows, duplicate keys, cycles
 
   // What one saved format may keep (docs/proposals/saved-format-contents.md section 7): the browser's live check reports the caps the server
   // refuses a save over (shared `contentLimitProblems`).
-  it('reports a value map of more than 500 entries, a value of more than 200 characters, and rules over 64 KB', () => {
+  it('reports a value map of more than 500 entries, a value of more than 300 characters, and rules over 64 KB', () => {
     const map = (n: number): Record<string, string> => Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, `v${i}`]));
     const withMap = (n: number): LearnResult => baseRules({ transform: { computed: [], valueMaps: [{ column: 'a', map: map(n), onMissing: 'flag' }], sort: [] } });
     expect(checkLimits(withMap(500), 'paid')).toEqual([]);
     expect(checkLimits(withMap(501), 'paid')).toEqual([{ kind: 'limit', path: 'transform.valueMaps[0]', message: 'the value map on "a" has 501 entries, exceeding the maximum of 500' }]);
 
     const label = (n: number): LearnResult => baseRules({ transform: { computed: [{ id: 'c', type: 'text', expr: { const: 'x'.repeat(n) } }], valueMaps: [], sort: [] } });
-    expect(checkLimits(label(200), 'paid')).toEqual([]);
-    expect(checkLimits(label(201), 'paid')).toEqual([{ kind: 'limit', path: 'transform.computed[0].expr', message: 'a value of 201 characters, exceeding the maximum of 200 characters for one value' }]);
+    expect(checkLimits(label(300), 'paid')).toEqual([]);
+    expect(checkLimits(label(301), 'paid')).toEqual([{ kind: 'limit', path: 'transform.computed[0].expr', message: 'a value of 301 characters, exceeding the maximum of 300 characters for one value' }]);
 
-    // A title row's text (or a summary row's label) is held to 500 characters, not 200.
+    // A title row's text (or a summary row's label) is held to 500 characters, not 300.
     const titled = (n: number): LearnResult => baseRules({ output: { sheetName: 'Out', direction: 'ltr', language: 'en', titleRows: [{ text: 't'.repeat(n) }], columns: [] } });
     expect(checkLimits(titled(500), 'paid')).toEqual([]);
     expect(checkLimits(titled(501), 'paid')).toEqual([{ kind: 'limit', path: 'output.titleRows[0]', message: "a title of 501 characters, exceeding the maximum of 500 characters for a title or a summary row's label" }]);
