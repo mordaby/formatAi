@@ -2,7 +2,7 @@
 // operations, the example output those rules make through the real `convertFile`, and a hold-out pair (fresh rows, same rules). The
 // ground truth is the reference rules run by the engine's pipeline - the part under test is the FREE learn (pair analysis, fast path,
 // local partial result), which never sees the reference rules.
-import { checkLimits, convertFile, typeCheck, type ConvertResult } from '@formatai/engine';
+import { checkLimits, convertFile, makeValidIsraeliId, typeCheck, type ConvertResult } from '@formatai/engine';
 import { checkRules, RulesSchema, type Computed, type Expr, type InputColumn, type OutputColumnRule, type RowFilter, type Rules, type SummaryRow, type TitleRow } from '@formatai/shared';
 import { chance, makeRng, pick, randInt, shuffle, type Rng } from '../cases/lib/prng';
 import { EN_STATUS as CAT_EN_STATUS } from '../catalogue/data';
@@ -498,16 +498,37 @@ function makeFair(rows: GenCell[][], example: GenCell[][], cols: InCol[], filter
   }
 }
 
-const MESSY = /^\s|\s$|[ ‎‏]/;
+/** The kinds of stray characters a cell may carry, each with what takes it out: the example shows a kind, or the hold-out has none. */
+const MESS_KINDS: { test: RegExp; clean: (s: string) => string }[] = [
+  { test: /[\u200e\u200f]/, clean: (s) => s.replace(/[\u200e\u200f]/g, '') },
+  { test: /\u00a0/, clean: (s) => s.replace(/\u00a0/g, ' ') },
+  { test: /^\s|\s$/, clean: (s) => s.trim() },
+];
 
 /** Fair hold-outs, continued: a column whose example cells show no stray space, NBSP or direction mark gets none next month either (the
- * example cannot say whether the rule keeps them or trims them: a copy and a trim fit it alike). */
+ * example cannot say whether the rule keeps them or trims them: a copy and a trim fit it alike). Per kind: an example that shows a
+ * direction mark says nothing about a leading space (a text reading drops the one and keeps the other). */
 function cleanUnshownMess(rows: GenCell[][], example: GenCell[][], cols: InCol[]): void {
   cols.forEach((_, i) => {
-    if (example.some((r) => { const c = r[i]; return c !== null && c !== undefined && 's' in c && MESSY.test(c.s); })) return;
+    for (const kind of MESS_KINDS) {
+      if (example.some((r) => { const c = r[i]; return c !== null && c !== undefined && 's' in c && kind.test.test(c.s); })) continue;
+      for (const r of rows) {
+        const c = r[i];
+        if (c && 's' in c && kind.test.test(c.s)) r[i] = { s: kind.clean(c.s) };
+      }
+    }
+  });
+}
+
+/** Fair hold-outs, continued: an ID column stored as numbers whose example shows no ID that lost its leading zero (every one 9 digits)
+ * gets none next month either - the example cannot say whether a short ID is padded back (the reference rules pad it: `padLeft: 9`). */
+function keepShownIdLengths(rows: GenCell[][], example: GenCell[][], cols: InCol[], rng: Rng): void {
+  cols.forEach((col, i) => {
+    if (col.kind !== 'israeliId' || !col.asNumber) return;
+    if (example.some((r) => { const c = r[i]; return c !== null && c !== undefined && 'n' in c && c.n < 1e8; })) return;
     for (const r of rows) {
       const c = r[i];
-      if (c && 's' in c && MESSY.test(c.s)) r[i] = { s: c.s.replace(/[‎‏]/g, '').replace(/ /g, ' ').trim() };
+      if (c && 'n' in c && c.n < 1e8) r[i] = { n: Number(makeValidIsraeliId(`${randInt(rng, 1, 3)}${String(c.n).padStart(8, '0').slice(1, 8)}`)) };
     }
   });
 }
@@ -600,6 +621,7 @@ export async function buildCase(seed: number, opts: BuildOptions = {}): Promise<
   const nextRows = genRows(nextRng, cols, nextN, 'next', layout, { next: new Map(exampleState.next), pools: new Map() });
   makeFair(nextRows, exampleRows, cols, filterCol, filterCut, nextRng);
   cleanUnshownMess(nextRows, exampleRows, cols);
+  keepShownIdLengths(nextRows, exampleRows, cols, nextRng);
 
   const headers = cols.map((c) => c.header);
   // Windows-1255 holds Hebrew, not emoji or Arabic: a file that cannot be written in it is written in UTF-8 (as a real export would be).
