@@ -288,6 +288,17 @@
 .upgrade .panel {
   inline-size: min(420px, 100%);
 }
+/* Out of AI formats (owner 2026-10-07): the dialog's lines, and its waitlist step (the upgrade panel's own content). */
+.ai-out__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.ai-out__waitlist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
 
 /* ---------- Home for a signed-in user with formats ---------- */
 .home-actions {

@@ -12,6 +12,7 @@ import { LegalPage } from '../pages/Legal/LegalPage';
 import { ResultPage } from '../pages/Result';
 import { peekResultSession } from '../pages/Result/session';
 import { Spinner } from '../ui';
+import { AiLimitProvider } from './AiLimit';
 import { LearnSessionProvider, useLearnSession } from './LearnSession';
 import { MeProvider } from './Me';
 import { Shell } from './Shell';
@@ -70,42 +71,44 @@ export function App() {
       <TurnstileProvider>
         <SignInProvider>
           <LearnSessionProvider>
-            <Shell>
-              <Routes>
-                <Route path="/" element={<Home />} />
-                <Route path="/result" element={<ResultRoute />} />
-                <Route path="/formats" element={<FormatsPage />} />
-                <Route path="/formats/:id" element={<FormatPage />} />
-                <Route path="/formats/:id/add-source" element={<AddSourcePage />} />
-                <Route path="/formats/:id/sources/:conversionId" element={<ResultRoute />} />
-                <Route path="/convert" element={<ConvertPage />} />
-                <Route path="/batch" element={<BatchRedirect />} />
-                <Route
-                  path="/admin"
-                  element={
-                    <Suspense fallback={null}>
-                      <AdminPage />
-                    </Suspense>
-                  }
-                />
-                <Route path="/business" element={<BusinessPage />} />
-                {/* v13 M4: the legal pages (drafts: the owner or a lawyer reviews them - see i18n/legal.ts) and the accessibility statement. */}
-                <Route path="/privacy" element={<LegalPage id="privacy" />} />
-                <Route path="/terms" element={<LegalPage id="terms" />} />
-                <Route path="/accessibility" element={<LegalPage id="accessibility" />} />
-                {DevPage && (
+            <AiLimitProvider>
+              <Shell>
+                <Routes>
+                  <Route path="/" element={<Home />} />
+                  <Route path="/result" element={<ResultRoute />} />
+                  <Route path="/formats" element={<FormatsPage />} />
+                  <Route path="/formats/:id" element={<FormatPage />} />
+                  <Route path="/formats/:id/add-source" element={<AddSourcePage />} />
+                  <Route path="/formats/:id/sources/:conversionId" element={<ResultRoute />} />
+                  <Route path="/convert" element={<ConvertPage />} />
+                  <Route path="/batch" element={<BatchRedirect />} />
                   <Route
-                    path="/dev"
+                    path="/admin"
                     element={
                       <Suspense fallback={null}>
-                        <DevPage />
+                        <AdminPage />
                       </Suspense>
                     }
                   />
-                )}
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </Shell>
+                  <Route path="/business" element={<BusinessPage />} />
+                  {/* v13 M4: the legal pages (drafts: the owner or a lawyer reviews them - see i18n/legal.ts) and the accessibility statement. */}
+                  <Route path="/privacy" element={<LegalPage id="privacy" />} />
+                  <Route path="/terms" element={<LegalPage id="terms" />} />
+                  <Route path="/accessibility" element={<LegalPage id="accessibility" />} />
+                  {DevPage && (
+                    <Route
+                      path="/dev"
+                      element={
+                        <Suspense fallback={null}>
+                          <DevPage />
+                        </Suspense>
+                      }
+                    />
+                  )}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </Shell>
+            </AiLimitProvider>
           </LearnSessionProvider>
         </SignInProvider>
       </TurnstileProvider>

@@ -29,7 +29,8 @@ function Avatar({ user }: { user: MeUser }) {
 
 /** The header's account area: "Sign in" for a visitor, and for a signed-in user a menu with what belongs to the account. */
 export function AccountMenu() {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const me = useMe();
   const signIn = useSignIn();
   const feedback = useFeedback();
@@ -107,7 +108,7 @@ export function AccountMenu() {
             <p>
               <Badge tone={user.tier === 'paid' ? 'verified' : 'neutral'}>{t(user.tier === 'paid' ? 'account.tier.paid' : 'account.tier.registered')}</Badge>
             </p>
-            {me.quota ? <p className="account__quota tabular">{aiLeftLabel(t, me.quota)}</p> : null}
+            {me.quota ? <p className="account__quota tabular">{aiLeftLabel(i18n, me.quota)}</p> : null}
           </div>
           <ul className="account__list">
             <li>
