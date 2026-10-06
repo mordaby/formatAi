@@ -40,7 +40,7 @@
 // flow) and, if it stays, asked about at Save. The copied list above - one row per entry, keyed on a column unique per row - is one case of
 // it, with the same question. NOT a list: a small vocabulary (a translation of a category column with few values: at most
 // `limits.learn.lists.vocabulary.maxEntries` entries, each giving its value to at least `minRowsPerEntry` rows, keyed on a column that is not
-// an identifier - #56's classification, `maskTypes`), and the one-time edits above (fewer than `limits.learn.lists.minEntries` entries).
+// an identifier - the column classification, `classify.ts`), and the one-time edits above (fewer than `limits.learn.lists.minEntries` entries).
 //
 // Real values (the question shows the row's own values) - this runs in the browser and the eval, never on the server, and nothing here is
 // ever sent. Pure and synchronous, like the rest of this package.
@@ -72,7 +72,7 @@ import type { PairAnalysis } from './analyze';
 import { probeCellValue, probeKeyText, probeTruthy, runWithProbes, valueListOf, type ProbedRun, type RunProbe } from './fillParams';
 import { atomsOf, casesOf, comparesPosition, overfitFindings, positionColumns, type OverfitFinding } from './overfit';
 import { cellMatchesExample, exampleCellAt } from './verify';
-import { inputMaskType } from './maskTypes';
+import { inputClass } from './classify';
 
 /** What singles the one row out: an ID (a key column of the example), an exact amount or date no other row has, its position in the file. */
 export type OneTimeBy = 'id' | 'amount' | 'date' | 'position';
@@ -660,7 +660,7 @@ export function questionedPositions(rules: LearnResult, analysis: PairAnalysis, 
  *     (`switch(oneOf(product, "card", "computer"), "Electronics", ...)`): the same list written out;
  * and it has at least `minListEntries` entries the example uses (an entry that gives at least one row of the example its value), unless it is
  * a small vocabulary: at most `limits.learn.lists.vocabulary.maxEntries` entries, each giving its value to at least `minRowsPerEntry` rows,
- * keyed on an input column that is not an identifier (#56's classification: `maskTypes`, an ID column or an integer identifier). One question
+ * keyed on an input column that is not an identifier (the column classification, `classify.ts`). One question
  * per column at most (its list with the most entries), in output order.
  *
  * DECISIONS (conservative: code asks only what it can say plainly):
@@ -684,8 +684,8 @@ export function copiedLists(rules: LearnResult, analysis: PairAnalysis, opts: On
   const fixed = opts.fixed;
   const tables = new Map((rules.transform.tables ?? []).map((t) => [t.name, t] as const));
   const src = mapHeaders(rules.input.columns, analysis.input.headers).src;
-  /** #56's classification of the key column (the type it is masked as): an ID column, or an integer column that identifies rows. */
-  const identifier = (index: number): boolean => inputMaskType(analysis, src[index] ?? -1) === 'idLike';
+  /** The key column is an identifier (the column classification, `classify.ts`). */
+  const identifier = (index: number): boolean => inputClass(analysis, src[index] ?? -1) === 'identifier';
   const theirs = (s: Extract<Site, { kind: 'lookup' | 'valueMap' }>): boolean => {
     if (!fixed) return false;
     if (s.kind === 'valueMap') return fixed.transform.valueMaps.some((m) => m.column === s.column);

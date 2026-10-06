@@ -18,7 +18,7 @@ import type { AnalysisStage, CompleteOptions, LearnCallResult, PreflightIssue } 
 import type { Api } from '../api';
 import { webConfig } from '../config';
 import type { EngineClient } from '../worker/engineClient';
-import type { CheckRoundInfo, LearnArgs, LearnHost, LearnOutput, LearnProgress, LoopRoundInfo } from '../worker/engineApi';
+import type { CheckRoundInfo, LearnArgs, LearnHost, LearnOutput, LearnProgress, LoopRoundInfo, SentColumns } from '../worker/engineApi';
 import { isCancellation, toFlowError, type FlowError } from './errors';
 
 /**
@@ -48,6 +48,8 @@ export interface SentRecord {
   rounds?: CheckRound[];
   /** Size of the JSON request body's payload part (a step: the payload with its rounds), in bytes (SPEC 7.3 caps it at 48 KB). */
   bytes: number;
+  /** The learn request: per column of the example, whether masking hides its values (shown beside the JSON; not part of the request). */
+  columns?: SentColumns;
 }
 
 interface Common {
@@ -255,9 +257,9 @@ export class LearnFlow {
     if (stale()) return;
 
     const host: LearnHost = {
-      callLearn: async (payload) => {
+      callLearn: async (payload, columns) => {
         try {
-          await record({ kind: 'learn', payload });
+          await record({ kind: 'learn', payload, ...(columns ? { columns } : {}) });
           const res = await this.deps.api.learn(payload, { turnstileToken: await token(), signal: abort.signal });
           learnId = res.learnId;
           lastProblems = res.problems;

@@ -408,6 +408,7 @@ function analyzeSides(
     dropped,
     layout,
     sample: { size: sample.length, seed },
+    ...(opts.columnHints ? { columnHints: opts.columnHints } : {}),
   };
   return result;
 }

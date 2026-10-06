@@ -22,14 +22,14 @@
 // order, so a plain position-by-position walk is enough - and any divergence (a missing
 // title, a summary row the rules don't emit, an extra blank row) is exactly the kind of
 // thing a human glancing at the two files side by side would flag first.
-import type { LearnResult, PayloadCell, ProfileType, Rules, RepairProblem } from '@formatai/shared';
+import type { ColumnClass, LearnResult, PayloadCell, Rules, RepairProblem } from '@formatai/shared';
 import { DEFAULT_OUTPUT_FILE } from '@formatai/shared';
 import { runRules } from '../pipeline/runRules';
 import type { InputTable, OutCell, OutRow, OutRowKind, OutputFileSpec, RawCell } from '../types';
 import { isoOfSerial } from './analyze/cells';
 import type { OutputRowKind, PairAnalysis } from './analyze';
 import type { Masker } from './mask';
-import { maskTypes, type MaskTypes } from './maskTypes';
+import { classifyColumns } from './classify';
 
 /** LEARN_PROMPT §4: "At most 10 diff problems are sent." Same cap as the API's sample
  * run (`apps/api/src/learn/sampleRun.ts`), enforced here for the same reason: a repair
@@ -216,14 +216,14 @@ function rowToPayloadCells(row: (RawCell | null)[] | undefined, count: number, d
   return out;
 }
 
-/** A row's cells masked like the samples' cells of their columns (`types`: `maskTypes`, an identifier stored as a number masked as an ID). */
-function maskCells(cells: PayloadCell[], types: readonly ProfileType[], masker: Masker | undefined): PayloadCell[] {
+/** A row's cells masked like the samples' cells of their columns (`types`: their classes, `classify.ts`). */
+function maskCells(cells: PayloadCell[], types: readonly ColumnClass[], masker: Masker | undefined): PayloadCell[] {
   if (!masker) return cells;
   return cells.map((v, i) => masker.maskCell(v, types[i] ?? 'text'));
 }
 
 /** One output cell's value, masked like the samples' cells of that column (the rules' own value too: it is made from real words). */
-function maskOutputCell(v: PayloadCell, column: number, types: readonly ProfileType[], masker: Masker | undefined): PayloadCell {
+function maskOutputCell(v: PayloadCell, column: number, types: readonly ColumnClass[], masker: Masker | undefined): PayloadCell {
   return masker ? masker.maskCell(v, types[column] ?? 'text') : v;
 }
 
@@ -309,10 +309,10 @@ const LAYOUT_CODE: Record<LayoutCategory, LayoutProblemCode> = { title: 'titleRo
  * real), and numbers, booleans and real dates are sent real as everywhere. `undefined`: a value that cannot be masked, which the message
  * then leaves out (it says only where the difference is).
  */
-function layoutValue(seen: Seen, masker: Masker | undefined, headers: ReadonlySet<string> | null, maskType?: ProfileType): string | undefined {
+function layoutValue(seen: Seen, masker: Masker | undefined, headers: ReadonlySet<string> | null, cls?: ColumnClass): string | undefined {
   const v = seen.v;
-  // A number in a column masked as an ID (amendment 2026-10-06: the first or last ID of a group, in a summary row) is masked like its cells.
-  if (masker && typeof v === 'number' && maskType === 'idLike' && !seen.date) return JSON.stringify(masker.maskCell(v, maskType));
+  // A number in an identifier column (amendment 2026-10-06: the first or last ID of a group, in a summary row) is masked like its cells.
+  if (masker && typeof v === 'number' && cls === 'identifier' && !seen.date) return JSON.stringify(masker.maskCell(v, cls));
   if (!masker || v === null || typeof v === 'number' || typeof v === 'boolean' || seen.date) return JSON.stringify(v);
   if (typeof v !== 'string') return undefined;
   return JSON.stringify(headers?.has(v) ? v : masker.maskText(v));
@@ -336,7 +336,7 @@ function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]
   const issues: LayoutIssue[] = [];
   const plain = (code: LayoutProblemCode, message: string): void => void issues.push({ code, message, repair: message });
   const knownHeaders = new Set(analysis.output.headers);
-  const outTypes = masker ? maskTypes(analysis).output : [];
+  const outTypes = masker ? classifyColumns(analysis).output : [];
   const len = Math.max(expected.length, actual.length);
   for (let i = 0; i < len; i++) {
     const exp = expected[i];
@@ -497,8 +497,8 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   }
 
   const inputCellsFor = (inRow: number): PayloadCell[] => rowToPayloadCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904);
-  // The type each column is masked as in a repair problem: the same as in the payload's samples (`maskTypes`).
-  const types: MaskTypes = masker ? maskTypes(analysis) : { input: [], output: [] };
+  // Each column's class in a repair problem: the same as in the payload's samples (`classify.ts`).
+  const types: { input: readonly ColumnClass[]; output: readonly ColumnClass[] } = masker ? classifyColumns(analysis) : { input: [], output: [] };
   // The learning loop's wrong rows (only when asked for), one per input row, in file order.
   const wrongRows: WrongRow[] | undefined = opts.wrongRows ? [] : undefined;
   const wrongRowOf = (inRow: number, current: WrongRow | null): WrongRow | null => {

@@ -172,6 +172,11 @@ export const en = {
   'sendPanel.checkRows.one': 'Its answers show 1 row of your example (every row the checks showed so far).',
   'sendPanel.checkRows.other': 'Its answers show {n} rows of your example (every row the checks showed so far).',
   'sendPanel.json': 'Data sent (JSON)',
+  'sendPanel.columns.title': 'Your columns in the rows we send',
+  'sendPanel.columns.input': 'Example input',
+  'sendPanel.columns.output': 'Example output',
+  'sendPanel.columns.hidden': '{column}: values hidden (replaced with look-alike values)',
+  'sendPanel.columns.sent': '{column}: values sent as they are',
 
   // SPEC 16.1 screen 2: pre-flight
   'preflight.warnTitle': 'One thing to check first',
@@ -362,6 +367,11 @@ export const he: Record<MessageKey, string> = {
   'sendPanel.checkRows.one': 'התשובות בה מציגות שורה אחת מהדוגמה שלכם (כל השורות שהבדיקות הציגו עד כה).',
   'sendPanel.checkRows.other': 'התשובות בה מציגות {n} שורות מהדוגמה שלכם (כל השורות שהבדיקות הציגו עד כה).',
   'sendPanel.json': 'הנתונים שנשלחו (JSON)',
+  'sendPanel.columns.title': 'העמודות שלכם בשורות שאנחנו שולחים',
+  'sendPanel.columns.input': 'דוגמת קלט',
+  'sendPanel.columns.output': 'דוגמת פלט',
+  'sendPanel.columns.hidden': '{column}: הערכים מוסתרים (מוחלפים בערכים מדומים)',
+  'sendPanel.columns.sent': '{column}: הערכים נשלחים כפי שהם',
 
   'preflight.warnTitle': 'דבר אחד לבדוק קודם',
   'learning.unexplained.lead': 'עמודות שלא מצאנו בקובץ הקלט שלכם',

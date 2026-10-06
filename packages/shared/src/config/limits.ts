@@ -346,7 +346,7 @@ export const limits = {
      *     retry stay rare.
      *   - `vocabulary`: a translation of a category column with few values (`Open -> פתוח`, 4 region codes -> names) - at most `maxEntries`
      *     entries, each giving its value to at least `minRowsPerEntry` rows of the example, keyed on a column that is not an identifier
-     *     (#56's classification, engine `maskTypes`). Anything bigger, keyed on an identifier, or with an entry used by a single row is a list.
+     *     (the column classification, engine `classifyColumns`). Anything bigger, keyed on an identifier, or with an entry used by a single row is a list.
      */
     lists: {
       minEntries: 6,

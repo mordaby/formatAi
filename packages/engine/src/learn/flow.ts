@@ -22,7 +22,7 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import { aiNotesOf, isCodeCheck, limits, payloadRowCount, stepBytes, stripAiNotes, unsupportedDespiteEvidence, withRows, type AiColumnNote, type AiStepPartCode, type Check, type CheckAnswer, type CheckRound, type Format, type LearnAlternative, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
+import { aiNotesOf, isCodeCheck, limits, payloadRowCount, stepBytes, stripAiNotes, unsupportedDespiteEvidence, withRows, type AiColumnNote, type AiStepPartCode, type Check, type CheckAnswer, type CheckRound, type ColumnClassHints, type Format, type LearnAlternative, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
 import { answerChecks, checkSummaryOf, withoutRows, type CheckSummary } from './checks';
 import { deepEqual } from '../registry/deepEqual';
 import { columnVerifier, resolveAlternatives, type AlternativeResult } from './alternatives';
@@ -133,6 +133,12 @@ export interface LearnFromExamplesOptions<Call = unknown> {
    * eval's `--no-pattern-hints`, which measures the AI code checks against them (docs/proposals/ai-code-checks.md section 8).
    */
   patternHints?: boolean;
+  /**
+   * An external classification of the columns, by header (column classification, owner 2026-10-06; `learn/classify.ts`): the hook for the
+   * AI step that will classify columns from their names. It may tighten any column to masked, and loosen a text column to a category (sent
+   * real) only when code confirms it; it never loosens an identifier. Every path that masks reads it through the analysis.
+   */
+  columnHints?: ColumnClassHints;
   onProgress?: (p: AnalysisProgress) => void;
   /**
    * Called once with the successful pair analysis, before pre-flight. The web worker keeps it
@@ -349,6 +355,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // SPEC 8.12/A2: the output must already match the format, so its file spec is the
   // format's own, not re-detected from this particular example.
   if (opts.target) analysisOpts.outputFileSpec = opts.target.output.file;
+  if (opts.columnHints) analysisOpts.columnHints = opts.columnHints;
 
   const analysis = analyzePair(inputWb, outputWb, analysisOpts);
   if (analysis.ok) opts.onAnalysis?.(analysis);

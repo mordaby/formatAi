@@ -1,5 +1,5 @@
 // The AI code checks with masking on, on identifiers stored as numbers (amendment 2026-10-06, SPEC 7.2): every answer masks an identifier
-// column exactly like the payload does - the same per-column decision (`maskTypes`) and the same masker - in its rows, failing and conflict
+// column exactly like the payload does - the same per-column decision (`classifyColumns`) and the same masker - in its rows, failing and conflict
 // rows, top values, dependsOn keys and test's expected / got; `values` gives no min / max of one, `ranges` refuses to sort by one, and a
 // fake ID the AI writes in a formula (`where`, `rule`, `let`) is unmasked like a rule's constant. The measures stay real.
 import type { Check, CheckAnswer, CheckRound, DependsOnAnswer, LearnPayload, LearnResult, PayloadCell, RangesAnswer, RowsAnswer, TestAnswer, ValuesAnswer } from '@formatai/shared';
@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { answerChecks, type CheckContext } from '../../src/learn/checks';
 import { learnFromExamples } from '../../src/learn/flow';
 import { createMasker } from '../../src/learn/mask';
-import { maskTypes } from '../../src/learn/maskTypes';
+import { classifyColumns } from '../../src/learn/classify';
 import { buildPayload } from '../../src/learn/payload';
 import { preflight } from '../../src/learn/preflight';
 import { makeValidIsraeliId } from '../../src/values/israeliId';
@@ -17,7 +17,7 @@ import { xlsxBytesOf } from './v5fixtures';
 
 const key = (seed: string): Uint8Array => new TextEncoder().encode(seed);
 
-// תז (valid Israeli IDs, idLike), מספר לקוח (unique integers, only copied: an identifier), טלפון (idLike) - all stored as numbers -, a name,
+// תז (valid Israeli IDs, idLike), מספר לקוח (integers named as an identifier), טלפון (idLike) - all stored as numbers -, a name,
 // and an amount (a measure: the label סוג is cut by it at 700).
 const NAMES = ['דנה כהן', 'יוסי לוי', 'מיכל אברהם', 'אבי מזרחי', 'רונית פרץ', 'משה ביטון', 'שרה דהן', 'דוד אזולאי', 'נועה פרידמן', 'עמית שפירא', 'תמר גבאי', 'אורי חדד'];
 const CUT = 700;
@@ -73,9 +73,10 @@ describe('the AI code checks mask identifiers stored as numbers like the payload
   const SMALL = masker.maskText('קטן');
 
   it('the setup: תז, customer number and phone are masked as IDs, the amount is a measure; the payload sends none of them', () => {
-    expect(maskTypes(analysis)).toEqual({
-      input: ['idLike', 'idLike', 'idLike', 'text', 'integer'],
-      output: ['idLike', 'idLike', 'idLike', 'text', 'integer', 'text'],
+    const { input: inClasses, output: outClasses } = classifyColumns(analysis);
+    expect({ input: inClasses, output: outClasses }).toEqual({
+      input: ['identifier', 'identifier', 'identifier', 'text', 'measure'],
+      output: ['identifier', 'identifier', 'identifier', 'text', 'measure', 'text'],
     });
     expect(leaked(JSON.stringify(s.built.payload))).toEqual([]);
     expect(s.sent.size).toBeLessThan(N);
@@ -92,7 +93,7 @@ describe('the AI code checks mask identifiers stored as numbers like the payload
       expect([f.expected, f.got]).toEqual([BIG, SMALL]);
       const inRow = amounts.indexOf(f.row.in[4] as number);
       expect(inRow).toBeGreaterThanOrEqual(0); // the amount: real
-      expect(f.row.in.slice(0, 3)).toEqual([ids[inRow]!, customers[inRow]!, phones[inRow]!].map((v) => masker.maskCell(v, 'idLike')));
+      expect(f.row.in.slice(0, 3)).toEqual([ids[inRow]!, customers[inRow]!, phones[inRow]!].map((v) => masker.maskCell(v, 'identifier')));
       expect((f.row.out as PayloadCell[]).slice(0, 3)).toEqual(f.row.in.slice(0, 3)); // the same fake in `in` and `out`
     }
   });
@@ -105,8 +106,8 @@ describe('the AI code checks mask identifiers stored as numbers like the payload
     for (const f of a.failing) {
       const inRow = ids.indexOf(masker.realNumberOf(f.expected as number)!);
       expect(inRow).toBeGreaterThanOrEqual(0);
-      expect(f.expected).toBe(masker.maskCell(ids[inRow]!, 'idLike'));
-      expect(f.got).toBe(masker.maskCell(customers[inRow]!, 'idLike'));
+      expect(f.expected).toBe(masker.maskCell(ids[inRow]!, 'identifier'));
+      expect(f.got).toBe(masker.maskCell(customers[inRow]!, 'identifier'));
     }
     const b = one({ check: 'test', column: 'סכום', let: [{ id: 'c', expr: 'in1 + 0' }], rule: 'c' }) as TestAnswer;
     expect(b.matched).toBe(0);
@@ -183,7 +184,7 @@ describe('the AI code checks mask identifiers stored as numbers like the payload
     for (const c of byHundreds.conflicts) {
       expect(typeof c.key[0]).toBe('number');
       expect(hundreds).not.toContain(c.key[0]);
-      expect(hundreds.map((h) => masker.maskCell(h, 'idLike'))).toContain(c.key[0]);
+      expect(hundreds.map((h) => masker.maskCell(h, 'identifier'))).toContain(c.key[0]);
     }
   });
 
@@ -198,7 +199,7 @@ describe('the AI code checks mask identifiers stored as numbers like the payload
     expect(a.rows).toHaveLength(Math.min(limit, unsent.length));
     expect(leaked(JSON.stringify(a))).toEqual([]);
     expect(r.rowsShown).toEqual(unsent.slice(0, a.rows.length));
-    for (const [n, row] of a.rows.entries()) expect(row.in[1]).toBe(masker.maskCell(customers[unsent[n]!]!, 'idLike'));
+    for (const [n, row] of a.rows.entries()) expect(row.in[1]).toBe(masker.maskCell(customers[unsent[n]!]!, 'identifier'));
     // ... and past the limit they are withheld, still masked
     const tight = answerChecks([{ check: 'rows', where, limit }], s.ctx({ rowBudget: 1 }));
     expect(tight.rowsShown).toHaveLength(1);
@@ -219,7 +220,7 @@ describe('a fake ID the AI writes in a formula is unmasked like a rule\'s consta
   });
 
   it('where on a masked ID constant filters to the real row (תז, customer number, phone; = and oneOf)', () => {
-    // The customer number is an integer column (masked as an ID by `maskTypes`): a number constant. תז and the phone are idLike columns,
+    // The customer number is an integer column (an identifier by its name, `classifyColumns`): a number constant. תז and the phone are idLike columns,
     // which a check reads as an ID (`in0 = 123` is a type error there, masked or not): their digits are written as text.
     for (const [col, fake] of [['in1', `${fakeCustomer}`], ['in0', `"${fakeId}"`], ['in2', `"${fakePhone}"`]] as const) {
       const r = answerChecks([{ check: 'rows', where: `${col} = ${fake}`, limit: 5 }], s.ctx());

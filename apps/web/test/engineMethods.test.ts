@@ -166,7 +166,7 @@ describe('engine methods, through the worker RPC', () => {
     const client = loopback(engineMethods);
     const payloads: LearnPayload[] = [];
     const progress: LearnProgress[] = [];
-    const callLearn = vi.fn(async (payload: LearnPayload) => {
+    const callLearn = vi.fn(async (payload: LearnPayload, _columns?: unknown) => {
       payloads.push(payload);
       return { rules: null, problems: [], calls: [] };
     });
@@ -186,6 +186,12 @@ describe('engine methods, through the worker RPC', () => {
     expect(payloads[0]!.masking).toBe(true);
     expect(sent).toContain('"Item"');
     expect(sent).toContain('"Qty"');
+    // "See what we send": with the payload, which columns masking hides (the column classification) - never part of the payload.
+    expect(callLearn.mock.calls[0]![1]).toEqual({
+      input: [{ header: 'Item', hidden: true }, { header: 'Qty', hidden: false }],
+      output: [{ header: 'Item', hidden: true }, { header: 'Size', hidden: true }],
+    });
+    expect(sent).not.toContain('"hidden"');
 
     // The masking key is the worker's own, stable for the session: the same pair masks to the same fake words.
     const again = learnArgs(llmPair(), true);

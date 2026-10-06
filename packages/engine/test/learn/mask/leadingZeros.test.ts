@@ -20,41 +20,41 @@ const ID_TWO_ZEROS = makeValidIsraeliId('00523456');
 describe('masking keeps leading zeros: every form of a value shares one fake', () => {
   it('"12345", "012345", "000012345" and the number 12345 (an ID column): the zeros as they are, then one fake of the significant digits', () => {
     const m = createMasker(key('forms'));
-    const f = m.maskCell('12345', 'idLike') as string;
+    const f = m.maskCell('12345', 'identifier') as string;
     expect(f).toMatch(/^[1-9][0-9]{4}$/);
     expect(f).not.toBe('12345');
-    expect(m.maskCell('012345', 'idLike')).toBe(`0${f}`);
-    expect(m.maskCell('000012345', 'idLike')).toBe(`0000${f}`);
-    expect(m.maskCell(12345, 'idLike')).toBe(Number(f));
+    expect(m.maskCell('012345', 'identifier')).toBe(`0${f}`);
+    expect(m.maskCell('000012345', 'identifier')).toBe(`0000${f}`);
+    expect(m.maskCell(12345, 'identifier')).toBe(Number(f));
   });
 
   it('in any order, and the same for the same key (deterministic per session key)', () => {
     const forms: PayloadCell[] = ['000012345', 12345, '012345', '12345'];
     const a = createMasker(key('order'));
     const b = createMasker(key('order'));
-    const fromA = forms.map((v) => a.maskCell(v, 'idLike'));
-    const fromB = [...forms].reverse().map((v) => b.maskCell(v, 'idLike')).reverse();
+    const fromA = forms.map((v) => a.maskCell(v, 'identifier'));
+    const fromB = [...forms].reverse().map((v) => b.maskCell(v, 'identifier')).reverse();
     expect(fromB).toEqual(fromA);
-    const other = createMasker(key('another key')).maskCell('000012345', 'idLike');
+    const other = createMasker(key('another key')).maskCell('000012345', 'identifier');
     expect(other).not.toBe(fromA[0]);
     expect(String(other).startsWith('0000')).toBe(true);
   });
 
   it('a text column and digits inside text get the same fakes as the ID column', () => {
     const m = createMasker(key('text'));
-    const f = m.maskCell('12345', 'idLike') as string;
+    const f = m.maskCell('12345', 'identifier') as string;
     expect(m.maskCell('000012345', 'text')).toBe(`0000${f}`);
     const sentence = m.maskCell('Ref 000012345 / 12345', 'text') as string;
     expect(sentence).toMatch(new RegExp(`^[A-Z][a-z]{2} 0000${f} / ${f}$`));
     // letters around digits: the zeros are kept, the significant digits masked
-    expect(m.maskCell('A-000123', 'idLike')).toMatch(/^[A-Z]-000[1-9][0-9]{2}$/);
+    expect(m.maskCell('A-000123', 'identifier')).toMatch(/^[A-Z]-000[1-9][0-9]{2}$/);
   });
 
   it('a run of zeros only hides nothing and is sent as it is', () => {
     const m = createMasker(key('zeros'));
-    expect(m.maskCell('0', 'idLike')).toBe('0');
-    expect(m.maskCell('0000', 'idLike')).toBe('0000');
-    expect(m.maskCell(0, 'idLike')).toBe(0);
+    expect(m.maskCell('0', 'identifier')).toBe('0');
+    expect(m.maskCell('0000', 'identifier')).toBe('0000');
+    expect(m.maskCell(0, 'identifier')).toBe(0);
     expect(m.maskCell('Box 00', 'text')).toMatch(/^[A-Z][a-z]{2} 00$/);
   });
 
@@ -76,7 +76,7 @@ describe('masking keeps leading zeros: every form of a value shares one fake', (
 
   it('numbers in other columns are sent real, as before', () => {
     const m = createMasker(key('other'));
-    expect(m.maskCell(12345, 'integer')).toBe(12345);
+    expect(m.maskCell(12345, 'measure')).toBe(12345);
     expect(m.maskCell('000012345', 'date')).toBe('000012345');
   });
 });
@@ -86,12 +86,12 @@ describe('Israeli IDs with and without a leading zero', () => {
     expect(ID_ZERO.startsWith('0')).toBe(true);
     for (const seed of ['id-a', 'id-b', 'id-c', 'id-d', 'id-e', 'id-f', 'id-g', 'id-h']) {
       const m = createMasker(key(seed));
-      const fakeText = m.maskCell(ID_ZERO, 'idLike') as string;
+      const fakeText = m.maskCell(ID_ZERO, 'identifier') as string;
       expect(fakeText).not.toBe(ID_ZERO);
       expect(fakeText).toMatch(/^0[1-9][0-9]{7}$/);
       expect(isIsraeliIdNumber(fakeText)).toBe(true);
 
-      const fakeNumber = m.maskCell(Number(ID_ZERO), 'idLike');
+      const fakeNumber = m.maskCell(Number(ID_ZERO), 'identifier');
       expect(typeof fakeNumber).toBe('number');
       expect(String(fakeNumber)).toHaveLength(8);
       expect(isValidIsraeliId(String(fakeNumber))).toBe(true); // a valid ID once padded, like the real number
@@ -106,19 +106,19 @@ describe('Israeli IDs with and without a leading zero', () => {
   it('an ID without a leading zero stays a valid 9-digit ID and never gains one', () => {
     for (const seed of ['nine-a', 'nine-b', 'nine-c', 'nine-d']) {
       const m = createMasker(key(seed));
-      const fake = m.maskCell(Number(ID_NINE), 'idLike') as number;
+      const fake = m.maskCell(Number(ID_NINE), 'identifier') as number;
       expect(String(fake)).toMatch(/^[1-9][0-9]{8}$/);
       expect(isIsraeliIdNumber(String(fake))).toBe(true);
-      expect(m.maskCell(ID_NINE, 'idLike')).toBe(String(fake));
+      expect(m.maskCell(ID_NINE, 'identifier')).toBe(String(fake));
     }
   });
 
   it('two leading zeros (7 significant digits): both kept, a valid ID, and the 7-digit number shares the fake', () => {
     const m = createMasker(key('two-zeros'));
-    const fakeText = m.maskCell(ID_TWO_ZEROS, 'idLike') as string;
+    const fakeText = m.maskCell(ID_TWO_ZEROS, 'identifier') as string;
     expect(fakeText).toMatch(/^00[1-9][0-9]{6}$/);
     expect(isIsraeliIdNumber(fakeText)).toBe(true);
-    expect(m.maskCell(Number(ID_TWO_ZEROS), 'idLike')).toBe(Number(fakeText));
+    expect(m.maskCell(Number(ID_TWO_ZEROS), 'identifier')).toBe(Number(fakeText));
   });
 });
 
@@ -130,15 +130,15 @@ describe('unmasking: every masked form back to its own real form', () => {
       expect(m.fakeToReal.get(fake)).toBe(real);
     }
     // a number's fake maps back as its digits
-    const fakeNumber = m.maskCell(Number(ID_NINE), 'idLike');
+    const fakeNumber = m.maskCell(Number(ID_NINE), 'identifier');
     expect(m.fakeToReal.get(String(fakeNumber))).toBe(ID_NINE);
   });
 
   it('unmaskRules restores text constants of every form, and number constants', () => {
     const m = createMasker(key('unmask-rules'));
     const [f5, f6, f9, fid] = (['12345', '012345', '000012345', ID_ZERO] as const).map((r) => m.maskIdLike(r));
-    const fNumber = m.maskCell(12345, 'idLike') as number;
-    const fIdNumber = m.maskCell(Number(ID_ZERO), 'idLike') as number;
+    const fNumber = m.maskCell(12345, 'identifier') as number;
+    const fIdNumber = m.maskCell(Number(ID_ZERO), 'identifier') as number;
     const rules = {
       transform: {
         computed: [
@@ -158,14 +158,14 @@ describe('unmasking: every masked form back to its own real form', () => {
 
   it('a number the AI writes for an ID it saw zero-padded ("000083920" -> 83920) unmasks to the real number', () => {
     const m = createMasker(key('padded-only'));
-    const fake = m.maskCell('000012345', 'idLike') as string;
+    const fake = m.maskCell('000012345', 'identifier') as string;
     expect(m.realNumberOf(Number(fake))).toBe(12345);
     expect(m.fakeNumberOf(12345)).toBe(Number(fake));
   });
 
   it('maskRules (a completion call) masks a padded constant like the samples, and unmaskRules restores it', () => {
     const m = createMasker(key('complete'));
-    const sampleFake = m.maskCell('000012345', 'idLike');
+    const sampleFake = m.maskCell('000012345', 'identifier');
     const rules = { input: { rowFilters: [{ column: 'code', op: 'eq', value: '000012345' }, { column: 'n', op: 'ne', value: 12345 }] } };
     const masked = maskRules(rules, m);
     expect(masked.input.rowFilters[0]!.value).toBe(sampleFake);
@@ -227,7 +227,7 @@ describe('a masked payload where the padding is visible', () => {
     const m = createMasker(key('title'));
     const sent = buildPayload(titled, preflight(titled, 'paid'), { masker: m }).payload;
     expect(JSON.stringify(sent)).not.toContain(real);
-    const fakeCell = m.maskCell(`00${real}`, 'idLike') as string;
+    const fakeCell = m.maskCell(`00${real}`, 'identifier') as string;
     expect(sent.output.layout.titleRows[0]?.text).toBe(`Report ${fakeCell.slice(2)}`);
   });
 });

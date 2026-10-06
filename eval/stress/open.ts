@@ -15,12 +15,6 @@ const seedOf = (r: CaseResult): string => `${r.profile}:${r.seed}`;
 
 export const OPEN_FINDINGS: OpenFinding[] = [
   {
-    id: 'O1',
-    title: 'Masking: letters of a script the masker has no fake alphabet for (Cyrillic, Arabic, ...) are sent real',
-    seeds: ['small:10', 'small:23', 'small:73', 'mixed:5', 'mixed:68'],
-    matches: (f) => f.kind === 'maskLeakScript',
-  },
-  {
     id: 'O2',
     title: 'CSV/TXT: a plain negative number held as TEXT in a text column gets the formula guard\'s apostrophe; the verification compares values and passes',
     seeds: ['small:231'],
