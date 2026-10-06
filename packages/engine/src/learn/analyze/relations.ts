@@ -229,9 +229,12 @@ const GUARD_DATE_RENDERINGS = ['MM', 'M', 'MMM', 'YY'];
  *  (a) an input column holds the same value (a copy is as possible as a constant);
  *  (b) a date input column, formatted with an output date format the free engine writes (the month, the year, ...), gives it
  *      - each cell is read on its own, so a column mixing date formats counts (dateReadings.ts);
- *  (c) a fixed part of an input text (a prefix, a suffix, a fixed position, one part of a split) is that value.
- * (c) is the existing `substr` / `split` detection run on this column, not new code; `template` and `concat` need input values
- * INSIDE the output, and a constant has none, so they cannot write it.
+ *  (c) a fixed part of an input text (a prefix, a suffix, a fixed position, one part of a split) is that value;
+ *  (d) fixed text around the value of an input column that holds ONE value on every row ("Area " + a Group that is "North"
+ *      throughout): the `template` the free engine writes (short fixed text, `limits.learn.template`) gives the same constant.
+ * (c) is the existing `substr` / `split` detection run on this column, not new code. A template over input columns that VARY cannot
+ * write a constant; over a column that does not, it can (d): found by the engine stress test (eval/STRESS.md), built as a constant
+ * the template was wrong on the first row next month that holds another value.
  * A truly fixed value that also happens to appear in the data goes to the AI step too: acceptable, the AI step or the user decides.
  * Returns the source columns (indices into `env.src`, input columns first) that can write the value; none = a real constant.
  */
@@ -270,6 +273,26 @@ function constantSources(env: RelationEnv, out: ColumnData, value: string): numb
     for (let k = 0; k < total && holds; k++) holds = cand.test(k) === 1;
     if (holds) found.add(s);
   }
+
+  // (d) fixed text around the one value of an input column (a template of a column that does not vary in the example)
+  const T = limits.learn.template;
+  env.src.forEach((a, s) => {
+    if (found.has(s) || total === 0) return;
+    let w: string | null = null;
+    for (let k = 0; k < total; k++) {
+      const kind = a.kind[k];
+      if (kind === EMPTY || kind === DATE) return;
+      const t = a.text[k]!.trim();
+      if (w === null) w = t;
+      else if (t !== w) return;
+    }
+    if (w === null || w.length < limits.learn.compositionMinValueLength || w === v) return;
+    const at = v.indexOf(w);
+    if (at < 0) return;
+    const before = at;
+    const after = v.length - at - w.length;
+    if (before <= T.maxLiteralChars && after <= T.maxLiteralChars && before + after <= T.maxTotalLiteralChars) found.add(s);
+  });
   return [...found].sort((x, y) => x - y);
 }
 

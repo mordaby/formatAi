@@ -257,6 +257,29 @@ describe('a value the input holds as it is is not a constant either', () => {
   });
 });
 
+// Found by the engine stress test (eval/STRESS.md): an output written as fixed text around the value of an input column that holds one
+// value in the example ("Area " + Group, Group "North" on every row) was built as the constant "Area North" with no question - next
+// month's "South" rows came out "Area North", unflagged.
+describe('fixed text around a value the input holds on every row is not a constant either', () => {
+  it('a fixed prefix + the one value of an input column: not built (no reading of it can be written as a rule), no question', () => {
+    const { ca } = expectNotBuilt(pairWith({ header: 'Region', value: 'Area North' }), 'Region');
+    expect(ca.derivableConstant).toEqual([3]);
+  });
+
+  it('the value + a fixed suffix: the same', () => {
+    const { ca } = expectNotBuilt(pairWith({ header: 'Region', value: 'North-1' }), 'Region');
+    expect(ca.derivableConstant).toEqual([3]);
+  });
+
+  it('fixed text longer than a template may hold is a label: built as the constant, as before', () => {
+    const { a, pf } = analyze(pairWith({ header: 'Region', value: 'North and the whole coastal area' }));
+    const out = a.columns.findIndex((c) => c.header === 'Region');
+    expect(a.columns[out]!.derivableConstant).toBeUndefined();
+    expect(findRel(a, out, 'constant')).toBeDefined();
+    expect('rules' in fastPath(a, pf)).toBe(true);
+  });
+});
+
 describe('with another column the free engine cannot build', () => {
   it('only the other column is missing for the AI step: the question is the user\'s, the completion plan does not list it', () => {
     const input: V[][] = [['Ref', 'Item', 'Employee']];
