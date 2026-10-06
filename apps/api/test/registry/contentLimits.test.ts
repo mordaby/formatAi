@@ -19,9 +19,13 @@ import { edited, makeCaller, saveBody, sourceOne, sourceTwo } from './helpers.js
 const bigMap = (r: LearnResult | Rules): void => {
   r.transform.valueMaps = [{ column: 'id', map: Object.fromEntries(Array.from({ length: limits.rules.maxValueMapEntries + 1 }, (_, i) => [`k${i}`, `v${i}`])), onMissing: 'keep' }];
 };
-/** Over the value cap: a title of 201 characters. */
+/** Over the value cap: a label of 201 characters (the total's value written as text). */
+const longLabel = (r: LearnResult | Rules): void => {
+  r.transform.computed = [...r.transform.computed, { id: 'note', type: 'text', expr: { const: 'x'.repeat(limits.rules.maxValueChars + 1) } }];
+};
+/** Over the title cap: a title of 501 characters (a title is held to 500, not 200). */
 const longTitle = (r: LearnResult | Rules): void => {
-  r.output.titleRows = [{ text: 'x'.repeat(limits.rules.maxValueChars + 1) }];
+  r.output.titleRows = [{ text: 'x'.repeat(limits.rules.maxTitleChars + 1) }];
 };
 /** Over the version cap: a table nobody reads would go, so a value map just within the entry cap, with long keys (about 70 KB). */
 const bigRules = (r: LearnResult | Rules): void => {
@@ -29,7 +33,8 @@ const bigRules = (r: LearnResult | Rules): void => {
 };
 const OVER: [string, (r: LearnResult | Rules) => void][] = [
   ['a value map of 501 entries', bigMap],
-  ['a value of 201 characters', longTitle],
+  ['a value of 201 characters', longLabel],
+  ['a title of 501 characters', longTitle],
   ['rules over 64 KB', bigRules],
 ];
 
@@ -41,8 +46,10 @@ describe('checkRulesFile: the caps come first, as a plain refusal', () => {
     expect(checkRulesFile(stored(edited(sourceOne(), over)), 'paid')).toEqual({ ok: false, onlyRuleLimit: false, tooLarge: true, problems: [] });
   });
 
-  it('within the caps: as before', () => {
+  it('within the caps: as before - a title of 500 characters included', () => {
     expect(checkRulesFile(stored(sourceOne()), 'paid').ok).toBe(true);
+    const titled = edited(sourceOne(), (r) => void (r.output.titleRows = [{ text: 'x'.repeat(limits.rules.maxTitleChars) }]));
+    expect(checkRulesFile(stored(titled), 'paid').ok).toBe(true);
   });
 
   it('the error has its own texts, in both languages', () => {

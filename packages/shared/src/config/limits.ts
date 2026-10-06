@@ -190,13 +190,16 @@ export const limits = {
      * capped (`maxTables` x `maxTableRows`), but a value map's entries, the length of a value and the size of a format's rules were not:
      *   - `maxValueMapEntries`: entries in one value map (`transform.valueMaps[].map`), as many as a table's rows;
      *   - `maxValueChars`: characters of any one value the rules keep - a label or a constant in an expression, a table cell, a value map's
-     *     key or value, a condition's constant, a filter's or a check's value, a "read as" text, a title or a summary row's label;
+     *     key or value, a condition's constant, a filter's or a check's value, a "read as" text, a "stop at" text;
+     *   - `maxTitleChars`: characters of a title row's text and of a summary row's label (coordinator follow-up, 2026-10-06: a title is a
+     *     sentence of the format's own, longer than a label);
      *   - `maxRulesBytes`: the UTF-8 bytes of one version's rules (compact JSON), well under the request cap (`api.maxBodyBytes`, 256 KB).
      * Checked by the engine's `checkLimits` (the browser's live check, the API's checks of an AI answer) and by the server on every route that
      * stores rules, which refuses a save over any of them with 400 `rulesTooLarge` (the browser checks first, so a user never sees it in normal use).
      */
     maxValueMapEntries: 500,
     maxValueChars: 200,
+    maxTitleChars: 500,
     maxRulesBytes: 65_536,
   },
   /**

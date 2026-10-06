@@ -296,8 +296,8 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
     he: 'אי אפשר לשמור את הכללים האלה עדיין. תקנו את הבעיות המסומנות ונסו שוב.',
   },
   rulesTooLarge: {
-    en: "This format is too large to save: a list or a value in its rules is longer than a saved format may keep. Shorten it and try again.",
-    he: 'הפורמט הזה גדול מדי לשמירה: רשימה או ערך בכללים שלו ארוכים יותר ממה שפורמט שמור יכול להכיל. קצרו אותם ונסו שוב.',
+    en: "This format is too large to save: a list, a value or a title in its rules is longer than a saved format may keep. Shorten it and try again.",
+    he: 'הפורמט הזה גדול מדי לשמירה: רשימה, ערך או כותרת בכללים שלו ארוכים יותר ממה שפורמט שמור יכול להכיל. קצרו אותם ונסו שוב.',
   },
   formatMismatch: {
     en: "This file's output doesn't match the format. See which columns differ and fix them, or save it as a new format.",

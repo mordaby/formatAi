@@ -389,8 +389,12 @@ describe('runStaticChecks: the caps of a saved format', () => {
     expect(problems.map((p) => p.message)).toEqual([`the value map on "${shown.from}" has 501 entries, exceeding the maximum of 500`]);
     expect(explainStaticProblems(mapped, problems).map((p) => p.text)).toEqual([`Column "${shown.header}" is too big: the value map on "${shown.from}" has 501 entries, exceeding the maximum of 500.`]);
 
-    const titled: LearnResult = { ...rules, output: { ...rules.output, titleRows: [{ text: 'x'.repeat(201) }] } };
-    const long = runStaticChecks(titled, { tier: 'paid' }).filter((p) => p.layer === 'limits');
-    expect(explainStaticProblems(titled, long).map((p) => p.text)).toEqual(['Title row 1 is too big: a value of 201 characters, exceeding the maximum of 200 characters for one value.']);
+    // A title is held to 500 characters (a sentence of the format's own), a label to 200.
+    const titled = (n: number): LearnResult => ({ ...rules, output: { ...rules.output, titleRows: [{ text: 'x'.repeat(n) }] } });
+    expect(runStaticChecks(titled(500), { tier: 'paid' }).filter((p) => p.layer === 'limits')).toEqual([]);
+    const long = runStaticChecks(titled(501), { tier: 'paid' }).filter((p) => p.layer === 'limits');
+    expect(explainStaticProblems(titled(501), long).map((p) => p.text)).toEqual(["Title row 1 is too big: a title of 501 characters, exceeding the maximum of 500 characters for a title or a summary row's label."]);
+    const label: LearnResult = { ...rules, transform: { ...rules.transform, computed: [...rules.transform.computed, { id: 'note', type: 'text', expr: { const: 'x'.repeat(201) } }] } };
+    expect(runStaticChecks(label, { tier: 'paid' }).filter((p) => p.layer === 'limits').map((p) => p.message)).toEqual(['a value of 201 characters, exceeding the maximum of 200 characters for one value']);
   });
 });

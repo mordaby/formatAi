@@ -175,8 +175,24 @@ describe('withoutIdentifiers: "Save without them"', () => {
 });
 
 describe('the size caps (section 7)', () => {
-  it('the config values the owner approved', () => {
-    expect(limits.rules).toMatchObject({ maxValueMapEntries: 500, maxValueChars: 200, maxRulesBytes: 65_536 });
+  it('the config values the owner approved (and 500 characters for a title)', () => {
+    expect(limits.rules).toMatchObject({ maxValueMapEntries: 500, maxValueChars: 200, maxTitleChars: 500, maxRulesBytes: 65_536 });
+  });
+
+  it('a title row or a summary row\'s label: 500 characters is fine, 501 is over; a "stop at" text stays at 200', () => {
+    const base = rules();
+    const titled = (n: number): LearnResult => ({ ...base, output: { ...base.output, titleRows: [{ text: 'x'.repeat(n) }, { parts: [{ text: 'y'.repeat(10) }] }] } });
+    expect(contentLimitProblems(titled(500))).toEqual([]);
+    expect(contentLimitProblems(titled(501))).toEqual([{ code: 'titleChars', path: 'output.titleRows[0]', chars: 501, max: 500 }]);
+    const summed = (n: number): LearnResult => ({ ...base, output: { ...base.output, summaryRows: [{ label: 'z'.repeat(n), cells: {} }] } });
+    expect(contentLimitProblems(summed(500))).toEqual([]);
+    expect(contentLimitProblems(summed(501)).map((p) => p.code)).toEqual(['titleChars']);
+    const grouped: LearnResult = { ...base, transform: { ...base.transform, group: { by: 'type', showDetailRows: true, summaryRows: [{ label: 'g'.repeat(501), cells: {} }] } } };
+    expect(contentLimitProblems(grouped).map((p) => p.code === 'titleChars' && p.path)).toEqual(['transform.group.summaryRows[0]']);
+    const stop = (n: number): LearnResult => ({ ...base, input: { ...base.input, stopAt: { when: 'firstCellMatches', values: ['s'.repeat(n)] } } });
+    expect(contentLimitProblems(stop(200))).toEqual([]);
+    expect(contentLimitProblems(stop(201)).map((p) => p.code)).toEqual(['valueChars']);
+    expect(contentLimitMessage(contentLimitProblems(titled(501))[0]!)).toBe("a title of 501 characters, exceeding the maximum of 500 characters for a title or a summary row's label");
   });
 
   it('a value map of 500 entries is fine, 501 is over', () => {

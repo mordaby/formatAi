@@ -221,6 +221,11 @@ describe('checkLimits: function/table counts, table rows, duplicate keys, cycles
     expect(checkLimits(label(200), 'paid')).toEqual([]);
     expect(checkLimits(label(201), 'paid')).toEqual([{ kind: 'limit', path: 'transform.computed[0].expr', message: 'a value of 201 characters, exceeding the maximum of 200 characters for one value' }]);
 
+    // A title row's text (or a summary row's label) is held to 500 characters, not 200.
+    const titled = (n: number): LearnResult => baseRules({ output: { sheetName: 'Out', direction: 'ltr', language: 'en', titleRows: [{ text: 't'.repeat(n) }], columns: [] } });
+    expect(checkLimits(titled(500), 'paid')).toEqual([]);
+    expect(checkLimits(titled(501), 'paid')).toEqual([{ kind: 'limit', path: 'output.titleRows[0]', message: "a title of 501 characters, exceeding the maximum of 500 characters for a title or a summary row's label" }]);
+
     const rows = Array.from({ length: 480 }, (_, i) => [`key-${i}`, 'v'.repeat(140)]);
     const big = baseRules({ transform: { computed: [], valueMaps: [], sort: [], tables: [{ name: 't', columns: ['k', 'v'], rows }] } });
     expect(checkLimits(big, 'paid').map((p) => p.message)).toEqual([expect.stringMatching(/^the rules take \d+ bytes, exceeding the maximum of 65536 bytes for one format$/)]);

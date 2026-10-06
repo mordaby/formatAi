@@ -5,7 +5,8 @@
 //   - identifier-shaped values (section 5, `identifierFindings`): an ID number, a phone, an email, a card or an IBAN anywhere in the rules
 //     goes to the one popup at Save - "Target customer keeps an ID number in its rules" - whatever kind the rule is. Keep saves it as it is;
 //     "Save without them" takes it out (`withoutIdentifiers`). One the server already holds is not asked again (`identifiersToConfirm`).
-//   - the size caps (section 7, `contentLimitProblems`): entries in one value map, characters of one value, bytes of one version's rules.
+//   - the size caps (section 7, `contentLimitProblems`): entries in one value map, characters of one value (of a title or a summary row's
+//     label: `limits.rules.maxTitleChars`; of anything else: `maxValueChars`), bytes of one version's rules.
 //     The engine's `checkLimits` reports them (the browser's live check), and the server refuses a save over any of them (400 `rulesTooLarge`).
 //
 // Where a value sits, and so which column a popup line names:
@@ -42,6 +43,8 @@ export interface SavedValue {
   place: SavedPlace;
   /** Where in the rules (a dotted path, like the checkers' problems), so a size problem can name its line in the editor. */
   path: string;
+  /** A title row's text or a summary row's label: held to `limits.rules.maxTitleChars` instead of `maxValueChars`. */
+  title?: true;
 }
 
 /** The reason a column saved without its identifier is reported with ("needs your input"). */
@@ -164,8 +167,8 @@ export function savedValues(rules: AnyRules): SavedValue[] {
   const out: SavedValue[] = [];
   const reach = reachOf(rules);
   const headersWhere = (test: (r: Refs, i: number) => boolean): string[] => rules.output.columns.flatMap((c, i) => (test(reach[i]!, i) ? [c.header] : []));
-  const push = (values: readonly unknown[], place: SavedPlace, path: string): void => {
-    for (const v of values) if (isValue(v)) out.push({ value: v, place, path });
+  const push = (values: readonly unknown[], place: SavedPlace, path: string, title = false): void => {
+    for (const v of values) if (isValue(v)) out.push({ value: v, place, path, ...(title ? { title: true as const } : {}) });
   };
   const inputHeader = new Map(rules.input.columns.map((c) => [c.id, c.header] as const));
   /** The column a filter or a check reads, as the user knows it: an input column's header, or the output column that shows a computed one. */
@@ -212,15 +215,16 @@ export function savedValues(rules: AnyRules): SavedValue[] {
     else if (v.rule === 'sameAs') push(exprValues(v.expr, []), place, `validations[${i}]`);
   });
 
+  // (titles and summary rows' labels: the format's own sentences, held to `maxTitleChars`)
   rules.output.titleRows.forEach((t, i) => {
-    if ('text' in t) push([t.text], { kind: 'layout' }, `output.titleRows[${i}]`);
-    else if ('parts' in t) push(t.parts.flatMap((p) => ('text' in p ? [p.text] : [])), { kind: 'layout' }, `output.titleRows[${i}]`);
+    if ('text' in t) push([t.text], { kind: 'layout' }, `output.titleRows[${i}]`, true);
+    else if ('parts' in t) push(t.parts.flatMap((p) => ('text' in p ? [p.text] : [])), { kind: 'layout' }, `output.titleRows[${i}]`, true);
   });
-  (rules.output.summaryRows ?? []).forEach((s, i) => push(s.label === undefined ? [] : [s.label], { kind: 'layout' }, `output.summaryRows[${i}]`));
-  (rules.transform.group?.summaryRows ?? []).forEach((s, i) => push(s.label === undefined ? [] : [s.label], { kind: 'layout' }, `transform.group.summaryRows[${i}]`));
+  (rules.output.summaryRows ?? []).forEach((s, i) => push(s.label === undefined ? [] : [s.label], { kind: 'layout' }, `output.summaryRows[${i}]`, true));
+  (rules.transform.group?.summaryRows ?? []).forEach((s, i) => push(s.label === undefined ? [] : [s.label], { kind: 'layout' }, `transform.group.summaryRows[${i}]`, true));
   const legacy = rules as { output: { grandTotal?: { label: string } }; transform: { group?: { subtotal?: { label: string } } } };
-  if (legacy.output.grandTotal) push([legacy.output.grandTotal.label], { kind: 'layout' }, 'output.grandTotal');
-  if (legacy.transform.group?.subtotal) push([legacy.transform.group.subtotal.label], { kind: 'layout' }, 'transform.group.subtotal');
+  if (legacy.output.grandTotal) push([legacy.output.grandTotal.label], { kind: 'layout' }, 'output.grandTotal', true);
+  if (legacy.transform.group?.subtotal) push([legacy.transform.group.subtotal.label], { kind: 'layout' }, 'transform.group.subtotal', true);
   return out;
 }
 
@@ -363,10 +367,11 @@ export function withoutIdentifiers<R extends AnyRules>(rules: R, lines: readonly
 // The size caps (section 7)
 // ---------------------------------------------------------------------------
 
-/** One cap a rules file is over (`limits.rules`): a value map's entries, a value's characters, the rules' bytes. */
+/** One cap a rules file is over (`limits.rules`): a value map's entries, a value's or a title's characters, the rules' bytes. */
 export type ContentLimitProblem =
   | { code: 'valueMapEntries'; path: string; column: string; entries: number; max: number }
   | { code: 'valueChars'; path: string; chars: number; max: number }
+  | { code: 'titleChars'; path: string; chars: number; max: number }
   | { code: 'rulesBytes'; bytes: number; max: number };
 
 /** The UTF-8 length of a text, without encoding it. */
@@ -390,11 +395,12 @@ export function rulesBytes(rules: unknown): number {
 }
 
 /**
- * The caps a rules file is over (`limits.rules.maxValueMapEntries`, `maxValueChars`, `maxRulesBytes`): each value map with more entries, each
- * place with a longer value (one problem per path: its longest value), and the whole file when it is larger. [] when it is within them.
+ * The caps a rules file is over (`limits.rules.maxValueMapEntries`, `maxValueChars`, `maxTitleChars`, `maxRulesBytes`): each value map with more
+ * entries, each place with a longer value (one problem per path: its longest value; a title or a summary row's label against the title cap),
+ * and the whole file when it is larger. [] when it is within them.
  */
 export function contentLimitProblems(rules: AnyRules): ContentLimitProblem[] {
-  const { maxValueMapEntries, maxValueChars, maxRulesBytes } = limits.rules;
+  const { maxValueMapEntries, maxValueChars, maxTitleChars, maxRulesBytes } = limits.rules;
   const problems: ContentLimitProblem[] = [];
   const maps = rules?.transform?.valueMaps;
   if (Array.isArray(maps)) {
@@ -403,12 +409,14 @@ export function contentLimitProblems(rules: AnyRules): ContentLimitProblem[] {
       if (entries > maxValueMapEntries) problems.push({ code: 'valueMapEntries', path: `transform.valueMaps[${i}]`, column: m.column, entries, max: maxValueMapEntries });
     });
   }
-  const longest = new Map<string, number>();
+  const longest = new Map<string, { chars: number; title: boolean }>();
   for (const v of savedValues(rules)) {
-    if (typeof v.value !== 'string' || v.value.length <= maxValueChars) continue;
-    longest.set(v.path, Math.max(longest.get(v.path) ?? 0, v.value.length));
+    if (typeof v.value !== 'string' || v.value.length <= (v.title ? maxTitleChars : maxValueChars)) continue;
+    longest.set(v.path, { chars: Math.max(longest.get(v.path)?.chars ?? 0, v.value.length), title: v.title === true });
   }
-  for (const [path, chars] of longest) problems.push({ code: 'valueChars', path, chars, max: maxValueChars });
+  for (const [path, { chars, title }] of longest) {
+    problems.push(title ? { code: 'titleChars', path, chars, max: maxTitleChars } : { code: 'valueChars', path, chars, max: maxValueChars });
+  }
   const bytes = rulesBytes(rules);
   if (bytes > maxRulesBytes) problems.push({ code: 'rulesBytes', bytes, max: maxRulesBytes });
   return problems;
@@ -421,6 +429,8 @@ export function contentLimitMessage(p: ContentLimitProblem): string {
       return `the value map on "${p.column}" has ${p.entries} entries, exceeding the maximum of ${p.max}`;
     case 'valueChars':
       return `a value of ${p.chars} characters, exceeding the maximum of ${p.max} characters for one value`;
+    case 'titleChars':
+      return `a title of ${p.chars} characters, exceeding the maximum of ${p.max} characters for a title or a summary row's label`;
     case 'rulesBytes':
       return `the rules take ${p.bytes} bytes, exceeding the maximum of ${p.max} bytes for one format`;
   }

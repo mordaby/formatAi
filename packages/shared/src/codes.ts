@@ -149,7 +149,8 @@ export const API_ERROR_CODES = [
   // 422: the rules file failed the checks (structure, references, types, limits); `problems` says which.
   'invalidRules',
   // 400 (docs/proposals/saved-format-contents.md section 7; SPEC 11, 21 v15): the rules are over a cap of what one saved format may keep - a
-  // value map's entries, one value's characters, or one version's size (`limits.rules.maxValueMapEntries` / `maxValueChars` / `maxRulesBytes`).
+  // value map's entries, one value's or one title's characters, or one version's size (`limits.rules.maxValueMapEntries` / `maxValueChars` /
+  // `maxTitleChars` / `maxRulesBytes`).
   // Every route that stores rules refuses it; the browser checks the same caps first.
   'rulesTooLarge',
   // 422: attach / restore - the rules don't reproduce the format; `problems` are `formatMismatch` ones.

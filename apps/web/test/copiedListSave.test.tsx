@@ -651,8 +651,8 @@ describe('a save over a cap of what a saved format may keep', () => {
     await press(en ? 'Save format' : 'שמירת הפורמט');
     await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
     const text = en
-      ? 'This format is too large to save: a list or a value in its rules is longer than a saved format may keep. Shorten it and try again.'
-      : 'הפורמט הזה גדול מדי לשמירה: רשימה או ערך בכללים שלו ארוכים יותר ממה שפורמט שמור יכול להכיל. קצרו אותם ונסו שוב.';
+      ? 'This format is too large to save: a list, a value or a title in its rules is longer than a saved format may keep. Shorten it and try again.'
+      : 'הפורמט הזה גדול מדי לשמירה: רשימה, ערך או כותרת בכללים שלו ארוכים יותר ממה שפורמט שמור יכול להכיל. קצרו אותם ונסו שוב.';
     expect(await screen.findByText(text)).toBeTruthy();
   });
 });
