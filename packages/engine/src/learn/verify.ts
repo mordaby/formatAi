@@ -162,6 +162,8 @@ function actualCellValue(cell: OutCell | undefined): PayloadCell {
 interface Seen {
   v: PayloadCell;
   date: boolean;
+  /** A date the rules made: the text a csv / txt file writes for it (its column's date format), when known. */
+  text?: string;
 }
 
 function expectedSeen(cell: RawCell | null | undefined, date1904 = false): Seen {
@@ -169,7 +171,8 @@ function expectedSeen(cell: RawCell | null | undefined, date1904 = false): Seen 
 }
 
 function actualSeen(cell: OutCell | undefined): Seen {
-  return { v: actualCellValue(cell), date: cell?.isDate === true && typeof cell.v === 'number' };
+  const date = cell?.isDate === true && typeof cell.v === 'number';
+  return { v: actualCellValue(cell), date, ...(date && cell?.text !== undefined ? { text: cell.text } : {}) };
 }
 
 /** Numbers compare with a small epsilon (a decimal.js value that round-trips through
@@ -194,9 +197,11 @@ const PLAIN_NUMBER_TEXT = /^-?\d+(\.\d+)?$/;
  * The one exception is a csv/txt example output: its cells are always strings (`RawCell.v`: "CSV cells are always
  * strings"), so a real "12" cell matches the engine's own number 12, which the delimited writer writes as plain
  * digits. Only such a plain digit string qualifies - never one with a currency sign, grouping or a percent sign,
- * which the writer would not reproduce.
+ * which the writer would not reproduce. A date the rules make is compared the same way, by the text the writer
+ * writes for it (its column's date format): "2024-09-28" in the example is not the date written "28/09/2024".
  */
 function cellsMatch(expected: Seen, actual: Seen, delimited: boolean): boolean {
+  if (delimited && actual.date && !expected.date && actual.text !== undefined) return typeof expected.v === 'string' && expected.v === actual.text;
   if (expected.date !== actual.date && !(delimited && !expected.date)) return false;
   if (valuesEqual(expected.v, actual.v)) return true;
   if (delimited && typeof expected.v === 'string' && typeof actual.v === 'number') {
