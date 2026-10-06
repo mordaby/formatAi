@@ -1,17 +1,21 @@
 // Identifier-shaped values (docs/proposals/saved-format-contents.md section 5; `identifiers.ts`): the five shapes code recognizes with
-// certainty - an Israeli ID (check digit), a phone (fixed formats), an email, a card (Luhn), an IBAN (mod-97) - and, as decided by the owner,
-// NO digit-run rule: a ledger account, an item code or a barcode used as a label is never one of them.
+// certainty - an Israeli ID (check digit), a phone (a numbering plan), an email, a card (issuer and Luhn), an IBAN (mod-97), each checked by
+// validator.js since the column classification (owner, 2026-10-06) - and, as decided by the owner, NO digit-run rule: a ledger account, an
+// item code or a barcode used as a label is never one of them.
+import isLuhnNumber from 'validator/lib/isLuhnNumber.js';
 import { describe, expect, it } from 'vitest';
 import {
   identifierKindOf,
+  identifierShapeOf,
   isCardNumber,
   isEmailAddress,
   isIban,
   isIsraeliIdNumber,
   isPhoneNumber,
   isValidIsraeliId,
-  luhnValid,
 } from '../src/identifiers';
+
+const luhnValid = (digits: string): boolean => isLuhnNumber(digits);
 
 describe('an Israeli ID number', () => {
   it('9 digits with a valid check digit', () => {
@@ -45,7 +49,7 @@ describe('no digit-run rule: ledger accounts, item codes and barcodes are labels
 });
 
 describe('a phone number', () => {
-  it.each(['050-1234567', '0501234567', '052 123 4567', '03-1234567', '031234567', '(03) 123-4567', '072-2123456', '+972-50-123-4567', '+972501234567', '+1 (212) 555-0123', '+44 20 7946 0958'])(
+  it.each(['050-1234567', '0501234567', '052 123 4567', '03-1234567', '031234567', '(03) 123-4567', '077-2123456', '+972-50-123-4567', '+972501234567', '+1 (212) 555-0123', '+44 7911 123456'])(
     '%s is a phone',
     (v) => {
       expect(isPhoneNumber(v)).toBe(true);
@@ -54,6 +58,12 @@ describe('a phone number', () => {
   );
 
   it.each(['1234567890', '0601234567', '01-1234567', '+0501234567', '+12345', '05012345', 'call 05'])('%s is not', (v) => {
+    expect(isPhoneNumber(v)).toBe(false);
+  });
+
+  // DECISION (column classification, 2026-10-06): validator's plans, not our own pattern. Its Israeli plan has 077 among the 07x numbers, and
+  // abroad it knows mobile plans only; libphonenumber-js knows every plan but adds about 120 KB to each bundle (the report has the numbers).
+  it.each(['072-2123456', '+44 20 7946 0958'])('%s (an Israeli VoIP number other than 077, a landline abroad) is no longer recognized', (v) => {
     expect(isPhoneNumber(v)).toBe(false);
   });
 
@@ -131,5 +141,30 @@ describe('inside a longer label', () => {
     expect(identifierKindOf('קטנה')).toBeNull();
     expect(identifierKindOf(-123456782)).toBeNull();
     expect(identifierKindOf(123456782.5)).toBeNull();
+  });
+});
+
+describe('identifierShapeOf: one cell of a column, whole (the engine\'s column classification)', () => {
+  it('each shape, as text, with the marks and spaces a cell may carry', () => {
+    expect(identifierShapeOf('123456782')).toBe('israeliId');
+    expect(identifierShapeOf('\u200f 123456782 ')).toBe('israeliId');
+    expect(identifierShapeOf('050-1234567')).toBe('phone');
+    expect(identifierShapeOf('050\u00a01234567')).toBe('phone');
+    expect(identifierShapeOf('dana@example.com')).toBe('email');
+    expect(identifierShapeOf('4580 1234 5678 9010')).toBeNull(); // Luhn fails
+    expect(identifierShapeOf('4111 1111 1111 1111')).toBe('card');
+    expect(identifierShapeOf('IL62 0108 0000 0009 9999 999')).toBe('iban');
+  });
+
+  it('a number: an ID of 9 digits or a card; a price, a ledger account or a 9-digit code failing the check digit is none', () => {
+    expect(identifierShapeOf(123456782)).toBe('israeliId');
+    expect(identifierShapeOf(4111111111111111)).toBe('card');
+    for (const v of [1250000, 61000100, 123456789, 12345674, 501234567, 99.5]) expect(identifierShapeOf(v)).toBeNull();
+  });
+
+  it('only the whole cell: a label with an ID inside is the Save popup\'s word-by-word check, not a cell shape', () => {
+    expect(identifierShapeOf('Target customer 123456782')).toBeNull();
+    expect(identifierKindOf('Target customer 123456782')).toBe('israeliId');
+    expect(identifierShapeOf('Expense account 61000100')).toBeNull();
   });
 });

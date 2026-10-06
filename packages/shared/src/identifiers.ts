@@ -1,112 +1,88 @@
-// Identifier-shaped values (docs/proposals/saved-format-contents.md section 5; SPEC 21 v15): a value a saved format would keep - a label, a
-// table key or value, a condition's constant, a "Do this every time?" fix - is checked against the shapes code recognizes with CERTAINTY:
-//   - an Israeli ID number: exactly 9 digits with a valid check digit (`isValidIsraeliId`);
-//   - a phone number: Israeli mobile / VoIP (05x / 07x, 10 digits), a landline (02 / 03 / 04 / 08 / 09, 9 digits), or an international `+`
-//     form (`+` and 8 to 15 digits: +972 ... is one of them);
-//   - an email address;
-//   - a card number: 13 to 19 digits, Luhn-valid, starting with 2-6 (the payment cards' major industry identifiers);
-//   - an IBAN: a country code, two check digits and 11 to 30 letters or digits, mod-97 valid.
-// A match goes to the one popup at Save ("Target customer keeps an ID number in its rules"); nothing else is done with it here.
+// Identifier-shaped values (SPEC 21 v15 item 3; column classification, owner 2026-10-06). The five shapes code recognizes, each checked by
+// a maintained library - validator.js, one file per check so a bundle takes only these:
+//   - an Israeli ID number: `isIdentityCard(s, 'he-IL')` - exactly 9 digits with a valid check digit;
+//   - a phone number: `isMobilePhone` - Israel's numbering plan ('he-IL': 05x mobiles, 02 / 03 / 04 / 08 / 09 landlines, 077) for a number
+//     written with a leading 0 or +972, and every country validator knows for another `+` number (its mobile plans);
+//   - an email address: `isEmail`;
+//   - a card number: `isCreditCard` - a known issuer's prefix and length, and the Luhn check;
+//   - an IBAN: `isIBAN` - the country's format and the mod-97 check.
+// One implementation, two users: the Save popup (`identifierKindOf`: a value a saved format would keep, whole and then word by word) and the
+// engine's column classification (`identifierShapeOf`: one cell, whole - `learn/classify.ts`).
 //
-// DECISIONS (conservative: a popup on the bookkeepers' most common format would be worse than none):
-//   - NO digit-run rule (owner, 2026-10-06). Accounting formats map to ledger account numbers, item codes and barcodes as labels all the time
-//     (`expense -> 61000100`); only a shape with a check digit or a fixed format counts. A 9-digit code passes the ID check 1 time in 10:
-//     the popup then asks once, and Keep keeps it.
-//   - A card starts with 2-6: an Israeli barcode (EAN-13, 729...) is 13 digits and passes Luhn 1 time in 10 too, but starts with 7.
+// DECISIONS (code adds only the gates the library leaves open; conservative: a popup on the bookkeepers' most common format would be worse
+// than none):
+//   - NO digit-run rule (owner, 2026-10-06). Ledger account numbers, item codes and barcodes are labels all the time (`expense -> 61000100`);
+//     only a shape with a check digit or a fixed format counts. A 9-digit code passes the ID check 1 time in 10: the popup then asks once.
+//   - A card is 13 to 19 digits (spaces or dashes between them): validator's issuer patterns alone let a short number starting 51-55 through.
+//     An Israeli barcode (EAN-13, 729...) passes Luhn 1 time in 10 too, but no issuer starts with 7.
+//   - A phone is written with a leading 0 or `+` (separators removed first: validator reads bare digits); without them it is any number.
 //   - A NUMBER is checked as an ID (9 digits) or a card (13 to 16 digits, the safe integers) only: a phone stored as a number has lost its
 //     leading zero, and so has an ID of 8 digits - both then look like any other number, and an amount is never an identifier.
-//   - The whole value is checked first (separators allowed: "03-123 4567", "4580 1234 5678 9010", "IL62 0108 0000 0009 9999 999"), then each
-//     word of a longer text ("ID 123456782", "write to dana@example.com"): a label may hold an identifier beside other words.
 //   - All zeros is no ID ("000000000" passes the check digit) and no card.
 // Values are never logged: a caller reports the column and the kind found.
 //
-// Pure; shared by the browser (the Save popup), the engine and the eval.
+// Pure; shared by the browser (the Save popup, the engine's worker), the server and the eval.
+import isCreditCard from 'validator/lib/isCreditCard.js';
+import isEmail from 'validator/lib/isEmail.js';
+import isIBANModule from 'validator/lib/isIBAN.js';
+import isIdentityCard from 'validator/lib/isIdentityCard.js';
+import isMobilePhoneModule from 'validator/lib/isMobilePhone.js';
+
+/**
+ * A validator function from its CommonJS file: a bundler hands over `exports.default`; Node hands over the module itself for the two
+ * files that export more than one name (`isIBAN`, `isMobilePhone`), whose function is then its `default`.
+ */
+function unwrap<F extends (...args: never[]) => unknown>(f: F): F {
+  return typeof f === 'function' ? f : (f as unknown as { default: F }).default;
+}
+const isIBAN = unwrap(isIBANModule);
+const isMobilePhone = unwrap(isMobilePhoneModule);
 
 export const IDENTIFIER_KINDS = ['israeliId', 'phone', 'email', 'card', 'iban'] as const;
 export type IdentifierKind = (typeof IDENTIFIER_KINDS)[number];
 
 /**
- * True when `s` is 1-9 digits that, once left-padded to 9 digits, pass the standard Israeli ID check-digit algorithm (alternating weights
- * 1/2, digits of a weighted product >= 10 are summed, total must be a multiple of 10). (The engine's masker and the `israeliIdChecksum`
- * check read it from here.)
+ * True when `s` is 1-9 digits that, once left-padded to 9 digits, pass the Israeli ID check digit (the library's). For an ID that lost its
+ * leading zeros as a number: the engine's masker, the profile and the `israeliIdChecksum` check read it from here.
  */
 export function isValidIsraeliId(s: string): boolean {
-  if (!/^\d{1,9}$/.test(s)) return false;
-  const id = s.padStart(9, '0');
-  let sum = 0;
-  for (let i = 0; i < 9; i++) {
-    const weight = (i % 2) + 1;
-    let digit = Number(id[i]) * weight;
-    if (digit > 9) digit -= 9;
-    sum += digit;
-  }
-  return sum % 10 === 0;
+  return /^\d{1,9}$/.test(s) && isIdentityCard(s.padStart(9, '0'), 'he-IL');
 }
 
-/** An Israeli ID number as a saved value: exactly 9 digits (no padding: an 8-digit code is not an ID), a valid check digit, not all zeros. */
+/** An Israeli ID number as a value: exactly 9 digits (no padding: an 8-digit code is not an ID), a valid check digit, not all zeros. */
 export function isIsraeliIdNumber(text: string): boolean {
-  return /^\d{9}$/.test(text) && !/^0+$/.test(text) && isValidIsraeliId(text);
+  return /^\d{9}$/.test(text) && !/^0+$/.test(text) && isIdentityCard(text, 'he-IL');
 }
 
-/** The separators a phone, a card or an IBAN may be written with. */
-const SEPARATORS = /[\s\-.()]/g;
+/** The separators a phone may be written with. */
+const PHONE_SEPARATORS = /[\s\-.()]/g;
 
-/** A phone number: Israeli 05x / 07x (10 digits) or a landline 02 / 03 / 04 / 08 / 09 (9 digits), or `+` and 8 to 15 digits. */
+/** A phone number: Israel's numbering plan (a leading 0 or +972), or a `+` number of a country the library knows. */
 export function isPhoneNumber(text: string): boolean {
   const t = text.trim();
   if (!/^\+?[\d\s\-.()]+$/.test(t)) return false;
-  const s = t.replace(SEPARATORS, '');
-  if (s.startsWith('+')) return /^\+[1-9]\d{7,14}$/.test(s);
-  return /^0[57]\d{8}$/.test(s) || /^0[2-489]\d{7}$/.test(s);
+  const s = t.replace(PHONE_SEPARATORS, '');
+  if (s.startsWith('+')) return isMobilePhone(s, 'any', { strictMode: true });
+  return s.startsWith('0') && isMobilePhone(s, 'he-IL');
 }
 
-/** An email address (an ASCII local part, a domain with at least one dot, a top-level domain of letters). */
+/** An email address. */
 export function isEmailAddress(text: string): boolean {
-  return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/.test(text.trim());
+  return isEmail(text.trim());
 }
 
-/** The Luhn check of a digit string. */
-export function luhnValid(digits: string): boolean {
-  if (!/^\d+$/.test(digits)) return false;
-  let sum = 0;
-  for (let i = 0; i < digits.length; i++) {
-    let d = Number(digits[digits.length - 1 - i]);
-    if (i % 2 === 1) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-  }
-  return sum % 10 === 0;
-}
-
-/** A card number: 13 to 19 digits (single spaces or dashes between them allowed), starting with 2-6, Luhn-valid, not all zeros. */
+/** A card number: 13 to 19 digits (single spaces or dashes between them allowed), not all zeros, a known issuer and the Luhn check. */
 export function isCardNumber(text: string): boolean {
   const t = text.trim();
-  if (!/^\d(?:[ -]?\d){12,18}$/.test(t)) return false;
-  const s = t.replace(/[ -]/g, '');
-  return /^[2-6]/.test(s) && !/^0+$/.test(s) && luhnValid(s);
+  return /^\d(?:[ -]?\d){12,18}$/.test(t) && !/^[0 -]+$/.test(t) && isCreditCard(t);
 }
 
-/** The mod-97 of a long number written as text (IBAN check, ISO 13616), digit by digit. */
-function mod97(digits: string): number {
-  let r = 0;
-  for (const ch of digits) r = (r * 10 + Number(ch)) % 97;
-  return r;
-}
-
-/** An IBAN: a country code, check digits 02-98 and 11 to 30 letters or digits (spaces allowed), whose mod-97 is 1. */
+/** An IBAN (spaces allowed): the country's format and the mod-97 check. */
 export function isIban(text: string): boolean {
-  const s = text.trim().replace(/\s+/g, '').toUpperCase();
-  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(s)) return false;
-  const check = Number(s.slice(2, 4));
-  if (check < 2 || check > 98) return false;
-  const moved = s.slice(4) + s.slice(0, 4);
-  const digits = moved.replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
-  return mod97(digits) === 1;
+  return isIBAN(text.trim().replace(/\s+/g, '').toUpperCase());
 }
 
-/** The kind of a whole value (text), or null. An ID before a phone: a 9-digit landline shape that passes the check digit is an ID. */
+/** The kind of a whole text value, or null. An ID before a phone: a 9-digit landline shape that passes the check digit is an ID. */
 function kindOfText(t: string): IdentifierKind | null {
   if (t.includes('@')) return isEmailAddress(t) ? 'email' : null;
   if (/^[A-Za-z]{2}\d/.test(t)) return isIban(t) ? 'iban' : null;
@@ -116,14 +92,14 @@ function kindOfText(t: string): IdentifierKind | null {
   return null;
 }
 
-/** Where a longer text is split into words: spaces and the punctuation a label puts around a value. */
-const WORD_BREAKS = /[\s,;:()[\]{}<>"'|/\\]+/;
+/** Direction marks and isolates a cell may carry around its text (they are invisible, and no shape holds one). */
+const BIDI_MARKS = /[‎‏‪-‮⁦-⁩]/g;
 
 /**
- * The identifier kind of a value a format would save, or null (see the file header): a number as an ID or a card; a text as a whole, then
- * word by word.
+ * The identifier kind of ONE whole value, or null: a number as an ID or a card; a text (trimmed, direction marks and non-breaking spaces
+ * ignored) by its whole shape. The engine's column classification reads its cells with this.
  */
-export function identifierKindOf(value: unknown): IdentifierKind | null {
+export function identifierShapeOf(value: unknown): IdentifierKind | null {
   if (typeof value === 'number') {
     if (!Number.isSafeInteger(value) || value <= 0) return null;
     const s = String(value);
@@ -131,10 +107,21 @@ export function identifierKindOf(value: unknown): IdentifierKind | null {
     return s.length >= 13 && isCardNumber(s) ? 'card' : null;
   }
   if (typeof value !== 'string') return null;
+  const t = value.replace(BIDI_MARKS, '').replace(/ /g, ' ').trim();
+  return t.length < 6 ? null : kindOfText(t);
+}
+
+/** Where a longer text is split into words: spaces and the punctuation a label puts around a value. */
+const WORD_BREAKS = /[\s,;:()[\]{}<>"'|/\\]+/;
+
+/**
+ * The identifier kind of a value a format would save, or null (see the file header): the whole value (`identifierShapeOf`), then word by
+ * word - a label may hold an identifier beside other words ("ID 123456782", "write to dana@example.com").
+ */
+export function identifierKindOf(value: unknown): IdentifierKind | null {
+  const whole = identifierShapeOf(value);
+  if (whole || typeof value !== 'string') return whole;
   const t = value.trim();
-  if (t.length < 6) return null;
-  const whole = kindOfText(t);
-  if (whole) return whole;
   for (const word of t.split(WORD_BREAKS)) {
     // (A word is checked on its own shape; one that is the whole text was checked above.)
     if (word.length < 6 || word === t) continue;
