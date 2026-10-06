@@ -10,6 +10,7 @@ import type { CopiedListQuestion } from '@formatai/engine';
 import type { Expr, LearnResult, Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../src/api/http';
 import { createRegistryApi } from '../src/api/registry';
 import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
 import { resumeLeaveGuard } from '../src/app/unloadPrompt';
@@ -184,7 +185,7 @@ describe('Save format with a list copied from the example', () => {
     expect(within(box).getByRole('heading').textContent).toBe('Save this format?');
     expect(screen.getByRole('dialog', { name: 'Save this format?' })).toBe(box);
     expect(within(box).getByTestId('copied-list-dialog').textContent).toBe(
-      'Account Manager was learned as a list copied from your example (40 values, one for each Account). Keep this list in the saved format?',
+      'Account Manager is a list of 40 fixed values taken from your example (one for each Account). Keep this list in the saved format?',
     );
     expect(within(box).getByText('Account Manager').closest('strong')).toBeTruthy();
     expect(within(box).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['Close', 'Keep it', 'Save without it', 'Cancel']);
@@ -253,8 +254,8 @@ describe('Save format with a list copied from the example', () => {
     await press('Save format');
     const box = dialog()!;
     expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
-      'Account Manager was learned as a list copied from your example (40 values, one for each Account).',
-      'Account Owner was learned as a list copied from your example (40 values, one for each Account).',
+      'Account Manager is a list of 40 fixed values taken from your example (one for each Account).',
+      'Account Owner is a list of 40 fixed values taken from your example (one for each Account).',
     ]);
     expect(within(box).getByText('Keep these lists in the saved format?')).toBeTruthy();
     expect(within(box).getAllByRole('button').map((b) => b.textContent).slice(1)).toEqual(['Keep them', 'Save without them', 'Cancel']);
@@ -274,7 +275,7 @@ describe('Save format with a list copied from the example', () => {
     const box = dialog()!;
     expect(within(box).getByRole('heading').textContent).toBe('לשמור את הפורמט?');
     expect(within(box).getByTestId('copied-list-dialog').textContent).toBe(
-      'העמודה Account Manager נלמדה כרשימה שהועתקה מהדוגמה שלכם (40 ערכים, אחד לכל Account). להשאיר את הרשימה הזאת בפורמט השמור?',
+      'העמודה Account Manager היא רשימה של 40 ערכים קבועים שנלקחו מהדוגמה שלכם (אחד לכל Account). להשאיר את הרשימה הזאת בפורמט השמור?',
     );
     expect(within(box).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['סגירה', 'להשאיר אותה', 'לשמור בלעדיה', 'ביטול']);
     await answer('לשמור בלעדיה');
@@ -451,7 +452,7 @@ describe('Add a source', () => {
     const { attachSource } = await openAdd(aiResult());
     expect(screen.queryByTestId('one-time-question')).toBeNull();
     await press('Add source');
-    expect(within(dialog()!).getByTestId('copied-list-dialog').textContent).toContain('Account Manager was learned as a list copied from your example');
+    expect(within(dialog()!).getByTestId('copied-list-dialog').textContent).toContain('Account Manager is a list of 40 fixed values taken from your example');
     expect(attachSource).not.toHaveBeenCalled();
     await answer('Save without it');
     await waitFor(() => expect(attachSource).toHaveBeenCalledTimes(1));
@@ -502,5 +503,180 @@ describe('the saved-source editor', () => {
     await waitFor(() => expect(updateConversion).toHaveBeenCalledTimes(1));
     expect(dialog()).toBeNull();
     expect(bodyOf(updateConversion).rules.transform.tables).toEqual(listed().transform.tables);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What a saved format may keep (docs/proposals/saved-format-contents.md section 6; SPEC 21 v15): one popup, a line per finding - a list of
+// fixed values, an identifier-shaped value (an ID number, a phone, an email, a card or bank account number) - and the same three answers.
+// ---------------------------------------------------------------------------
+
+const ID = '039337423';
+/** Account Manager (a list), and Target customer: a logic rule whose label is an ID number ("amount > 1000 -> target customer <id>"). */
+function withTarget(label = ID, list = true): LearnResult {
+  const base = listed();
+  const target = { id: 'target', type: 'text' as const, expr: { op: 'if' as const, cond: { op: 'eq' as const, args: [{ col: 'company' }, { const: 'Acme' }] as [Expr, Expr] }, then: { const: label }, else: { const: '' } } };
+  return {
+    ...base,
+    transform: list ? { ...base.transform, computed: [...base.transform.computed, target] } : { ...base.transform, computed: [target], tables: [] },
+    output: {
+      ...base.output,
+      columns: [...base.output.columns.filter((c) => list || c.header !== 'Account Manager'), { header: 'Target customer', from: 'target' }],
+    },
+  };
+}
+
+describe('Save format: a list and an identifier-shaped value, one popup', () => {
+  it('a line for each - the column, the count and the key; the column and the kind - then one question, plural answers; no value', async () => {
+    const { createFormat } = await openResult(aiResult([managerList], withTarget()));
+    await press('Save format');
+    const box = dialog()!;
+    expect(within(box).getByRole('heading').textContent).toBe('Save this format?');
+    expect([...box.querySelectorAll('li')].map((li) => [li.getAttribute('data-kind'), li.textContent])).toEqual([
+      ['list', 'Account Manager is a list of 40 fixed values taken from your example (one for each Account).'],
+      ['israeliId', 'Target customer keeps an ID number in its rules.'],
+    ]);
+    expect(within(box).getByText('Keep these in the saved format?')).toBeTruthy();
+    expect(within(box).getAllByRole('button').map((b) => b.textContent).slice(1)).toEqual(['Keep them', 'Save without them', 'Cancel']);
+    expect(box.textContent).not.toContain(ID);
+    expect(createFormat).not.toHaveBeenCalled();
+  });
+
+  it('"Keep them" saves both as they are', async () => {
+    const { createFormat } = await openResult(aiResult([managerList], withTarget()));
+    await press('Save format');
+    await answer('Keep them');
+    await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+    expect(bodyOf(createFormat).rules).toEqual(withTarget());
+  });
+
+  it('"Save without them": both columns need your input (the list: overfit; the ID: savedWithout), neither value is sent', async () => {
+    const { createFormat } = await openResult(aiResult([managerList], withTarget()));
+    await press('Save format');
+    await answer('Save without them');
+    await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+    const { rules, status } = bodyOf(createFormat);
+    expect(rules.output.columns.filter((c) => c.from === null).map((c) => c.header)).toEqual(['Account Manager', 'Target customer']);
+    expect(rules.unsupported).toEqual([
+      { outputColumn: 'Account Manager', reasonCode: 'overfit' },
+      { outputColumn: 'Target customer', reasonCode: 'savedWithout' },
+    ]);
+    expect(JSON.stringify(rules)).not.toContain(ID);
+    noCopiedValues(rules);
+    expect(status).toBe('userConfirmed');
+    expect(badge()).toBe('2 columns need your input');
+  });
+
+  it('"Cancel" saves nothing', async () => {
+    const { createFormat } = await openResult(aiResult([managerList], withTarget()));
+    await press('Save format');
+    await answer('Cancel');
+    expect(dialog()).toBeNull();
+    expect(createFormat).not.toHaveBeenCalled();
+  });
+
+  it('an identifier alone: its own question and answers ("Keep it" saves it)', async () => {
+    const { createFormat } = await openResult(aiResult([], withTarget(ID, false)));
+    await press('Save format');
+    const box = dialog()!;
+    expect(within(box).getByTestId('copied-list-dialog').textContent).toBe('Target customer keeps an ID number in its rules. Keep it in the saved format?');
+    expect(within(box).getAllByRole('button').map((b) => b.textContent).slice(1)).toEqual(['Keep it', 'Save without it', 'Cancel']);
+    await answer('Keep it');
+    await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+    expect(JSON.stringify(bodyOf(createFormat).rules)).toContain(ID);
+  });
+
+  it.each([
+    ['a phone number', '050-1234567'],
+    ['an email address', 'dana@example.com'],
+    ['a card number', '4111 1111 1111 1111'],
+    ['a bank account number', 'IL62 0108 0000 0009 9999 999'],
+  ])('says %s by its kind', async (what, label) => {
+    await openResult(aiResult([], withTarget(label, false)));
+    await press('Save format');
+    expect(within(dialog()!).getByTestId('copied-list-dialog').textContent).toBe(`Target customer keeps ${what} in its rules. Keep it in the saved format?`);
+  });
+
+  it('has its Hebrew copy: both reasons, plural answers', async () => {
+    const { createFormat } = await openResult(aiResult([managerList], withTarget()), 'he');
+    await press('שמירת הפורמט');
+    const box = dialog()!;
+    expect(within(box).getByRole('heading').textContent).toBe('לשמור את הפורמט?');
+    expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
+      'העמודה Account Manager היא רשימה של 40 ערכים קבועים שנלקחו מהדוגמה שלכם (אחד לכל Account).',
+      'הכללים של העמודה Target customer שומרים מספר זהות.',
+    ]);
+    expect(within(box).getByText('להשאיר את כל אלה בפורמט השמור?')).toBeTruthy();
+    expect(within(box).getAllByRole('button').map((b) => b.textContent).slice(1)).toEqual(['להשאיר אותם', 'לשמור בלעדיהם', 'ביטול']);
+    await answer('לשמור בלעדיהם');
+    await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+    expect(JSON.stringify(bodyOf(createFormat).rules)).not.toContain(ID);
+  });
+
+  it('Hebrew, an identifier alone', async () => {
+    await openResult(aiResult([], withTarget(ID, false)), 'he');
+    await press('שמירת הפורמט');
+    const box = dialog()!;
+    expect(within(box).getByTestId('copied-list-dialog').textContent).toBe('הכללים של העמודה Target customer שומרים מספר זהות. להשאיר את הערך הזה בפורמט השמור?');
+    expect(within(box).getAllByRole('button').map((b) => b.textContent).slice(1)).toEqual(['להשאיר אותו', 'לשמור בלעדיו', 'ביטול']);
+  });
+});
+
+describe('no popup for a small vocabulary or ledger-account labels', () => {
+  it('a status translation (no list found by the engine) and 8-digit ledger accounts as labels: Save saves at the first click', async () => {
+    const base = withTarget('61000100', false);
+    const rules: LearnResult = { ...base, transform: { ...base.transform, valueMaps: [{ column: 'company', map: { Open: 'פתוח', Closed: 'סגור' }, onMissing: 'keep' }] } };
+    const { createFormat } = await openResult(aiResult([], rules));
+    await press('Save format');
+    await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+    expect(dialog()).toBeNull();
+    expect(JSON.stringify(bodyOf(createFormat).rules)).toContain('61000100');
+  });
+});
+
+describe('a save over a cap of what a saved format may keep', () => {
+  it.each(['en', 'he'] as const)('the refusal of the server (400 rulesTooLarge) is said in plain words (%s)', async (lang) => {
+    const liveCheck = vi.fn(async (_id: string, r: LearnResult | Rules) => live(r));
+    const fake = fakeEngine(async () => aiResult([], listed()), undefined, { liveCheck, fullCheck: liveCheck });
+    const createFormat = vi.fn(async () => Promise.reject(new ApiError('rulesTooLarge', 400)));
+    renderApp({ engine: fake.engine, api: fakeApi({ user: USER, registry: { createFormat } }), lang, dataRouter: true });
+    const en = lang === 'en';
+    fireEvent.change(screen.getByLabelText(en ? 'Example input' : 'דוגמת קלט'), { target: { files: [csv('accounts.csv')] } });
+    fireEvent.change(screen.getByLabelText(en ? 'Example output' : 'דוגמת פלט'), { target: { files: [csv('managers.csv')] } });
+    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
+    const learn = screen.getByRole('button', { name: en ? /Learn the format/ : /ללמוד את הפורמט/ }) as HTMLButtonElement;
+    await waitFor(() => expect(learn.disabled).toBe(false));
+    await act(async () => void fireEvent.click(learn));
+    await screen.findByTestId('rules-map');
+    await press(en ? 'Save format' : 'שמירת הפורמט');
+    await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+    const text = en
+      ? 'This format is too large to save: a list or a value in its rules is longer than a saved format may keep. Shorten it and try again.'
+      : 'הפורמט הזה גדול מדי לשמירה: רשימה או ערך בכללים שלו ארוכים יותר ממה שפורמט שמור יכול להכיל. קצרו אותם ונסו שוב.';
+    expect(await screen.findByText(text)).toBeTruthy();
+  });
+});
+
+describe('the saved-source editor: what the server already holds is not asked again', () => {
+  it('stored rules that keep an ID number save at the first click, the ID as it is', async () => {
+    const stored = { ...withTarget(), name: 'CRM A', meta: { source: 'examplePair', status: 'verified' } } as unknown as Rules;
+    const updateConversion = vi.fn(async () => patched(5));
+    const api = fakeApi({
+      user: USER,
+      registry: {
+        getConversion: vi.fn(async () => conversionDetail({ id: 'C1', version: 4, sourceName: 'CRM A' }, stored)),
+        getFormat: vi.fn(async () => getFormatResponse({ id: 'F1', name: 'Accounts', sources: [conversionSummary({ id: 'C1', sourceName: 'CRM A' })] })),
+        updateConversion,
+      },
+    });
+    renderApp({ api, engine: fakeEngine().engine, route: '/formats/F1/sources/C1' });
+    await screen.findByTestId('rules-map');
+    const row = document.querySelector('[data-line-id="col:Company"]') as HTMLElement;
+    fireEvent.click(within(row).getAllByRole('button').find((b) => b.classList.contains('map-line__main'))!);
+    fireEvent.change(screen.getByLabelText('Column name'), { target: { value: 'Customer' } });
+    await press('Save changes');
+    await waitFor(() => expect(updateConversion).toHaveBeenCalledTimes(1));
+    expect(dialog()).toBeNull();
+    expect(JSON.stringify(bodyOf(updateConversion).rules)).toContain(ID);
   });
 });

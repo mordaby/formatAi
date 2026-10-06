@@ -231,6 +231,25 @@ describe('LearnFlow', () => {
       expect(api.repair.mock.calls[0]![4]).toMatchObject({ overfitRepaired: true });
     });
 
+    it('the round for a list (docs/proposals/saved-format-contents.md section 4): sent again with its rounds of checks, recorded with them', async () => {
+      const LIST = [{ kind: 'list' as const, out: 1, message: 'Column "B" is a list of 30 fixed values, one per A.' }];
+      const CHECKS = [{ checks: [{ check: 'values', column: 'B' }], answers: [{ rows: 3, distinct: 2, empty: 0, top: [] }] }] as unknown as CheckRound[];
+      const { engine } = fakeEngine(async (_a, host) => {
+        await host.callLearn(PAYLOAD);
+        await host.callRepair(PAYLOAD, PREV_RULES, LIST, { round: 1, maxRounds: 3, rows: [], newRows: 0, list: true });
+        const r = await host.callRepair(PAYLOAD, PREV_RULES, LIST, { round: 2, maxRounds: 3, rows: [], newRows: 0, list: true, checks: CHECKS });
+        return result({ path: 'llm', rules: r.rules, loop: { rounds: 2, rowsSent: 0, end: 'verified' } });
+      });
+      const api = fakeApi({ learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false })) as unknown as Api['learn'] });
+      const { start, flow } = makeFlow(engine, api);
+      await start();
+      await vi.waitFor(() => expect(api.repair).toHaveBeenCalledTimes(2));
+      expect(api.repair.mock.calls[0]![4]).toMatchObject({ rounds: undefined });
+      expect(api.repair.mock.calls[1]![4]).toMatchObject({ rounds: CHECKS });
+      const repairs = (flow.getState().sent ?? []).filter((s) => s.kind === 'repair');
+      expect(repairs.map((s) => s.rounds)).toEqual([undefined, CHECKS]);
+    });
+
     it('a learn that verifies in round 2: two rounds under the learn\'s id, the progress says which round, every round is in "see what we send", reported verified once', async () => {
       const rounds: unknown[] = [];
       const { engine } = fakeEngine(async (_a, host, opts) => {

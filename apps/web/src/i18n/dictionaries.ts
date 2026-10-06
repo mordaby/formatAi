@@ -201,6 +201,7 @@ export const en = {
   'learning.round.one': 'Checking every row of your example: sending 1 row the rules got wrong (round {n} of {of}).',
   'learning.round.other': 'Checking every row of your example: sending {rows} rows the rules got wrong (round {n} of {of}).',
   'learning.round.none': 'Checking every row of your example: sending what still did not match (round {n} of {of}).',
+  'learning.round.list': 'Looking for the rule behind a list of fixed values (round {n} of {of}).',
   // AI code checks (SPEC 21 v14): the AI step asked code to check an idea on every row before it answers.
   'learning.checks': 'The AI is checking an idea on your rows (round {n} of {of}).',
   'learning.done': 'Done',
@@ -387,6 +388,7 @@ export const he: Record<MessageKey, string> = {
   'learning.round.one': 'בודקים כל שורה בדוגמה שלכם: שולחים שורה אחת שהכללים טעו בה (סבב {n} מתוך {of}).',
   'learning.round.other': 'בודקים כל שורה בדוגמה שלכם: שולחים {rows} שורות שהכללים טעו בהן (סבב {n} מתוך {of}).',
   'learning.round.none': 'בודקים כל שורה בדוגמה שלכם: שולחים את מה שעדיין לא התאים (סבב {n} מתוך {of}).',
+  'learning.round.list': 'מחפשים את הכלל שמאחורי רשימה של ערכים קבועים (סבב {n} מתוך {of}).',
   'learning.checks': 'ה-AI בודק רעיון מול השורות שלכם (סבב {n} מתוך {of}).',
   'learning.done': 'הושלם',
 

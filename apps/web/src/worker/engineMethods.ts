@@ -93,7 +93,7 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     },
     callRepair: async (payload, previousRules, problems, round) => {
       // The learning loop: which round, and how many rows the rules got wrong it sends (the rows themselves go to the main thread with it).
-      emit({ phase: 'learning', attempt: 'repair', round: { n: round.round, of: round.maxRounds, rows: round.newRows } });
+      emit({ phase: 'learning', attempt: 'repair', round: { n: round.round, of: round.maxRounds, rows: round.newRows, ...(round.list ? { list: true as const } : {}) } });
       const out = await ctx.host<LearnCallResult>('callRepair', payload, previousRules, problems, round);
       emit({ phase: 'verifying' });
       return out;

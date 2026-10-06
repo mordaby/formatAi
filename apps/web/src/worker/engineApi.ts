@@ -87,6 +87,8 @@ export interface LoopRoundInfo {
   n: number;
   of: number;
   rows: number;
+  /** The one round for a list of fixed values (docs/proposals/saved-format-contents.md section 4): it sends no row, it asks for the rule behind the list. */
+  list?: true;
 }
 
 /**

@@ -49,6 +49,12 @@ function locate(rules: EditableRules, path: string | undefined): { lineId?: Line
     const fn = rules.transform.functions?.[Number(m[1])];
     if (fn) return { lineId: lineIds.fn(fn.name), where: `Function "${fn.name}"` };
   }
+  // (a value map, docs/proposals/saved-format-contents.md section 7: the column that shows it)
+  if ((m = path.match(/^transform\.valueMaps\[(\d+)\]/))) {
+    const map = rules.transform.valueMaps[Number(m[1])];
+    const col = map ? rules.output.columns.find((o) => o.from === map.column) : undefined;
+    if (col) return { lineId: lineIds.col(col.header), where: `Column "${col.header}"` };
+  }
   if ((m = path.match(/^transform\.tables\[(\d+)\]/))) {
     const t = rules.transform.tables?.[Number(m[1])];
     if (t) return { lineId: lineIds.table(t.name), where: `Table "${t.name}"` };
@@ -80,6 +86,8 @@ function sentence(p: StaticProblem, where: string): string {
     }
     case 'limits':
       if (/rules exceeds/.test(m)) return `${m[0]!.toUpperCase()}${m.slice(1)}. Remove some rules or upgrade.`;
+      // (what one saved format may keep, docs/proposals/saved-format-contents.md section 7: the whole rules file)
+      if (/^the rules take/.test(m)) return `The rules are too big to save: ${m}.`;
       return `${where} is too big: ${m}.`;
     case 'formatLock':
       return `${where} no longer matches the format this source belongs to: ${m}.`;

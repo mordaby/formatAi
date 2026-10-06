@@ -41,7 +41,10 @@ export interface SentRecord {
   round?: { n: number; of: number };
   /** A round of the learning loop: every row of the example sent so far, masked (the request's `rows`). */
   rows?: Sample[];
-  /** A step of AI code checks: every round so far, this one last - the checks and code's answers, masked like the samples (the request's `rounds`). */
+  /**
+   * A step of AI code checks, or the round for a list sent again with its own (docs/proposals/saved-format-contents.md section 4): every round
+   * so far, this one last - the checks and code's answers, masked like the samples (the request's `rounds`).
+   */
   rounds?: CheckRound[];
   /** Size of the JSON request body's payload part (a step: the payload with its rounds), in bytes (SPEC 7.3 caps it at 48 KB). */
   bytes: number;
@@ -225,7 +228,7 @@ export class LearnFlow {
     };
     const record = async (rec: Omit<SentRecord, 'bytes'>): Promise<void> => {
       // (a loop round's rows count with the payload: the byte cap holds for the payload with every row sent added to it; a step's rounds the same)
-      const full: SentRecord = { ...rec, bytes: rec.rounds ? stepBytes(rec.payload, rec.rounds) : payloadBytes(withRows(rec.payload, rec.rows ?? [])) };
+      const full: SentRecord = { ...rec, bytes: rec.rounds ? stepBytes(withRows(rec.payload, rec.rows ?? []), rec.rounds) : payloadBytes(withRows(rec.payload, rec.rows ?? [])) };
       sent = [...sent, full];
       if (!stale()) this.set({ ...this.state, sent } as LearnFlowState);
       await this.deps.beforeSend?.(full);
@@ -280,11 +283,21 @@ export class LearnFlow {
           await record(
             fresh
               ? { kind: 'repair', fresh: true, payload, round: n }
-              : { kind: 'repair', payload, previousRules, problems, round: n, ...(rows.length > 0 ? { rows } : {}), ...(round.overfitRepaired ? { overfitRepaired: true } : {}) },
+              : {
+                  kind: 'repair',
+                  payload,
+                  previousRules,
+                  problems,
+                  round: n,
+                  ...(rows.length > 0 ? { rows } : {}),
+                  ...(round.overfitRepaired ? { overfitRepaired: true } : {}),
+                  ...(round.checks && round.checks.length > 0 ? { rounds: round.checks } : {}),
+                },
           );
+          // (the round for a list, learn-v9: sent again with its rounds of checks answered - `LoopRound.checks`)
           const res = fresh
             ? await this.deps.api.learn(payload, { turnstileToken: await token(), noCache: true, rulesNow: true, signal: abort.signal })
-            : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, rows, overfitRepaired: round.overfitRepaired });
+            : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, rows, overfitRepaired: round.overfitRepaired, rounds: round.checks });
           lastProblems = res.problems;
           // (the next round repairs the fresh learn, under its own learnId)
           if (fresh) learnId = (res as LearnResponse).learnId;

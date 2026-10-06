@@ -10,7 +10,7 @@ import { aiLeftLabel } from '../../app/aiQuota';
 import { LeaveDialog } from '../../app/LeaveGuard';
 import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
-import { copiedListsOf, lineIds, listsToConfirm } from '../../editor';
+import { copiedListsOf, findingsToConfirm, lineIds } from '../../editor';
 import { useSignIn } from '../../app/SignIn';
 import { Cell } from '../../components/Cell';
 import type { AiInfo } from '../../flow/learnFlow';
@@ -71,8 +71,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // learn-v7: the notes of an applied answer go into the session (never into the rules): see `ResultSession.aiNotes`.
   const completion = useCompletion(kept.store, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
   const completed = completion.completed;
-  // A list copied from the example (owner decision 2026-10-06): never asked on screen - the list is used as it is - but at Save, before the
-  // rules are stored (`CopiedListSave`): the completion's answer's lists, then the learn's.
+  // A list copied from the example (owner decision 2026-10-06), and an identifier-shaped value (docs/proposals/saved-format-contents.md section
+  // 6): never asked on screen - the rules are used as they are - but at Save, before the rules are stored, in one popup (`CopiedListSave`):
+  // the completion's answer's lists, then the learn's.
   const copied = useMemo(() => copiedListsOf(completed?.oneTimers, result.path === 'llm' ? result.oneTimers?.questions : undefined), [completed?.oneTimers, result]);
   const gate = useCopiedListGate();
 
@@ -317,8 +318,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
             loading={saving}
             // A visitor is asked to sign in (SPEC 5 E); a signed-in user needs rules that can be saved right now - and the AI step not at work on them.
             disabled={completion.running || (me.user ? info.metaStatus === null : info.status.kind === 'blocked')}
-            // (a list copied from the example that the rules still hold is asked about first, in a dialog: none, and the save goes at once)
-            onClick={() => (me.user ? gate.save(info, listsToConfirm(info.rules, copied), doSave) : signIn.open('save'))}
+            // (a list or an identifier-shaped value the rules about to be stored hold is asked about first, in a dialog: none, and the save goes at once)
+            onClick={() => (me.user ? gate.save(info, findingsToConfirm(info.rules, copied), doSave) : signIn.open('save'))}
           >
             {label}
           </Button>

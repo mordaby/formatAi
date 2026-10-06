@@ -24,14 +24,15 @@ export interface Api {
   learn(payload: LearnPayload, opts?: { turnstileToken?: string | undefined; noCache?: boolean; rulesNow?: boolean; signal?: AbortSignal }): Promise<LearnResponse>;
   /**
    * POST /api/learn/repair: one round of the learning loop, at most `limits.llm.browserRepairCalls` per `learnId`. `rows`: every row the loop sent
-   * so far, masked. `overfitRepaired`: the learn already had its one repair for a rule that copies rows (SPEC 9.2 layer 6).
+   * so far, masked. `overfitRepaired`: the learn already had its one repair for a rule that copies rows (SPEC 9.2 layer 6). `rounds`: the round
+   * for a list (docs/proposals/saved-format-contents.md section 4), sent again with its rounds of AI code checks answered (learn-v9).
    */
   repair(
     learnId: string,
     payload: LearnPayload,
     previousRules: LearnResult,
     problems: RepairProblem[],
-    opts?: { signal?: AbortSignal; rows?: Sample[] | undefined; overfitRepaired?: boolean | undefined },
+    opts?: { signal?: AbortSignal; rows?: Sample[] | undefined; overfitRepaired?: boolean | undefined; rounds?: CheckRound[] | undefined },
   ): Promise<RepairResponse>;
   /**
    * POST /api/learn/step (AI code checks, SPEC 21 v14): one step of a learn whose AI step asked checks. `token` is the learn's `learnId` (the
@@ -67,7 +68,15 @@ export function createApi(options: CreateApiOptions = {}): Api {
       return request<LearnResponse>('POST', '/api/learn', req, opts.signal);
     },
     repair: (learnId, payload, previousRules, problems, opts = {}) => {
-      const req: RepairRequest = { payload, previousRules, problems, learnId, ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}), ...(opts.overfitRepaired ? { overfitRepaired: true } : {}) };
+      const req: RepairRequest = {
+        payload,
+        previousRules,
+        problems,
+        learnId,
+        ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}),
+        ...(opts.overfitRepaired ? { overfitRepaired: true } : {}),
+        ...(opts.rounds && opts.rounds.length > 0 ? { rounds: opts.rounds } : {}),
+      };
       return request<RepairResponse>('POST', '/api/learn/repair', req, opts.signal);
     },
     step: (token, payload, rounds, opts = {}) => {

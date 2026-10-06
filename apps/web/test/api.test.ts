@@ -68,6 +68,16 @@ describe('requests', () => {
     expect(sentBody(fetchMock, 1)).not.toHaveProperty('overfitRepaired');
   });
 
+  it('repair(): the round for a list sent again with its rounds of checks (docs/proposals/saved-format-contents.md section 4), and only then', async () => {
+    const { api, fetchMock } = apiWith(() => json({ rules, verified: true, problems: [] }));
+    const list = [{ kind: 'list' as const, out: 1, message: 'Column "Size" is a list of 30 fixed values, one per Product.' }];
+    const rounds = [{ checks: [{ check: 'values' as const, column: 'Size' }], answers: [{ rows: 10, distinct: 2, empty: 0, top: [] }] }];
+    await api.repair('L1', payload, rules, list, { rounds });
+    expect(sentBody(fetchMock, 0)).toEqual({ learnId: 'L1', payload, previousRules: rules, problems: list, rounds });
+    await api.repair('L1', payload, rules, list, { rounds: [] });
+    expect(sentBody(fetchMock, 1)).not.toHaveProperty('rounds');
+  });
+
   it('step(): POSTs the learn\'s id as the token, the payload and every round so far (AI code checks), and passes the abort signal', async () => {
     const answer = { rules: null, checks: [{ check: 'values', column: 'Size' }], verified: false, problems: [], counted: false, failedAttempts: 0 };
     const { api, fetchMock } = apiWith(() => json(answer));
