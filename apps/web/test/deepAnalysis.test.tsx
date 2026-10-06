@@ -4,6 +4,7 @@
 // start by itself after the free result when fields are missing; a visitor is asked to sign in first. The engine and the API are fakes: nothing
 // real is ever called.
 import type { LearnResult, Rules } from '@formatai/shared';
+import { tiers } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryPendingStore, setPendingStore, type PendingLearnStore } from '../src/app/pendingLearn';
@@ -11,6 +12,8 @@ import { ordersRules } from '../src/editor/testkit';
 import type { LearnOutput } from '../src/worker/engineApi';
 import { conversionSummary, createFormatResponse, formatSummary } from './helpers/registryKit';
 import { csv, fakeApi, fakeEngine, learnResult, renderApp, USER } from './helpers/renderApp';
+// The registered plan's AI formats a month, from the config (it changes: owner decision 2026-10-06, 500 for the beta).
+const REG_AI = tiers.registered.aiLearns.count;
 
 vi.mock('../src/app/redirect', () => ({ redirectTo: vi.fn() }));
 const { downloaded } = vi.hoisted(() => ({ downloaded: vi.fn() }));
@@ -189,7 +192,7 @@ describe('Home: "Learn the format" and "Learn with AI"', () => {
     await waitFor(() => expect(screen.getByTestId('learn-ai-hint').textContent).toBe('Uses 1 AI format (3 left this month), and only if it succeeds.'));
     cleanup();
     renderApp({ engine, api: fakeApi() });
-    expect((await screen.findByTestId('learn-ai-hint')).textContent).toBe('Sign in free to learn with AI (3 AI formats a month included).');
+    expect((await screen.findByTestId('learn-ai-hint')).textContent).toBe(`Sign in free to learn with AI (${REG_AI} AI formats a month included).`);
   });
 
   it('with no AI formats left the button is off and says so; "Learn the format" still works', async () => {
@@ -210,7 +213,7 @@ describe('Home: "Learn the format" and "Learn with AI"', () => {
     await waitFor(() => expect(screen.getByTestId('learn-ai-hint').textContent).toBe('ינצל פורמט אחד עם AI (נותרו לכם 3 החודש), ורק אם יצליח.'));
     cleanup();
     renderApp({ engine, api: fakeApi(), lang: 'he' });
-    expect((await screen.findByTestId('learn-ai-hint')).textContent).toBe('התחברו בחינם כדי ללמוד עם AI (כולל 3 פורמטים עם AI בחודש).');
+    expect((await screen.findByTestId('learn-ai-hint')).textContent).toBe(`התחברו בחינם כדי ללמוד עם AI (כולל ${REG_AI} פורמטים עם AI בחודש).`);
   });
 
   it('signed in: the free engine runs first and the AI step starts by itself right after it when fields are missing - the free result is shown first, "Running deep analysis…" on the missing fields', async () => {
@@ -620,7 +623,7 @@ describe('a visitor', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Not now' }));
     const panel = screen.getByTestId('deep-panel');
     expect(within(panel).getByRole('heading', { name: 'The free engine solved 3 of 6 fields.' })).toBeTruthy();
-    expect(within(panel).getByText('Sign in free to run a deep analysis with AI on these fields (3 AI formats a month included).')).toBeTruthy();
+    expect(within(panel).getByText(`Sign in free to run a deep analysis with AI on these fields (${REG_AI} AI formats a month included).`)).toBeTruthy();
     expect(within(panel).getByRole('button', { name: 'Sign in free to finish' })).toBeTruthy();
     expect(within(panel).queryAllByRole('checkbox')).toHaveLength(0);
     expect(within(panel).getByTestId('deep-fields').textContent).toContain('Total');

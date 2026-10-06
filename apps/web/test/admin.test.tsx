@@ -2,12 +2,15 @@
 // numbers ("n/a" where they are not known), function requests offer the GitHub issue once and can be marked, the users list sets a plan and a
 // limit, leads and feedback read as text - and all of it in Hebrew. A fake API; the server is what really enforces access (apps/api/test/admin).
 import type { AdminAuditEntry, AdminContact, AdminFunctionRequest, AdminOverview, AdminUserRow, MeUser } from '@formatai/shared';
+import { tiers } from '@formatai/shared';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
 import type { AdminApi } from '../src/api/admin';
 import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
 import { fakeApi, renderApp, USER } from './helpers/renderApp';
+// The registered plan's AI formats a month, from the config (it changes: owner decision 2026-10-06, 500 for the beta).
+const REG_AI = tiers.registered.aiLearns.count;
 
 beforeEach(() => {
   document.cookie = 'lang=; Path=/; Max-Age=0';
@@ -368,7 +371,7 @@ describe('users', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit: Dana Levi' }));
     const input = within(screen.getByTestId('user-editor')).getByLabelText('AI learns per period');
-    expect(screen.getByText("Leave empty for the plan's own number (3).")).toBeTruthy();
+    expect(screen.getByText(`Leave empty for the plan's own number (${REG_AI}).`)).toBeTruthy();
     fireEvent.change(input, { target: { value: '1.5' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('Enter a whole number, or leave it empty.')).toBeTruthy();

@@ -3,12 +3,15 @@
 // gets "Finish with AI". A column code could not explain at all (external) needs the AI step too ("may come from another
 // source"), and when the AI can't help at all the screen says what to fix. The worker is a fake; the API is never asked to learn for a visitor.
 import type { LearnResult, MeUser, Rules } from '@formatai/shared';
+import { tiers } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
 import { ordersRules } from '../src/editor/testkit';
 import type { LearnOutput } from '../src/worker/engineApi';
 import { csv, fakeApi, fakeEngine, learnResult, liveResult, renderApp, USER } from './helpers/renderApp';
+// The registered plan's AI formats a month, from the config (it changes: owner decision 2026-10-06, 500 for the beta).
+const REG_AI = tiers.registered.aiLearns.count;
 
 const { redirectTo } = vi.hoisted(() => ({ redirectTo: vi.fn() }));
 vi.mock('../src/app/redirect', () => ({ redirectTo }));
@@ -88,7 +91,7 @@ describe('a visitor whose example needs the AI step', () => {
     await learn(engine);
     const dialog = await screen.findByRole('dialog', { name: 'Sign in to finish' });
     expect(within(dialog).getByTestId('partial-popup-text').textContent).toBe(
-      'We worked out 3 of 6 columns on your computer. 3 need the AI step — sign in free to finish (3 AI formats a month included).',
+      `We worked out 3 of 6 columns on your computer. 3 need the AI step — sign in free to finish (${REG_AI} AI formats a month included).`,
     );
     expect(await within(dialog).findByRole('button', { name: 'Continue with Google' })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Continue with Microsoft' })).toBeTruthy();
@@ -101,7 +104,7 @@ describe('a visitor whose example needs the AI step', () => {
     const text = within(dialog).getByTestId('partial-popup-text').textContent!;
     expect(text).toContain('הבנו 3 מתוך 6 עמודות במחשב שלכם');
     expect(text).toContain('3 דורשות את שלב ה-AI');
-    expect(text).toContain('כולל 3 פורמטים עם AI בחודש');
+    expect(text).toContain(`כולל ${REG_AI} פורמטים עם AI בחודש`);
   });
 
   it('uses the "layout" sentence when every column is worked out and only parts of the layout are left', async () => {
@@ -114,7 +117,7 @@ describe('a visitor whose example needs the AI step', () => {
     await learn(engine);
     const dialog = await screen.findByRole('dialog', { name: 'Sign in to finish' });
     expect(within(dialog).getByTestId('partial-popup-text').textContent).toContain('We worked out 6 of 6 columns on your computer. The rest of the format');
-    expect(within(dialog).getByTestId('partial-popup-text').textContent).toContain('needs the AI step — sign in free to finish (3 AI formats a month included).');
+    expect(within(dialog).getByTestId('partial-popup-text').textContent).toContain(`needs the AI step — sign in free to finish (${REG_AI} AI formats a month included).`);
   });
 
   it('shows the local result after "Not now": solved columns as usual, the others as "Needs the AI step", the parts in their own list', async () => {
@@ -232,7 +235,7 @@ describe('only an unexplained (external) column is left', () => {
     await learn(engine);
     const dialog = await screen.findByRole('dialog', { name: 'Sign in to finish' });
     expect(within(dialog).getByTestId('partial-popup-text').textContent).toBe(
-      'We worked out 5 of 6 columns on your computer. 1 needs the AI step — sign in free to finish (3 AI formats a month included).',
+      `We worked out 5 of 6 columns on your computer. 1 needs the AI step — sign in free to finish (${REG_AI} AI formats a month included).`,
     );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Not now' }));
     expect(line('col:Remarks').getAttribute('data-ai-step')).toBe('true');
