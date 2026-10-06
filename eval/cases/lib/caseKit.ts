@@ -36,8 +36,8 @@ export interface CaseMeta {
   /** How many data rows of `output.*` a person edited by hand, so that the reference rules differ from it in exactly that many rows (`verify-cases.ts` checks it). */
   handEditedRows?: number;
   attachTo?: string;
-  /** What the user would answer on the Result screen (`eval/lib/caseLoader.ts` `CaseAnswers`): the runner applies it before scoring. */
-  answers?: { copiedList?: 'oneTime' | 'rule' };
+  /** What the user would answer at Save (`eval/lib/caseLoader.ts` `CaseAnswers`): the runner applies it before scoring. */
+  answers?: { copiedList?: 'oneTime' | 'rule'; identifier?: 'keep' | 'without' };
 }
 
 export interface FileArtifact {

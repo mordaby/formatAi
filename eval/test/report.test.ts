@@ -51,6 +51,8 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     oneTimeAsked: 0,
     oneTimeParts: '',
     oneTimeDefault: '',
+    listRetry: '',
+    savedIdentifiers: '',
     formulaErrorCount: 0,
     firstCallFormulaErrors: 0,
     formulaFixedByRepair: false,

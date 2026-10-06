@@ -1,0 +1,15 @@
+{
+  "difficulty": "stress",
+  "domain": "salesOrders",
+  "features": [
+    "savedContents",
+    "identifierLabel",
+    "threshold",
+    "askedAtSave"
+  ],
+  "expect": "verified",
+  "expectNote": "Target customer is a fixed ID number on every order above 1000, empty below (the cut-off pinned by 990 | 1010). Logic, not a list - so no automatic round - but its label is an identifier: a saved format would keep an ID number, so the Save popup asks (\"Target customer keeps an ID number in its rules\"); this case answers \"Keep it\" (answers.identifier), so it scores verified. With masking on, the ID is sent as a look-alike valid ID and unmasked in the rules. May break: a list of amounts instead of the threshold, or the label not found under masking.",
+  "answers": {
+    "identifier": "keep"
+  }
+}

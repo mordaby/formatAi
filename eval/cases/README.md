@@ -46,7 +46,7 @@ person would, and there is no "learned rules" to hold out against.
 | `expectNote` | Optional. The expected outcome in plain words, for a case whose target `expect` cannot say. NOT scored: `expect` still decides "expectation met"; the eval report prints the note next to the case ("Expected outcomes in words"). `discount-hand-edited`, the six stress cases and the eight adversarial cases have one. |
 | `handEditedRows` | Optional. How many data rows of `output.*` a person edited by hand: the reference rules differ from `output.*` in exactly that many rows (`verify-cases.ts` checks it instead of the byte-for-byte match). The runner ignores it. |
 | `attachTo` | Only for the registry cases: the case name whose output defines the shared format (SPEC 8.12). |
-| `answers` | Optional (owner amendment, 2026-10-06). What the user would answer; the runner applies it to the kept rules as the web app does, before the run is scored (`applyCaseAnswers`). Today one key: `copiedList` - the answer to every list copied from the example (a lookup or value map keyed on a column that is different on every row), asked at save ("Save this format?" - "Account Manager was learned as a list copied from your example ..."): `"oneTime"` ("Save without it") takes the column's list out, so the column needs your input (code reports it `unsupported` with `overfit`), and the record's classification, expectation and hold-out follow those rules; `"rule"` ("Keep it") keeps the list (the same as no answer). For an `unsupported:<code>` expectation a column the answer took out counts as the expected report. Only `external-agent-column` has one: `{ "copiedList": "oneTime" }`. |
+| `answers` | Optional (owner amendment, 2026-10-06). What the user would answer; the runner applies it to the kept rules as the web app does, before the run is scored (`applyCaseAnswers`). Two keys. `copiedList` - the answer to every list of fixed values (docs/proposals/saved-format-contents.md section 3: a lookup, a value map or a chain of cases keyed on an input column, not a small vocabulary), asked at save ("Save this format?" - "Account Manager is a list of 40 fixed values taken from your example (one for each Account)"): `"oneTime"` ("Save without it") takes the column's list out, so the column needs your input (code reports it `unsupported` with `overfit`), and the record's classification, expectation and hold-out follow those rules; `"rule"` ("Keep it") keeps the list (the same as no answer). `identifier` (section 5) - the answer to every identifier-shaped value the rules keep ("Target customer keeps an ID number in its rules"): `"without"` takes its column out (`unsupported` with `savedWithout`), `"keep"` keeps it (the same as no answer). For an `unsupported:<code>` expectation a column the answer took out counts as the expected report. `external-agent-column`: `{ "copiedList": "oneTime" }`; `catalog-200`: `{ "copiedList": "rule" }`; `label-is-an-id`: `{ "identifier": "keep" }`. |
 
 ### The masking-gap case (`payroll-pension-deposits`)
 
@@ -122,6 +122,10 @@ output at all, so both `input.*` and `output.*` are built directly with
 | 32 | `external-agent-column` | stress | customerAccounts | unsupported:externalData (answers its copied-list question "one-time") |
 | 33 | `injection-in-cells` | stress | salesOrders | masking_on/off pair, both verified |
 | 34 | `vip-keyword` | stress | customerNotes | masking_on/off pair, both verified |
+| 35 | `catalog-200` | stress | productCatalog | verified (a list of 200 fixed values: one automatic round, asked at Save, answered "Keep it") |
+| 36 | `small-vocabulary` | stress | helpdeskTickets | verified (a small vocabulary: silent) |
+| 37 | `ledger-account-labels` | stress | bookkeeping | verified (8-digit ledger accounts as labels: silent, no identifier) |
+| 38 | `label-is-an-id` | stress | salesOrders | verified (a logic rule whose label is an ID number: asked at Save, answered "Keep it") |
 
 Cases 15-17 are three different suppliers' price lists (different headers,
 column orders and number-format quirks - Hebrew, English and Hebrew again)
@@ -188,6 +192,21 @@ Decisions worth knowing (the DECISION comments in `buildAdversarial.ts` have the
 - **A case the free engine solves tests nothing.** Each case was run through `runMatrix` with canned answers (the fake provider, no real model) to see its path: every one reaches the AI step, `injection-in-cells` only because of the sort.
 - **`fee-threshold-by-type`, `late-delivery-flag` and `vip-keyword` get no hint for the interesting column**; `class-by-computed-total`, `small-example-bands` and `tiered-commission` get a `bands` hint, which is what `--no-pattern-hints` takes away.
 
+### The four saved-contents cases (what a saved format keeps)
+
+Built by `buildContents.ts` (called from `build.ts`, wired like `buildAdversarial.ts`), `difficulty: "stress"`, feature tag `savedContents`
+(docs/proposals/saved-format-contents.md; SPEC 21 v15). Each has a `reference.rules.json` that reproduces both outputs byte for byte and a
+next-month pair. The run record says what a save would ask: `listRetry` (the one automatic round for a list column: its columns, how it ended,
+its calls) and `savedIdentifiers` (the identifier-shaped values the saved rules keep, by column and kind - never the value); the report's
+"Saved contents" column and `results.csv` carry both.
+
+| Case | What it is | What it tests |
+|---|---|---|
+| `catalog-200` | English. 400 orders (Order, Product code, Qty) of 200 products, each twice in a shuffled order -> Order, Product code, Category, Qty; the category drawn at random per product from 8 (no code range explains it). Next month: 300 orders of the same products. | A list of fixed values: 200 entries, more than a small vocabulary's 12. The learn sends ONE automatic round asking for the rule behind it (`list` problem: the column, the count, the key column - no value); the honest answer keeps the lookup, and the list is asked about at Save; the case answers "Keep it" (`answers.copiedList: "rule"`), so it scores verified and passes the hold-out. |
+| `small-vocabulary` | Hebrew output. 40 tickets (Ticket, Subject, Status) -> the same with the status translated (Open -> פתוח, 4 values, 10 rows each). Next month: 30 tickets. | A small vocabulary (at most 12 entries, each on 2 rows or more, keyed on a column that is no identifier): saved silently - no round, nothing asked. The free engine learns it by itself. |
+| `ledger-account-labels` | English. 48 expenses (Expense, Expense type, Amount) -> Expense, Expense type, Ledger account, Amount; each of 8 types has an 8-digit account written as a label (61000100 ...), 6 rows each. Next month: 40 expenses. | No digit-run rule (the owner's decision): an 8-digit account is no identifier (not 9 digits, no phone's leading zero, too short for a card), and 8 types of 6 rows are a vocabulary - silent. The free engine learns it by itself. |
+| `label-is-an-id` | English. 40 orders (Order, Customer, Amount) -> the same and Target customer: a fixed, made-up ID number (valid check digit) on every order above 1000, empty below; the cut-off pinned by 990 \| 1010. Next month: 30 orders, none in the gap. | A logic rule whose LABEL is personal data: no list, so no round - but a saved format would keep an ID number, and the Save popup asks ("Target customer keeps an ID number in its rules"); the case answers "Keep it" (`answers.identifier: "keep"`). With masking on the label is sent as a look-alike ID and unmasked in the rules. |
+
 ## Traps, by case
 
 | Trap | Case(s) |
@@ -205,6 +224,9 @@ Decisions worth knowing (the DECISION comments in `buildAdversarial.ts` have the
 | Column nothing explains, random per row (an AI could invent a rule) | 32 |
 | Prompt-injection text in a copied column | 33 |
 | Keyword in free text, in any letter case, with masking on | 34 |
+| A list of fixed values a saved format would keep (retried once, asked at Save) | 35 |
+| A small vocabulary or ledger codes as labels that must stay silent | 36, 37 |
+| A label that is an identifier (asked at Save) | 38 |
 
 ## Rebuilding
 
