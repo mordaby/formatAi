@@ -80,10 +80,7 @@ export const tiers: Record<Tier, TierLimits> = {
     savedFormats: 3,
     sourcesPerFormat: 3,
     rulesPerFormat: 30,
-    // Owner decision (2026-10-06): 500 a month for the beta (3-4 testers before marketing). The daily overall budget
-    // (`limits.budgets.dailyOverallUsd`) still caps the spend; lower it again (or use the admin's per-user `limitOverrides.aiLearns`)
-    // before the public launch.
-    aiLearns: { count: 500, period: 'month' },
+    aiLearns: { count: 3, period: 'month' },
     fastPathLearns: 'unlimited',
     editRules: true,
   },
@@ -100,8 +97,7 @@ export const tiers: Record<Tier, TierLimits> = {
     newSavedFormatsPerMonth: 50,
     sourcesPerFormat: 'unlimited',
     rulesPerFormat: 300,
-    // Owner decision (2026-10-06): never below the registered tier (see there).
-    aiLearns: { count: 500, period: 'month' },
+    aiLearns: { count: 150, period: 'month' },
     fastPathLearns: 'unlimited',
     editRules: true,
   },
