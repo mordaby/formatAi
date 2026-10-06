@@ -8,14 +8,16 @@
 // Amendment 2026-10-06 (SPEC 7.2): an ID stored as a NUMBER is masked too. A number in an ID column is masked as its digits, exactly
 // like the same digits as text (a valid Israeli ID stays a valid one, the length is kept), and is sent as a number again: the example's
 // cell is a number, and the server's sample run and the browser's verification compare typed, so a fake written as text would ask the
-// rules for text where the real file wants a number (and a repair diff of the two would look the same once masked). Which columns
-// are ID columns - `idLike` ones, and integer columns the pair analysis shows to be identifiers - is the caller's (`learn/maskTypes.ts`).
+// rules for text where the real file wants a number (and a repair diff of the two would look the same once masked).
+//
+// WHETHER a column is masked is the column classification's (owner, 2026-10-06; `learn/classify.ts`): `maskCell` is given the column's
+// class - an `identifier` or `text` is masked, a `category`, `measure` or `date` is sent real. This file decides only HOW.
 //
 // Amendment 2026-10-06 (leading zeros survive masking): a run of digits is masked as its leading zeros, kept, plus the fake of its
 // significant digits, so every zero-padded form of a value - and its number - shares one fake and a padding rule stays visible
 // (`maskDigits`).
 
-import { maskingIdentifiers, maskingVocabulary, type PayloadCell, type ProfileType } from '@formatai/shared';
+import { maskingIdentifiers, maskingVocabulary, type ColumnClass, type PayloadCell } from '@formatai/shared';
 import { MONTH_NAMES, WEEKDAY_NAMES, monthOfName } from '../../values/dates';
 import { isValidIsraeliId, makeValidIsraeliId } from '../../values/israeliId';
 import { normalizeText } from '../../values/text';
@@ -104,11 +106,13 @@ export interface Masker {
    */
   maskIdLike(s: string): string;
   /**
-   * Masks a cell per SPEC 7.2: only `text` and `idLike` columns are masked. In an `idLike` column a NUMBER is masked too (amendment
-   * 2026-10-06): as its digits, like `maskIdLike` of the same digits, and returned as a number of the same length (as text only in
-   * the rare case its fake does not read back as the same digits: a fraction, a number too long to hold exactly).
+   * Masks a cell by its column's class (`learn/classify.ts`): a `text` column's text is masked word by word (`maskText`), an `identifier`
+   * column's text like an ID (`maskIdLike`) and its NUMBERS too (amendment 2026-10-06): as their digits, like `maskIdLike` of the same
+   * digits, and returned as a number of the same length (as text only in the rare case its fake does not read back as the same digits: a
+   * fraction, a number too long to hold exactly). Anything else - a number in a text column, a category, a measure, a date, a boolean - is
+   * sent real (SPEC 7.2).
    */
-  maskCell(value: PayloadCell, columnType: ProfileType): PayloadCell;
+  maskCell(value: PayloadCell, columnClass: ColumnClass): PayloadCell;
   /** Registers more words (e.g. discovered later) that should pass through unmasked. */
   addLabelWords(words: Iterable<string>): void;
   /**
@@ -327,12 +331,12 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
     return String(back) === fake ? back : fake;
   }
 
-  function maskCell(value: PayloadCell, columnType: ProfileType): PayloadCell {
-    if (typeof value === 'number') return columnType === 'idLike' ? maskIdNumber(value) : value; // a number in any other column: sent real (SPEC 7.2)
-    if (typeof value !== 'string') return value; // booleans, null: sent real regardless of type
-    if (columnType === 'text') return maskText(value);
-    if (columnType === 'idLike') return maskIdLike(value);
-    return value; // integer/decimal/currency/percent/date/boolean/empty: sent real (SPEC 7.2)
+  function maskCell(value: PayloadCell, columnClass: ColumnClass): PayloadCell {
+    if (typeof value === 'number') return columnClass === 'identifier' ? maskIdNumber(value) : value; // a number in any other column: sent real (SPEC 7.2)
+    if (typeof value !== 'string') return value; // booleans, null: sent real whatever the class
+    if (columnClass === 'text') return maskText(value);
+    if (columnClass === 'identifier') return maskIdLike(value);
+    return value; // category / measure / date: sent real
   }
 
   function addLabelWords(words: Iterable<string>): void {

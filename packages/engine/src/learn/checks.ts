@@ -9,8 +9,8 @@
 //     as input columns, the helpers and the rule as computed columns - on a table of the example's aligned rows (`runRules`). So a check reads
 //     a value exactly as the rules will (types, dates, numbers written as text), and any operation the language has works in it.
 //   - `test` compares the rule's cell with the example's exactly like the full verification does (`cellMatchesExample`: formats, dates, numbers).
-//   - Every value that leaves is masked like the samples, with the same masker and key (`maskCell` by the type the payload masks the column
-//     as, `maskTypes`: numbers, dates and "no value" placeholders stay real, except an identifier stored as a number - amendment 2026-10-06),
+//   - Every value that leaves is masked like the samples, with the same masker and key (`maskCell` by the column's class, `classify.ts`:
+//     numbers, dates and "no value" placeholders stay real, except an identifier stored as a number - amendment 2026-10-06),
 //     and every row is a sample-shaped row of the example (`counterexampleSample`: `{ in, out }`, a whole family when rows expand), cut to the
 //     payload's cell length. A value computed from an identifier column is masked like one; with masking on, `values` gives no min / max of
 //     an identifier column and `ranges` refuses to sort by one (its from / to would be real IDs).
@@ -30,6 +30,7 @@ import {
   type Check,
   type CheckAnswer,
   type CheckLet,
+  type ColumnClass,
   type ColumnType,
   type Computed,
   type DependsOnAnswer,
@@ -54,7 +55,7 @@ import type { InputTable, OutCell, RawCell } from '../types';
 import type { PairAnalysis } from './analyze';
 import { isoOfSerial } from './analyze/cells';
 import { unmaskRules, type Masker } from './mask';
-import { inputMaskType, outputMaskType } from './maskTypes';
+import { inputClass, outputClass } from './classify';
 import { counterexampleSample } from './payload';
 import { cellMatchesExample, exampleCellAt } from './verify';
 
@@ -441,7 +442,7 @@ function takeRow(a: Answering, inRow: number): Sample | null {
 }
 
 /** A value as the AI step may see it: masked like the samples' cells of its kind, cut to the payload's cell length. */
-function sendable(v: PayloadCell, type: ProfileType, masker: Masker | undefined): PayloadCell {
+function sendable(v: PayloadCell, type: ColumnClass, masker: Masker | undefined): PayloadCell {
   const masked = masker ? masker.maskCell(v, type) : v;
   const max = limits.payload.maxCellChars;
   return typeof masked === 'string' && masked.length > max ? masked.slice(0, max) : masked;
@@ -467,25 +468,25 @@ interface Prepared {
   run: Run;
   refs: Ref[];
   rows: number[];
-  maskType: (ref: Ref) => ProfileType;
+  maskType: (ref: Ref) => ColumnClass;
 }
 
 /**
- * Amendment 2026-10-06 (identifiers stored as numbers are masked): the type a column's values are masked as in an answer - the payload's
- * (`maskTypes`) for the example's own columns; for a computed column (a `let`, the `test` rule, the user's), `idLike` when it reads an
+ * Amendment 2026-10-06 (identifiers stored as numbers are masked): the class a column's values are masked by in an answer - the payload's
+ * (`classify.ts`) for the example's own columns; for a computed column (a `let`, the `test` rule, the user's), `identifier` when it reads an
  * identifier column, directly or through another computed column, else `text` as before. DECISION: anything computed from an identifier is
  * masked like one (a copy, `in0 + 0`, is that ID; a count such as its length is masked too and reads wrong - safe, never a real ID).
  */
-function maskTypeOf(ref: Ref, n: Names, exprs: ReadonlyMap<string, Expr>, seen: Set<string> = new Set()): ProfileType {
-  if (ref.kind === 'in') return inputMaskType(n.analysis, ref.pos);
-  if (ref.kind === 'out') return outputMaskType(n.analysis, ref.pos);
+function maskTypeOf(ref: Ref, n: Names, exprs: ReadonlyMap<string, Expr>, seen: Set<string> = new Set()): ColumnClass {
+  if (ref.kind === 'in') return inputClass(n.analysis, ref.pos);
+  if (ref.kind === 'out') return outputClass(n.analysis, ref.pos);
   if (seen.has(ref.id)) return 'text';
   seen.add(ref.id);
   const expr = exprs.get(ref.id);
   if (expr === undefined) return 'text';
   for (const name of namesOf(expr)) {
     const read = resolveName(name, n);
-    if (read && maskTypeOf(read, n, exprs, seen) === 'idLike') return 'idLike';
+    if (read && maskTypeOf(read, n, exprs, seen) === 'identifier') return 'identifier';
   }
   return 'text';
 }
@@ -527,8 +528,8 @@ function prepare(a: Answering, check: Check, fields: { name: string; value: stri
   });
   // Every computed column the check may show, by id, with its names as written: the user's columns, the helpers, the rule.
   const exprs = new Map<string, Expr>([...a.ex.fixedComputed.map((c) => [c.id, c.expr] as const), ...formulas.map((f) => [f.id, f.expr] as const)]);
-  const types = new Map<string, ProfileType>();
-  const maskType = (ref: Ref): ProfileType => {
+  const types = new Map<string, ColumnClass>();
+  const maskType = (ref: Ref): ColumnClass => {
     const key = `${ref.kind}:${ref.id}`;
     let type = types.get(key);
     if (type === undefined) types.set(key, (type = maskTypeOf(ref, names, exprs)));
@@ -538,7 +539,7 @@ function prepare(a: Answering, check: Check, fields: { name: string; value: stri
 }
 
 /** The value of a column at a check-table row, as the samples show it (raw for the example's own columns), and the type it is masked by. */
-function displayOf(a: Answering, p: Prepared, ref: Ref, j: number): { v: PayloadCell; type: ProfileType } {
+function displayOf(a: Answering, p: Prepared, ref: Ref, j: number): { v: PayloadCell; type: ColumnClass } {
   const { analysis } = a.ctx;
   const row = a.ex.rows[j]!;
   const type = p.maskType(ref);
@@ -547,9 +548,9 @@ function displayOf(a: Answering, p: Prepared, ref: Ref, j: number): { v: Payload
   return { v: outValue(p.run.cell(ref.id, j)), type };
 }
 
-/** With masking on, a column masked as an ID (`maskTypes`): its values never leave real - no min / max, no sorting by it. */
+/** With masking on, an identifier column (`classify.ts`): its values never leave real - no min / max, no sorting by it. */
 function maskedId(a: Answering, p: Prepared, ref: Ref): boolean {
-  return a.ctx.masker !== undefined && p.maskType(ref) === 'idLike';
+  return a.ctx.masker !== undefined && p.maskType(ref) === 'identifier';
 }
 
 function answerTest(a: Answering, check: Extract<Check, { check: 'test' }>): TestAnswer {
@@ -560,7 +561,7 @@ function answerTest(a: Answering, check: Extract<Check, { check: 'test' }>): Tes
   if (out.kind !== 'out') fail(`column: "${check.column}" is not an output column (an output header, or out0 to out${analysis.output.columnCount - 1})`);
   // `expected` is masked like the column's cells; `got` too, or like an ID when the rule reads one (a wrong rule may give an ID elsewhere).
   const type = p.maskType(out);
-  const gotType = p.maskType({ kind: 'computed', id: RULE_ID }) === 'idLike' ? 'idLike' : type;
+  const gotType = p.maskType({ kind: 'computed', id: RULE_ID }) === 'identifier' ? 'identifier' : type;
   const failingRows: number[] = [];
   let matched = 0;
   for (const j of rows) {
@@ -594,7 +595,7 @@ function answerRanges(a: Answering, check: Extract<Check, { check: 'ranges' }>):
   // DECISION (amendment 2026-10-06): a run's from / to are values of `by` - real IDs if it is one; refused rather than masked (a masked
   // from / to would not sort like the IDs, and an order of ID numbers is no rule anyway).
   if (maskedId(a, p, by)) fail('by: sorting by an identifier column is not supported');
-  const points: { x: number | string; key: string; v: PayloadCell; type: ProfileType }[] = [];
+  const points: { x: number | string; key: string; v: PayloadCell; type: ColumnClass }[] = [];
   let noValue = 0;
   let numbers = 0;
   let dates = 0;
@@ -619,7 +620,7 @@ function answerRanges(a: Answering, check: Extract<Check, { check: 'ranges' }>):
     to: number | string;
     key: string | null;
     v: PayloadCell;
-    type: ProfileType;
+    type: ColumnClass;
     rows: number;
   }
   const runs: Span[] = [];
@@ -658,7 +659,7 @@ function answerDependsOn(a: Answering, check: Extract<Check, { check: 'dependsOn
   const { refs, rows } = p;
   const [col, ...on] = refs as [Ref, ...Ref[]];
   // key -> value -> { rows, the first row }, in the order first seen (file order).
-  const groups = new Map<string, { key: { v: PayloadCell; type: ProfileType }[]; values: Map<string, { v: PayloadCell; type: ProfileType; rows: number; first: number }> }>();
+  const groups = new Map<string, { key: { v: PayloadCell; type: ColumnClass }[]; values: Map<string, { v: PayloadCell; type: ColumnClass; rows: number; first: number }> }>();
   for (const j of rows) {
     const key = on.map((r) => displayOf(a, p, r, j));
     const k = key.map((d) => keyOf(d.v)).join('\u0000');
@@ -705,7 +706,7 @@ function answerValues(a: Answering, check: Extract<Check, { check: 'values' }>):
   const p = prepare(a, check, [{ name: 'column', value: check.column }], []);
   const { run, refs, rows } = p;
   const col = refs[0]!;
-  const counts = new Map<string, { v: PayloadCell; type: ProfileType; rows: number; first: number }>();
+  const counts = new Map<string, { v: PayloadCell; type: ColumnClass; rows: number; first: number }>();
   let empty = 0;
   const numbers: number[] = [];
   const dates: string[] = [];

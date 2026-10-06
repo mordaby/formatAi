@@ -27,8 +27,8 @@ describe('masking privacy (SPEC 15: "the masking map stays local")', () => {
       output: { layout: { titleRows: [{ text: masker.maskText('דוח ' + realWords[0]) }] } },
       samples: [
         {
-          in: [masker.maskCell(realWords[0]!, 'text'), masker.maskCell(realId, 'idLike'), 1000],
-          out: [masker.maskCell(realWords[1]!, 'text'), masker.maskCell(realId, 'idLike'), 1180],
+          in: [masker.maskCell(realWords[0]!, 'text'), masker.maskCell(realId, 'identifier'), 1000],
+          out: [masker.maskCell(realWords[1]!, 'text'), masker.maskCell(realId, 'identifier'), 1180],
         },
       ],
       hints: [

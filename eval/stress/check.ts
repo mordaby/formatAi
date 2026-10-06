@@ -16,7 +16,7 @@ import {
   counterexampleSample,
   createMasker,
   learnFromExamples,
-  maskTypes,
+  classifyColumns,
   MONTH_NAMES,
   normalizeText,
   preflight,
@@ -366,10 +366,10 @@ interface MaskCtx {
   masker: Masker;
   allowed: Set<string>;
   kinds: (InCol | undefined)[];
-  types: ReturnType<typeof maskTypes>;
+  types: ReturnType<typeof classifyColumns>;
   /** Every checkable word of a sensitive column's real cells (for the output side and the payload's other parts). */
   sensitive: Map<string, string>;
-  /** Every identifier number of an ID column (by maskTypes) or a generated ID column, by value. */
+  /** Every identifier number of an identifier column (by the classification) or a generated ID column, by value. */
   idNumbers: Map<number, { header: string; maskedAsId: boolean }>;
   leaks: { kind: FailureKind; detail: string }[];
   findings: Finding[];
@@ -379,7 +379,8 @@ interface MaskCtx {
 /** Letters of a script the masker has a fake alphabet for (words.ts: digits, Latin, the Hebrew letters). */
 const MODELED = /^[0-9A-Za-zא-ת]+$/;
 
-const NUMERIC_MASK_TYPES: ReadonlySet<string> = new Set(['integer', 'decimal', 'currency', 'percent']);
+/** The classes masking sends real (`classify.ts`): a number written as text in one of these is sent as it is. */
+const REAL_CLASSES: ReadonlySet<string> = new Set(['measure', 'category', 'date']);
 
 function leakOf(m: MaskCtx, where: string, word: string): void {
   // The fake of ANOTHER real value that happens to equal this one (a short ID's fake space is small): the masker checks a fake only
@@ -397,7 +398,7 @@ function leakOf(m: MaskCtx, where: string, word: string): void {
 }
 
 /** One masked cell against the real value it came from: none of the real cell's checkable words may survive. */
-function checkCellPair(m: MaskCtx, where: string, real: PayloadCell | undefined, masked: PayloadCell | undefined, col: InCol | undefined, maskType: string | undefined): void {
+function checkCellPair(m: MaskCtx, where: string, real: PayloadCell | undefined, masked: PayloadCell | undefined, col: InCol | undefined, cls: string | undefined): void {
   if (real === null || real === undefined) return;
   if (typeof real === 'number') {
     const id = m.idNumbers.get(real);
@@ -405,22 +406,22 @@ function checkCellPair(m: MaskCtx, where: string, real: PayloadCell | undefined,
       if (id.maskedAsId) leakOf(m, `${where} (ID column "${id.header}")`, String(real));
       else if (!m.reportedIdColumns.has(id.header)) {
         m.reportedIdColumns.add(id.header);
-        m.findings.push({ kind: 'idNumberSentReal', detail: `"${id.header}" holds generated ID numbers, maskTypes does not mask it as an ID (sent real)` });
+        m.findings.push({ kind: 'idNumberSentReal', detail: `"${id.header}" holds generated ID numbers; no identifier word in its name or shape in its values: a measure, sent real` });
       }
     }
     return;
   }
   if (typeof real !== 'string' || typeof masked !== 'string') return;
   // A number written as text (a csv / txt cell) in a column masked as a number: sent real by design (SPEC 7.2: numbers are real; an
-  // integer column is masked as an ID only when it is unique per row, maskTypes.ts) - the same finding as a number cell.
-  if (maskType !== undefined && NUMERIC_MASK_TYPES.has(maskType) && /^-?\d+(\.\d+)?$/.test(real.trim())) {
+  // integer column is an identifier only by its values' shape or its name, classify.ts) - the same finding as a number cell.
+  if (cls !== undefined && REAL_CLASSES.has(cls) && /^-?\d+(\.\d+)?$/.test(real.trim())) {
     if (col && (col.kind === 'idNum' || col.kind === 'israeliId') && masked === real && !m.reportedIdColumns.has(col.header)) {
       m.reportedIdColumns.add(col.header);
-      m.findings.push({ kind: 'idNumberSentReal', detail: `"${col.header}" holds generated ID numbers (as text), maskTypes masks it as ${maskType} (sent real)` });
+      m.findings.push({ kind: 'idNumberSentReal', detail: `"${col.header}" holds generated ID numbers (as text), classified ${cls} (sent real)` });
     }
     return;
   }
-  const sensitiveCol = col !== undefined ? SENSITIVE_KINDS.has(col.kind) : maskType === 'text' || maskType === 'idLike';
+  const sensitiveCol = col !== undefined ? SENSITIVE_KINDS.has(col.kind) : cls === 'text' || cls === 'identifier';
   if (!sensitiveCol) return;
   // The payload cuts a cell at 40 characters: only words wholly inside the masked cell's length can be compared.
   const maskedWords = new Set(tokens(masked));
@@ -470,7 +471,7 @@ function maskCheck(c: StressCase, analysis: PairAnalysis, res: LearnFromExamples
   }
   const built = readiness.built;
   const payload: LearnPayload = built.payload;
-  const types = maskTypes(analysis);
+  const types = classifyColumns(analysis);
   const kinds = inputKinds(c, analysis);
   const allowed = allowedReal(c, analysis);
   const sensitive = new Map<string, string>();
@@ -481,12 +482,12 @@ function maskCheck(c: StressCase, analysis: PairAnalysis, res: LearnFromExamples
       const v = cell?.v;
       const header = analysis.input.headers[i] ?? `column${i + 1}`;
       // (Numbers written as text in a column masked as a number are sent real by design: the same finding as a number cell, below.)
-      const numericText = typeof v === 'string' && NUMERIC_MASK_TYPES.has(types.input[i] ?? '') && /^-?\d+(\.\d+)?$/.test(v.trim());
-      if (typeof v === 'string' && !numericText && ((col && SENSITIVE_KINDS.has(col.kind)) || (!col && (types.input[i] === 'text' || types.input[i] === 'idLike')))) {
+      const numericText = typeof v === 'string' && REAL_CLASSES.has(types.input[i] ?? '') && /^-?\d+(\.\d+)?$/.test(v.trim());
+      if (typeof v === 'string' && !numericText && ((col && SENSITIVE_KINDS.has(col.kind)) || (!col && (types.input[i] === 'text' || types.input[i] === 'identifier')))) {
         for (const w of tokens(v)) if (checkable(w) && !allowed.has(w)) sensitive.set(w, header);
       }
-      if (typeof v === 'number' && Number.isInteger(v) && String(Math.abs(v)).length >= 6 && (types.input[i] === 'idLike' || (col && (col.kind === 'idNum' || col.kind === 'israeliId')))) {
-        idNumbers.set(v, { header, maskedAsId: types.input[i] === 'idLike' });
+      if (typeof v === 'number' && Number.isInteger(v) && String(Math.abs(v)).length >= 6 && (types.input[i] === 'identifier' || (col && (col.kind === 'idNum' || col.kind === 'israeliId')))) {
+        idNumbers.set(v, { header, maskedAsId: types.input[i] === 'identifier' });
       }
     });
   });
@@ -507,7 +508,7 @@ function maskCheck(c: StressCase, analysis: PairAnalysis, res: LearnFromExamples
         // A number written as text in an output column masked as a number: sent real by design, even when the same number is also in
         // an ID column that is masked (a customer number twice, once unique per row and once not) - the finding, as on the input side.
         const outType = types.output[col];
-        if (typeof real === 'string' && outType !== undefined && NUMERIC_MASK_TYPES.has(outType) && /^-?\d+(\.\d+)?$/.test(real.trim())) {
+        if (typeof real === 'string' && outType !== undefined && REAL_CLASSES.has(outType) && /^-?\d+(\.\d+)?$/.test(real.trim())) {
           if (masked === real && sensitive.has(real.trim()) && !m.reportedIdColumns.has(`out:${col}`)) {
             m.reportedIdColumns.add(`out:${col}`);
             findings.push({ kind: 'idNumberSentReal', detail: `output column ${col + 1} (masked as ${outType}) holds ${JSON.stringify(real)}, also a value of the ID column "${sensitive.get(real.trim())}" (sent real)` });

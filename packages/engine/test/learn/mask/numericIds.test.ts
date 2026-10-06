@@ -1,14 +1,15 @@
 // Amendment 2026-10-06 (SPEC 7.2): identifiers stored as numbers are masked. The bug: with masking on, `maskCell` sent every NUMBER
 // real whatever its column, so an ID column, a customer number and a phone number stored as numbers in Excel (the common case) went to
 // the AI as they were - in samples `in` and `out` - while the privacy page promises that ID numbers are replaced. Now a number in an
-// `idLike` column is masked as its digits (and stays a number), an integer column the analysis shows to be an identifier is masked the
-// same way, and every path that sends cells uses the same types (`learn/maskTypes.ts`). A measure (an amount, a quantity) stays real.
+// `idLike` column is masked as its digits (and stays a number), an integer column the classification calls an identifier (its name, since
+// the column classification of 2026-10-06) is masked the same way, and every path that sends cells uses the same classes
+// (`learn/classify.ts`). A measure (an amount, a quantity) stays real.
 import type { Expr, LearnPayload, LearnResult, PayloadCell, Sample } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { learnFromExamples } from '../../../src/learn/flow';
 import { loopStep, startLoop, wrongCount, type LoopContext } from '../../../src/learn/loop';
 import { createMasker, maskRules, unmaskRules } from '../../../src/learn/mask';
-import { identifierColumns, maskTypes } from '../../../src/learn/maskTypes';
+import { classifyColumns } from '../../../src/learn/classify';
 import { buildPayload } from '../../../src/learn/payload';
 import { preflight } from '../../../src/learn/preflight';
 import { verifyAgainstExample } from '../../../src/learn/verify';
@@ -141,24 +142,26 @@ describe('the reproduction: IDs, customer numbers and phones stored as numbers, 
 });
 
 // ---------------------------------------------------------------------------
-// Which integer columns are identifiers: unique per row, and nothing computes with them.
+// Which integer columns are identifiers: since the column classification (owner, 2026-10-06), the name decides - not uniqueness or use.
 // ---------------------------------------------------------------------------
 
-describe('maskTypes: an integer identifier is masked, a measure stays real', () => {
-  it('the reproduction: the customer number (unique, only copied) is masked as an ID; the amount (bands) is not', () => {
+describe('classifyColumns: an integer identifier is masked, a measure stays real', () => {
+  const classes = (a: ReturnType<typeof analyzeOk>) => ({ input: classifyColumns(a).input, output: classifyColumns(a).output });
+
+  it('the reproduction: the customer number (its name) is an identifier; the amount (bands) is a measure', () => {
     const pair = idPair();
     const a = analyzeOk(xlsx(pair.input), xlsx(pair.output));
-    expect([...identifierColumns(a)]).toEqual([1]);
-    expect(maskTypes(a)).toEqual({
-      input: ['idLike', 'idLike', 'idLike', 'text', 'integer'],
-      output: ['idLike', 'idLike', 'idLike', 'text', 'integer', 'text'],
+    expect(classifyColumns(a).detail.input[1]).toEqual({ class: 'identifier', by: 'name' });
+    expect(classes(a)).toEqual({
+      input: ['identifier', 'identifier', 'identifier', 'text', 'measure'],
+      output: ['identifier', 'identifier', 'identifier', 'text', 'measure', 'text'],
     });
   });
 
-  /** Ref: a unique integer key, only copied. Qty: unique integers too, but the total is Qty * Price. */
-  function totalPair(): { input: V[][]; output: V[][] } {
-    const input: V[][] = [['Ref', 'Qty', 'Price']];
-    const output: V[][] = [['Ref', 'Qty', 'Total']];
+  /** A unique integer key, only copied (`key`), Qty: unique integers too, but the total is Qty * Price. */
+  function totalPair(key: string): { input: V[][]; output: V[][] } {
+    const input: V[][] = [[key, 'Qty', 'Price']];
+    const output: V[][] = [[key, 'Qty', 'Total']];
     for (let i = 0; i < 12; i++) {
       const ref = 400100 + i * 7;
       const qty = 3 + ((i * 5) % 12) + i * 12; // all different
@@ -169,13 +172,12 @@ describe('maskTypes: an integer identifier is masked, a measure stays real', () 
     return { input, output };
   }
 
-  it('an integer quantity used in `mul` stays real; the integer key that is only copied is masked', () => {
-    const { input, output } = totalPair();
+  it('an integer quantity used in `mul` stays real; the integer key named as an identifier is masked', () => {
+    const { input, output } = totalPair('Account No');
     const a = analyzeOk(xlsx(input), xlsx(output));
     expect(a.input.profile.map((p) => [p.type, p.key])).toEqual([['integer', true], ['integer', true], ['decimal', false]]);
     expect(a.columns[2]!.relations[0]!.rel).toBe('mul');
-    expect(maskTypes(a).input).toEqual(['idLike', 'integer', 'decimal']);
-    expect(maskTypes(a).output).toEqual(['idLike', 'integer', 'decimal']);
+    expect(classes(a)).toEqual({ input: ['identifier', 'measure', 'measure'], output: ['identifier', 'measure', 'measure'] });
 
     const { payload } = buildPayload(a, preflight(a, 'paid'), { masker: createMasker(key('mul')) });
     const sent = JSON.stringify(payload.samples);
@@ -188,7 +190,17 @@ describe('maskTypes: an integer identifier is masked, a measure stays real', () 
     }
   });
 
-  it('an integer column with a filter threshold, a window sum, or a summary total is a measure', () => {
+  // WHETHER changed (owner, 2026-10-06): #56 masked this unique, only-copied integer column whatever its name. A name with no identifier
+  // word now leaves it a measure, sent real - the documented limit the external classification (the AI step, later) is for.
+  it('the same key named "Ref" (no identifier word) is a measure, sent real', () => {
+    const { input, output } = totalPair('Ref');
+    const a = analyzeOk(xlsx(input), xlsx(output));
+    expect(classes(a).input).toEqual(['measure', 'measure', 'measure']);
+    const sent = JSON.stringify(buildPayload(a, preflight(a, 'paid'), { masker: createMasker(key('ref')) }).payload.samples);
+    expect(leaked(sent, (input.slice(1) as number[][]).map((r) => r[0]!))).toHaveLength(12);
+  });
+
+  it('an integer column with a filter threshold is a measure', () => {
     // Score: unique integers; the rows below 50 are dropped.
     const input: V[][] = [['Ref', 'Score']];
     const output: V[][] = [['Ref', 'Score']];
@@ -199,11 +211,10 @@ describe('maskTypes: an integer identifier is masked, a measure stays real', () 
     }
     const a = analyzeOk(xlsx(input), xlsx(output));
     expect(a.dropped.filters[0]?.droppedWhen?.op).toMatch(/^(gte|lt)$/);
-    expect(identifierColumns(a).has(1)).toBe(false);
-    expect(maskTypes(a).input[1]).toBe('integer');
+    expect(classifyColumns(a).input[1]).toBe('measure');
   });
 
-  it('an integer column that is not unique per row is no identifier (a code repeated across rows)', () => {
+  it('an integer column that is not unique per row and not named as an identifier is a measure (a code repeated across rows)', () => {
     const input: V[][] = [['Branch', 'Name']];
     const output: V[][] = [['Name', 'Branch']];
     for (let i = 0; i < 12; i++) {
@@ -211,7 +222,7 @@ describe('maskTypes: an integer identifier is masked, a measure stays real', () 
       output.push([`N${i}`, 101 + (i % 3)]);
     }
     const a = analyzeOk(xlsx(input), xlsx(output));
-    expect(identifierColumns(a).size).toBe(0);
+    expect(classifyColumns(a).input).toEqual(['measure', 'text']);
   });
 });
 
@@ -222,10 +233,10 @@ describe('maskTypes: an integer identifier is masked, a measure stays real', () 
 describe('Masker.maskCell: a number in an idLike column', () => {
   it('is masked like the same digits as text, and stays a number of the same length', () => {
     const m = createMasker(key('cell'));
-    const fake = m.maskCell(312345002, 'idLike');
+    const fake = m.maskCell(312345002, 'identifier');
     expect(typeof fake).toBe('number');
     expect(fake).not.toBe(312345002);
-    expect(String(fake)).toBe(m.maskCell('312345002', 'idLike'));
+    expect(String(fake)).toBe(m.maskCell('312345002', 'identifier'));
     expect(isValidIsraeliId(String(fake))).toBe(true);
     expect(m.fakeToReal.get(String(fake))).toBe('312345002');
     // inside text, the same ID gets the same fake (SPEC 7.2: the same real word becomes the same fake word)
@@ -236,7 +247,7 @@ describe('Masker.maskCell: a number in an idLike column', () => {
     const m = createMasker(key('short'));
     const real = Number(makeValidIsraeliId('04021776')); // "04021776x", stored as a number: 8 digits
     expect(String(real)).toHaveLength(8);
-    const fake = m.maskCell(real, 'idLike');
+    const fake = m.maskCell(real, 'identifier');
     expect(typeof fake).toBe('number');
     expect(String(fake)).toHaveLength(8);
     expect(isValidIsraeliId(String(fake))).toBe(true);
@@ -245,17 +256,17 @@ describe('Masker.maskCell: a number in an idLike column', () => {
   it('a number that is no Israeli ID keeps its digit count and never gains a leading zero', () => {
     const m = createMasker(key('lead'));
     for (let n = 100200; n < 100200 + 13 * 300; n += 13) {
-      const fake = m.maskCell(n, 'idLike') as number;
+      const fake = m.maskCell(n, 'identifier') as number;
       expect(typeof fake).toBe('number');
       expect(String(fake)).toHaveLength(6);
     }
-    for (let n = 1; n < 400; n++) expect(String(m.maskCell(n, 'idLike'))).toHaveLength(String(n).length);
+    for (let n = 1; n < 400; n++) expect(String(m.maskCell(n, 'identifier'))).toHaveLength(String(n).length);
   });
 
   it('numbers in other columns are sent real, as before', () => {
     const m = createMasker(key('other'));
-    expect(m.maskCell(312345002, 'integer')).toBe(312345002);
-    expect(m.maskCell(1234.5, 'decimal')).toBe(1234.5);
+    expect(m.maskCell(312345002, 'measure')).toBe(312345002);
+    expect(m.maskCell(1234.5, 'measure')).toBe(1234.5);
     expect(m.maskCell(312345002, 'text')).toBe(312345002);
   });
 });
@@ -267,10 +278,10 @@ describe('Masker.maskCell: a number in an idLike column', () => {
 describe('unmaskRules: a fake ID written as a number constant', () => {
   const m = createMasker(key('unmask'));
   const realId = 312345002;
-  const fakeId = m.maskCell(realId, 'idLike') as number;
+  const fakeId = m.maskCell(realId, 'identifier') as number;
   const realCustomer = 100213;
-  const fakeCustomer = m.maskCell(realCustomer, 'idLike') as number;
-  const shortFake = m.maskCell(37, 'idLike') as number;
+  const fakeCustomer = m.maskCell(realCustomer, 'identifier') as number;
+  const shortFake = m.maskCell(37, 'identifier') as number;
 
   it('unmasks the fake to the real value, written as text or as a number, in every constant position', () => {
     const rules = {
@@ -447,7 +458,7 @@ describe('repair rows and the learning loop\'s rows are masked the same way', ()
     const { payload } = buildPayload(a, preflight(a, 'paid'), { masker: m, complete: { fixedRules: fixed, columns: [5], parts: [] } });
     const json = JSON.stringify(payload.complete);
     expect(leaked(json, all)).toEqual([]);
-    expect(json).toContain(String(m.maskCell(pair.customers[row]!, 'idLike')));
+    expect(json).toContain(String(m.maskCell(pair.customers[row]!, 'identifier')));
     expect(json).toContain(String(CUT)); // a threshold: real
   });
 
@@ -462,7 +473,7 @@ describe('repair rows and the learning loop\'s rows are masked the same way', ()
     for (const row of r.step.rows) {
       const fake = row.sample.in[0];
       expect(typeof fake).toBe('number');
-      expect(fake).toBe(masker.maskCell(pair.ids[row.inRow]!, 'idLike'));
+      expect(fake).toBe(masker.maskCell(pair.ids[row.inRow]!, 'identifier'));
       expect(row.sample.in[4]).toBe(pair.amounts[row.inRow]); // the amount: real
     }
   });

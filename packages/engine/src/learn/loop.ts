@@ -17,13 +17,13 @@
 // Which rows (the counterexamples): the wrong rows are grouped by what went wrong - (output column, the example's value, the value the
 // rules made); one row from each group, biggest groups first, then a second row from each, and so on until the round is full. A row the
 // payload or an earlier round already sent is never sent again (the server checks every answer against all of them anyway).
-import type { CheckRound, LearnPayload, PayloadCell, ProfileType, RepairProblem, Sample } from '@formatai/shared';
+import type { CheckRound, ColumnClass, LearnPayload, PayloadCell, RepairProblem, Sample } from '@formatai/shared';
 import { limits, payloadBytes, payloadRowCount, withRows } from '@formatai/shared';
 import type { RawCell } from '../types';
 import type { PairAnalysis } from './analyze';
 import { isoOfSerial } from './analyze/cells';
 import type { Masker } from './mask';
-import { inputMaskType, outputMaskType } from './maskTypes';
+import { inputClass, outputClass } from './classify';
 import { counterexampleSample } from './payload';
 import type { WrongCell, WrongRow } from './verify';
 
@@ -205,9 +205,9 @@ function pickWithGroups(wrongRows: readonly WrongRow[], skip: ReadonlySet<number
   return picked;
 }
 
-/** A value as the AI step may see it: masked like the samples' cells of its column (`maskTypes`), and cut to the payload's cell length. */
-function sendable(v: PayloadCell, type: ProfileType, masker: Masker | undefined): PayloadCell {
-  const masked = masker ? masker.maskCell(v, type) : v;
+/** A value as the AI step may see it: masked like the samples' cells of its column (`classify.ts`), and cut to the payload's cell length. */
+function sendable(v: PayloadCell, cls: ColumnClass, masker: Masker | undefined): PayloadCell {
+  const masked = masker ? masker.maskCell(v, cls) : v;
   const maxChars = limits.payload.maxCellChars;
   return typeof masked === 'string' && masked.length > maxChars ? masked.slice(0, maxChars) : masked;
 }
@@ -226,13 +226,13 @@ function rowValues(row: readonly (RawCell | null)[] | undefined, count: number, 
 
 function sendableInput(row: WrongRow, ctx: LoopContext): PayloadCell[] {
   const { analysis, masker } = ctx;
-  return rowValues(analysis.input.rows[row.inRow], analysis.input.columnCount, analysis.input.date1904).map((v, i) => sendable(v, inputMaskType(analysis, i), masker));
+  return rowValues(analysis.input.rows[row.inRow], analysis.input.columnCount, analysis.input.date1904).map((v, i) => sendable(v, inputClass(analysis, i), masker));
 }
 
 /** One `diff` problem for a wrong cell, carrying its row (LEARN_PROMPT §4): every value masked like the samples. */
 function cellProblem(row: WrongRow, cell: WrongCell, ctx: LoopContext): RepairProblem {
   const { analysis, masker } = ctx;
-  const outType = (o: number): ProfileType => outputMaskType(analysis, o);
+  const outType = (o: number): ColumnClass => outputClass(analysis, o);
   const sheetRow = analysis.output.dataRows[cell.outRow];
   // (The example output's real dates are read as the 1900 system, as the payload's samples are.)
   const outCells = rowValues(sheetRow !== undefined ? analysis.output.sheet.rows[sheetRow] : undefined, analysis.output.columnCount, false);
@@ -250,7 +250,7 @@ function cellProblem(row: WrongRow, cell: WrongCell, ctx: LoopContext): RepairPr
  * output for it is nothing (`row.out: []`), and what the rules made is `made` - `row.out` always means the example's row (prompt audit X1).
  */
 function extraProblem(row: WrongRow, made: readonly PayloadCell[], ctx: LoopContext): RepairProblem {
-  const outType = (o: number): ProfileType => outputMaskType(ctx.analysis, o);
+  const outType = (o: number): ColumnClass => outputClass(ctx.analysis, o);
   return {
     kind: 'diff',
     out: 0,

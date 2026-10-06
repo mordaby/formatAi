@@ -16,6 +16,7 @@
 
 import type {
   Band,
+  ColumnClassHints,
   InputLayout,
   OutputLayout,
   PayloadCell,
@@ -112,6 +113,8 @@ export interface AnalyzeOptions {
   seed?: number;
   /** Relations below this coverage are not reported. Default 0.9 (SPEC 6.2: partial hints). */
   minCoverage?: number;
+  /** An external classification of the columns, by header (the AI step's, later): kept on the analysis for `classifyColumns`. */
+  columnHints?: ColumnClassHints;
 }
 
 // ---------- Tables ----------
@@ -535,6 +538,8 @@ export interface PairAnalysis {
   layout: LayoutAnalysis;
   /** The aligned rows the first pass used (seeded random sample). */
   sample: { size: number; seed: number };
+  /** `AnalyzeOptions.columnHints`: what `classifyColumns` reads, so every path that masks reads the same classes. */
+  columnHints?: ColumnClassHints;
 }
 
 export interface PairAnalysisFailure {

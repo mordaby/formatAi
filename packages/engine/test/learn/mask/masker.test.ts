@@ -171,19 +171,19 @@ describe('createMasker: maskCell', () => {
   it('masks text and idLike columns only; numbers, dates and booleans pass through real', () => {
     const masker = createMasker(key('cell-1'));
     expect(masker.maskCell('זקמ עגש', 'text')).not.toBe('זקמ עגש');
-    expect(masker.maskCell('040217763', 'idLike')).not.toBe('040217763');
-    expect(masker.maskCell(1234.5, 'decimal')).toBe(1234.5);
-    expect(masker.maskCell(7, 'integer')).toBe(7);
+    expect(masker.maskCell('040217763', 'identifier')).not.toBe('040217763');
+    expect(masker.maskCell(1234.5, 'measure')).toBe(1234.5);
+    expect(masker.maskCell(7, 'measure')).toBe(7);
     expect(masker.maskCell('2024-01-01', 'date')).toBe('2024-01-01');
-    expect(masker.maskCell(true, 'boolean')).toBe(true);
+    expect(masker.maskCell(true, 'category')).toBe(true);
     expect(masker.maskCell(null, 'text')).toBeNull();
-    expect(masker.maskCell(null, 'idLike')).toBeNull();
+    expect(masker.maskCell(null, 'identifier')).toBeNull();
   });
 
   it('headers are never run through maskCell at all (columns are metadata, not cell values) -- sanity: passing a header-like string through a numeric type stays real', () => {
     const masker = createMasker(key('cell-2'));
-    expect(masker.maskCell('שם לקוח', 'currency')).toBe('שם לקוח');
-    expect(masker.maskCell('שם לקוח', 'percent')).toBe('שם לקוח');
+    expect(masker.maskCell('שם לקוח', 'measure')).toBe('שם לקוח');
+    expect(masker.maskCell('שם לקוח', 'measure')).toBe('שם לקוח');
   });
 });
 
@@ -206,7 +206,7 @@ describe('createMasker: vocabulary sent as it is (SPEC 7.2, learning-loop propos
     const masker = createMasker(key('dates'));
     for (const d of ['12 במרץ 2026', '2026-03-07', '05/03/2026', '5.3.26', 'March 12, 2026', '12-Mar-2026', 'ינואר 2026', '31/02/2026']) {
       expect(masker.maskCell(d, 'text')).toBe(d);
-      expect(masker.maskCell(d, 'idLike')).toBe(d);
+      expect(masker.maskCell(d, 'identifier')).toBe(d);
     }
     // not a date: a phone number, parts too big for a day or a month
     expect(masker.maskCell('054-123-4567', 'text')).not.toBe('054-123-4567');

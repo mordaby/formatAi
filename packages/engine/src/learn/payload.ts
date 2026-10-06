@@ -7,6 +7,7 @@
 
 import type {
   Band,
+  ColumnClass,
   ColumnHint,
   Format,
   Hint,
@@ -15,7 +16,6 @@ import type {
   OutputLayout,
   PayloadCell,
   PayloadColumn,
-  ProfileType,
   RowHint,
   Rules,
   Sample,
@@ -30,7 +30,7 @@ import { isoOfSerial } from './analyze/cells';
 import { completePayloadOf, fixedLabelTexts, type CompleteOptions } from './complete';
 import { relationsToHints, type HintCandidate } from './hints';
 import { mapRuleConstants, splitWords, type Masker } from './mask';
-import { inputMaskType, maskTypes, outputMaskType } from './maskTypes';
+import { classifyColumns, inputClass, isMasked, outputClass } from './classify';
 import type { PreflightResult } from './preflight';
 import { normalizeText } from '../values/text';
 
@@ -338,12 +338,12 @@ function significantDigitsOf(word: string): string | null {
 /**
  * The label words among `candidates` (normalized words of the title, summary-label and other label texts): those that appear in no text or
  * ID-like data cell of the example, input or output, in any row (SPEC 7.2). Scans until every candidate has turned up in a cell. A number
- * in a column masked as an ID (amendment 2026-10-06, `maskTypes`) is masked as its digits, so those digits are data too: a title that
+ * in an identifier column (amendment 2026-10-06, `classify.ts`) is masked as its digits, so those digits are data too: a title that
  * names one ("customer 100200") must not make them a label word the masker then lets through.
  */
 function labelWordsOf(analysis: PairAnalysis, candidates: ReadonlySet<string>): Set<string> {
   const left = new Set(candidates);
-  const types = maskTypes(analysis);
+  const types = classifyColumns(analysis);
   // Amendment 2026-10-06 (leading zeros survive masking): the masker masks a run of digits by its significant digits, so "12345" in a
   // title and "000012345" in a cell are the same value - a title word of digits is data when any cell holds those digits, zero-padded or not.
   const digitCandidates = new Map<string, string[]>();
@@ -356,12 +356,12 @@ function labelWordsOf(analysis: PairAnalysis, candidates: ReadonlySet<string>): 
     const significant = significantDigitsOf(word);
     if (significant !== null) for (const w of digitCandidates.get(significant) ?? []) left.delete(w);
   };
-  const scan = (row: (RawCell | null)[] | undefined, kinds: readonly ProfileType[]): void => {
+  const scan = (row: (RawCell | null)[] | undefined, classes: readonly ColumnClass[]): void => {
     if (!row) return;
-    kinds.forEach((type, c) => {
+    classes.forEach((cls, c) => {
       const cell = row[c];
-      if (!cell || (type !== 'text' && type !== 'idLike')) return;
-      const text = typeof cell.v === 'string' ? cell.v : typeof cell.v === 'number' && type === 'idLike' ? String(cell.v) : null;
+      if (!cell || !isMasked(cls)) return;
+      const text = typeof cell.v === 'string' ? cell.v : typeof cell.v === 'number' && cls === 'identifier' ? String(cell.v) : null;
       if (text !== null) for (const tok of splitWords(text)) if (tok.isWord) seen(normalizeText(tok.text));
     });
   };
@@ -376,14 +376,14 @@ function labelWordsOf(analysis: PairAnalysis, candidates: ReadonlySet<string>): 
   return left;
 }
 
-/** A sample's cells masked by the type each column is masked as (`maskTypes`: an identifier stored as a number is masked as an ID). */
+/** A sample's cells masked by their column's class (`classify.ts`: an identifier stored as a number is masked as an ID). */
 function maskSample(sample: Sample, analysis: PairAnalysis, masker: Masker): Sample {
-  const inMasked = sample.in.map((v, i) => masker.maskCell(v, inputMaskType(analysis, i)));
+  const inMasked = sample.in.map((v, i) => masker.maskCell(v, inputClass(analysis, i)));
   if (sample.out.length > 0 && Array.isArray(sample.out[0])) {
-    const outMasked = (sample.out as PayloadCell[][]).map((row) => row.map((v, i) => masker.maskCell(v, outputMaskType(analysis, i))));
+    const outMasked = (sample.out as PayloadCell[][]).map((row) => row.map((v, i) => masker.maskCell(v, outputClass(analysis, i))));
     return { in: inMasked, out: outMasked };
   }
-  const outMasked = (sample.out as PayloadCell[]).map((v, i) => masker.maskCell(v, outputMaskType(analysis, i)));
+  const outMasked = (sample.out as PayloadCell[]).map((v, i) => masker.maskCell(v, outputClass(analysis, i)));
   return { in: inMasked, out: outMasked };
 }
 
@@ -425,8 +425,8 @@ export function counterexampleSample(analysis: PairAnalysis, inRow: number, mask
 
 function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Masker): ColumnHint {
   if (h.rel === 'valueMap') {
-    const inType = inputMaskType(analysis, h.in[0]);
-    const outType = outputMaskType(analysis, h.out);
+    const inType = inputClass(analysis, h.in[0]);
+    const outType = outputClass(analysis, h.out);
     const pairs: [string, string][] = h.pairs.map(([from, to]) => [
       String(masker.maskCell(from, inType) ?? ''),
       String(masker.maskCell(to, outType) ?? ''),
@@ -434,7 +434,7 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
     return { ...h, pairs };
   }
   if (h.rel === 'constant') {
-    const outType = outputMaskType(analysis, h.out);
+    const outType = outputClass(analysis, h.out);
     return { ...h, value: masker.maskCell(h.value, outType) };
   }
   if (h.rel === 'template') {
@@ -446,7 +446,7 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
   if (h.rel === 'bands') {
     // The thresholds are numbers or ISO dates (sent real, SPEC 7.2); the band values are output cells, masked like samples.
     // Bands on a computed output column (`onOut`) are no different: the thresholds are numbers of that column, the values cells of `out`.
-    const outType = outputMaskType(analysis, h.out);
+    const outType = outputClass(analysis, h.out);
     const bands: Band[] = h.bands.map((band) => ({ ...band, value: masker.maskCell(band.value, outType) }));
     return { ...h, bands };
   }
@@ -455,7 +455,7 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
 
 function maskRowHintValue(h: RowHint, analysis: PairAnalysis, masker: Masker): RowHint {
   if (h.rel !== 'filter') return h;
-  const inType = inputMaskType(analysis, h.in[0]!);
+  const inType = inputClass(analysis, h.in[0]!);
   const out: RowHint = { ...h };
   if (h.keptValues) out.keptValues = h.keptValues.map((v) => masker.maskCell(v, inType));
   if (h.droppedValues) out.droppedValues = h.droppedValues.map((v) => masker.maskCell(v, inType));
@@ -484,11 +484,11 @@ function registerIdConstants(analysis: PairAnalysis, rules: LearnResult | Rules,
     return n;
   });
   if (wanted.size === 0) return;
-  const types = maskTypes(analysis);
-  const scan = (row: (RawCell | null)[] | undefined, kinds: readonly ProfileType[]): void => {
-    kinds.forEach((type, c) => {
+  const types = classifyColumns(analysis);
+  const scan = (row: (RawCell | null)[] | undefined, classes: readonly ColumnClass[]): void => {
+    classes.forEach((cls, c) => {
       const v = row?.[c]?.v;
-      if (type === 'idLike' && typeof v === 'number' && wanted.has(v)) masker.maskCell(v, type);
+      if (cls === 'identifier' && typeof v === 'number' && wanted.has(v)) masker.maskCell(v, cls);
     });
   };
   for (const row of analysis.input.rows) scan(row, types.input);
@@ -623,7 +623,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
   const buildDroppedRows = (): PayloadCell[][] =>
     droppedPriority.map((r) => {
       const cells = rowCells(analysis.input.rows[r], analysis.input.columnCount, analysis.input.date1904);
-      const masked = masker ? cells.map((v, i) => masker.maskCell(v, inputMaskType(analysis, i))) : cells;
+      const masked = masker ? cells.map((v, i) => masker.maskCell(v, inputClass(analysis, i))) : cells;
       return truncateCells(masked, caps.maxCellChars);
     });
 
@@ -643,13 +643,13 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
       return failsOn ? ({ ...rest, failsOn } as Hint) : (rest as Hint);
     });
 
-    // With masking on, a column masked as an ID that the profile calls a number (amendment 2026-10-06) does not carry its real
-    // smallest and largest values (`stats.range`): they are two of the IDs the samples mask.
-    const types = masker ? maskTypes(analysis) : null;
-    const columnOf = (p: ColumnProfile, maskType: ProfileType | undefined): PayloadColumn => {
+    // With masking on, an identifier column (amendment 2026-10-06) does not carry its real smallest and largest values (`stats.range`):
+    // they are two of the IDs the samples mask.
+    const types = masker ? classifyColumns(analysis) : null;
+    const columnOf = (p: ColumnProfile, cls: ColumnClass | undefined): PayloadColumn => {
       const col = toPayloadColumn(p);
       if (!includeStats) delete col.stats;
-      else if (maskType === 'idLike' && p.type !== 'idLike') delete col.stats?.range;
+      else if (cls === 'identifier') delete col.stats?.range;
       return col;
     };
     const inputColumns = analysis.input.profile.map((p, i) => columnOf(p, types?.input[i]));

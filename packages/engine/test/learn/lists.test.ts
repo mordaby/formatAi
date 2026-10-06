@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { limits, type Expr, type LearnResult } from '@formatai/shared';
 import { fillParams } from '../../src/learn/fillParams';
 import { copiedLists, listRetryProblems, oneTimeQuestions } from '../../src/learn/oneTimers';
-import { inputMaskType } from '../../src/learn/maskTypes';
+import { inputClass } from '../../src/learn/classify';
 import { verifyAgainstExample } from '../../src/learn/verify';
 import { parseFormula } from '../../src/formula';
 import type { PairAnalysis } from '../../src/learn/analyze';
@@ -143,13 +143,13 @@ describe('a small vocabulary is not a list (at most 12 entries, each used by at 
     expect(copiedLists(lookupRules(analysis), analysis).map((q) => q.entries)).toEqual([12]);
   });
 
-  it('keyed on an identifier column (#56: digit codes with their zeros), 8 entries of 3 rows each: a list', () => {
+  it('keyed on an identifier column (digit codes with their zeros: profile idLike), 8 entries of 3 rows each: a list', () => {
     const ids = catalog(times(8, 3), 'zeros');
-    expect(inputMaskType(ids.analysis, 1)).toBe('idLike');
+    expect(inputClass(ids.analysis, 1)).toBe('identifier');
     expect(copiedLists(lookupRules(ids.analysis), ids.analysis).map((q) => [q.keyColumn, q.entries])).toEqual([['Product', 8]]);
     // The same 8 entries keyed on a text code: a vocabulary.
     const codes = catalog(times(8, 3));
-    expect(inputMaskType(codes.analysis, 1)).toBe('text');
+    expect(inputClass(codes.analysis, 1)).toBe('text');
     expect(copiedLists(lookupRules(codes.analysis), codes.analysis)).toEqual([]);
   });
 
