@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "expense",
+        "header": "Expense",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "type",
+        "header": "Expense type",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "account",
+        "type": "text",
+        "expr": {
+          "op": "lookup",
+          "table": "ledger",
+          "key": {
+            "col": "type"
+          },
+          "return": "account",
+          "onMissing": "flag"
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": [],
+    "tables": [
+      {
+        "name": "ledger",
+        "columns": [
+          "type",
+          "account"
+        ],
+        "rows": [
+          [
+            "Travel",
+            "61000100"
+          ],
+          [
+            "Meals",
+            "61000200"
+          ],
+          [
+            "Office supplies",
+            "61500100"
+          ],
+          [
+            "Software",
+            "62000300"
+          ],
+          [
+            "Rent",
+            "63000100"
+          ],
+          [
+            "Utilities",
+            "63000200"
+          ],
+          [
+            "Training",
+            "64000100"
+          ],
+          [
+            "Fuel",
+            "65000400"
+          ]
+        ]
+      }
+    ]
+  },
+  "output": {
+    "sheetName": "Journal",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Expense",
+        "from": "expense"
+      },
+      {
+        "header": "Expense type",
+        "from": "type"
+      },
+      {
+        "header": "Ledger account",
+        "from": "account"
+      },
+      {
+        "header": "Amount",
+        "from": "amount"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Expenses -> ledger accounts",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

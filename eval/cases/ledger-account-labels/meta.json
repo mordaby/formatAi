@@ -1,0 +1,14 @@
+{
+  "difficulty": "stress",
+  "domain": "bookkeeping",
+  "features": [
+    "savedContents",
+    "smallVocabulary",
+    "lookupTable",
+    "ledgerAccounts",
+    "noDigitRunRule",
+    "silentSave"
+  ],
+  "expect": "verified",
+  "expectNote": "Each expense type has its ledger account, written as an 8-digit label (61000100 ...): 8 types, each on 6 of the 48 rows - a small vocabulary, and no 8-digit code has an identifier's shape (the owner's decision: no digit-run rule; only an ID with its check digit, a phone, an email, a card or an IBAN count). Saved silently: no automatic round, nothing asked at Save. May break: a Save question about the accounts, or a rule that reads the amount."
+}

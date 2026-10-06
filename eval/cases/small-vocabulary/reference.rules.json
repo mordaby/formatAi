@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "ticket",
+        "header": "Ticket",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "subject",
+        "header": "Subject",
+        "type": "text"
+      },
+      {
+        "id": "status",
+        "header": "Status",
+        "type": "text",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [],
+    "valueMaps": [
+      {
+        "column": "status",
+        "map": {
+          "Open": "פתוח",
+          "In progress": "בטיפול",
+          "On hold": "מושהה",
+          "Closed": "סגור"
+        },
+        "onMissing": "flag"
+      }
+    ],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "קריאות",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "מספר קריאה",
+        "from": "ticket"
+      },
+      {
+        "header": "נושא",
+        "from": "subject"
+      },
+      {
+        "header": "סטטוס",
+        "from": "status"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Tickets -> Hebrew status",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

@@ -3,13 +3,15 @@
 // once a learn has been saved (from then on it is the editor of that source).
 // A list copied from the example (owner decision 2026-10-06) is asked about at Save, before anything is sent (`CopiedListSave`): only a list of
 // the learn on screen that the rules still hold and the server does not hold yet - one an earlier save stored was asked about then. The
-// saved-source editor has no learn (its rules are the server's own): it saves as it always did.
+// saved-source editor has no learn (its rules are the server's own): no list is asked there. An identifier-shaped value (an ID number, a
+// phone, an email, a card or bank account number: docs/proposals/saved-format-contents.md section 5) is asked about on both, in the same
+// popup, when the rules about to be stored hold one the server does not hold yet - an edit that typed one into a label, say.
 import type { CopiedListQuestion } from '@formatai/engine';
 import type { UpdateConversionRequest, UpdateConversionResponse } from '@formatai/shared';
 import { useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Cell } from '../../components/Cell';
-import { listsToConfirm } from '../../editor';
+import { findingsToConfirm } from '../../editor';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Button, InlineMessage } from '../../ui';
@@ -25,7 +27,7 @@ export interface SourceSaver {
   failure: SaveFailure | undefined;
   /** Someone else saved a newer version in the meantime. */
   conflict: boolean;
-  /** Saves `info.rules` as a new version of the source (nothing when it cannot be saved right now); a new copied list is asked about first. */
+  /** Saves `info.rules` as a new version of the source (nothing when it cannot be saved right now); a new copied list or identifier is asked about first. */
   doSave(info: WorkbenchInfo): void;
   /** The copied-list question at Save (rendered by `SaveChangesActions`). */
   gate: CopiedListGate;
@@ -79,7 +81,7 @@ export function useSourceSave({ conversionId, version, onSaved, copiedLists }: S
   // (what the server holds now is what was last saved, or opened: a list in it is not asked about again)
   const doSave = (info: WorkbenchInfo): void => {
     if (!info.metaStatus) return;
-    gate.save(info, listsToConfirm(info.rules, copiedLists ?? [], info.editor.state.saved.rules), persist);
+    gate.save(info, findingsToConfirm(info.rules, copiedLists ?? [], info.editor.state.saved.rules), persist);
   };
 
   const failure = save.state.status === 'error' ? save.state.error : undefined;

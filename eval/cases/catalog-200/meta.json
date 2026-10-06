@@ -1,0 +1,16 @@
+{
+  "difficulty": "stress",
+  "domain": "productCatalog",
+  "features": [
+    "savedContents",
+    "listOfFixedValues",
+    "lookupTable",
+    "repeatingKeys",
+    "askedAtSave"
+  ],
+  "expect": "verified",
+  "expectNote": "Category is looked up by product code in a catalog of 200 products (each on 2 of the 400 rows); no code range or other column explains it. A list of fixed values (more than 12 entries): the learn sends ONE automatic round asking for the rule behind it (\"Column \\\"Category\\\" is a list of 200 fixed values, one per Product code ...\"), the honest answer keeps the lookup, and the list is asked about at Save (\"Category is a list of 200 fixed values taken from your example (one for each Product code)\"); this case answers \"Keep it\" (answers.copiedList), so it scores verified. May break: a rule invented from the code (a band on its digits, a prefix), or the list given up as unsupported.",
+  "answers": {
+    "copiedList": "rule"
+  }
+}

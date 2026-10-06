@@ -1,7 +1,7 @@
 // The pure parts of "convert a file" (SPEC 5 C, 21 v5 item 5): which rows need a look, what the user chose for each,
 // the RowDecisions those choices become, and the counts a finished run reports. No React, no worker: easy to test.
 import type { ConversionMatch, Flag, RowDecisions, RunSummary } from '@formatai/engine';
-import { limits, type ColumnType, type LearnResult, type Rules, type SignatureEntry, type SourceConversionRef } from '@formatai/shared';
+import { identifierKindOf, limits, type ColumnType, type IdentifierFinding, type LearnResult, type Rules, type SignatureEntry, type SourceConversionRef } from '@formatai/shared';
 import type { MessageKey } from '../../i18n';
 import type { RowInputCell, SignatureInput } from '../../worker/convertApi';
 
@@ -138,7 +138,9 @@ export function typedReading(typed: string): string {
 /**
  * The fix a typed field amounts to, when it can be a rule. DECISION: only a cell that IS text in the file (`RowInputCell.isText`: a number, a
  * date or an empty cell is never matched by `readAs`, so offering it would promise something next month's file would not do), whose text the
- * user changed, in a column that does not already read that text another way and has room for one more (`limits.rules.maxReadAsPerColumn`).
+ * user changed, in a column that does not already read that text another way and has room for one more (`limits.rules.maxReadAsPerColumn`),
+ * and whose text and value a saved format may keep (`limits.rules.maxValueChars`, docs/proposals/saved-format-contents.md section 7: the
+ * server would refuse the save).
  */
 function fixOf(rules: LearnResult | Rules, cell: RowInputCell | undefined, typed: string | undefined): ReadAsFix | null {
   if (!cell || typed === undefined || cell.isText !== true || typeof cell.value !== 'string' || cell.value === '') return null;
@@ -146,6 +148,7 @@ function fixOf(rules: LearnResult | Rules, cell: RowInputCell | undefined, typed
   if (!column) return null;
   const to = typedReading(typed);
   if (to === cell.value) return null;
+  if (cell.value.length > limits.rules.maxValueChars || to.length > limits.rules.maxValueChars) return null;
   const known = column.readAs ?? {};
   if (Object.prototype.hasOwnProperty.call(known, cell.value) || Object.keys(known).length >= limits.rules.maxReadAsPerColumn) return null;
   return { columnId: cell.columnId, header: column.header, from: cell.value, to };
@@ -179,6 +182,28 @@ export function readAsFixes(rules: LearnResult | Rules, rowInputs: Readonly<Reco
     }
   }
   return [...found.values()].filter((f): f is ReadAsFix => f !== null);
+}
+
+/**
+ * The identifier-shaped values (docs/proposals/saved-format-contents.md section 5: an ID number, a phone, an email, a card or bank account
+ * number - shared `identifierKindOf`) the fixes about to be saved as rules would keep, in the cell's text or in what it is read as: one line
+ * per column and kind, as the Save popup says them ("Qty keeps an ID number in its fixes" - never the value), and the fixes that hold one.
+ */
+export function fixIdentifiers(fixes: readonly ReadAsFix[]): { lines: IdentifierFinding[]; fixes: ReadAsFix[] } {
+  const lines = new Map<string, IdentifierFinding>();
+  const held: ReadAsFix[] = [];
+  for (const fix of fixes) {
+    const kinds = [identifierKindOf(fix.from), identifierKindOf(fix.to)].filter((k) => k !== null);
+    if (kinds.length === 0) continue;
+    held.push(fix);
+    for (const idKind of kinds) lines.set(`${fix.header}\u0000${idKind}`, { kind: 'identifier', header: fix.header, idKind });
+  }
+  return { lines: [...lines.values()], fixes: held };
+}
+
+/** The fixes without those of `notKept` (the same column and text): "Save without" on the Run screen's popup. */
+export function fixesWithout(fixes: readonly ReadAsFix[], notKept: readonly ReadAsFix[]): ReadAsFix[] {
+  return fixes.filter((f) => !notKept.some((n) => n.columnId === f.columnId && n.from === f.from));
 }
 
 /**

@@ -667,7 +667,8 @@ function fillLookups(rules: LearnResult, f: Filler): LearnResult {
 /**
  * `table` with a row for every key the example shows and the table lacks, each return column from the lookups that return it (null where
  * none does). DECISION: entries the AI wrote are never changed, only added to - a key it got wrong stays wrong and goes back to the loop.
- * DECISION: a table that would pass `limits.rules.maxTableRows` is not filled at all (half a table is no better than the AI's).
+ * DECISION: a table that would pass `limits.rules.maxTableRows` is not filled at all (half a table is no better than the AI's), and neither is
+ * one with a new cell longer than `limits.rules.maxValueChars` (what a saved format may keep, docs/proposals/saved-format-contents.md section 7).
  */
 function tableFilled(table: RulesTable, byReturn: ReadonlyMap<string, Pairs>): RulesTable {
   const have = new Set(table.rows.map((r) => normText(toText(constValOf(r[0] ?? null)))));
@@ -689,6 +690,7 @@ function tableFilled(table: RulesTable, byReturn: ReadonlyMap<string, Pairs>): R
     }
   }
   if (fresh.size === 0 || table.rows.length + fresh.size > limits.rules.maxTableRows) return table;
+  if ([...fresh.values()].some((row) => row.some((c) => typeof c === 'string' && c.length > limits.rules.maxValueChars))) return table;
   return { ...table, rows: [...table.rows, ...fresh.values()] };
 }
 
@@ -722,12 +724,18 @@ function fillValueMaps(rules: LearnResult, f: Filler): LearnResult {
     });
     const have = new Set(Object.keys(vm.map).map(normText));
     const map = { ...vm.map };
+    let fresh = 0;
     for (const [norm, { key, value }] of pairs) {
       if (value === undefined || have.has(norm)) continue;
       map[key] = value === null ? '' : String(value);
-      added++;
+      fresh++;
     }
-    return Object.keys(map).length === Object.keys(vm.map).length ? vm : { ...vm, map };
+    // DECISION (like a table, `tableFilled`): a map that would pass `limits.rules.maxValueMapEntries`, or with a new key or value longer than
+    // `limits.rules.maxValueChars`, is not filled at all - what a saved format may keep (docs/proposals/saved-format-contents.md section 7).
+    if (fresh === 0 || Object.keys(map).length > limits.rules.maxValueMapEntries) return vm;
+    if (Object.entries(map).some(([k, v]) => !(k in vm.map) && (k.length > limits.rules.maxValueChars || v.length > limits.rules.maxValueChars))) return vm;
+    added += fresh;
+    return { ...vm, map };
   });
   if (added === 0) return rules;
   f.count('valueMap', added);

@@ -2,7 +2,7 @@
 // per-run decisions once they are rules, and the rules with them added.
 import { limits } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
-import { readAsFixes, readAsOffer, toRowDecisions, typedReading, withoutSaved, withReadAs, type Choices } from '../src/pages/Convert/logic';
+import { fixesWithout, fixIdentifiers, readAsFixes, readAsOffer, toRowDecisions, typedReading, withoutSaved, withReadAs, type Choices } from '../src/pages/Convert/logic';
 import { RULES } from './helpers/convertKit';
 
 const text = (columnId: string, header: string, value: string) => ({ columnId, header, value, isText: true as const });
@@ -113,5 +113,30 @@ describe('withReadAs', () => {
     const more = withReadAs(out, [{ columnId: 'c_qty', header: 'Qty', from: 'none', to: '0' }]);
     expect(Object.keys(more.input.columns[1]!.readAs!)).toEqual(['N/A', '__proto__', 'none']);
     expect(withReadAs(RULES, [])).toBe(RULES);
+  });
+});
+
+// What a saved format may keep (docs/proposals/saved-format-contents.md sections 5 and 7).
+describe('a fix a saved format would keep', () => {
+  it('nothing is offered for a text or a value over the cap of one value (the server would refuse the save)', () => {
+    expect(readAsOffer(RULES, qty3, 'x'.repeat(limits.rules.maxValueChars), rowInputs, [])).not.toBeNull();
+    expect(readAsOffer(RULES, qty3, 'x'.repeat(limits.rules.maxValueChars + 1), rowInputs, [])).toBeNull();
+    expect(readAsOffer(RULES, { ...qty3, value: 'y'.repeat(limits.rules.maxValueChars + 1) }, '', rowInputs, [])).toBeNull();
+  });
+
+  it('fixIdentifiers: a line per column and kind for the fixes holding an identifier-shaped value (its text or what it is read as); fixesWithout drops them', () => {
+    const fixes = [
+      { columnId: 'c_qty', header: 'Qty', from: 'N/A', to: '039337423' },
+      { columnId: 'c_price', header: 'Price', from: 'call 050-1234567', to: '' },
+      { columnId: 'c_code', header: 'Item Code', from: '-', to: '61000100' },
+    ];
+    const found = fixIdentifiers(fixes);
+    expect(found.lines).toEqual([
+      { kind: 'identifier', header: 'Qty', idKind: 'israeliId' },
+      { kind: 'identifier', header: 'Price', idKind: 'phone' },
+    ]);
+    expect(found.fixes).toEqual(fixes.slice(0, 2));
+    expect(fixesWithout(fixes, found.fixes)).toEqual([fixes[2]]);
+    expect(fixIdentifiers([fixes[2]!])).toEqual({ lines: [], fixes: [] });
   });
 });

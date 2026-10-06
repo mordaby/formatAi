@@ -358,13 +358,14 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
     '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user). "Alternatives" (learn-v8): the second rules the AI step gave, per column, as code found them on every row (bothPass = asked of the user; answerOnly / alternativeOnly = one fits and is the rule; bothFail), then the ones the API dropped (invalid). ' +
       'The prompt audit\'s columns: "Gave up on hinted" (columns given up on despite a hint, over every call), "Unsupported" (the reason codes of the kept answer\'s unsupported columns), "Problems" (every problem kind the calls produced, counted), "Cut off / failed" (calls cut off at the output-token limit - X2 - or failed, by outcome), "Overfit" (the kept answer\'s overfitSuspected assumptions). ' +
       '"Copies rows" (the overfitting guards, SPEC 9.2 layer 6): the overfit problems the calls found - a condition on a row\'s position, a long list of one-row cases, each asking for the learn\'s one repair - and the kept answer\'s columns code then reported as unsupported (reason overfit). ' +
-      '"One-time" (SPEC 21 v12 item 20): the questions the Result screen would ask - a part of the kept rules that explains one row of the example only, by column, row and what singles it out (id, amount, date, position); a list copied from the example (owner amendment, 2026-10-06), asked at save, by column, key column and entries ("answered one-time" when the case\'s own answer - "Save without it" - took it out, which its classification then follows) - then the columns with more such parts than are asked (handed off to the guards), and the hold-out if every question were answered "a one-time change".',
+      '"One-time" (SPEC 21 v12 item 20): the questions the Result screen would ask - a part of the kept rules that explains one row of the example only, by column, row and what singles it out (id, amount, date, position); a list copied from the example (owner amendment, 2026-10-06), asked at save, by column, key column and entries ("answered one-time" when the case\'s own answer - "Save without it" - took it out, which its classification then follows) - then the columns with more such parts than are asked (handed off to the guards), and the hold-out if every question were answered "a one-time change". ' +
+      '"Saved contents" (docs/proposals/saved-format-contents.md): the one automatic round for a list column of the kept answer - its columns and how it ended (logic: the list is gone; kept: asked at Save; worse; noAnswer) - and the identifier-shaped values the saved rules would keep, by column and kind, never the value.',
     '',
   );
   const learns = aiLearns(records).sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model) || Number(a.masking) - Number(b.masking) || a.run - b.run || (a.mode ?? '').localeCompare(b.mode ?? ''));
   lines.push(
     markdownTable(
-      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit', 'Copies rows', 'One-time', 'Check rounds', 'Checks asked'],
+      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit', 'Copies rows', 'One-time', 'Saved contents', 'Check rounds', 'Checks asked'],
       learns.map((r) => [
         r.case,
         ...(tagged ? [r.mode ?? 'full'] : []),
@@ -393,6 +394,7 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
         r.overfitSuspected ?? 0,
         (r.overfitFound ?? 0) + (r.overfitFellBack ?? 0) > 0 ? `found ${r.overfitFound ?? 0}, fell back ${r.overfitFellBack ?? 0}` : '-',
         r.oneTimeParts ? [r.oneTimeParts, r.oneTimeDefault].filter((s) => s).join('; ') : '-',
+        [r.listRetry ? `retry: ${r.listRetry}` : '', r.savedIdentifiers ? `identifiers: ${r.savedIdentifiers}` : ''].filter((s) => s).join('; ') || '-',
         r.checkRounds ?? 0,
         r.checksAsked ?? 0,
       ]),
@@ -547,6 +549,8 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'oneTimeAsked',
   'oneTimeParts',
   'oneTimeDefault',
+  'listRetry',
+  'savedIdentifiers',
   'formulaErrorCount',
   'firstCallFormulaErrors',
   'formulaFixedByRepair',

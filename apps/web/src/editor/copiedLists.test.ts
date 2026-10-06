@@ -3,7 +3,7 @@
 import type { CopiedListQuestion, OneTimeQuestion } from '@formatai/engine';
 import type { Expr, LearnResult } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
-import { copiedListsOf, listsToConfirm, withoutCopiedLists } from './copiedLists';
+import { copiedListsOf, findingsToConfirm, listsToConfirm, withoutCopiedLists, withoutFindings } from './copiedLists';
 
 const lookup = (table: string, ret: string): Expr => ({ op: 'lookup', table, key: { col: 'orderId' }, return: ret, onMissing: 'flag' });
 const table = (name: string, ret: string) => ({ name, columns: ['orderId', ret], rows: [['ORD-1', 5], ['ORD-2', 7]] as [string, number][] });
@@ -86,5 +86,39 @@ describe('"Save without them"', () => {
     const once = withoutCopiedLists(listed, [discount]);
     expect(withoutCopiedLists(once, [discount])).toBe(once);
     expect(withoutCopiedLists(listed, [])).toBe(listed);
+  });
+});
+
+// What a saved format may keep (docs/proposals/saved-format-contents.md section 6): the identifier-shaped values join the lists in the one popup.
+describe('findingsToConfirm / withoutFindings: lists and identifier-shaped values, one popup', () => {
+  const withLabel = (label: string): LearnResult => ({
+    ...listed,
+    transform: { ...listed.transform, computed: [...listed.transform.computed, { id: 'target', type: 'text', expr: { op: 'if', cond: { op: 'gt', args: [{ col: 'orderId' }, { const: 'ORD-5' }] }, then: { const: label }, else: { const: '' } } }] },
+    output: { ...listed.output, columns: [...listed.output.columns, { header: 'Target customer', from: 'target' }] },
+  });
+
+  it('a list line, then an identifier line, in output order - and what the server holds is not asked again', () => {
+    const rules = withLabel('039337423');
+    expect(findingsToConfirm(rules, [bonus])).toEqual([bonus, { kind: 'identifier', header: 'Target customer', idKind: 'israeliId', out: 3 }]);
+    expect(findingsToConfirm(rules, [bonus], rules)).toEqual([]);
+    // A ledger account (8 digits) as the label: nothing to ask.
+    expect(findingsToConfirm(withLabel('61000100'), [])).toEqual([]);
+  });
+
+  it('an identifier only in a table nothing reads any more is never sent, so never asked', () => {
+    const rules: LearnResult = { ...listed, transform: { ...listed.transform, tables: [...listed.transform.tables!, { name: 'old', columns: ['k', 'v'], rows: [['a', '039337423']] }] } };
+    expect(findingsToConfirm(rules, [])).toEqual([]);
+  });
+
+  it('"Save without them": the list\'s column (overfit) and the identifier\'s column (savedWithout) are taken out, no value left', () => {
+    const rules = withLabel('039337423');
+    const out = withoutFindings(rules, findingsToConfirm(rules, [bonus]));
+    expect(out.output.columns.filter((c) => c.from === null).map((c) => c.header)).toEqual(['Bonus', 'Target customer']);
+    expect(out.unsupported).toEqual([
+      { outputColumn: 'Bonus', reasonCode: 'overfit' },
+      { outputColumn: 'Target customer', reasonCode: 'savedWithout' },
+    ]);
+    expect(JSON.stringify(out)).not.toContain('039337423');
+    expect(out.transform.tables?.map((t) => t.name)).toEqual(['discounts']);
   });
 });

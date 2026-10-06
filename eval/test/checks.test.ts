@@ -96,7 +96,8 @@ describe('--no-pattern-hints', () => {
     const sent: string[] = [];
     const { complete } = scripted([{ checks: null, rules: rulesOf(c) }, { checks: null, rules: rulesOf(c) }]);
     const spy: CompleteFn = async (req, env) => {
-      sent.push(req.content[0]!.text);
+      // (each learn's first call: branch-lookup-50's 50-branch table is a list, whose one round - a repair - comes after it)
+      if (req.purpose === 'learn') sent.push(req.content[0]!.text);
       return complete(req, env);
     };
     const [withHints] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete: spy, prompt: 'learn-v9' });

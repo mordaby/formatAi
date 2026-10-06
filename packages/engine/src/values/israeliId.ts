@@ -1,22 +1,8 @@
-// Israeli ID (teudat zehut) check-digit validation. Pure, no dependencies.
+// Israeli ID (teudat zehut) check digit. The check itself lives in the shared package (`isValidIsraeliId`, `identifiers.ts`): the Save
+// popup's identifier detectors run on the browser's main thread, which never loads the engine. Pure, no dependencies.
+import { isValidIsraeliId } from '@formatai/shared';
 
-/**
- * True when `s` is 1-9 digits that, once left-padded to 9 digits, pass the
- * standard Israeli ID check-digit algorithm (alternating weights 1/2, digits
- * of a weighted product >= 10 are summed, total must be a multiple of 10).
- */
-export function isValidIsraeliId(s: string): boolean {
-  if (!/^\d{1,9}$/.test(s)) return false;
-  const id = s.padStart(9, '0');
-  let sum = 0;
-  for (let i = 0; i < 9; i++) {
-    const weight = (i % 2) + 1;
-    let digit = Number(id[i]) * weight;
-    if (digit > 9) digit -= 9;
-    sum += digit;
-  }
-  return sum % 10 === 0;
-}
+export { isValidIsraeliId };
 
 /** Appends a valid check digit to 8 seed digits, producing a valid 9-digit Israeli ID. */
 export function makeValidIsraeliId(seed8: string): string {

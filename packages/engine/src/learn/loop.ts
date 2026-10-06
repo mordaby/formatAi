@@ -17,7 +17,7 @@
 // Which rows (the counterexamples): the wrong rows are grouped by what went wrong - (output column, the example's value, the value the
 // rules made); one row from each group, biggest groups first, then a second row from each, and so on until the round is full. A row the
 // payload or an earlier round already sent is never sent again (the server checks every answer against all of them anyway).
-import type { LearnPayload, PayloadCell, ProfileType, RepairProblem, Sample } from '@formatai/shared';
+import type { CheckRound, LearnPayload, PayloadCell, ProfileType, RepairProblem, Sample } from '@formatai/shared';
 import { limits, payloadBytes, payloadRowCount, withRows } from '@formatai/shared';
 import type { RawCell } from '../types';
 import type { PairAnalysis } from './analyze';
@@ -117,6 +117,16 @@ export interface LoopRound {
    * `overfit` problem: the repair request says so (`RepairRequest.overfitRepaired`), and such a rule is reported as unsupported from now on.
    */
   overfitRepaired?: boolean;
+  /**
+   * The one round for the kept answer's lists (docs/proposals/saved-format-contents.md section 4; `learnFromExamples`): its problems are
+   * `list` problems and it sends no new row. Absent on every other round.
+   */
+  list?: true;
+  /**
+   * The list's round, learn-v9: every round of checks the AI step asked in it so far, this one last, answered on every row and masked like the
+   * samples (the request's `rounds`). Absent on the round's first call, and on every other round.
+   */
+  checks?: CheckRound[];
 }
 
 /** How a learn's loop went (`LearnFromExamplesResult.loop`): rounds made, rows sent by them, and how it ended. */

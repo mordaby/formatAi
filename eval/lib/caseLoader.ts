@@ -27,12 +27,15 @@ export interface CaseMeta {
 
 /**
  * A case's answers to the questions the user is asked (owner amendment, 2026-10-06), applied by the runner to the kept rules as the web app
- * applies them, before the run is scored (`applyCaseAnswers`). `copiedList`: the answer to every list copied from the example, asked at
- * Save ("Save this format?" - "<column> was learned as a list copied from your example ...") - `oneTime` ("Save without it") takes the
- * column's list out, so the column needs your input; `rule` ("Keep it") keeps it, which is the same as no answer.
+ * applies them, before the run is scored (`applyCaseAnswers`). `copiedList`: the answer to every list of fixed values, asked at Save ("Save
+ * this format?" - "<column> is a list of <n> fixed values taken from your example ...") - `oneTime` ("Save without it") takes the column's
+ * list out, so the column needs your input; `rule` ("Keep it") keeps it, which is the same as no answer. `identifier`
+ * (docs/proposals/saved-format-contents.md section 6): the answer to every identifier-shaped value the rules keep ("<column> keeps an ID
+ * number in its rules") - `without` ("Save without it") takes its column out (reason `savedWithout`); `keep` keeps it, the same as no answer.
  */
 export interface CaseAnswers {
   copiedList?: 'oneTime' | 'rule';
+  identifier?: 'keep' | 'without';
 }
 
 export interface CaseFile {

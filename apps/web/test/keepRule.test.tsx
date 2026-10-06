@@ -470,3 +470,116 @@ describe('Hebrew', () => {
   });
 });
 
+
+// What a saved format may keep (docs/proposals/saved-format-contents.md section 5): a "Do this every time?" fix is a value the format would save.
+// One that holds an identifier-shaped value is asked about in the same Save popup before anything is saved; any other saves at the one click.
+describe('a fix that keeps an identifier-shaped value', () => {
+  const ID = '039337423';
+  const dialog = (): HTMLElement | null => screen.queryByRole('dialog');
+
+  it('asks first, in the Save popup: the column and the kind, never the value - "Keep it" saves it as a rule', async () => {
+    const { engine } = realEngine();
+    const { api, saves } = apiWithServer();
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText(REVIEW);
+    fix(3, 'Qty', ID, { every: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
+    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(plain(within(box).getByTestId('copied-list-dialog'))).toBe('Qty keeps an ID number in its fixes. Keep it in the saved format?');
+    expect(within(box).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['Close', 'Keep it', 'Save without it', 'Cancel']);
+    expect(box.textContent).not.toContain(ID);
+    // Nothing is saved or made yet.
+    expect(api.saveRules).not.toHaveBeenCalled();
+    fireEvent.click(within(box).getByRole('button', { name: 'Keep it' }));
+    expect(await screen.findByText('Your file is ready')).toBeTruthy();
+    expect(saves).toHaveLength(1);
+    expect((saves[0]!.body.rules as Rules).input.columns[1]!.readAs).toEqual({ 'N/A': ID });
+  });
+
+  it('"Save without it": that fix is not saved - it still fixes this file, as a one-off', async () => {
+    const { engine, calls } = realEngine();
+    const { api } = apiWithServer();
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText(REVIEW);
+    fix(3, 'Qty', ID, { every: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Save without it' }));
+    expect(await screen.findByText('Your file is ready')).toBeTruthy();
+    expect(api.saveRules).not.toHaveBeenCalled();
+    const write = calls.find((c) => c.mode === 'write')!;
+    expect(write.rules.input.columns[1]!.readAs).toBeUndefined();
+    expect(write.rowDecisions).toEqual({ 3: { action: 'override', values: { c_qty: ID } } });
+    expect(screen.queryByTestId('kept-rules')).toBeNull();
+  });
+
+  it('"Cancel": nothing is saved and nothing is made - the review is still there', async () => {
+    const { engine, calls } = realEngine();
+    const { api } = apiWithServer();
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText(REVIEW);
+    fix(3, 'Qty', ID, { every: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(dialog()).toBeNull());
+    expect(screen.getByText(REVIEW)).toBeTruthy();
+    expect(api.saveRules).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.mode === 'write')).toBe(false);
+  });
+
+  it('two fixes, an ID and a plain one: one line for the ID; "Save without it" saves the plain one alone', async () => {
+    const { engine } = realEngine();
+    const { api, saves } = apiWithServer();
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText(REVIEW);
+    fix(3, 'Qty', ID, { every: true });
+    fix(5, 'Price', '', { every: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
+    const box = await screen.findByRole('dialog');
+    expect(plain(within(box).getByTestId('copied-list-dialog'))).toBe('Qty keeps an ID number in its fixes. Keep it in the saved format?');
+    fireEvent.click(within(box).getByRole('button', { name: 'Save without it' }));
+    await screen.findByText('Your file is ready');
+    expect(saves).toHaveLength(1);
+    expect((saves[0]!.body.rules as Rules).input.columns.map((c) => c.readAs)).toEqual([undefined, undefined, { 'N/A': '' }]);
+    expect(api.saveRules).toHaveBeenCalledTimes(1);
+  });
+
+  it('a fix with no identifier shape saves at the one click: no popup', async () => {
+    const { engine } = realEngine();
+    const { api, saves } = apiWithServer();
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText(REVIEW);
+    fix(3, 'Qty', '61000100', { every: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
+    expect(await screen.findByText('Your file is ready')).toBeTruthy();
+    expect(dialog()).toBeNull();
+    expect((saves[0]!.body.rules as Rules).input.columns[1]!.readAs).toEqual({ 'N/A': '61000100' });
+  });
+
+  it('in Hebrew: the line, the question and the answers', async () => {
+    const { engine } = realEngine();
+    const { api, saves } = apiWithServer();
+    renderConvert(<ConvertPage />, { api, engine, lang: 'he' });
+    const input = await screen.findByLabelText('קבצים להמרה');
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [csvFile('jan.csv', CSV)] } });
+    });
+    await screen.findByText('כמה שורות דורשות מבט לפני שהקובץ נוצר');
+    fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'לתקן רק את השורה הזו' }));
+    fireEvent.change(within(rowCard(3)).getByLabelText('Qty'), { target: { value: '050-1234567' } });
+    fireEvent.click(within(within(rowCard(3)).getByTestId('keep-offer')).getByRole('checkbox'));
+    fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'להשתמש בערך הזה' }));
+    fireEvent.click(screen.getByRole('button', { name: 'ליצור את הקובץ' }));
+    const box = await screen.findByRole('dialog', { name: 'לשמור את הפורמט?' });
+    expect(plain(within(box).getByTestId('copied-list-dialog'))).toBe('התיקונים של העמודה Qty שומרים מספר טלפון. להשאיר את הערך הזה בפורמט השמור?');
+    expect(within(box).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['סגירה', 'להשאיר אותו', 'לשמור בלעדיו', 'ביטול']);
+    fireEvent.click(within(box).getByRole('button', { name: 'לשמור בלעדיו' }));
+    await waitFor(() => expect(dialog()).toBeNull());
+    expect(await screen.findByText('הקובץ שלכם מוכן')).toBeTruthy();
+    expect(saves).toHaveLength(0);
+  });
+});

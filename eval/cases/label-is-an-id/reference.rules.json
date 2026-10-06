@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "order",
+        "header": "Order",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "customer",
+        "header": "Customer",
+        "type": "text"
+      },
+      {
+        "id": "amount",
+        "header": "Amount",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "target",
+        "type": "text",
+        "expr": {
+          "op": "if",
+          "cond": {
+            "op": "gt",
+            "args": [
+              {
+                "col": "amount"
+              },
+              {
+                "const": 1000
+              }
+            ]
+          },
+          "then": {
+            "const": "039337423"
+          },
+          "else": {
+            "const": ""
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Orders",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Order",
+        "from": "order"
+      },
+      {
+        "header": "Customer",
+        "from": "customer"
+      },
+      {
+        "header": "Amount",
+        "from": "amount"
+      },
+      {
+        "header": "Target customer",
+        "from": "target"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Orders -> target customer",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

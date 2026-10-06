@@ -1,8 +1,14 @@
 // Checking and shaping a rules file on its way into the registry (SPEC 9.2 layers 1-5 on every save, 8.12, 13).
 // Pure functions: no database, no request - so they are unit-tested on their own.
+//
+// What one saved format may keep (docs/proposals/saved-format-contents.md section 7; owner, 2026-10-06; SPEC 11, 21 v15): every route that
+// stores rules checks them with `checkRulesFile`, which refuses a file over a cap - a value map of more than `limits.rules.maxValueMapEntries`
+// entries, a value longer than `maxValueChars`, one version larger than `maxRulesBytes` (shared `contentLimitProblems`) - before anything
+// else, and the route answers 400 `rulesTooLarge` (`rulesRefusal`). The browser checks the same caps first (the engine's `checkLimits`).
 import { checkFormatLock, checkLimits, formatOf, inputSignatureOf, typeCheck } from '@formatai/engine';
 import {
   checkRules,
+  contentLimitProblems,
   RulesSchema,
   stripAiNotesFromJson,
   type Format,
@@ -25,6 +31,8 @@ export type RulesCheck =
       /** The rules pass every check except the tier's "rules per format" count (SPEC 11): the caller answers
        * with the limit code rather than with problems to fix. */
       onlyRuleLimit: boolean;
+      /** Over a cap of what one saved format may keep (see the file header): the caller answers 400 `rulesTooLarge`. */
+      tooLarge?: true;
     };
 
 /** `checkLimits` reports the rule count as its one problem without a path (see engine `check/limits.ts`);
@@ -52,6 +60,9 @@ export function checkRulesFile(input: unknown, tier: Tier): RulesCheck {
     };
   }
   const rules = parsed.data as unknown as Rules;
+  // The caps of what a saved format may keep, first (SPEC 21 v15): a plain refusal, never problems to fix one by one. (Counts only.)
+  const tooLarge = contentLimitProblems(rules);
+  if (tooLarge.length > 0) return { ok: false, onlyRuleLimit: false, tooLarge: true, problems: [] };
 
   const problems: RepairProblem[] = [];
   let ruleLimit = false;

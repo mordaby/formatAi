@@ -58,13 +58,22 @@ describe.each([
     const text = document.body.textContent ?? '';
     if (lang === 'en') {
       // the precise promise
-      expect(text).toContain('Your full files never leave your computer. Saved formats contain the column names and the rules you approved, including any fixed values those rules use');
+      // what a saved format may keep (docs/proposals/saved-format-contents.md section 8): in the promise, and in what is stored
+      const kept =
+        "Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Never rows from your files.";
+      expect(text).toContain(`Your full files never leave your computer. ${kept}`);
+      expect(text).toContain(`Your saved formats and sources, with your edits and earlier versions. ${kept}`);
+      expect(text).not.toContain('Saved formats contain');
       expect(text).toContain('Never rows from your files.');
       expect(text).toContain('Anthropic and OpenAI');
       expect(text).toContain('look-alike values');
       expect(text).toContain('"no value" placeholders');
     } else {
       expect(text).toContain('הקבצים המלאים שלכם לעולם לא יוצאים מהמחשב שלכם');
+      // (the same two places, in Hebrew)
+      const kept = 'לפני השמירה אנחנו שואלים אתכם על רשימות שהועתקו מהדוגמה שלכם ועל מספרי זהות, מספרי טלפון, כתובות אימייל ומספרי כרטיס או חשבון בנק שאנחנו מזהים בהם.';
+      expect(text.split(kept)).toHaveLength(3);
+      expect(text).toContain('אנא אל תשתמשו בפרטים אישיים אחרים, כמו שם של אדם, כתווית בכלל שאתם שומרים.');
       expect(text).toContain('לעולם לא שורות מהקבצים שלכם');
       expect(text).toContain('Anthropic ו-OpenAI');
       expect(text).toContain('ערכים מדומים');

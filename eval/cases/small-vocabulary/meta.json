@@ -1,0 +1,13 @@
+{
+  "difficulty": "stress",
+  "domain": "helpdeskTickets",
+  "features": [
+    "savedContents",
+    "smallVocabulary",
+    "valueMap",
+    "hebrewOutput",
+    "silentSave"
+  ],
+  "expect": "verified",
+  "expectNote": "Status is translated to Hebrew: 4 values, each on 10 of the 40 rows - a small vocabulary (at most 12 entries, each on 2 rows or more, keyed on a column that is no identifier). Saved silently: no automatic round for it, nothing asked at Save. May break: a list round or a Save question for a plain translation, or a value map that misses a status."
+}

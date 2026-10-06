@@ -13,11 +13,14 @@ import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
 import {
   columnsWithRule,
+  identifierFindings,
   learnPromptOf,
   promptVersion,
   sumEstimates,
   withoutCopiedList,
+  withoutIdentifiers,
   withoutRulePart,
+  withoutUnreadLists,
   type CheckRound,
   type Format,
   type LearnPayload,
@@ -145,6 +148,16 @@ export interface RunRecord {
    * (`meta.answers`), which the record's classification and hold-out then follow. '' when nothing was asked.
    */
   oneTimeDefault: string;
+  /**
+   * Logic first (docs/proposals/saved-format-contents.md section 4): the one automatic round for the kept answer's list columns - its columns,
+   * how it ended (`logic` / `kept` / `worse` / `noAnswer`) and its calls: "Category kept (1 call)". '' when none was made.
+   */
+  listRetry: string;
+  /**
+   * The identifier-shaped values the kept rules would save (section 5), as the Save popup's lines - the column and the kind found, NEVER the
+   * value: "Target customer israeliId", with " answered without" when the case's own answer took it out. '' when none.
+   */
+  savedIdentifiers: string;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
    * `LlmCallRecord.problemCounts.formula`): how many formula-text parse failures this
    * run's LLM calls produced, across the learn call and every repair/escalation call. */
@@ -315,9 +328,17 @@ async function runLearnOnce(opts: RunOneOptions, onAnalysis: (analysis: PairAnal
     return outcome;
   };
   // A round of the learning loop, exactly as the API's /api/learn/repair runs it: the answer checked on the samples plus every row sent.
-  // (The loop itself - which rows, when to stop - is `learnFromExamples`' own, the same code the browser runs.)
+  // (The loop itself - which rows, when to stop - is `learnFromExamples`' own, the same code the browser runs.) The round for a list
+  // (docs/proposals/saved-format-contents.md section 4) may ask checks under learn-v9 while another call of the loop is left - the route
+  // decides that by its repair counter, the eval by the round's own numbers.
   const callRepair: Parameters<typeof learnFromExamples<LlmCallRecord>>[0]['callRepair'] = async (payload, previousRules, problems, round) => {
-    const outcome = await repairFromBrowser(payload, previousRules, problems, { ...learnOpts, rows: round.rows, ...(round.overfitRepaired ? { overfitRepaired: true } : {}) });
+    const outcome = await repairFromBrowser(payload, previousRules, problems, {
+      ...learnOpts,
+      rows: round.rows,
+      ...(round.overfitRepaired ? { overfitRepaired: true } : {}),
+      ...(round.checks ? { rounds: round.checks } : {}),
+      mayCheck: round.round < round.maxRounds,
+    });
     opts.onLearnOutcome?.(outcome);
     return outcome;
   };
@@ -402,6 +423,7 @@ async function toRunRecord(
     holdOut = h.ok ? 'pass' : 'fail';
   }
   const oneTime = await oneTimeOf(result, caseDef, answeredColumns);
+  const saved = savedContentsOf(result, answeredColumns);
 
   const record: RunRecord = {
     case: caseDef.name,
@@ -434,6 +456,7 @@ async function toRunRecord(
     ...alternativesOf(result),
     ...callsOf(result),
     ...oneTime,
+    ...saved,
     ...formula,
     ...(tagMode
       ? {
@@ -493,6 +516,8 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     oneTimeAsked: 0,
     oneTimeParts: '',
     oneTimeDefault: '',
+    listRetry: '',
+    savedIdentifiers: '',
     ...formulaStats([]),
     error,
   };
@@ -533,10 +558,28 @@ export async function oneTimeOf(
 }
 
 /**
+ * What a saved format would keep (docs/proposals/saved-format-contents.md): the one round for the kept answer's lists, and the identifier-shaped
+ * values of the rules as a save sends them (`withoutUnreadLists`) - by column and kind, never a value. `answered`: the columns the case's own
+ * answers took out.
+ */
+export function savedContentsOf(
+  result: Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'rules' | 'listRetry'>,
+  answered: readonly string[] = [],
+): Pick<RunRecord, 'listRetry' | 'savedIdentifiers'> {
+  const retry = result.path === 'llm' ? result.listRetry : undefined;
+  const listRetry = retry ? `${retry.columns.join(', ')} ${retry.outcome} (${retry.calls} call${retry.calls === 1 ? '' : 's'}${retry.checkRounds > 0 ? `, ${retry.checkRounds} check round${retry.checkRounds === 1 ? '' : 's'}` : ''})` : '';
+  // (whatever path made the rules: the Save popup asks about the free engine's rules too)
+  const found = result.rules ? identifierFindings(withoutUnreadLists(result.rules)) : [];
+  const savedIdentifiers = found.map((f) => `${f.header} ${f.idKind}${answered.includes(f.header) ? ' answered without' : ''}`).join(', ');
+  return { listRetry, savedIdentifiers };
+}
+
+/**
  * The case's own answers to the questions the user is asked (`meta.answers`, owner amendment 2026-10-06), applied to the kept rules exactly as
- * the web app applies them, before the run is scored. Today one: `copiedList: "oneTime"` answers every list copied from the example, asked at
- * save, "Save without it" (`withoutCopiedList`: the column needs your input, reason `overfit`, its list gone); `"rule"` ("Keep it") - or no
- * answer - keeps the rules as they are.
+ * the web app applies them, before the run is scored. `copiedList: "oneTime"` answers every list of fixed values, asked at save, "Save
+ * without it" (`withoutCopiedList`: the column needs your input, reason `overfit`, its list gone); `"rule"` ("Keep it") - or no answer - keeps
+ * the rules as they are. `identifier: "without"` (docs/proposals/saved-format-contents.md section 6) answers every identifier-shaped value
+ * "Save without it" (`withoutIdentifiers`: its column needs your input, reason `savedWithout`); `"keep"` - or no answer - keeps it.
  * A plain learn's answer is verified again on the columns that still have a rule, as the flow verifies one (a column taken out matched the
  * example on every row it explained; one of its other rows may not have); a completion keeps its own verdict (`completion`), which never
  * counts a column that has no rule. `answered`: the columns taken out. The result as it is when nothing was answered.
@@ -546,15 +589,24 @@ export function applyCaseAnswers<R extends Pick<LearnFromExamplesResult<LlmCallR
   meta: Pick<CaseMeta, 'answers'>,
   analysis?: PairAnalysis,
 ): { result: R; answered: string[] } {
-  if (meta.answers?.copiedList !== 'oneTime' || result.path !== 'llm' || !result.rules) return { result, answered: [] };
+  const lists = meta.answers?.copiedList === 'oneTime';
+  const identifiers = meta.answers?.identifier === 'without';
+  if ((!lists && !identifiers) || result.path !== 'llm' || !result.rules) return { result, answered: [] };
   let rules: LearnResult = result.rules;
   const answered: string[] = [];
-  for (const q of result.oneTimers?.questions ?? []) {
+  for (const q of lists ? (result.oneTimers?.questions ?? []) : []) {
     if (q.kind !== 'copiedList') continue;
     const next = withoutCopiedList(rules, q.header, q.list);
     if (!next) continue;
     rules = next;
     answered.push(q.header);
+  }
+  if (identifiers) {
+    const found = identifierFindings(withoutUnreadLists(rules));
+    if (found.length > 0) {
+      rules = withoutIdentifiers(rules, found);
+      for (const f of found) if (!answered.includes(f.header) && rules.output.columns.some((c) => c.header === f.header && c.from === null)) answered.push(f.header);
+    }
   }
   if (answered.length === 0) return { result, answered };
   const verification = !result.completion && analysis ? verifyAgainstExample(rules, analysis, { onlyColumns: columnsWithRule(rules) }) : result.verification;

@@ -241,6 +241,11 @@ function buildStructure(
       seen.add(key);
       if (sent.aliases.length > limits.registry.maxAliasesPerColumn) return bad;
       if ([sent.header, ...sent.aliases].some((h) => h.length > limits.registry.maxAliasChars)) return bad;
+      // What one saved format may keep (docs/proposals/saved-format-contents.md section 7): a "read as" text the source's formats would all
+      // store, past `limits.rules.maxValueChars`, is refused like a rules file over a cap.
+      if (Object.entries(sent.readAs ?? {}).some(([text, as]) => text.length > limits.rules.maxValueChars || as.length > limits.rules.maxValueChars)) {
+        return { refusal: { status: 400, body: { error: 'rulesTooLarge' } as ApiErrorBody } };
+      }
 
       const old = before.inputSignature.columns.find((c) => c.header === (was ?? sent.header));
       if (was !== undefined && old && was !== sent.header) renames.set(was, sent.header);
