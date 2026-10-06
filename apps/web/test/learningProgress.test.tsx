@@ -127,6 +127,30 @@ describe('LearningProgress', () => {
     expect(screen.queryByTestId('check-round')).toBeNull();
   });
 
+  it('"See what we send" says per column whether its values are hidden or sent as they are (he/en)', () => {
+    const payload = { masking: true, samples: [{ in: ['s', 3], out: ['t'] }] };
+    const columns = { input: [{ header: 'Name', hidden: true }, { header: 'Qty', hidden: false }], output: [{ header: 'Label', hidden: true }] };
+    const sent = [{ kind: 'learn', bytes: 2048, payload, columns }] as never;
+    show({ status: 'learning', attempt: 'learn', sent }, ['reading', 'checking', 'learning']);
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    const list = screen.getByTestId('send-columns');
+    expect(list.querySelector('.send-record__head')!.textContent).toBe('Your columns in the rows we send');
+    expect([...list.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
+      'Name: values hidden (replaced with look-alike values)',
+      'Qty: values sent as they are',
+      'Label: values hidden (replaced with look-alike values)',
+    ]);
+    expect(within(screen.getByTestId('send-record')).getByRole('region', { name: 'Data sent (JSON)' }).textContent).not.toContain('hidden');
+    cleanup();
+    show({ status: 'learning', attempt: 'learn', sent }, ['reading', 'checking', 'learning'], 'he');
+    fireEvent.click(screen.getByRole('button', { name: 'מה אנחנו שולחים' }));
+    expect([...screen.getByTestId('send-columns').querySelectorAll('li')].map((li) => li.textContent)).toEqual([
+      'Name: הערכים מוסתרים (מוחלפים בערכים מדומים)',
+      'Qty: הערכים נשלחים כפי שהם',
+      'Label: הערכים מוסתרים (מוחלפים בערכים מדומים)',
+    ]);
+  });
+
   it('"See what we send" lists each step of AI code checks: the round, the rows its answers show, and the checks with their answers', () => {
     const payload = { masking: true, samples: [{ in: ['s'], out: ['t'] }] };
     const shown = { in: ['x'], out: ['y'] };

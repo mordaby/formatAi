@@ -14,6 +14,7 @@ import type {
   OutputSheet,
   RunError,
   RunSummary,
+  SentColumn,
   VerifyResult,
 } from '@formatai/engine';
 import type {
@@ -115,13 +116,20 @@ export type LearnOutput = LearnFromExamplesResult & {
   ambiguous?: AmbiguousColumn[];
 };
 
+/** "See what we send" (SPEC 15): per column of the example, whether its values are hidden by masking or sent as they are (engine `sentColumns`). */
+export interface SentColumns {
+  input: SentColumn[];
+  output: SentColumn[];
+}
+
 /**
- * What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). `round`: the loop round of a repair (its rows
- * go with it). `callStep` (AI code checks): one step of a learn whose AI step asked checks - `rounds` is every round so far, this one last, the
- * answers masked like the samples (POST /api/learn/step).
+ * What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). `columns`: the example's columns and
+ * whether masking hides each one (never sent; "See what we send" shows it). `round`: the loop round of a repair (its rows go with it).
+ * `callStep` (AI code checks): one step of a learn whose AI step asked checks - `rounds` is every round so far, this one last, the answers
+ * masked like the samples (POST /api/learn/step).
  */
 export interface LearnHost {
-  callLearn(payload: LearnPayload): Promise<LearnCallResult>;
+  callLearn(payload: LearnPayload, columns?: SentColumns): Promise<LearnCallResult>;
   callRepair(payload: LearnPayload, previousRules: LearnResult, problems: RepairProblem[], round: LoopRound): Promise<LearnCallResult>;
   callStep(payload: LearnPayload, rounds: CheckRound[]): Promise<LearnCallResult>;
 }

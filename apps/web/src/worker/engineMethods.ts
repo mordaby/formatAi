@@ -12,6 +12,7 @@ import {
   learnFromExamples,
   nonEmptySheets,
   readWorkbook,
+  sentColumns,
   sniffDelimitedText,
   verifyAgainstExample,
   type LearnCallResult,
@@ -77,7 +78,8 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     },
     callLearn: async (payload) => {
       emit(firstTry());
-      const out = await ctx.host<LearnCallResult>('callLearn', payload);
+      // "See what we send": which columns masking hides (the main thread shows it beside the payload; it is never sent).
+      const out = await ctx.host<LearnCallResult>('callLearn', payload, analysis ? sentColumns(analysis, args.masking) : undefined);
       // AI code checks: an answer with checks has no rules to verify yet - code answers them on every row now (round 1), then the step goes.
       emit(asksChecks(out) ? firstTry(1) : { phase: 'verifying' });
       return out;

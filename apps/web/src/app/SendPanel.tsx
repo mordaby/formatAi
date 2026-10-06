@@ -1,5 +1,6 @@
 import { limits, newCheckRows } from '@formatai/shared';
 import { sentBody, type SentRecord } from '../flow/learnFlow';
+import type { SentColumns } from '../worker/engineApi';
 import { useI18n } from '../i18n';
 import { CodeBlock, Panel } from '../ui';
 
@@ -16,7 +17,8 @@ export interface SendPanelProps {
  * SPEC 15 "See what we send". Before anything is sent it says what WILL be sent; once a payload
  * exists it shows the exact JSON, in either masking mode - the learn request, every step of AI code
  * checks (the checks and your computer's answers) and every round of the learning loop, each with
- * the rows of the example it carries. The Result screen reuses it.
+ * the rows of the example it carries, and per column of the example whether its values are hidden or
+ * sent as they are (the column classification). The Result screen reuses it.
  */
 export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
   const { t } = useI18n();
@@ -39,6 +41,7 @@ export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
     }
     return rec.rows && rec.rows.length > 0 ? t(rec.rows.length === 1 ? 'sendPanel.rows.one' : 'sendPanel.rows.other', { n: rec.rows.length }) : null;
   };
+  const columns = sent.find((rec) => rec.columns)?.columns;
   return (
     <Panel title={t('sendPanel.title')} onClose={onClose} {...(id ? { id } : {})}>
       {sent.length === 0 ? (
@@ -56,6 +59,7 @@ export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
       ) : (
         <>
           <p>{t('sendPanel.lead.sent')}</p>
+          {columns ? <ColumnsSent columns={columns} /> : null}
           {sent.map((rec, i) => {
             const note = rowsNote(rec);
             return (
@@ -72,5 +76,30 @@ export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
         </>
       )}
     </Panel>
+  );
+}
+
+/** Per column of the example: its values hidden by masking, or sent as they are. */
+function ColumnsSent({ columns }: { columns: SentColumns }) {
+  const { t } = useI18n();
+  const side = (label: string, list: SentColumns['input']) =>
+    list.length === 0 ? null : (
+      <>
+        <p className="muted">{label}</p>
+        <ul className="bullets">
+          {list.map((c, k) => (
+            <li key={k} data-hidden={c.hidden}>
+              {t(c.hidden ? 'sendPanel.columns.hidden' : 'sendPanel.columns.sent', { column: c.header || `#${k + 1}` })}
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  return (
+    <div className="send-record" data-testid="send-columns">
+      <p className="send-record__head">{t('sendPanel.columns.title')}</p>
+      {side(t('sendPanel.columns.input'), columns.input)}
+      {side(t('sendPanel.columns.output'), columns.output)}
+    </div>
   );
 }
