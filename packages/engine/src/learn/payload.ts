@@ -11,10 +11,13 @@ import type {
   Format,
   Hint,
   LearnPayload,
+  LearnResult,
   OutputLayout,
   PayloadCell,
+  PayloadColumn,
   ProfileType,
   RowHint,
+  Rules,
   Sample,
   SummaryRowLayout,
   TitleRowLayout,
@@ -22,11 +25,12 @@ import type {
 import { limits } from '@formatai/shared';
 import type { RawCell } from '../types';
 import { toPayloadColumn } from './analyze';
-import type { Family, PairAnalysis, SummaryRowAnalysis, TitleRowAnalysis } from './analyze';
+import type { ColumnProfile, Family, PairAnalysis, SummaryRowAnalysis, TitleRowAnalysis } from './analyze';
 import { isoOfSerial } from './analyze/cells';
 import { completePayloadOf, fixedLabelTexts, type CompleteOptions } from './complete';
 import { relationsToHints, type HintCandidate } from './hints';
-import { splitWords, type Masker } from './mask';
+import { mapRuleConstants, splitWords, type Masker } from './mask';
+import { inputMaskType, maskTypes, outputMaskType } from './maskTypes';
 import type { PreflightResult } from './preflight';
 import { normalizeText } from '../values/text';
 
@@ -328,37 +332,41 @@ function collectLabelTexts(analysis: PairAnalysis, target?: Format, complete?: C
 
 /**
  * The label words among `candidates` (normalized words of the title, summary-label and other label texts): those that appear in no text or
- * ID-like data cell of the example, input or output, in any row (SPEC 7.2). Scans until every candidate has turned up in a cell.
+ * ID-like data cell of the example, input or output, in any row (SPEC 7.2). Scans until every candidate has turned up in a cell. A number
+ * in a column masked as an ID (amendment 2026-10-06, `maskTypes`) is masked as its digits, so those digits are data too: a title that
+ * names one ("customer 100200") must not make them a label word the masker then lets through.
  */
 function labelWordsOf(analysis: PairAnalysis, candidates: ReadonlySet<string>): Set<string> {
   const left = new Set(candidates);
-  const scan = (row: (RawCell | null)[] | undefined, profiles: readonly { type: ProfileType }[]): void => {
+  const types = maskTypes(analysis);
+  const scan = (row: (RawCell | null)[] | undefined, kinds: readonly ProfileType[]): void => {
     if (!row) return;
-    profiles.forEach((p, c) => {
+    kinds.forEach((type, c) => {
       const cell = row[c];
-      if (cell && typeof cell.v === 'string' && (p.type === 'text' || p.type === 'idLike')) {
-        for (const tok of splitWords(cell.v)) if (tok.isWord) left.delete(normalizeText(tok.text));
-      }
+      if (!cell || (type !== 'text' && type !== 'idLike')) return;
+      const text = typeof cell.v === 'string' ? cell.v : typeof cell.v === 'number' && type === 'idLike' ? String(cell.v) : null;
+      if (text !== null) for (const tok of splitWords(text)) if (tok.isWord) left.delete(normalizeText(tok.text));
     });
   };
   for (const row of analysis.input.rows) {
     if (left.size === 0) return left;
-    scan(row, analysis.input.profile);
+    scan(row, types.input);
   }
   for (const sheetRow of analysis.output.dataRows) {
     if (left.size === 0) return left;
-    scan(analysis.output.sheet.rows[sheetRow], analysis.output.profile);
+    scan(analysis.output.sheet.rows[sheetRow], types.output);
   }
   return left;
 }
 
+/** A sample's cells masked by the type each column is masked as (`maskTypes`: an identifier stored as a number is masked as an ID). */
 function maskSample(sample: Sample, analysis: PairAnalysis, masker: Masker): Sample {
-  const inMasked = sample.in.map((v, i) => masker.maskCell(v, analysis.input.profile[i]?.type ?? 'text'));
+  const inMasked = sample.in.map((v, i) => masker.maskCell(v, inputMaskType(analysis, i)));
   if (sample.out.length > 0 && Array.isArray(sample.out[0])) {
-    const outMasked = (sample.out as PayloadCell[][]).map((row) => row.map((v, i) => masker.maskCell(v, analysis.output.profile[i]?.type ?? 'text')));
+    const outMasked = (sample.out as PayloadCell[][]).map((row) => row.map((v, i) => masker.maskCell(v, outputMaskType(analysis, i))));
     return { in: inMasked, out: outMasked };
   }
-  const outMasked = (sample.out as PayloadCell[]).map((v, i) => masker.maskCell(v, analysis.output.profile[i]?.type ?? 'text'));
+  const outMasked = (sample.out as PayloadCell[]).map((v, i) => masker.maskCell(v, outputMaskType(analysis, i)));
   return { in: inMasked, out: outMasked };
 }
 
@@ -400,8 +408,8 @@ export function counterexampleSample(analysis: PairAnalysis, inRow: number, mask
 
 function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Masker): ColumnHint {
   if (h.rel === 'valueMap') {
-    const inType = analysis.input.profile[h.in[0]]?.type ?? 'text';
-    const outType = analysis.output.profile[h.out]?.type ?? 'text';
+    const inType = inputMaskType(analysis, h.in[0]);
+    const outType = outputMaskType(analysis, h.out);
     const pairs: [string, string][] = h.pairs.map(([from, to]) => [
       String(masker.maskCell(from, inType) ?? ''),
       String(masker.maskCell(to, outType) ?? ''),
@@ -409,7 +417,7 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
     return { ...h, pairs };
   }
   if (h.rel === 'constant') {
-    const outType = analysis.output.profile[h.out]?.type ?? 'text';
+    const outType = outputMaskType(analysis, h.out);
     return { ...h, value: masker.maskCell(h.value, outType) };
   }
   if (h.rel === 'template') {
@@ -421,7 +429,7 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
   if (h.rel === 'bands') {
     // The thresholds are numbers or ISO dates (sent real, SPEC 7.2); the band values are output cells, masked like samples.
     // Bands on a computed output column (`onOut`) are no different: the thresholds are numbers of that column, the values cells of `out`.
-    const outType = analysis.output.profile[h.out]?.type ?? 'text';
+    const outType = outputMaskType(analysis, h.out);
     const bands: Band[] = h.bands.map((band) => ({ ...band, value: masker.maskCell(band.value, outType) }));
     return { ...h, bands };
   }
@@ -430,7 +438,7 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
 
 function maskRowHintValue(h: RowHint, analysis: PairAnalysis, masker: Masker): RowHint {
   if (h.rel !== 'filter') return h;
-  const inType = analysis.input.profile[h.in[0]]?.type ?? 'text';
+  const inType = inputMaskType(analysis, h.in[0]!);
   const out: RowHint = { ...h };
   if (h.keptValues) out.keptValues = h.keptValues.map((v) => masker.maskCell(v, inType));
   if (h.droppedValues) out.droppedValues = h.droppedValues.map((v) => masker.maskCell(v, inType));
@@ -446,6 +454,28 @@ function maskHintList(hints: readonly HintCandidate[], analysis: PairAnalysis, m
     }
     return maskColumnHintValue(h as ColumnHint, analysis, masker) as HintCandidate;
   });
+}
+
+/**
+ * Completion mode (amendment 2026-10-06): a number constant of the rules to keep that is a value of a column masked as an ID is masked
+ * here once, like that column's cells, so `maskRules` sends its fake (`Masker.fakeNumberOf`) - even when no row this payload sends holds it.
+ */
+function registerIdConstants(analysis: PairAnalysis, rules: LearnResult | Rules, masker: Masker): void {
+  const wanted = new Set<number>();
+  mapRuleConstants(rules, (s) => s, (n) => {
+    wanted.add(n);
+    return n;
+  });
+  if (wanted.size === 0) return;
+  const types = maskTypes(analysis);
+  const scan = (row: (RawCell | null)[] | undefined, kinds: readonly ProfileType[]): void => {
+    kinds.forEach((type, c) => {
+      const v = row?.[c]?.v;
+      if (type === 'idLike' && typeof v === 'number' && wanted.has(v)) masker.maskCell(v, type);
+    });
+  };
+  for (const row of analysis.input.rows) scan(row, types.input);
+  for (const sheetRow of analysis.output.dataRows) scan(analysis.output.sheet.rows[sheetRow], types.output);
 }
 
 /** SPEC 8.12/A2: `target`'s own header/title/summary-label words get the same
@@ -563,6 +593,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
   if (masker) masker.addLabelWords(labelWordsOf(analysis, extractWords(collectLabelTexts(analysis, opts.target, opts.complete))));
 
   const maskedHints = masker ? maskHintList(hints, analysis, masker) : hints;
+  if (masker && opts.complete) registerIdConstants(analysis, opts.complete.fixedRules, masker);
 
   const buildSamples = (): { samples: Sample[]; sampleRows: { in: number; out: number[] }[] } => {
     const built = isFamilies ? familyPriority.map((f) => buildFamilySample(analysis, f)) : pairPriority.map((k) => buildPairSample(analysis, k));
@@ -575,7 +606,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
   const buildDroppedRows = (): PayloadCell[][] =>
     droppedPriority.map((r) => {
       const cells = rowCells(analysis.input.rows[r], analysis.input.columnCount, analysis.input.date1904);
-      const masked = masker ? cells.map((v, i) => masker.maskCell(v, analysis.input.profile[i]?.type ?? 'text')) : cells;
+      const masked = masker ? cells.map((v, i) => masker.maskCell(v, inputMaskType(analysis, i))) : cells;
       return truncateCells(masked, caps.maxCellChars);
     });
 
@@ -595,16 +626,17 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
       return failsOn ? ({ ...rest, failsOn } as Hint) : (rest as Hint);
     });
 
-    const inputColumns = analysis.input.profile.map((p) => {
+    // With masking on, a column masked as an ID that the profile calls a number (amendment 2026-10-06) does not carry its real
+    // smallest and largest values (`stats.range`): they are two of the IDs the samples mask.
+    const types = masker ? maskTypes(analysis) : null;
+    const columnOf = (p: ColumnProfile, maskType: ProfileType | undefined): PayloadColumn => {
       const col = toPayloadColumn(p);
       if (!includeStats) delete col.stats;
+      else if (maskType === 'idLike' && p.type !== 'idLike') delete col.stats?.range;
       return col;
-    });
-    const outputColumns = analysis.output.profile.map((p) => {
-      const col = toPayloadColumn(p);
-      if (!includeStats) delete col.stats;
-      return col;
-    });
+    };
+    const inputColumns = analysis.input.profile.map((p, i) => columnOf(p, types?.input[i]));
+    const outputColumns = analysis.output.profile.map((p, o) => columnOf(p, types?.output[o]));
 
     const payload: LearnPayload = {
       masking: masker !== undefined,

@@ -102,34 +102,49 @@ function unmaskString(s: string, fakeToReal: ReadonlyMap<string, string>): strin
     .join('');
 }
 
-function mapValue(value: unknown, keyContext: string | undefined, fn: (s: string) => string): unknown {
+/**
+ * Amendment 2026-10-06 (identifiers stored as numbers are masked): the keys a NUMBER constant copied from the data can sit under - an
+ * expression's `{ const }` leaf, `oneOf`'s `values`, a row filter's `value` (one, or a list), a lookup table's `rows`. Every other number
+ * in a rules file is structural (`round`'s digits, `substr`'s start, `padLeft`, a header row, a width, a range check's min/max) and is
+ * never mapped, so a fake ID that happens to equal one cannot change it.
+ */
+const NUMBER_CONSTANT_KEYS = new Set<string>(['const', 'values', 'value', 'rows']);
+
+interface ConstantFns {
+  text: (s: string) => string;
+  number?: (n: number) => number;
+}
+
+function mapValue(value: unknown, keyContext: string | undefined, fns: ConstantFns): unknown {
   if (keyContext === STRUCTURAL_SUBTREE_KEY) return value;
   if (Array.isArray(value)) {
-    return value.map((item) => mapValue(item, keyContext, fn));
+    return value.map((item) => mapValue(item, keyContext, fns));
   }
   if (value !== null && typeof value === 'object') {
     const isOpenWordDictionary = keyContext === OPEN_WORD_DICTIONARY_KEY;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const newKey = isOpenWordDictionary ? fn(k) : k;
-      out[newKey] = mapValue(v, k, fn);
+      const newKey = isOpenWordDictionary ? fns.text(k) : k;
+      out[newKey] = mapValue(v, k, fns);
     }
     return out;
   }
   if (typeof value === 'string') {
     if (keyContext !== undefined && STRUCTURAL_KEYS.has(keyContext)) return value;
-    return fn(value);
+    return fns.text(value);
   }
-  return value; // number, boolean, null
+  if (typeof value === 'number' && fns.number && keyContext !== undefined && NUMBER_CONSTANT_KEYS.has(keyContext)) return fns.number(value);
+  return value; // any other number, boolean, null
 }
 
 /**
  * Returns a deep copy of `rules` with `fn` applied to every constant: every string that is not under a
- * structural key (see STRUCTURAL_KEYS), plus the keys of the one open word dictionary. The shared walk behind
- * `unmaskRules` (fake -> real) and `maskRules` (real -> fake, for the rules a completion call sends).
+ * structural key (see STRUCTURAL_KEYS), plus the keys of the one open word dictionary - and, given `numberFn`,
+ * every number in a constant position (NUMBER_CONSTANT_KEYS). The shared walk behind `unmaskRules`
+ * (fake -> real) and `maskRules` (real -> fake, for the rules a completion call sends).
  */
-export function mapRuleConstants<T>(rules: T, fn: (s: string) => string): T {
-  return mapValue(rules, undefined, fn) as T;
+export function mapRuleConstants<T>(rules: T, fn: (s: string) => string, numberFn?: (n: number) => number): T {
+  return mapValue(rules, undefined, numberFn ? { text: fn, number: numberFn } : { text: fn }) as T;
 }
 
 /**
@@ -139,9 +154,18 @@ export function mapRuleConstants<T>(rules: T, fn: (s: string) => string): T {
  * (ids, column/table names, enum members, formats — see STRUCTURAL_KEYS) are
  * left untouched. `rules` is treated as plain JSON, so this works unchanged
  * across schema versions/additions.
+ *
+ * Amendment 2026-10-06: a NUMBER constant (`{ const: 912384771 }`, a filter value, a table cell) that is the fake of an ID stored as a
+ * number - or written by the AI as a number for an ID it saw as digits - is unmasked too (`Masker.realNumberOf`: only fakes of whole
+ * IDs of 4+ digits; any other number is left as it is).
  */
-export function unmaskRules<T>(rules: T, masker: Pick<Masker, 'fakeToReal'>): T {
-  return mapRuleConstants(rules, (s) => unmaskString(s, masker.fakeToReal));
+export function unmaskRules<T>(rules: T, masker: Pick<Masker, 'fakeToReal'> & Partial<Pick<Masker, 'realNumberOf'>>): T {
+  const realNumberOf = masker.realNumberOf;
+  return mapRuleConstants(
+    rules,
+    (s) => unmaskString(s, masker.fakeToReal),
+    realNumberOf ? (n) => realNumberOf(n) ?? n : undefined,
+  );
 }
 
 /**
@@ -149,13 +173,19 @@ export function unmaskRules<T>(rules: T, masker: Pick<Masker, 'fakeToReal'>): T 
  * masked like the samples are (SPEC 7.2) - the `complete.fixed` of a completion call. A pure-digit constant is
  * masked like an ID cell (so it matches a masked ID in the samples), a constant with a letter like text, and a
  * constant with neither (a separator, a date) stays; label words the payload sends real stay real. Structural
- * fields are untouched, exactly as in `unmaskRules`.
+ * fields are untouched, exactly as in `unmaskRules`. A NUMBER constant that is a real ID the masker has masked
+ * as a number (amendment 2026-10-06, `Masker.fakeNumberOf`) is masked like it; every other number stays real.
  */
-export function maskRules<T>(rules: T, masker: Pick<Masker, 'maskText' | 'maskIdLike'>): T {
-  return mapRuleConstants(rules, (s) => {
-    if (/^[0-9]{1,9}$/.test(s)) return masker.maskIdLike(s);
-    // No letter at all (a separator, a date like 2026-01-31, a number written as text): sent real, like numbers and dates are in the samples.
-    if (!/\p{L}/u.test(s)) return s;
-    return masker.maskText(s);
-  });
+export function maskRules<T>(rules: T, masker: Pick<Masker, 'maskText' | 'maskIdLike'> & Partial<Pick<Masker, 'fakeNumberOf'>>): T {
+  const fakeNumberOf = masker.fakeNumberOf;
+  return mapRuleConstants(
+    rules,
+    (s) => {
+      if (/^[0-9]{1,9}$/.test(s)) return masker.maskIdLike(s);
+      // No letter at all (a separator, a date like 2026-01-31, a number written as text): sent real, like numbers and dates are in the samples.
+      if (!/\p{L}/u.test(s)) return s;
+      return masker.maskText(s);
+    },
+    fakeNumberOf ? (n) => fakeNumberOf(n) ?? n : undefined,
+  );
 }
