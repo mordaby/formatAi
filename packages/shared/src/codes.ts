@@ -22,6 +22,11 @@ export const UNSUPPORTED_REASON_CODES = [
   // (a condition on a row's position, a long list of one-row cases, a lookup keyed on an amount), and it still did after its one repair - so code reports the column
   // as "needs your input" rather than count a copy of the example as a rule. Never offered to the AI step.
   'overfit',
+  // Code only (docs/proposals/saved-format-contents.md section 6; SPEC 21 v15): the user saved the format without this column's rule, because
+  // it kept an identifier-shaped value (an ID number, a phone, an email, a card or bank account number) - "Save without them" at Save. The
+  // column needs their input. (A list copied from the example, saved without, keeps `overfit`: its rule only copied rows.) Never offered to
+  // the AI step.
+  'savedWithout',
 ] as const;
 export type UnsupportedReasonCode = (typeof UNSUPPORTED_REASON_CODES)[number];
 
@@ -143,6 +148,10 @@ export const API_ERROR_CODES = [
   'invalidRequest',
   // 422: the rules file failed the checks (structure, references, types, limits); `problems` says which.
   'invalidRules',
+  // 400 (docs/proposals/saved-format-contents.md section 7; SPEC 11, 21 v15): the rules are over a cap of what one saved format may keep - a
+  // value map's entries, one value's characters, or one version's size (`limits.rules.maxValueMapEntries` / `maxValueChars` / `maxRulesBytes`).
+  // Every route that stores rules refuses it; the browser checks the same caps first.
+  'rulesTooLarge',
   // 422: attach / restore - the rules don't reproduce the format; `problems` are `formatMismatch` ones.
   'formatMismatch',
   // 409: another source of yours already has that name (source names are the company's, SPEC 8.15).

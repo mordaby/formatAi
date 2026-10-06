@@ -50,6 +50,10 @@ export const unsupportedMessages: Record<UnsupportedReasonCode, Localized> = {
     en: 'The only rule we found for this column copies particular rows of your example, so it would be wrong on your next file. Please set this column yourself.',
     he: 'הכלל היחיד שמצאנו לעמודה הזו מעתיק שורות מסוימות מהדוגמה שלך, ולכן הוא יטעה בקובץ הבא. אנא הגדירו את העמודה הזו בעצמכם.',
   },
+  savedWithout: {
+    en: "You saved this format without this column's rule, because it kept an ID number or similar details. Please set this column yourself.",
+    he: 'שמרתם את הפורמט בלי הכלל של העמודה הזו, כי הוא שמר מספר זהות או פרטים דומים. אנא הגדירו את העמודה הזו בעצמכם.',
+  },
 };
 
 export const assumptionMessages: Record<AssumptionReasonCode, Localized> = {
@@ -290,6 +294,10 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
   invalidRules: {
     en: "These rules can't be saved yet. Fix the marked problems and try again.",
     he: 'אי אפשר לשמור את הכללים האלה עדיין. תקנו את הבעיות המסומנות ונסו שוב.',
+  },
+  rulesTooLarge: {
+    en: "This format is too large to save: a list or a value in its rules is longer than a saved format may keep. Shorten it and try again.",
+    he: 'הפורמט הזה גדול מדי לשמירה: רשימה או ערך בכללים שלו ארוכים יותר ממה שפורמט שמור יכול להכיל. קצרו אותם ונסו שוב.',
   },
   formatMismatch: {
     en: "This file's output doesn't match the format. See which columns differ and fix them, or save it as a new format.",

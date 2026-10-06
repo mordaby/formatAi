@@ -326,6 +326,14 @@ export type RepairProblem =
    */
   | { kind: 'overfit'; out: number; message: string }
   /**
+   * Logic first (docs/proposals/saved-format-contents.md section 4; SPEC 21 v15): the kept answer's rule for output column `out` is a list of
+   * fixed values keyed on an input column (a lookup, a value map, a chain of cases naming values one by one) - nobody can deduce it, and a
+   * saved format would keep it. The browser's ONE automatic round per learn asks for the rule behind it, and to keep the list only if none
+   * exists. The message names the column, the number of values and the key column, never a value. Unlike `overfit`, nothing falls back: a
+   * list the answer keeps is used for the conversion and asked about at Save.
+   */
+  | { kind: 'list'; out: number; message: string }
+  /**
    * Prompt audit X2: the answer was cut off at the output-token limit before it was complete (the provider's stop reason), so nothing of it
    * could be read. Its own kind - never a `schema` problem - so the ledger counts it apart (`problemCounts.truncated`); the repair round is
    * asked for the whole answer again, shorter (`previousRules` is null).

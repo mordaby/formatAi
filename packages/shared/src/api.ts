@@ -130,9 +130,16 @@ export interface RepairRequest {
   rows?: Sample[];
   /** The learn already had its one repair for a rule that copies rows (`LearnResponse.overfitRepaired`): such a rule is reported as unsupported now. */
   overfitRepaired?: boolean;
+  /**
+   * Logic first (docs/proposals/saved-format-contents.md section 4): a round whose problems ask for the rule behind a list (`list`) may be
+   * answered with AI code checks under learn-v9, like a learn's first call (`RepairResponse.checks`); the browser answers them and sends the
+   * round again with every round of checks so far, this one last (`CheckRound`, masked like the samples; within the caps `stepFits` holds a
+   * step to, the round's rows included). Absent or empty: the round's first call. Refused on any other round.
+   */
+  rounds?: CheckRound[];
 }
 
-/** POST /api/learn/repair 200 body. */
+/** POST /api/learn/repair 200 body (a list's round, learn-v9: `checks` instead of rules while rounds are left - then like a learn's answer). */
 export type RepairResponse = Omit<LearnResponse, 'learnId' | 'cached'>;
 
 /**

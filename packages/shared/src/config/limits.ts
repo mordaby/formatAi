@@ -185,6 +185,19 @@ export const limits = {
     maxWindowKeys: 3,
     /** SPEC 8.4a: how many exact cell texts one input column may read another way (`input.columns[].readAs`, "Do this every time?" on the Run screen). */
     maxReadAsPerColumn: 100,
+    /**
+     * What one saved format may keep (docs/proposals/saved-format-contents.md section 7; owner, 2026-10-06; SPEC 11, 21 v15). The tables were
+     * capped (`maxTables` x `maxTableRows`), but a value map's entries, the length of a value and the size of a format's rules were not:
+     *   - `maxValueMapEntries`: entries in one value map (`transform.valueMaps[].map`), as many as a table's rows;
+     *   - `maxValueChars`: characters of any one value the rules keep - a label or a constant in an expression, a table cell, a value map's
+     *     key or value, a condition's constant, a filter's or a check's value, a "read as" text, a title or a summary row's label;
+     *   - `maxRulesBytes`: the UTF-8 bytes of one version's rules (compact JSON), well under the request cap (`api.maxBodyBytes`, 256 KB).
+     * Checked by the engine's `checkLimits` (the browser's live check, the API's checks of an AI answer) and by the server on every route that
+     * stores rules, which refuses a save over any of them with 400 `rulesTooLarge` (the browser checks first, so a user never sees it in normal use).
+     */
+    maxValueMapEntries: 500,
+    maxValueChars: 200,
+    maxRulesBytes: 65_536,
   },
   /**
    * SPEC 6.5: the local fast path.
@@ -318,6 +331,25 @@ export const limits = {
      */
     oneTimer: {
       maxQuestions: 3,
+    },
+    /**
+     * A list of fixed values (docs/proposals/saved-format-contents.md section 3; owner, 2026-10-06; engine `copiedLists`, `learn/oneTimers.ts`):
+     * an output column whose value comes from a lookup, a value map or a chain of cases whose entries are fixed values keyed on an input
+     * column. A list is retried once for logic (section 4) and asked about at Save (section 6); a small vocabulary is not a list and saves
+     * silently.
+     *   - `minEntries`: a list has at least this many entries the example uses. DECISION: 6, the copied list's threshold of #55
+     *     (`overfit.minCases`): below it a few named values are one-time edits (the Result screen's question) or a rule, and the popup and the
+     *     retry stay rare.
+     *   - `vocabulary`: a translation of a category column with few values (`Open -> פתוח`, 4 region codes -> names) - at most `maxEntries`
+     *     entries, each giving its value to at least `minRowsPerEntry` rows of the example, keyed on a column that is not an identifier
+     *     (#56's classification, engine `maskTypes`). Anything bigger, keyed on an identifier, or with an entry used by a single row is a list.
+     */
+    lists: {
+      minEntries: 6,
+      vocabulary: {
+        maxEntries: 12,
+        minRowsPerEntry: 2,
+      },
     },
     /**
      * AI code checks (docs/proposals/ai-code-checks.md, owner decision 2026-10-05; SPEC 21 v14, 9.1): before it answers, the AI step (prompt
