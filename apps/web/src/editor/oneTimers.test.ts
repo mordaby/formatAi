@@ -1,10 +1,10 @@
 // Answering a one-time question (SPEC 21 v12 item 20, `oneTimers.ts`) on rules in any state, and the one-time cells in the editor's state:
 // one undo step with the rules, never "unsaved changes" on their own (they are never saved).
-import type { OneTimeQuestion } from '@formatai/engine';
+import type { OneTimeRowQuestion as OneTimeQuestion } from '@formatai/engine';
 import type { Expr, LearnResult, Validation } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { applyEdit, createEditorState, markSaved, redo, undo } from './model';
-import { answerOneTime, answerRule, answerUnsure, oneTimeKey, oneTimeState } from './oneTimers';
+import { answerOneTime, answerRule, answerUnsure, oneTimeState } from './oneTimers';
 
 const tenth: Expr = { op: 'round', arg: { op: 'mul', args: [{ col: 'amount' }, { const: 0.1 }] }, digits: 2 };
 const byId: Expr = { op: 'eq', args: [{ col: 'orderId' }, { const: 'ORD-03053' }] };
@@ -49,50 +49,6 @@ describe('the answers', () => {
     expect(oneTimeState(learned, q, true)).toBe('closed');
     expect(oneTimeState(rules(tenth), q, false)).toBe('closed');
     expect(oneTimeState({ ...learned, output: { ...learned.output, columns: [learned.output.columns[0]!, { header: 'Discount', from: null }] } }, q, false)).toBe('closed');
-  });
-});
-
-describe('a copied list (owner amendment, 2026-10-06): "is this the rule?"', () => {
-  const lookup: Expr = { op: 'lookup', table: 'discounts', key: { col: 'orderId' }, return: 'discount', onMissing: 'flag' };
-  const listed: LearnResult = { ...rules(lookup), transform: { ...rules(lookup).transform, tables: [{ name: 'discounts', columns: ['orderId', 'discount'], rows: [['ORD-1', 5], ['ORD-2', 7]] }] } };
-  const list: OneTimeQuestion = { kind: 'copiedList', out: 1, header: 'Discount', keyColumn: 'Order ID', entries: 2, list: { kind: 'lookup', computed: 'discount', table: 'discounts' } };
-
-  it('a one-time edit: the column needs your input and its list goes; no one-time cell (the column is not compared at all)', () => {
-    const out = answerOneTime(listed, list, [{ exampleRow: 7, column: 'Discount' }])!;
-    expect(out.rules.output.columns[1]).toEqual({ header: 'Discount', from: null });
-    expect(out.rules.unsupported).toEqual([{ outputColumn: 'Discount', reasonCode: 'overfit' }]);
-    expect([out.rules.transform.computed, out.rules.transform.tables]).toEqual([[], []]);
-    expect(out.oneTime).toEqual([{ exampleRow: 7, column: 'Discount' }]);
-    expect(answerOneTime(out.rules, list, [])).toBeNull();
-  });
-
-  it('the rule keeps the rules as they are; there is no "not sure"', () => {
-    expect(answerRule(listed, list)).toBe(listed);
-    expect(answerUnsure(listed, list)).toBeNull();
-  });
-
-  it('where it stands: open while the column takes its value from the list; closed once answered either way, or the column changed', () => {
-    expect(oneTimeState(listed, list, false)).toBe('open');
-    expect(oneTimeState(listed, list, true)).toBe('closed');
-    expect(oneTimeState(answerOneTime(listed, list, [])!.rules, list, false)).toBe('closed');
-    expect(oneTimeState(rules(tenth), list, false)).toBe('closed');
-  });
-
-  it('the same list written out as a chain of cases on one column: the same answers', () => {
-    const id = (v: string): Expr => ({ op: 'eq', args: [{ col: 'orderId' }, { const: v }] });
-    const chain = rules({ op: 'switch', cases: [{ when: { op: 'or', args: [id('ORD-1'), id('ORD-2')] }, then: { const: 5 } }], else: { const: 0 } });
-    const cases: OneTimeQuestion = { ...list, list: { kind: 'cases' as const, computed: 'discount', column: 'orderId' } };
-    expect(oneTimeState(chain, cases, false)).toBe('open');
-    expect(answerRule(chain, cases)).toBe(chain);
-    const out = answerOneTime(chain, cases, [])!;
-    expect([out.rules.output.columns[1], out.rules.transform.computed, out.oneTime]).toEqual([{ header: 'Discount', from: null }, [], []]);
-    expect(JSON.stringify(out.rules)).not.toContain('ORD-');
-    expect(oneTimeState(out.rules, cases, false)).toBe('closed');
-  });
-
-  it('a key of its own on screen, beside the row questions of the same column', () => {
-    expect(oneTimeKey(list)).not.toBe(oneTimeKey(q));
-    expect(oneTimeKey(list)).toBe(oneTimeKey({ ...list, entries: 40 }));
   });
 });
 

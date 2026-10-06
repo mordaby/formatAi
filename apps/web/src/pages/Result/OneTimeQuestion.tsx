@@ -4,11 +4,7 @@
 // no amber, no modal): "Row 54: Discount is 0 instead of Amount × 0.1, rounded to 2 decimals." The row's own values are shown here, read from
 // the learn on this computer; nothing is sent. Three answers: a one-time change (the part goes, the row is listed as one that doesn't follow
 // the rule), a rule (it stays), not sure (it stays, with a check that flags a later row it applies to - the question folds into one line).
-//
-// The second kind (owner amendment, 2026-10-06), a list copied from the example, in the same place and look: "Account Manager: is this the
-// rule?" - "We learned Account Manager as a list taken from your example: one value for each Account (40 entries)." Neutral, no cell value.
-// Two answers: "Yes, that's the rule" (nothing changes) and "No, it was a one-time edit" (the column needs your input).
-import type { CopiedListQuestion, OneTimeQuestion as Question } from '@formatai/engine';
+import type { OneTimeRowQuestion as Question } from '@formatai/engine';
 import type { PayloadCell } from '@formatai/shared';
 import { useMemo } from 'react';
 import { Cell } from '../../components/Cell';
@@ -35,8 +31,7 @@ export interface OneTimeQuestionProps {
 
 export function OneTimeQuestion({ question: q, rules, state, disabled, onOnce, onRule, onUnsure, onReopen }: OneTimeQuestionProps) {
   const { t, lang } = useI18n();
-  const rest = useMemo(() => (q.kind === 'copiedList' ? null : restParts(rules, q, lang)), [rules, q, lang]);
-  if (q.kind === 'copiedList') return <CopiedList question={q} disabled={disabled} onOnce={onOnce} onRule={onRule} />;
+  const rest = useMemo(() => restParts(rules, q, lang), [rules, q, lang]);
   if (rest === null) return null;
   const language = rules.output.language;
   const format = rules.output.columns.find((c) => c.header === q.header)?.format;
@@ -84,31 +79,6 @@ export function OneTimeQuestion({ question: q, rules, state, disabled, onOnce, o
         </Button>
         <Button variant="link" size="sm" disabled={disabled} onClick={onUnsure} data-answer="unsure">
           {t('oneTime.unsure')}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/** A list copied from the example: the question, what was learned (the key column and the entry count, no value), and the two answers. */
-function CopiedList({ question: q, disabled, onOnce, onRule }: { question: CopiedListQuestion; disabled: boolean; onOnce(): void; onRule(): void }) {
-  const { t, lang } = useI18n();
-  const column = <bdi className="sentence__name">{q.header}</bdi>;
-  const entries = <span className="tabular">{q.entries.toLocaleString(lang === 'he' ? 'he-IL' : 'en-US')}</span>;
-  return (
-    <div className="map-line__ask" data-testid="one-time-question" data-column={q.header} data-kind="copiedList" data-state="open">
-      <p className="map-line__ask-question">
-        <Marked id="oneTime.list.question" nodes={{ column }} />
-      </p>
-      <p className="muted" data-testid="one-time-values">
-        <Marked id="oneTime.list.detail" nodes={{ column, key: <bdi className="sentence__name">{q.keyColumn}</bdi>, entries }} />
-      </p>
-      <div className="map-line__ask-choices" role="group" aria-label={t('oneTime.list.group', { column: q.header })}>
-        <Button variant="secondary" size="sm" disabled={disabled} onClick={onRule} data-answer="rule">
-          {t('oneTime.list.rule')}
-        </Button>
-        <Button variant="secondary" size="sm" disabled={disabled} onClick={onOnce} data-answer="once">
-          {t('oneTime.list.once')}
         </Button>
       </div>
     </div>
