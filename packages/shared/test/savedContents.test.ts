@@ -1,6 +1,6 @@
 // What a saved format keeps (docs/proposals/saved-format-contents.md; `rules/savedContents.ts`): every value of the rules with where it sits,
 // the identifier-shaped ones as the Save popup's lines (column and kind, never the value), "Save without them", what the server already holds,
-// and the size caps (section 7: 500 value-map entries, 200 characters per value, 64 KB per version).
+// and the size caps (section 7: 500 value-map entries, 300 characters per value (owner, 2026-10-06; the proposal said 200), 64 KB per version).
 import { describe, expect, it } from 'vitest';
 import { limits } from '../src/config/limits';
 import {
@@ -176,10 +176,10 @@ describe('withoutIdentifiers: "Save without them"', () => {
 
 describe('the size caps (section 7)', () => {
   it('the config values the owner approved (and 500 characters for a title)', () => {
-    expect(limits.rules).toMatchObject({ maxValueMapEntries: 500, maxValueChars: 200, maxTitleChars: 500, maxRulesBytes: 65_536 });
+    expect(limits.rules).toMatchObject({ maxValueMapEntries: 500, maxValueChars: 300, maxTitleChars: 500, maxRulesBytes: 65_536 });
   });
 
-  it('a title row or a summary row\'s label: 500 characters is fine, 501 is over; a "stop at" text stays at 200', () => {
+  it('a title row or a summary row\'s label: 500 characters is fine, 501 is over; a "stop at" text stays at 300', () => {
     const base = rules();
     const titled = (n: number): LearnResult => ({ ...base, output: { ...base.output, titleRows: [{ text: 'x'.repeat(n) }, { parts: [{ text: 'y'.repeat(10) }] }] } });
     expect(contentLimitProblems(titled(500))).toEqual([]);
@@ -190,8 +190,8 @@ describe('the size caps (section 7)', () => {
     const grouped: LearnResult = { ...base, transform: { ...base.transform, group: { by: 'type', showDetailRows: true, summaryRows: [{ label: 'g'.repeat(501), cells: {} }] } } };
     expect(contentLimitProblems(grouped).map((p) => p.code === 'titleChars' && p.path)).toEqual(['transform.group.summaryRows[0]']);
     const stop = (n: number): LearnResult => ({ ...base, input: { ...base.input, stopAt: { when: 'firstCellMatches', values: ['s'.repeat(n)] } } });
-    expect(contentLimitProblems(stop(200))).toEqual([]);
-    expect(contentLimitProblems(stop(201)).map((p) => p.code)).toEqual(['valueChars']);
+    expect(contentLimitProblems(stop(300))).toEqual([]);
+    expect(contentLimitProblems(stop(301)).map((p) => p.code)).toEqual(['valueChars']);
     expect(contentLimitMessage(contentLimitProblems(titled(501))[0]!)).toBe("a title of 501 characters, exceeding the maximum of 500 characters for a title or a summary row's label");
   });
 
@@ -203,16 +203,16 @@ describe('the size caps (section 7)', () => {
     expect(contentLimitProblems(withMap(501))).toEqual([{ code: 'valueMapEntries', path: 'transform.valueMaps[0]', column: 'type', entries: 501, max: 500 }]);
   });
 
-  it('a value of 200 characters is fine, 201 is over - a label, a table cell, a condition\'s constant, a fix', () => {
+  it('a value of 300 characters is fine, 301 is over - a label, a table cell, a condition\'s constant, a fix', () => {
     const at = (n: number) => 'x'.repeat(n);
-    expect(contentLimitProblems(rules(iff(gt(col('amount'), { const: 1 }), str(at(200)), str(''))))).toEqual([]);
-    expect(contentLimitProblems(rules(iff(gt(col('amount'), { const: 1 }), str(at(201)), str(''))))).toEqual([{ code: 'valueChars', path: 'transform.computed[0].expr', chars: 201, max: 200 }]);
+    expect(contentLimitProblems(rules(iff(gt(col('amount'), { const: 1 }), str(at(300)), str(''))))).toEqual([]);
+    expect(contentLimitProblems(rules(iff(gt(col('amount'), { const: 1 }), str(at(301)), str(''))))).toEqual([{ code: 'valueChars', path: 'transform.computed[0].expr', chars: 301, max: 300 }]);
     const base = rules();
-    const cell: LearnResult = { ...base, transform: { ...base.transform, tables: [{ name: 'ledger', columns: ['type', 'account'], rows: [['Travel', at(250)]] }] } };
-    expect(contentLimitProblems(cell).map((p) => p.code === 'valueChars' && [p.path, p.chars])).toEqual([['transform.tables[0]', 250]]);
-    const condition = rules(iff({ op: 'contains', arg: col('order'), text: at(201) }, str('A'), str('B')));
+    const cell: LearnResult = { ...base, transform: { ...base.transform, tables: [{ name: 'ledger', columns: ['type', 'account'], rows: [['Travel', at(350)]] }] } };
+    expect(contentLimitProblems(cell).map((p) => p.code === 'valueChars' && [p.path, p.chars])).toEqual([['transform.tables[0]', 350]]);
+    const condition = rules(iff({ op: 'contains', arg: col('order'), text: at(301) }, str('A'), str('B')));
     expect(contentLimitProblems(condition).map((p) => p.code)).toEqual(['valueChars']);
-    const fix: LearnResult = { ...base, input: { ...base.input, columns: base.input.columns.map((c) => (c.id === 'order' ? { ...c, readAs: { 'N/A': at(201) } } : c)) } };
+    const fix: LearnResult = { ...base, input: { ...base.input, columns: base.input.columns.map((c) => (c.id === 'order' ? { ...c, readAs: { 'N/A': at(301) } } : c)) } };
     expect(contentLimitProblems(fix).map((p) => p.code === 'valueChars' && p.path)).toEqual(['input.columns[0].readAs']);
   });
 
@@ -230,8 +230,8 @@ describe('the size caps (section 7)', () => {
   });
 
   it('the message names counts, never a value', () => {
-    const p = contentLimitProblems(rules(iff(gt(col('amount'), { const: 1 }), str(`${ID}${'x'.repeat(200)}`), str(''))))[0]!;
-    expect(contentLimitMessage(p)).toBe('a value of 209 characters, exceeding the maximum of 200 characters for one value');
+    const p = contentLimitProblems(rules(iff(gt(col('amount'), { const: 1 }), str(`${ID}${'x'.repeat(300)}`), str(''))))[0]!;
+    expect(contentLimitMessage(p)).toBe('a value of 309 characters, exceeding the maximum of 300 characters for one value');
     expect(contentLimitMessage(p)).not.toContain(ID);
   });
 });

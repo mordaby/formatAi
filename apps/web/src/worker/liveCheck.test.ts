@@ -380,7 +380,7 @@ describe('runStaticChecks with a source (the source lock)', () => {
 // What one saved format may keep (docs/proposals/saved-format-contents.md section 7): the browser checks the caps the server refuses a save over,
 // and says them in plain words on the line they are about.
 describe('runStaticChecks: the caps of a saved format', () => {
-  it('a value map over 500 entries, a value over 200 characters: limit problems, explained on their column', async () => {
+  it('a value map over 500 entries, a value over 300 characters: limit problems, explained on their column', async () => {
     const { rules } = await exampleOf(12);
     const shown = rules.output.columns[0]!;
     const map = Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`k${i}`, `v${i}`]));
@@ -394,7 +394,7 @@ describe('runStaticChecks: the caps of a saved format', () => {
     expect(runStaticChecks(titled(500), { tier: 'paid' }).filter((p) => p.layer === 'limits')).toEqual([]);
     const long = runStaticChecks(titled(501), { tier: 'paid' }).filter((p) => p.layer === 'limits');
     expect(explainStaticProblems(titled(501), long).map((p) => p.text)).toEqual(["Title row 1 is too big: a title of 501 characters, exceeding the maximum of 500 characters for a title or a summary row's label."]);
-    const label: LearnResult = { ...rules, transform: { ...rules.transform, computed: [...rules.transform.computed, { id: 'note', type: 'text', expr: { const: 'x'.repeat(201) } }] } };
-    expect(runStaticChecks(label, { tier: 'paid' }).filter((p) => p.layer === 'limits').map((p) => p.message)).toEqual(['a value of 201 characters, exceeding the maximum of 200 characters for one value']);
+    const label: LearnResult = { ...rules, transform: { ...rules.transform, computed: [...rules.transform.computed, { id: 'note', type: 'text', expr: { const: 'x'.repeat(301) } }] } };
+    expect(runStaticChecks(label, { tier: 'paid' }).filter((p) => p.layer === 'limits').map((p) => p.message)).toEqual(['a value of 301 characters, exceeding the maximum of 300 characters for one value']);
   });
 });

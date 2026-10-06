@@ -198,7 +198,8 @@ export const limits = {
      * stores rules, which refuses a save over any of them with 400 `rulesTooLarge` (the browser checks first, so a user never sees it in normal use).
      */
     maxValueMapEntries: 500,
-    maxValueChars: 200,
+    // Owner decision (2026-10-06): 300, raised from the proposal's 200.
+    maxValueChars: 300,
     maxTitleChars: 500,
     maxRulesBytes: 65_536,
   },
