@@ -42,10 +42,30 @@ export function explainedRate(a: PairAnalysis): number {
  * on it is never cut off by their cap.
  */
 export function firstRowExplained(asData: PairAnalysis): boolean {
-  if (asData.alignment.rows[0]?.out !== 0) return false;
+  return rowExplained(asData, 0);
+}
+
+/**
+ * Whether output data row `d` of a reading where every row is data is explained as a data row: aligned to an input row, and no traced
+ * column's best relation fails on it.
+ */
+export function rowExplained(asData: PairAnalysis, d: number): boolean {
+  const j = asData.alignment.rows.findIndex((r) => r.out === d);
+  if (j < 0) return false;
   const traced = asData.columns.filter((c) => !c.unknown && c.relations[0] !== undefined);
   if (traced.length === 0) return false;
-  return traced.every((c) => !c.relations[0]!.failing.includes(0));
+  return traced.every((c) => !c.relations[0]!.failing.includes(j));
+}
+
+/**
+ * The row the header reading takes as the header, as a data row of the reading where every row is data (its sheet row's index there);
+ * 0 when there is no header reading. DECISION (found by the engine stress test, eval/STRESS.md): with a title row above it, the header
+ * reading's header is not row 0 - and it is that row, not the title, whose being explained as data says the file has no header.
+ */
+function headerAsDataRow(asHeader: PairAnalysis | null, asData: PairAnalysis): number {
+  if (asHeader === null || asHeader.output.headerRow <= 0) return 0;
+  const d = asData.output.dataRows.indexOf(asHeader.output.headerRow);
+  return d < 0 ? 0 : d;
 }
 
 /**
@@ -82,13 +102,13 @@ export function headerRowMayBeData(asHeader: PairAnalysis, inCols: ColumnData[],
 export type HeaderVerdict = 'header' | 'data' | 'unknown';
 
 /**
- * Judges the two readings of the same output file. `asHeader` reads row 0 as the
- * header, `asData` reads every row as data; either may be missing (null).
+ * Judges the two readings of the same output file. `asHeader` reads a header row (row 0, or a row under title rows),
+ * `asData` reads every row as data; either may be missing (null). The header reading's header row decides: explained as data, it is data.
  * 'unknown' keeps the default reading (header: true when detection had no type
  * evidence, as detected otherwise).
  */
 export function decideHeader(asHeader: PairAnalysis | null, asData: PairAnalysis | null): HeaderVerdict {
-  const row0 = asData !== null && firstRowExplained(asData);
+  const row0 = asData !== null && rowExplained(asData, headerAsDataRow(asHeader, asData));
   if (row0 && asData !== null && explainedRate(asData) >= HEADER_MIN_EXPLAINED) return 'data';
   if (!row0 && asHeader !== null && explainedRate(asHeader) >= HEADER_MIN_EXPLAINED) return 'header';
   return 'unknown';
