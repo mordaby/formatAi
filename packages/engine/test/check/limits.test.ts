@@ -209,6 +209,23 @@ describe('checkLimits: function/table counts, table rows, duplicate keys, cycles
     expect(problems.map((p) => p.path)).toEqual(['input.columns[0].readAs']);
   });
 
+  // What one saved format may keep (docs/proposals/saved-format-contents.md section 7): the browser's live check reports the caps the server
+  // refuses a save over (shared `contentLimitProblems`).
+  it('reports a value map of more than 500 entries, a value of more than 200 characters, and rules over 64 KB', () => {
+    const map = (n: number): Record<string, string> => Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, `v${i}`]));
+    const withMap = (n: number): LearnResult => baseRules({ transform: { computed: [], valueMaps: [{ column: 'a', map: map(n), onMissing: 'flag' }], sort: [] } });
+    expect(checkLimits(withMap(500), 'paid')).toEqual([]);
+    expect(checkLimits(withMap(501), 'paid')).toEqual([{ kind: 'limit', path: 'transform.valueMaps[0]', message: 'the value map on "a" has 501 entries, exceeding the maximum of 500' }]);
+
+    const label = (n: number): LearnResult => baseRules({ transform: { computed: [{ id: 'c', type: 'text', expr: { const: 'x'.repeat(n) } }], valueMaps: [], sort: [] } });
+    expect(checkLimits(label(200), 'paid')).toEqual([]);
+    expect(checkLimits(label(201), 'paid')).toEqual([{ kind: 'limit', path: 'transform.computed[0].expr', message: 'a value of 201 characters, exceeding the maximum of 200 characters for one value' }]);
+
+    const rows = Array.from({ length: 480 }, (_, i) => [`key-${i}`, 'v'.repeat(140)]);
+    const big = baseRules({ transform: { computed: [], valueMaps: [], sort: [], tables: [{ name: 't', columns: ['k', 'v'], rows }] } });
+    expect(checkLimits(big, 'paid').map((p) => p.message)).toEqual([expect.stringMatching(/^the rules take \d+ bytes, exceeding the maximum of 65536 bytes for one format$/)]);
+  });
+
   it('reports a duplicate table key', () => {
     const rules = baseRules({
       transform: { computed: [], valueMaps: [], sort: [], tables: [{ name: 't', columns: ['k', 'v'], rows: [['A', 1], ['A', 2]] }] },

@@ -9,7 +9,7 @@
 // defensively while resolving `call`/`lookup` references). Both are kept in sync
 // through the same `limits.rules.maxExprDepth` config value, so they can never disagree.
 import type { Computed, Expr, ExprNode, LearnResult, Rules, RulesFunction, RulesTable, Tier } from '@formatai/shared';
-import { limits, tiers } from '@formatai/shared';
+import { contentLimitMessage, contentLimitProblems, limits, tiers } from '@formatai/shared';
 
 export interface LimitProblem {
   kind: 'limit';
@@ -361,6 +361,12 @@ export function checkLimits(rules: LearnResult | Rules, tier: Tier): LimitProble
       });
     }
   });
+
+  // ----- what one saved format may keep (docs/proposals/saved-format-contents.md section 7; SPEC 21 v15): a value map's entries, one value's
+  // characters, one version's bytes (shared `contentLimitProblems`, which the server checks again on every route that stores rules) -----
+  for (const p of contentLimitProblems(rules)) {
+    problems.push({ kind: 'limit', ...(p.code === 'rulesBytes' ? { path: '' } : { path: p.path }), message: contentLimitMessage(p) });
+  }
 
   // ----- acyclic call graph (defensive; SPEC 8.14 already makes it acyclic by
   // construction via "a function may call only functions defined above it", enforced

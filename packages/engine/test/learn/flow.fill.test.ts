@@ -80,7 +80,19 @@ describe('learnFromExamples: code fills the data parameters, after unmasking', (
     expect(r.filled).toEqual({ filled: [{ kind: 'lookup', count: table.rows.length - aiEntries }], checks: 0 });
     // B07's store rows are what is still wrong: the loop made its round with them
     expect(r.verification?.mismatches).toHaveLength(aiHasB07 ? 1 : 2);
-    expect(sent).toHaveLength(1);
+    // ... and then (docs/proposals/saved-format-contents.md section 4) the one round for the list it kept: 29 or 30 branches by code, more
+    // than a small vocabulary - its problem names the column, the count and the key, never a value
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.round).toMatchObject({ round: 2, list: true, newRows: 0 });
+    expect(sent[1]!.problems).toEqual([
+      {
+        kind: 'list',
+        out: 1,
+        message: `Column "Branch" is a list of ${table.rows.length} fixed values, one per Code. Find the rule behind it from the other columns. Only if no rule exists - the value depends on each Code itself, or comes from outside the file - keep the list.`,
+      },
+    ]);
+    expect(r.listRetry).toEqual({ columns: ['Branch'], calls: 1, checkRounds: 0, outcome: 'noAnswer' });
+    expect(r.loop?.rounds).toBe(2);
 
     // the round sent the answer as the AI wrote it (its masked entries only), and no real name anywhere
     expect(sent[0]!.previous.transform.tables![0]!.rows).toHaveLength(aiEntries);

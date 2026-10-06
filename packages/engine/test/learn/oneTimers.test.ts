@@ -332,7 +332,7 @@ describe('discount-hand-edited: the answers learn-v8 and learn-v8.1 wrote for it
 });
 
 describe('every kept rules file of the measurement (learn-v7 and learn-v8, both modes, the noE1 arm, the MVP runs)', () => {
-  it('asks no one-row question on any of them, and one copied list: questions stay rare', async () => {
+  it('asks no one-row question on any of them, and two lists: questions stay rare', async () => {
     const asked: string[] = [];
     const lists: unknown[] = [];
     for (const k of KEPT) {
@@ -344,6 +344,17 @@ describe('every kept rules file of the measurement (learn-v7 and learn-v8, both 
     // (owner amendment, 2026-10-06) learn-v8's SKU column written as a table of the example's 27 codes, each with its padding (100 ->
     // 000100), keyed on the SKU - different on every row. Next month's file has the same SKUs, so it passes there too: code cannot tell a
     // real list from a copy, and asks.
-    expect(lists).toEqual([['cmp-learn-v8-full/stock-count-warehouse-report.full', 'מקט', 'מקט', 27, 'lookup']]);
+    // (docs/proposals/saved-format-contents.md section 3) And every kept answer of branch-lookup-50: its branch table, 50 fixed values keyed
+    // on the branch code - more than a small vocabulary's 12, nobody can deduce them, and a saved format keeps them: a list, asked at Save.
+    const branches = (source: string): unknown[] => [source, 'Branch Name', 'Branch Code', 50, 'lookup'];
+    expect(lists).toEqual([
+      branches('cmp-learn-v7/branch-lookup-50.complete'),
+      branches('cmp-learn-v7/branch-lookup-50.full'),
+      ['cmp-learn-v8-full/stock-count-warehouse-report.full', 'מקט', 'מקט', 27, 'lookup'],
+      branches('cmp-learn-v8-complete/branch-lookup-50.complete'),
+      branches('cmp-learn-v8-noE1/branch-lookup-50.complete'),
+      branches('mvp-2026-10-04/branch-lookup-50.complete'),
+      branches('mvp-2026-10-04/branch-lookup-50.full'),
+    ]);
   }, 120_000);
 });

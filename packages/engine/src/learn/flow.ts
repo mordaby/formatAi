@@ -9,16 +9,25 @@
 // of the example (`learn/checks.ts`, masked like the samples, within the learn's row limit) and makes the next step (`callStep`, with every
 // round so far), until the rules come - at most `limits.learn.checks.maxRounds` rounds. From the rules on, nothing changes.
 //
+// Logic first (docs/proposals/saved-format-contents.md section 4; SPEC 21 v15): when the answer the loop kept has a LIST column (`copiedLists`:
+// a lookup, a value map or a chain of cases with fixed values keyed on an input column, not a small vocabulary), the flow sends ONE automatic
+// repair round for it, with no click - the `list` problem names the column, the number of values and the key column, never a value
+// (`listRetryProblems`) - within the loop's caps (it is a round of the loop: `limits.learn.loop.maxRounds`, the API's repair calls). With
+// learn-v9 the AI step may answer that round with checks first (`callRepair` with `LoopRound.checks`). An answer without the list (logic
+// found) replaces the kept one when it is no worse on every row; one that keeps it changes nothing - the list is used for the conversion and
+// asked about at Save. The overfitting guards keep their own one repair (an `overfit` problem never rides in this round, and this round is
+// not it).
+//
 // Deliberately transport-agnostic: `callLearn`/`callRepair`/`callStep` are injected by the caller,
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import { aiNotesOf, isCodeCheck, limits, payloadRowCount, stepBytes, stripAiNotes, unsupportedDespiteEvidence, type AiColumnNote, type AiStepPartCode, type Check, type CheckAnswer, type CheckRound, type Format, type LearnAlternative, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
+import { aiNotesOf, isCodeCheck, limits, payloadRowCount, stepBytes, stripAiNotes, unsupportedDespiteEvidence, withRows, type AiColumnNote, type AiStepPartCode, type Check, type CheckAnswer, type CheckRound, type Format, type LearnAlternative, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
 import { answerChecks, checkSummaryOf, withoutRows, type CheckSummary } from './checks';
 import { deepEqual } from '../registry/deepEqual';
 import { columnVerifier, resolveAlternatives, type AlternativeResult } from './alternatives';
 import { fillParams, type FillAmbiguity, type FillResult, type FillSummary } from './fillParams';
-import { oneTimeQuestions, questionedPositions, type OneTimeResult } from './oneTimers';
+import { copiedLists, listRetryProblems, oneTimeQuestions, questionedPositions, type OneTimeOptions, type OneTimeResult } from './oneTimers';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
@@ -232,8 +241,15 @@ export interface LearnFromExamplesResult<Call = unknown> {
     /** What the answer produced of what was asked: listed columns that got a rule, listed parts it built. Nothing produced is no completion. */
     produced: { columns: number; parts: number };
   };
-  /** The learning loop (path 'llm' with rules): rounds made, rows they sent, and how it ended. `rules` is its best answer. */
+  /** The learning loop (path 'llm' with rules): rounds made (the list's round included), rows they sent, and how it ended. `rules` is its best answer. */
   loop?: LoopSummary;
+  /**
+   * Path 'llm' with rules: the one automatic round for the kept answer's list columns (docs/proposals/saved-format-contents.md section 4) -
+   * the columns retried, the calls it took (its own rounds of checks included) and how it ended: `logic` (the answer came back without the
+   * list: it is gone), `kept` (the answer keeps the list: it is used and asked about at Save), `worse` (the answer was worse on the example: the
+   * one before is kept, list and all), `noAnswer` (no usable rules came back). Absent when the kept answer had no list, or no round was left.
+   */
+  listRetry?: ListRetrySummary;
   /**
    * Path 'llm': the AI code checks the AI step asked before it answered (learn-v9) - rounds, checks, rows shown, dropped, errors. Counts
    * only, for the eval report and the UI's progress line. Absent when it asked none.
@@ -266,6 +282,15 @@ export interface LearnFromExamplesResult<Call = unknown> {
    * saved format?"; no cell value). Real values: the browser's and the eval's only. Absent when there is neither.
    */
   oneTimers?: OneTimeResult;
+}
+
+/** How the one round for the kept answer's lists went (`LearnFromExamplesResult.listRetry`). Headers and counts only. */
+export interface ListRetrySummary {
+  columns: string[];
+  calls: number;
+  /** learn-v9: the rounds of checks the AI step asked in it. */
+  checkRounds: number;
+  outcome: 'logic' | 'kept' | 'worse' | 'noAnswer';
 }
 
 /** Like the diff problems (LEARN_PROMPT §4: "At most 10 diff problems are sent"), a repair call needs enough fixed-lock findings to fix the pattern, not all of them. */
@@ -654,17 +679,72 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // The answer kept is the loop's best (the fewest wrong rows; ties keep the earliest). One that still has a rule that copies rows - no round
   // could repair it - is judged again with the honest fallback: never counted as verified by a copy of the example.
   const best = answers[loop.best] ?? first;
-  const kept = best.overfit.length > 0 ? judge(best.source.answer, best.source.alternatives, true) : best;
+  let kept = best.overfit.length > 0 ? judge(best.source.answer, best.source.alternatives, true) : best;
+
+  // ---- Logic first (docs/proposals/saved-format-contents.md section 4): the kept answer's list columns get ONE automatic round, a round of
+  // the loop (its caps, the API's repair calls), never more than one per learn. (Completion mode: the asked columns only, never a list of the
+  // user's own rules.) ----
+  const listOpts: OneTimeOptions = askedHeaders && complete ? { columns: askedHeaders, fixed: complete.fixedRules } : {};
+  let listRetry: ListRetrySummary | undefined;
+  let retryCalls = 0;
+  const lists = opts.callRepair && loop.rounds < caps.maxRounds ? copiedLists(kept.rules, analysis, listOpts) : [];
+  if (opts.callRepair && lists.length > 0) {
+    const problems = listRetryProblems(lists, kept.masked);
+    const rows = loop.sent.map((r) => r.sample);
+    const base: LoopRound = { round: loop.rounds + 1, maxRounds: caps.maxRounds, rows, newRows: 0, overfitRepaired, list: true };
+    stages.browserRepairUsed = true;
+    let repaired = await opts.callRepair(payload, kept.masked, problems, base);
+    retryCalls = 1;
+    calls.push(...repaired.calls);
+    // learn-v9: the AI step may prove its point with checks first ("a band on the total fits", "every key always gives one value"), answered
+    // on every row like the learn's own (`nextCheckRound`) - each answer is one more call of the round, within the loop's caps.
+    const retryRounds: CheckRound[] = [];
+    while (repaired.checks && !repaired.rules && retryRounds.length < limits.learn.checks.maxRounds && loop.rounds + retryCalls < caps.maxRounds) {
+      const next = nextCheckRound(repaired.checks, repaired.droppedChecks ?? [], {
+        analysis,
+        masker,
+        fixedRules: complete?.fixedRules,
+        payload: withRows(payload, rows),
+        rounds: retryRounds,
+        sent: new Set([...built.sampleRows.map((r) => r.in), ...built.droppedRows, ...checkRows, ...loop.sent.map((r) => r.inRow), ...loop.named]),
+        rowBudget: limits.learn.loop.maxRowsTotal - payloadRowCount(payload) - checkRows.length - loop.sent.length - loop.named.length,
+      });
+      if (!next) break;
+      retryRounds.push(next.round);
+      checkRows.push(...next.rowsShown);
+      repaired = await opts.callRepair(payload, kept.masked, problems, { ...base, round: base.round + retryCalls, checks: [...retryRounds] });
+      retryCalls += 1;
+      calls.push(...repaired.calls);
+    }
+    if (repaired.overfitRepaired) overfitRepaired = true;
+    // Code checks the answer on every row, as always: it replaces the kept one only when it is no worse (ties: a passing one over one that
+    // does not pass). An answer that still copies rows is judged with the honest fallback, like the loop's kept answer.
+    const judged = repaired.rules ? judge(repaired.rules, repaired.alternatives) : null;
+    const candidate = judged && judged.overfit.length > 0 ? judge(judged.source.answer, judged.source.alternatives, true) : judged;
+    const columns = lists.map((q) => q.header);
+    let outcome: ListRetrySummary['outcome'] = 'noAnswer';
+    if (candidate) {
+      const noWorse = candidate.wrong < kept.wrong || (candidate.wrong === kept.wrong && (candidate.passes || !kept.passes));
+      if (!noWorse) outcome = 'worse';
+      else {
+        kept = candidate;
+        const still = new Set(copiedLists(kept.rules, analysis, listOpts).map((q) => q.header));
+        outcome = columns.some((h) => still.has(h)) ? 'kept' : 'logic';
+      }
+    }
+    listRetry = { columns, calls: retryCalls, checkRounds: retryRounds.length, outcome };
+  }
+
   const { rules, fixedProblems } = kept;
   // (The wrong rows were the loop's to choose from; they hold real values and stay here.)
   const { wrongRows: _wrongRows, ...verification } = kept.verification;
   stages.verifiedAfterRepair = kept.passes;
-  const loopSummary: LoopSummary = { rounds: loop.rounds, rowsSent: loop.sent.length + loop.named.length, end: decided.step.kind === 'stop' ? decided.step.reason : 'verified' };
+  const loopSummary: LoopSummary = { rounds: loop.rounds + retryCalls, rowsSent: loop.sent.length + loop.named.length, end: decided.step.kind === 'stop' ? decided.step.reason : 'verified' };
 
   // A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of the kept answer that explain one row of the example only, for the user -
-  // and (owner amendment, 2026-10-06) the lists copied from the example, keyed on a column that is different on every row. Completion mode:
-  // the asked columns only, never a lookup or a value map of the user's own rules.
-  const oneTimers = oneTimeQuestions(rules, analysis, askedHeaders && complete ? { columns: askedHeaders, fixed: complete.fixedRules } : {});
+  // and (owner amendment, 2026-10-06; docs/proposals/saved-format-contents.md section 3) the lists of fixed values the kept answer still has,
+  // asked at Save. Completion mode: the asked columns only, never a lookup or a value map of the user's own rules.
+  const oneTimers = oneTimeQuestions(rules, analysis, listOpts);
 
   // learn-v7: the notes leave the rules here (SPEC 15): the answer the caller works with has none, and they travel beside it.
   const aiNotes = aiNotesOf(rules);
@@ -684,6 +764,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     stages,
     readiness: shownReadiness,
     loop: loopSummary,
+    ...(listRetry ? { listRetry } : {}),
     ...checkSummary,
     filled: kept.fill.summary,
     ...(kept.fill.ambiguities.length > 0 ? { ambiguities: kept.fill.ambiguities } : {}),
