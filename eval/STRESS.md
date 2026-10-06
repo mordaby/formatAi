@@ -24,7 +24,7 @@ the repro of a seed with findings only; `--out <dir>` (default `eval/reports/str
 Keep each command short: a 100-seed `mixed` chunk takes 1-2 minutes, a `timing` case 20-60 s (most of it generating the files).
 Run 500 seeds as five chunks (`--seed 1`, `101`, ...).
 
-The eval tests run a fixed set: the first 30 seeds of the small profile and the 15 seeds that found the bugs fixed so far, about
+The eval tests run a fixed set: the first 30 seeds of the small profile and the 18 seeds that found the bugs fixed so far, about
 8 s (`pnpm --filter ./eval test`).
 
 ## What a case is
@@ -65,8 +65,10 @@ that removes nothing) are taken out of the reference rules. No row is blank in e
 
 **Findings** (counted, not failures): `localNotVerified` (the fast path's rules do not verify: reported to the user),
 `partialMismatchReported` (a built column the verification reports wrong), `holdoutAssumed` (wrong next month under a stated
-assumption), `holdoutAsked` (wrong next month in a column the engine asks about), `idNumberSentReal` (an integer column that is not
-unique per row is a measure and is sent real, maskTypes.ts), `fakeEqualsReal` (a fake that happens to equal another row's real
+assumption), `holdoutAsked` (wrong next month in a column the engine asks about), `idNumberSentReal` (a generated ID column -
+customer or order numbers, Israeli IDs - with no identifier word in its name and no identifier shape in its values: the column
+classification makes it a measure, sent real - `classify.ts`, the documented limit the AI classification is for; an identifier column
+sent real is a failure), `fakeEqualsReal` (a fake that happens to equal another row's real
 value: the masker checks fakes only against the words it has seen), `csvLeadingControl`, `payloadNotBuilt`.
 
 ## Results (2026-10-06, branch engine-stress)
@@ -83,15 +85,24 @@ Paths (mixed): partial 286, blocked 103, local 111; no generator error. Findings
 Timing, 20,000 x 20: csv / txt input learns in 1.8-6.1 s and converts in 0.4-3.5 s; xlsx input learns in 7.5-14.3 s (reading the
 two workbooks is about 9 s of it) and converts in 4.7-12.6 s with xlsx in and out (O4). Times vary with the machine's load.
 
+## Results (2026-10-06, branch column-classification)
+
+The column classification (SPEC 21, its amendment) and every script masked. The same seeds as above:
+
+| Run | Cases | New failures | Open findings reproduced | Learn p50 / p95 / max | Convert p50 / p95 / max |
+|---|---|---|---|---|---|
+| mixed, seeds 1-500 (five chunks of 100) | 500 (2-19,960 rows, 2-40 columns; 102 of 1,000+ rows) | 0 | O3 on 1 | 33 / 758 / 6,676 ms | 10 / 253 / 4,102 ms |
+| small, seeds 1-500 | 500 | 0 | O2 on 1 | 12 / 43 / 97 ms | 7 / 29 / 53 ms |
+
+O1 is gone (it was on 14 mixed and 10 small cases). Paths (mixed) are unchanged: partial 286, blocked 103, local 111. Findings
+(mixed): partialMismatchReported 29, fakeEqualsReal 20, idNumberSentReal 17 (was 26), localNotVerified 7, holdoutAssumed 5. Every
+`idNumberSentReal` is now an "Order No" / "מספר הזמנה" column - no identifier word in the name, so a measure, sent real (the documented
+limit); "Customer No" / "מספר לקוח" and the Israeli ID columns are identifiers by their names and masked.
+
 ## Open findings
 
 Design questions the run reproduces, not fixed in passing (`open.ts`; the summary lists them apart from new failures).
 
-- **O1 - other scripts are sent real under masking** (small 10, 23, 73; mixed 5, 68 and about 3% of cases). The masker has fake
-  alphabets for digits, Latin and Hebrew only (SPEC 7.1's shape signature models D/A/H); a Cyrillic or Arabic name ("Ольга Петрова",
-  "محمد خليل") passes through unchanged (`words.ts`, DECISION: no alphabet to draw from). Accented Latin words are masked but for the
-  accented letters ("José" -> "Vvoé").
-  Question: a fake alphabet per script, or a placeholder for unmodeled letters.
 - **O2 - csv / txt: a plain negative number held as text in a text column** (small 231). The formula guard prefixes text that
   starts with `-` with an apostrophe unless the column is numeric (SPEC 15), so rules that build "-1192964702.4" as a text constant
   write "'-1192964702.4" where the example shows the number; the verification compares values and passes. Question: exempt a plain
@@ -126,6 +137,7 @@ Design questions the run reproduces, not fixed in passing (`open.ts`; the summar
 | normalizeCase speed | rows skipped on cached normalized texts (a 15,000-row learn 15 s -> 7 s) | mixed 134 |
 | Lazy repair problems | only the 10 kept repair problems are built and masked (32 s -> 0.8 s) | mixed 134 |
 | Value map, duplicates | an exact duplicate row confirms nothing | mixed 153 |
+| Every script masked (O1; column classification) | Arabic and Cyrillic get same-script fakes; a letter of any other script is never sent real | small 10, 23, 73; mixed 5, 68 |
 
 Harness fixes on the way (no engine change): a column the engine asks about is reported; digits as text in a column masked as a
 number are the `idNumberSentReal` finding; a fake that equals another real value is `fakeEqualsReal`; and the fair hold-out rules
