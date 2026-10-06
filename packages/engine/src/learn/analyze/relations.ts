@@ -417,10 +417,19 @@ function padCands(env: RelationEnv, out: ColumnData): Cand[] {
   return cands;
 }
 
+/** Whether position `i` of `t` is a cut that leaves every run of digits whole (no digit on both sides). */
+function wholeDigitsAt(t: string, i: number): boolean {
+  return i <= 0 || i >= t.length || !(/\d/.test(t[i - 1]!) && /\d/.test(t[i]!));
+}
+
 function substrCands(env: RelationEnv, out: ColumnData): Cand[] {
   const cands: Cand[] = [];
   env.src.forEach((a, s) => {
     if (kindShare(a, DATE) > 0) return;
+    // DECISION (found by the engine stress test, eval/STRESS.md): a part of a date written as text is a whole day, month or year. A cut
+    // inside one is luck: the 5th character of "17/06/2026" is the month on every row of an example whose months are 1-9, and "0" in
+    // October. Such a column is left to the rest of the analysis (or the AI step).
+    const cut = a.textDate !== null ? (t: string, from: number, to: number): boolean => wholeDigitsAt(t, from) && wholeDigitsAt(t, to) : (): boolean => true;
     const pre = new Map<number, number>();
     const suf = new Map<number, number>();
     const fix = new Map<string, number>();
@@ -428,10 +437,10 @@ function substrCands(env: RelationEnv, out: ColumnData): Cand[] {
       const t = textAt(a, k);
       const o = textAt(out, k);
       if (o === '' || o === t || o.length >= t.length) continue;
-      if (t.startsWith(o)) bump(pre, o.length);
-      if (t.endsWith(o)) bump(suf, o.length);
+      if (t.startsWith(o) && cut(t, 0, o.length)) bump(pre, o.length);
+      if (t.endsWith(o) && cut(t, t.length - o.length, t.length)) bump(suf, o.length);
       const at = t.indexOf(o, 1);
-      if (at > 0 && at + o.length < t.length) bump(fix, `${at + 1}:${o.length}`);
+      if (at > 0 && at + o.length < t.length && cut(t, at, at + o.length)) bump(fix, `${at + 1}:${o.length}`);
     }
     const both = (k: number): number | null => {
       const ea = a.kind[k] === EMPTY;
