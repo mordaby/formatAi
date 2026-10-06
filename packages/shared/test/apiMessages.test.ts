@@ -63,10 +63,12 @@ describe('API error codes and messages', () => {
 });
 
 describe('AI learn quota config (SPEC 11, 21 v5)', () => {
-  it('gives anonymous none, registered 3 a month and paid 150 a month', () => {
+  it('gives anonymous none, registered 500 a month and paid 500 a month (owner decision 2026-10-06: the beta)', () => {
     expect(tiers.anonymous.aiLearns).toEqual({ count: 0, period: 'lifetime' });
-    expect(tiers.registered.aiLearns).toEqual({ count: 3, period: 'month' });
-    expect(tiers.paid.aiLearns).toEqual({ count: 150, period: 'month' });
+    expect(tiers.registered.aiLearns).toEqual({ count: 500, period: 'month' });
+    expect(tiers.paid.aiLearns).toEqual({ count: 500, period: 'month' });
+    // paid is never below registered
+    expect(tiers.paid.aiLearns.count).toBeGreaterThanOrEqual(tiers.registered.aiLearns.count);
     for (const t of Object.values(tiers)) {
       expect(['lifetime', 'month', 'day', 'unlimited']).toContain(t.aiLearns.period);
     }
