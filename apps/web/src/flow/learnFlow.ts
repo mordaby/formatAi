@@ -269,6 +269,9 @@ export class LearnFlow {
         }
       },
       callRepair: async (payload, previousRules, problems, round) => {
+        // The round for a list (docs/proposals/saved-format-contents.md section 4) of a cached answer: there is no learn to repair, and the fresh
+        // learn that stands in for a loop round would not carry its question - nothing is sent (the list stays, and is asked about at Save).
+        if (round.list && learnId === undefined) return { rules: null, problems: [], calls: [] };
         // A cached result has no `learnId` to repair; the server's own answer to "the browser rejected it"
         // is a fresh, uncached learn (SPEC 9.5 cache).
         const fresh = learnId === undefined;

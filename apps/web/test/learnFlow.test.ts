@@ -250,6 +250,23 @@ describe('LearnFlow', () => {
       expect(repairs.map((s) => s.rounds)).toEqual([undefined, CHECKS]);
     });
 
+    it('the round for a list of a cached answer sends nothing: no learn to repair, and a fresh learn would not carry its question', async () => {
+      const LIST = [{ kind: 'list' as const, out: 1, message: 'Column "B" is a list of 30 fixed values, one per A.' }];
+      let answered: unknown;
+      const { engine } = fakeEngine(async (_a, host) => {
+        await host.callLearn(PAYLOAD);
+        answered = await host.callRepair(PAYLOAD, PREV_RULES, LIST, { round: 1, maxRounds: 3, rows: [], newRows: 0, list: true });
+        return result({ path: 'llm' });
+      });
+      const api = fakeApi({ learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], cached: true })) as unknown as Api['learn'] });
+      const { start, flow } = makeFlow(engine, api);
+      await start();
+      await vi.waitFor(() => expect(flow.getState().status).toBe('done'));
+      expect(answered).toEqual({ rules: null, problems: [], calls: [] });
+      expect(api.learn).toHaveBeenCalledTimes(1);
+      expect(api.repair).not.toHaveBeenCalled();
+    });
+
     it('a learn that verifies in round 2: two rounds under the learn\'s id, the progress says which round, every round is in "see what we send", reported verified once', async () => {
       const rounds: unknown[] = [];
       const { engine } = fakeEngine(async (_a, host, opts) => {
