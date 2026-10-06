@@ -1251,16 +1251,41 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
 
 const MAX_MAP_VALUES = 50;
 
+const REPEATED_ROWS = new WeakMap<ColumnData[], Uint8Array>();
+
+/** 1 on a row whose every source column holds what an earlier row's does (an exact repeat of a row), per row; cached per source list. */
+function repeatedRows(env: RelationEnv): Uint8Array {
+  const cached = REPEATED_ROWS.get(env.src);
+  if (cached) return cached;
+  const n = env.total;
+  const flags = new Uint8Array(n);
+  const cols = env.src.map((c) => keys(c));
+  const seen = new Set<string>();
+  for (let k = 0; k < n; k++) {
+    const sig = cols.map((ks) => ks[k] ?? '\u0000').join('\u001f');
+    if (seen.has(sig)) flags[k] = 1;
+    else seen.add(sig);
+  }
+  REPEATED_ROWS.set(env.src, flags);
+  return flags;
+}
+
 function valueMapCands(env: RelationEnv, out: ColumnData): Cand[] {
   const outDistinct = new Set<string>();
   for (let k = 0; k < out.n; k++) if (out.kind[k] !== EMPTY) outDistinct.add(out.text[k]!);
   if (outDistinct.size < 2) return [];
   const cands: Cand[] = [];
+  // DECISION (found by the engine stress test, eval/STRESS.md): a row that repeats an earlier row in every column (a duplicate
+  // row) is the same evidence again, not a key that confirms the mapping on another row.
+  const repeated = repeatedRows(env);
+  let distinctRows = 0;
+  for (let k = 0; k < env.total; k++) if (repeated[k] === 0) distinctRows++;
   env.src.forEach((a, s) => {
     const ks = keys(a);
     const table = new Map<string, Map<string, number>>();
     const display = new Map<string, string>();
     for (let k = 0; k < a.n; k++) {
+      if (repeated[k] === 1) continue;
       const key = ks[k] ?? '';
       let m = table.get(key);
       if (!m) {
@@ -1271,12 +1296,12 @@ function valueMapCands(env: RelationEnv, out: ColumnData): Cand[] {
       }
       bump(m, out.kind[k] === EMPTY ? '' : out.text[k]!);
     }
-    if (table.size >= a.n || table.size < 2) return;
+    if (table.size >= distinctRows || table.size < 2) return;
     // DECISION: a value map is evidence only when its keys repeat — rows whose key was already
     // seen confirm the mapping. With (almost) one row per key, any column "maps" onto any other
     // (e.g. 19 dates → 19 warehouses assigned by another system): that is memorizing, not a rule,
     // and must stay `unknown` so pre-flight can report it. Require on average ≥ 1.5 rows per key.
-    const confirmingRows = a.n - table.size;
+    const confirmingRows = distinctRows - table.size;
     if (confirmingRows < Math.max(2, Math.ceil(table.size / 2))) return;
     const map = new Map<string, string>();
     let identity = true;
