@@ -77,7 +77,7 @@ function vocabularyWords(tokens: readonly { isWord: boolean; text: string }[]): 
 // used as-is rather than looping forever.
 const MAX_COLLISION_ATTEMPTS = 8;
 
-/** A word or cell of digits only (ASCII digits: the only ones `buildWordFromBytes` replaces). */
+/** A word or cell of digits only (ASCII digits: the runs `maskDigits` masks; a digit of another script is masked like a letter, `buildWordFromBytes`). */
 const DIGITS_ONLY = /^[0-9]+$/;
 const LEADING_ZEROS = /^0+/;
 /** Inside text, a run of digits is masked as an Israeli ID from this many significant digits on: short numbers in text (a quantity, a code) keep plain digit masking. */

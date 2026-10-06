@@ -41,22 +41,51 @@ export function splitWords(s: string): WordToken[] {
 
 // ---------- Character classes and replacement alphabets ----------
 
-export type CharClass = 'digit' | 'latinUpper' | 'latinLower' | 'hebrew' | 'other';
+/**
+ * What a character of a word is replaced from: its script's own alphabet, keeping its case - digits, Latin, Hebrew, Arabic, Cyrillic,
+ * Greek and the Arabic-Indic digits - or, for a letter or digit of any other script, a Latin letter (of its case) or an ASCII digit.
+ * `other`: not a letter or a digit (never inside a word: `splitWords` makes it a separator), kept as it is.
+ */
+export type CharClass =
+  | 'digit'
+  | 'latinUpper'
+  | 'latinLower'
+  | 'hebrew'
+  | 'arabic'
+  | 'arabicDigit'
+  | 'persianDigit'
+  | 'cyrillicUpper'
+  | 'cyrillicLower'
+  | 'greekUpper'
+  | 'greekLower'
+  | 'otherDigit'
+  | 'otherUpper'
+  | 'otherLower'
+  | 'other';
 
-const DIGIT_RE = /[0-9]/;
-const LATIN_UPPER_RE = /[A-Z]/;
-const LATIN_LOWER_RE = /[a-z]/;
-// The Hebrew letter block (U+05D0-U+05EA) includes both base forms and the
-// five final forms (ך ם ן ף ץ); classification doesn't need to tell them apart,
-// only word-end placement does (see HEBREW_END below).
-const HEBREW_RE = /[א-ת]/;
+const LETTER_RE = /\p{L}/u;
+const DIGIT_RE = /\p{Nd}/u;
+const SCRIPTS: readonly [RegExp, CharClass, CharClass][] = [
+  [/\p{Script=Latin}/u, 'latinUpper', 'latinLower'],
+  [/\p{Script=Hebrew}/u, 'hebrew', 'hebrew'],
+  [/\p{Script=Arabic}/u, 'arabic', 'arabic'],
+  [/\p{Script=Cyrillic}/u, 'cyrillicUpper', 'cyrillicLower'],
+  [/\p{Script=Greek}/u, 'greekUpper', 'greekLower'],
+];
 
 export function classifyChar(ch: string): CharClass {
-  if (DIGIT_RE.test(ch)) return 'digit';
-  if (LATIN_UPPER_RE.test(ch)) return 'latinUpper';
-  if (LATIN_LOWER_RE.test(ch)) return 'latinLower';
-  if (HEBREW_RE.test(ch)) return 'hebrew';
-  return 'other';
+  if (ch >= '0' && ch <= '9' && ch.length === 1) return 'digit';
+  if (DIGIT_RE.test(ch)) {
+    const cp = ch.codePointAt(0)!;
+    if (cp >= 0x0660 && cp <= 0x0669) return 'arabicDigit';
+    if (cp >= 0x06f0 && cp <= 0x06f9) return 'persianDigit';
+    return 'otherDigit';
+  }
+  if (!LETTER_RE.test(ch)) return 'other';
+  // (A letter with a lower-case form is upper case; one without case - Hebrew, Arabic, CJK - counts as lower.)
+  const upper = ch !== ch.toLowerCase();
+  for (const [re, up, low] of SCRIPTS) if (re.test(ch)) return upper ? up : low;
+  return upper ? 'otherUpper' : 'otherLower';
 }
 
 export const DIGITS = '0123456789';
@@ -84,13 +113,35 @@ export const HEBREW_END = Array.from(HEBREW_MID)
   .map((ch) => HEBREW_FINAL_FORM[ch] ?? ch)
   .join('');
 
+/** The 28 Arabic letters (their written forms are contextual, so one alphabet serves every position). */
+export const ARABIC = 'ابتثجحخدذرزسشصضطظعغفقكلمنهوي';
+/** Cyrillic letters, both cases (without Ё, Ъ, Ы, Ь: they never start a word, and a fake needs none of them). */
+export const CYRILLIC_UPPER = 'АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЭЮЯ';
+export const CYRILLIC_LOWER = 'абвгдежзийклмнопрстуфхцчшщэюя';
+export const GREEK_UPPER = 'ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ';
+export const GREEK_LOWER = 'αβγδεζηθικλμνξοπρστυφχψω';
+
+const ALPHABET: Readonly<Record<Exclude<CharClass, 'hebrew' | 'other'>, string>> = {
+  digit: DIGITS,
+  latinUpper: LATIN_UPPER,
+  latinLower: LATIN_LOWER,
+  arabic: ARABIC,
+  arabicDigit: '٠١٢٣٤٥٦٧٨٩',
+  persianDigit: '۰۱۲۳۴۵۶۷۸۹',
+  cyrillicUpper: CYRILLIC_UPPER,
+  cyrillicLower: CYRILLIC_LOWER,
+  greekUpper: GREEK_UPPER,
+  greekLower: GREEK_LOWER,
+  otherDigit: DIGITS,
+  otherUpper: LATIN_UPPER,
+  otherLower: LATIN_LOWER,
+};
+
 /**
- * Builds a fake word of the same length and per-character script/case as
- * `chars`, one byte of `bytes` per character (bytes.length must be >= chars.length).
- * Characters outside digit/Latin/Hebrew (SPEC 7.1's shape signature only
- * models D/A/H; everything else is "literal") pass through unchanged —
- * DECISION: there is no fake alphabet to draw from for an unmodeled script,
- * and leaving it as-is is safer than inventing one.
+ * Builds a fake word of the same length and per-character script and case as `chars`, one byte of `bytes` per character
+ * (bytes.length must be >= chars.length). Every letter and digit is replaced (`classifyChar`): DECISION (column classification, owner
+ * 2026-10-06, stress finding O1): a letter of a script with no alphabet here is never sent real - it becomes a Latin letter of its case,
+ * an accented Latin letter a plain one, a digit of another script an ASCII digit. Only a non-letter (never inside a word) is kept.
  */
 export function buildWordFromBytes(chars: readonly string[], bytes: Uint8Array): string {
   const n = chars.length;
@@ -98,23 +149,11 @@ export function buildWordFromBytes(chars: readonly string[], bytes: Uint8Array):
   for (let i = 0; i < n; i++) {
     const ch = chars[i]!;
     const byte = bytes[i]!;
-    switch (classifyChar(ch)) {
-      case 'digit':
-        out += DIGITS[byte % DIGITS.length];
-        break;
-      case 'latinUpper':
-        out += LATIN_UPPER[byte % LATIN_UPPER.length];
-        break;
-      case 'latinLower':
-        out += LATIN_LOWER[byte % LATIN_LOWER.length];
-        break;
-      case 'hebrew': {
-        const alphabet = i === n - 1 ? HEBREW_END : HEBREW_MID;
-        out += alphabet[byte % alphabet.length];
-        break;
-      }
-      default:
-        out += ch;
+    const cls = classifyChar(ch);
+    if (cls === 'other') out += ch;
+    else {
+      const alphabet = cls === 'hebrew' ? (i === n - 1 ? HEBREW_END : HEBREW_MID) : ALPHABET[cls];
+      out += alphabet[byte % alphabet.length]; // (every alphabet here is in the BMP: one code unit per letter)
     }
   }
   return out;
