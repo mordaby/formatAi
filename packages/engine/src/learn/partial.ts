@@ -28,6 +28,7 @@ import {
   assembleRules,
   buildDropped,
   buildValidations,
+  builtOutputFormat,
   chooseColumn,
   columnFrom,
   declareNumericIds,
@@ -203,7 +204,8 @@ export function partialRules(analysis: PairAnalysis, preflight: PreflightResult)
 
     const outProfile = analysis.output.profile[ca.out];
     const col: BuiltOutputColumn = { header, from };
-    if (outProfile?.format !== undefined) col.format = outProfile.format;
+    const format = builtOutputFormat(analysis, ca.out);
+    if (format !== undefined) col.format = format;
     if (outProfile?.width !== undefined) col.width = outProfile.width;
     outputColumns.push(col);
 

@@ -321,6 +321,28 @@ function outputCellKind(analysis: PairAnalysis, out: number): 'number' | 'text' 
 const NUMBER_COLUMN_TYPES: ReadonlySet<ColumnType> = new Set(['integer', 'decimal', 'currency', 'percent']);
 
 /**
+ * The text form the example's output column writes its dates in ("YYYY-MM-DD"), when the column is date TEXT in one unambiguous form:
+ * what a date the rules make must be written with to show the same text. Undefined for real date cells (their own number format says
+ * it) and for text whose day and month could be either way round.
+ */
+function outputDateText(analysis: PairAnalysis, out: number): string | undefined {
+  const p = analysis.output.profile[out];
+  if (p?.type !== 'date' || p.dateFormat === undefined || p.dateFormat === 'excel' || p.dateFormat === 'excelSerial' || p.dayMonthAmbiguous === true) return undefined;
+  return p.dateFormat;
+}
+
+/**
+ * The format of a built output column: the example's own (a workbook's number format), or - for a csv/txt example, which has none - the
+ * text form its dates are written in, so that a date the rules make is written the same way (a delimited file writes a date with its
+ * column's format, the engine's default "DD/MM/YYYY" without one).
+ */
+export function builtOutputFormat(analysis: PairAnalysis, out: number): string | undefined {
+  const own = analysis.output.profile[out]?.format;
+  if (own !== undefined) return own;
+  return analysis.layout.file.type === 'xlsx' ? undefined : outputDateText(analysis, out);
+}
+
+/**
  * A copy in the kind of value the example shows. The `copy` relation takes a number and text that reads as the same number for one value
  * (a csv export's "9455433" is the workbook's 9455433), but the rule writes its input column's DECLARED type: a column of long numbers or
  * of same-length digit text is declared `idLike` (written as text), a number column as numbers. When every cell of the example's output
@@ -340,6 +362,10 @@ function typedCopy(ctx: Ctx, analysis: PairAnalysis, i: number, out: number, out
     computedType = 'decimal';
   } else if (want === 'text' && NUMBER_COLUMN_TYPES.has(type)) {
     expr = { op: 'toText', arg: { col: inputId } };
+  } else if (want === 'text' && type === 'date') {
+    // Date text copied as it is: the input is declared a date (to be read), and written back as the text the example holds.
+    const format = outputDateText(analysis, out);
+    if (format !== undefined) expr = { op: 'toText', arg: { col: inputId }, format };
   }
   if (expr === null) return null;
   const id = newComputedId(ctx, outHeader);
@@ -955,7 +981,8 @@ export function fastPath(analysis: PairAnalysis, preflight: PreflightResult): Fa
 
     const outProfile = analysis.output.profile[ca.out];
     const col: { header: string; from: string; format?: string; width?: number } = { header: headerFor(analysis, ca, rel), from };
-    if (outProfile?.format !== undefined) col.format = outProfile.format;
+    const format = builtOutputFormat(analysis, ca.out);
+    if (format !== undefined) col.format = format;
     if (outProfile?.width !== undefined) col.width = outProfile.width;
     outputColumns.push(col);
   }
