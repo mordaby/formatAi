@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "customer",
+        "header": "Customer",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "notes",
+        "header": "Notes",
+        "type": "text"
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "vip",
+        "type": "text",
+        "expr": {
+          "op": "if",
+          "cond": {
+            "op": "contains",
+            "arg": {
+              "op": "lower",
+              "arg": {
+                "col": "notes"
+              }
+            },
+            "text": "vip"
+          },
+          "then": {
+            "const": "Yes"
+          },
+          "else": {
+            "const": "No"
+          }
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "Customers",
+    "direction": "ltr",
+    "language": "en",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "Customer",
+        "from": "customer"
+      },
+      {
+        "header": "VIP",
+        "from": "vip"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "Customer notes -> VIP flag",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

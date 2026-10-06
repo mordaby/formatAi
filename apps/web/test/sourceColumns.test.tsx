@@ -63,7 +63,7 @@ async function openResult(result: Record<string, unknown> = {}, opts: { live?: L
   const { engine } = fakeEngine(
     async () => learnResult({ rules: ordersRules(), exampleInput: 'exampleInput' in opts ? opts.exampleInput : EXAMPLE_INPUT, ...result }) as LearnOutput,
     undefined,
-    { liveCheck, fullCheck: liveCheck, convert: vi.fn(async () => ({ ok: true, bytes: new ArrayBuffer(8), flags: [], summary: {}, preview: { name: 'Out', direction: 'ltr', language: 'en', columns: [], rows: [], merges: [] }, totalRows: 3 })) },
+    { liveCheck, fullCheck: liveCheck, convert: vi.fn(async () => ({ ok: true, bytes: new ArrayBuffer(8), flags: [], summary: { rowsIn: 3, rowsOut: 3, rowsFiltered: 0, duplicatesRemoved: [], duplicatesFlagged: 0, blockedRows: [] }, preview: { name: 'Out', direction: 'ltr', language: 'en', columns: [], rows: [], merges: [] }, totalRows: 3 })) },
   );
   renderApp({ engine, api });
   fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });

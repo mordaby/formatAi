@@ -10,7 +10,7 @@ import { aiLeftLabel } from '../../app/aiQuota';
 import { LeaveDialog } from '../../app/LeaveGuard';
 import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
-import { lineIds } from '../../editor';
+import { copiedListsOf, lineIds, listsToConfirm } from '../../editor';
 import { useSignIn } from '../../app/SignIn';
 import { Cell } from '../../components/Cell';
 import type { AiInfo } from '../../flow/learnFlow';
@@ -21,6 +21,7 @@ import { Button, Dialog, InlineMessage } from '../../ui';
 import type { LearnOutput } from '../../worker/engineApi';
 import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
 import { Versions } from '../Format/Versions';
+import { useCopiedListGate } from './CopiedListSave';
 import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
 import { filledNote } from './filledNote';
 import { oneTimeQuestionsOf, questionsOf } from './helpers';
@@ -63,6 +64,18 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // saved-source editor, which needs no example files), and saving again writes a new version of it.
   const [source, setSource] = useState<SavedSource | undefined>(kept.source);
   const [notice, setNotice] = useState<UpdateConversionResponse | null>(null);
+
+  // "Finish with AI" (completion mode): the AI step produces only what is missing and the rules on screen stay as they are; an
+  // answer that passes the fixed lock and the verification replaces them (see useCompletion). It never runs unless the user chose it: the
+  // panel's button, or Home's "Learn with AI" (acted on below, once per result).
+  // learn-v7: the notes of an applied answer go into the session (never into the rules): see `ResultSession.aiNotes`.
+  const completion = useCompletion(kept.store, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
+  const completed = completion.completed;
+  // A list copied from the example (owner decision 2026-10-06): never asked on screen - the list is used as it is - but at Save, before the
+  // rules are stored (`CopiedListSave`): the completion's answer's lists, then the learn's.
+  const copied = useMemo(() => copiedListsOf(completed?.oneTimers, result.path === 'llm' ? result.oneTimers?.questions : undefined), [completed?.oneTimers, result]);
+  const gate = useCopiedListGate();
+
   const saver = useSourceSave({
     conversionId: source?.conversionId ?? '',
     version: source?.version ?? 0,
@@ -72,6 +85,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       setSource(next);
       setNotice(res);
     },
+    copiedLists: copied,
   });
   useEffect(() => {
     if (source && location.pathname !== sourcePath(source)) navigate(sourcePath(source), { replace: true });
@@ -99,15 +113,10 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // Starting over throws the edits away: ask first when there are unsaved ones.
   const startOver = (): void => (kept.store.getState().dirty ? setConfirmStartOver(true) : goHome());
 
-  // "Finish with AI" (completion mode): the AI step produces only what is missing and the rules on screen stay as they are; an
-  // answer that passes the fixed lock and the verification replaces them (see useCompletion). It never runs unless the user chose it: the
-  // panel's button, or Home's "Learn with AI" (acted on below, once per result).
-  // learn-v7: the notes of an applied answer go into the session (never into the rules): see `ResultSession.aiNotes`.
-  const completion = useCompletion(kept.store, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
-  const completed = completion.completed;
   // The ambiguity questions (SPEC 21 v12 items 11, 16): the learn's own, and those of a completion's answer once one has been applied.
   const questions = useMemo(() => questionsOf(completed?.ambiguous, result.ambiguous), [completed?.ambiguous, result.ambiguous]);
-  // A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of an AI answer that explain one row only - the completion's, then the learn's.
+  // A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of an AI answer that explain one row only - the completion's, then the learn's
+  // (a copied list is not among them: it is asked at Save, see `copied`).
   const oneTimers = useMemo(() => oneTimeQuestionsOf(completed?.oneTimers, result.path === 'llm' ? result.oneTimers?.questions : undefined), [completed?.oneTimers, result]);
   const [confirmWhole, setConfirmWhole] = useState(false);
   // What the AI step reported for the answer on screen (the completion's, once one has been applied).
@@ -297,7 +306,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
     }
     const label =
       info.differences && info.differences > 0 ? t(info.differences === 1 ? 'save.differences.one' : 'save.differences.other', { n: info.differences }) : t('result.save');
-    const saving = save.state.status === 'saving';
+    const saving = save.state.status === 'saving' || gate.waiting;
     const file = session.input;
     return (
       <>
@@ -308,7 +317,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
             loading={saving}
             // A visitor is asked to sign in (SPEC 5 E); a signed-in user needs rules that can be saved right now - and the AI step not at work on them.
             disabled={completion.running || (me.user ? info.metaStatus === null : info.status.kind === 'blocked')}
-            onClick={() => (me.user ? doSave(info) : signIn.open('save'))}
+            // (a list copied from the example that the rules still hold is asked about first, in a dialog: none, and the save goes at once)
+            onClick={() => (me.user ? gate.save(info, listsToConfirm(info.rules, copied), doSave) : signIn.open('save'))}
           >
             {label}
           </Button>
@@ -325,6 +335,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           ) : null}
         </div>
         {!me.user && tierLimits.previewRows !== null ? <p className="muted">{t('result.freeHint', { n: tierLimits.previewRows })}</p> : null}
+        {gate.view(info)}
       </>
     );
   };

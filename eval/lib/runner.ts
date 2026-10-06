@@ -3,12 +3,31 @@
 // `learn()` and `callRepair` = `repairFromBrowser` (one round of the learning loop, with
 // the rows the loop sent), called in-process (no HTTP), plus the hold-out check and
 // scoring. This is the one place that actually spends tokens.
-import { completionPlan, formatOf, learnFromExamples, type FillSummary, type LearnFromExamplesResult } from '@formatai/engine';
+//
+// AI code checks (`--prompt learn-v9`, docs/proposals/ai-code-checks.md): `callStep` = the API's `learn()` with the rounds so far, in-process;
+// the checks themselves are answered by `learnFromExamples` (Node has the whole example: the same engine code the browser runs).
+// `--no-pattern-hints` builds the payload without the pattern hints (bands, dependsOn, contains), to measure the checks against them.
+import { completionPlan, formatOf, learnFromExamples, verifyAgainstExample, type FillSummary, type LearnFromExamplesResult, type OneTimeQuestion, type PairAnalysis } from '@formatai/engine';
 import { learn, repairFromBrowser, type CompleteFn, type LearnOptions, type LearnOutcome, type LlmCallRecord } from '@formatai/api/learn';
 import { resolveModel } from '@formatai/api/llm';
 import { loadEnv, type Env } from '@formatai/api/env';
-import { promptVersion, sumEstimates, withoutRulePart, type Format, type LearnResult, type LlmProviderName, type PromptVersion, type Rules, type Tier } from '@formatai/shared';
-import type { CaseDef } from './caseLoader.js';
+import {
+  columnsWithRule,
+  learnPromptOf,
+  promptVersion,
+  sumEstimates,
+  withoutCopiedList,
+  withoutRulePart,
+  type CheckRound,
+  type Format,
+  type LearnPayload,
+  type LearnResult,
+  type LlmProviderName,
+  type PromptVersion,
+  type Rules,
+  type Tier,
+} from '@formatai/shared';
+import type { CaseDef, CaseMeta } from './caseLoader.js';
 import type { EvalMode } from './args.js';
 import { checkHoldOut } from './holdout.js';
 import { classify, classificationLabel, expectationMet } from './score.js';
@@ -62,6 +81,14 @@ export interface RunRecord {
   loopRounds: number;
   loopRowsSent: number;
   loopEnd: string;
+  /**
+   * AI code checks (learn-v9, `result.checks`): the rounds of checks the AI step asked before it answered (steps made), and the checks over
+   * all of them. 0 / 0 when it asked none (and with any other prompt version).
+   */
+  checkRounds: number;
+  checksAsked: number;
+  /** `--no-pattern-hints`: the payload carried no pattern hints (bands, dependsOn, contains). Absent: it did, as always. */
+  patternHints?: false;
   /** What code filled in the kept answer from every row of the example (`result.filled`, learning-loop proposal 7.1): kinds and counts,
    * never a value - e.g. "lookup 47, cutoff 1, 1 check". '' when nothing was filled (or no AI answer). */
   filledByCode: string;
@@ -102,15 +129,20 @@ export interface RunRecord {
   overfitFellBack: number;
   /**
    * A one-time edit or a rule? (SPEC 21 v12 item 20, `result.oneTimers`): the questions the Result screen would ask about the kept answer - a
-   * part that explains one row of the example only, singled out by its ID, an exact amount or date, or its position. 0 when none.
+   * part that explains one row of the example only, singled out by its ID, an exact amount or date, or its position - and (owner amendment,
+   * 2026-10-06) a column whose list is copied from the example, keyed on a column that is different on every row, asked at save. 0 when none.
    */
   oneTimeAsked: number;
-  /** What they ask, then the columns handed to the guards: "Discount r54 id, Discount r99 position; handed off Discount 150" ('' when none). */
+  /**
+   * What they ask, then the columns handed to the guards: "Discount r54 id, Discount r99 position; handed off Discount 150"; a copied list
+   * as "Account Manager list by Account 40", with " answered one-time" when the case's own answer took it out ('' when none).
+   */
   oneTimeParts: string;
   /**
    * What the default answer would do. DECISION: the eval answers every question "a one-time change" (an eval case's single-row exceptions
-   * are hand edits by construction): the hold-out with every asked part taken out ("one-time: holdOut pass"); the kept rules as they are
-   * (the answer "a rule", or no answer) are the record's own `holdOut`. '' when nothing was asked.
+   * are hand edits by construction): the hold-out with every asked part (and every copied list) taken out ("one-time: holdOut pass"); the
+   * kept rules as they are (the answer "a rule", or no answer) are the record's own `holdOut` - unless the case declares its answer
+   * (`meta.answers`), which the record's classification and hold-out then follow. '' when nothing was asked.
    */
   oneTimeDefault: string;
   /** Product tracking (SPEC 9.2's `formula`-kind `RepairProblem`, from each
@@ -221,6 +253,8 @@ export interface RunOneOptions {
   onLearnOutcome?: (outcome: LearnOutcome) => void;
   /** `--prompt`: the prompt version to send (default: the current one). */
   prompt?: PromptVersion;
+  /** `--no-pattern-hints`: false leaves the pattern hints out of the payload (default true). */
+  patternHints?: boolean;
 }
 
 export interface RunLearnResult {
@@ -240,10 +274,18 @@ export interface RunLearnResult {
    * most common ones (`report.ts`'s "top formula error messages").
    */
   formulaErrorMessages: string[];
+  /** The example as the last learn read it (`onAnalysis`): what the case's answers are verified on again (`applyCaseAnswers`). */
+  analysis?: PairAnalysis;
 }
 
 /** Runs `learnFromExamples` for one case, under one model/masking/run combination. */
 export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
+  let analysis: PairAnalysis | undefined;
+  const ran = await runLearnOnce(opts, (a) => (analysis = a));
+  return analysis ? { ...ran, analysis } : ran;
+}
+
+async function runLearnOnce(opts: RunOneOptions, onAnalysis: (analysis: PairAnalysis) => void): Promise<RunLearnResult> {
   const formulaErrorMessages: string[] = [];
   let payloadBytes = 0;
   const learnOpts: LearnOptions = {
@@ -263,6 +305,8 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     masking: opts.masking,
     ...(opts.masking ? { key: evalMaskingKey(opts.caseDef.name, opts.model, opts.run) } : {}),
     tier: EVAL_TIER,
+    ...(opts.patternHints === false ? { patternHints: false } : {}),
+    onAnalysis,
   };
   const callLearn = async (payload: Parameters<typeof learn>[0]) => {
     if (payloadBytes === 0) payloadBytes = new TextEncoder().encode(JSON.stringify(payload)).length;
@@ -278,9 +322,20 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
     return outcome;
   };
 
+  // AI code checks (learn-v9): one step, exactly as the API's /api/learn/step runs it - `learn()` with every round so far. Only for a prompt
+  // version that asks checks (any other never does, and the flow is then exactly as before).
+  const callStep = learnPromptOf(opts.prompt).checks
+    ? async (payload: LearnPayload, rounds: CheckRound[]) => {
+        const outcome = await learn(payload, { ...learnOpts, rounds });
+        opts.onLearnOutcome?.(outcome);
+        return outcome;
+      }
+    : undefined;
+  const calls = { callLearn, callRepair, ...(callStep ? { callStep } : {}) };
+
   const wantsComplete = opts.mode === 'complete' && !opts.target;
   if (!wantsComplete) {
-    const result = await learnFromExamples<LlmCallRecord>({ ...common, ...(opts.target ? { target: opts.target } : {}), callLearn, callRepair });
+    const result = await learnFromExamples<LlmCallRecord>({ ...common, ...(opts.target ? { target: opts.target } : {}), ...calls });
     // (an attach case asked to run in complete mode is still counted under it, with the note that it ran full)
     return {
       result,
@@ -311,14 +366,13 @@ export async function runLearn(opts: RunOneOptions): Promise<RunLearnResult> {
   if (plan.columns.length === 0 && plan.parts.length === 0) {
     // The local rules cover every column and part, yet the strict fast path would not accept them (rows that change shape go to the AI
     // step, SPEC 6.5): there is nothing to complete, so - exactly as on the Result screen - the AI step runs as a full learn.
-    const result = await learnFromExamples<LlmCallRecord>({ ...common, callLearn, callRepair });
+    const result = await learnFromExamples<LlmCallRecord>({ ...common, ...calls });
     return { result, mode: 'complete', payloadBytes, formulaErrorMessages, completion: { fixedColumns, missingColumns: 0, missingParts: 0, skipped: 'nothingMissing (ran full)' } };
   }
   const result = await learnFromExamples<LlmCallRecord>({
     ...common,
     complete: { fixedRules: rules, columns: plan.columns, parts: plan.parts },
-    callLearn,
-    callRepair,
+    ...calls,
   });
   return { result, mode: 'complete', payloadBytes, formulaErrorMessages, completion: { fixedColumns, missingColumns: plan.columns.length, missingParts: plan.parts.length } };
 }
@@ -332,18 +386,22 @@ async function toRunRecord(
   /** Set when the matrix ran more than one mode: every record then says which one it was. */
   tagMode: boolean,
   prompt: PromptVersion = promptVersion,
+  patternHints = true,
 ): Promise<RunRecord> {
   const { result, formulaErrorMessages } = ran;
-  const classification = classify(result);
+  // The case's own answers to the Result screen's questions (`meta.answers`): the classification, the expectation, the hold-out and the rules
+  // kept follow the rules the user would end with. What the AI step did (the calls, its unsupported reasons, the questions) stays the learn's.
+  const { result: answered, answered: answeredColumns } = applyCaseAnswers(result, caseDef.meta, ran.analysis);
+  const classification = classify(answered);
   const totals = result.path === 'llm' ? sumCalls(result.calls) : emptyTotals();
   const formula = result.path === 'llm' ? formulaStats(result.calls) : formulaStats([]);
 
   let holdOut: RunRecord['holdOut'] = 'n/a';
-  if (caseDef.next && result.rules) {
-    const h = await checkHoldOut(result.rules, caseDef.next);
+  if (caseDef.next && answered.rules) {
+    const h = await checkHoldOut(answered.rules, caseDef.next);
     holdOut = h.ok ? 'pass' : 'fail';
   }
-  const oneTime = await oneTimeOf(result, caseDef);
+  const oneTime = await oneTimeOf(result, caseDef, answeredColumns);
 
   const record: RunRecord = {
     case: caseDef.name,
@@ -356,7 +414,7 @@ async function toRunRecord(
     ...(tagMode ? { mode: ran.mode } : {}),
     path: result.path,
     classification: classificationLabel(classification),
-    expectationMet: expectationMet(caseDef.meta, masking, result, classification),
+    expectationMet: expectationMet(caseDef.meta, masking, answered, classification, answeredColumns),
     ...(caseDef.meta.expectNote ? { expectNote: caseDef.meta.expectNote } : {}),
     holdOut,
     fastPath: result.path === 'local',
@@ -367,6 +425,9 @@ async function toRunRecord(
     loopRounds: result.loop?.rounds ?? 0,
     loopRowsSent: result.loop?.rowsSent ?? 0,
     loopEnd: result.loop?.end ?? '',
+    checkRounds: result.checks?.rounds ?? 0,
+    checksAsked: result.checks?.asked ?? 0,
+    ...(patternHints ? {} : { patternHints: false as const }),
     filledByCode: filledLabel(result.filled),
     ambiguities: (result.ambiguities ?? []).map((a) => a.kind).join(' '),
     prompt,
@@ -414,6 +475,8 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     loopRounds: 0,
     loopRowsSent: 0,
     loopEnd: '',
+    checkRounds: 0,
+    checksAsked: 0,
     filledByCode: '',
     ambiguities: '',
     prompt: promptVersion,
@@ -435,28 +498,67 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
   };
 }
 
+/** The rules with a question answered "a one-time change" (a one-row part out; a copied list out: the column needs your input); null when it is not there. */
+function answeredOnce(rules: LearnResult, q: OneTimeQuestion): LearnResult | null {
+  return q.kind === 'copiedList' ? withoutCopiedList(rules, q.header, q.list) : withoutRulePart(rules, q.part);
+}
+
 /**
  * A one-time edit or a rule? (SPEC 21 v12 item 20): the questions the kept answer would ask (`result.oneTimers`), said by column, row and what
- * singles the row out (no value), the columns handed to the guards, and what answering every one "a one-time change" would do to the hold-out.
+ * singles the row out (no value) - a copied list by column, key column and entries (owner amendment, 2026-10-06), marked when the case's own
+ * answer took it out (`answered`, `applyCaseAnswers`) - the columns handed to the guards, and what answering every one "a one-time change"
+ * would do to the hold-out.
  */
 export async function oneTimeOf(
   result: Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'rules' | 'oneTimers'>,
   caseDef: Pick<CaseDef, 'next'>,
+  answered: readonly string[] = [],
 ): Promise<Pick<RunRecord, 'oneTimeAsked' | 'oneTimeParts' | 'oneTimeDefault'>> {
   const found = result.path === 'llm' ? result.oneTimers : undefined;
   const questions = found?.questions ?? [];
+  const said = (q: OneTimeQuestion): string =>
+    q.kind === 'copiedList' ? `${q.header} list by ${q.keyColumn} ${q.entries}${answered.includes(q.header) ? ' answered one-time' : ''}` : `${q.header} r${q.row} ${q.by}`;
   const parts = [
-    questions.map((q) => `${q.header} r${q.row} ${q.by}`).join(', '),
+    questions.map(said).join(', '),
     found && found.handedOff.length > 0 ? `handed off ${found.handedOff.map((h) => `${h.header} ${h.parts}`).join(', ')}` : '',
   ].filter((s) => s !== '');
   let oneTimeDefault = '';
   if (questions.length > 0 && result.rules) {
-    let answered: LearnResult = result.rules;
-    for (const q of questions) answered = withoutRulePart(answered, q.part) ?? answered;
-    const h = caseDef.next ? await checkHoldOut(answered, caseDef.next) : null;
+    let once: LearnResult = result.rules;
+    for (const q of questions) once = answeredOnce(once, q) ?? once;
+    const h = caseDef.next ? await checkHoldOut(once, caseDef.next) : null;
     oneTimeDefault = `one-time: holdOut ${h ? (h.ok ? 'pass' : 'fail') : 'n/a'}`;
   }
   return { oneTimeAsked: questions.length, oneTimeParts: parts.join('; '), oneTimeDefault };
+}
+
+/**
+ * The case's own answers to the questions the user is asked (`meta.answers`, owner amendment 2026-10-06), applied to the kept rules exactly as
+ * the web app applies them, before the run is scored. Today one: `copiedList: "oneTime"` answers every list copied from the example, asked at
+ * save, "Save without it" (`withoutCopiedList`: the column needs your input, reason `overfit`, its list gone); `"rule"` ("Keep it") - or no
+ * answer - keeps the rules as they are.
+ * A plain learn's answer is verified again on the columns that still have a rule, as the flow verifies one (a column taken out matched the
+ * example on every row it explained; one of its other rows may not have); a completion keeps its own verdict (`completion`), which never
+ * counts a column that has no rule. `answered`: the columns taken out. The result as it is when nothing was answered.
+ */
+export function applyCaseAnswers<R extends Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'rules' | 'oneTimers' | 'unsupported' | 'assumptions' | 'verification' | 'completion'>>(
+  result: R,
+  meta: Pick<CaseMeta, 'answers'>,
+  analysis?: PairAnalysis,
+): { result: R; answered: string[] } {
+  if (meta.answers?.copiedList !== 'oneTime' || result.path !== 'llm' || !result.rules) return { result, answered: [] };
+  let rules: LearnResult = result.rules;
+  const answered: string[] = [];
+  for (const q of result.oneTimers?.questions ?? []) {
+    if (q.kind !== 'copiedList') continue;
+    const next = withoutCopiedList(rules, q.header, q.list);
+    if (!next) continue;
+    rules = next;
+    answered.push(q.header);
+  }
+  if (answered.length === 0) return { result, answered };
+  const verification = !result.completion && analysis ? verifyAgainstExample(rules, analysis, { onlyColumns: columnsWithRule(rules) }) : result.verification;
+  return { result: { ...result, rules, unsupported: rules.unsupported, assumptions: rules.assumptions, verification }, answered };
 }
 
 /** "a 2, b 1": counts, most common first (ties by name); '' when none. */
@@ -532,6 +634,8 @@ export interface RunMatrixOptions {
   complete?: CompleteFn;
   /** `--prompt`: the prompt version to send (default: the current one). */
   prompt?: PromptVersion;
+  /** `--no-pattern-hints`: false leaves the pattern hints (bands, dependsOn, contains) out of every payload (default true). */
+  patternHints?: boolean;
 }
 
 /**
@@ -553,6 +657,11 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
   const modes: EvalMode[] = opts.modes && opts.modes.length > 0 ? opts.modes : ['full'];
   // Every record says which mode it ran only when the matrix ran a mode other than plain 'full' (a full-only report stays as it always was).
   const tagMode = modes.some((m) => m !== 'full');
+  const extra = {
+    ...(opts.complete ? { complete: opts.complete } : {}),
+    ...(opts.prompt ? { prompt: opts.prompt } : {}),
+    ...(opts.patternHints === false ? { patternHints: false } : {}),
+  };
 
   for (const model of opts.models) {
     for (const masking of opts.maskingModes) {
@@ -563,9 +672,9 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
 
           for (const caseDef of baseCases) {
             opts.onProgress?.(`${label}: ${caseDef.name}`);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode, ...(opts.complete ? { complete: opts.complete } : {}), ...(opts.prompt ? { prompt: opts.prompt } : {}) });
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, mode, ...extra });
             baseResults.set(caseDef.name, ran.result);
-            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt));
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt, opts.patternHints !== false));
           }
 
           for (const caseDef of attachedCases) {
@@ -583,8 +692,8 @@ export async function runMatrix(opts: RunMatrixOptions): Promise<RunRecord[]> {
               continue;
             }
             const target: Format = formatOf(baseRules);
-            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode, ...(opts.complete ? { complete: opts.complete } : {}), ...(opts.prompt ? { prompt: opts.prompt } : {}) });
-            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt));
+            const ran = await runLearn({ caseDef, masking, model, run, env, noEscalation: opts.noEscalation, target, mode, ...extra });
+            records.push(await toRunRecord(caseDef, model, masking, run, ran, tagMode, opts.prompt, opts.patternHints !== false));
           }
         }
       }

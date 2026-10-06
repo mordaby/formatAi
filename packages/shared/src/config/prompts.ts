@@ -12,8 +12,12 @@
  * DECISION: the E1 switch is a prompt version of its own, made at build time from the same LEARN_PROMPT.md block
  * (`scripts/sync-prompt.ts`), not a flag: every call logs `promptVersion`, and the structure cache and the ledger tell two texts apart
  * by it alone - a flag beside the version would make one version name two prompts. Only the eval sends the noE1 variants.
+ *
+ * learn-v9 (docs/proposals/ai-code-checks.md, owner decision 2026-10-05): learn-v7 plus one section, "Checking with code" - the AI step may
+ * ask code a few closed, typed questions about the whole example before it answers (`checks.ts`). It is sent only where it is asked for:
+ * the eval's `--prompt learn-v9`, and in the app the learns `LEARN_CHECKS` gives it to (`limits.learn.checks.mode`: off, admin, all).
  */
-export const PROMPT_VERSIONS = ['learn-v7', 'learn-v8', 'learn-v8-noE1', 'learn-v8.1', 'learn-v8.1-noE1'] as const;
+export const PROMPT_VERSIONS = ['learn-v7', 'learn-v8', 'learn-v8-noE1', 'learn-v8.1', 'learn-v8.1-noE1', 'learn-v9'] as const;
 export type PromptVersion = (typeof PROMPT_VERSIONS)[number];
 
 /**

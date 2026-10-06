@@ -1,7 +1,7 @@
 // The typed surface of the engine worker: method arguments/results, progress events
 // and the host functions the worker may call back into. Types only - imported by both
 // the worker (engineMethods.ts) and the main-thread client (engineClient.ts).
-import type { Format, LearnPayload, LearnResult, RepairProblem, Rules, Tier } from '@formatai/shared';
+import type { CheckRound, Format, LearnPayload, LearnResult, RepairProblem, Rules, Tier } from '@formatai/shared';
 import type {
   AmbiguousColumn,
   AnalysisStage,
@@ -77,8 +77,9 @@ export type LearnProgress =
   /**
    * `unexplained`: headers of the output columns code could not find in the input file (SPEC 6.4, informational: the AI step tries them); first try only.
    * `round` (a repair): which round of the learning loop it is, of how many at most, and how many rows the rules got wrong it sends.
+   * `checkRound` (the first try, AI code checks): the AI step asked code to check ideas on every row - which round of checks it is, of how many at most.
    */
-  | { phase: 'learning'; attempt: 'learn' | 'repair'; unexplained?: string[]; round?: LoopRoundInfo }
+  | { phase: 'learning'; attempt: 'learn' | 'repair'; unexplained?: string[]; round?: LoopRoundInfo; checkRound?: CheckRoundInfo }
   | { phase: 'verifying' };
 
 /** A round of the learning loop, as the progress screens say it ("round 2 of 3, sending 5 rows the rules got wrong"). */
@@ -86,6 +87,16 @@ export interface LoopRoundInfo {
   n: number;
   of: number;
   rows: number;
+}
+
+/**
+ * A round of the AI code checks (learn-v9, SPEC 21 v14), as the progress screens say it ("The AI is checking an idea on your rows (round 1 of 3)"):
+ * code answers the checks on every row, then the AI step gets the answers. `n` is the number of rounds so far (`rounds.length`), `of` the cap
+ * (`limits.learn.checks.maxRounds`).
+ */
+export interface CheckRoundInfo {
+  n: number;
+  of: number;
 }
 
 /**
@@ -102,10 +113,15 @@ export type LearnOutput = LearnFromExamplesResult & {
   ambiguous?: AmbiguousColumn[];
 };
 
-/** What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). `round`: the loop round of a repair (its rows go with it). */
+/**
+ * What the main thread does on the worker's behalf (the HTTP calls; the worker has no network code). `round`: the loop round of a repair (its rows
+ * go with it). `callStep` (AI code checks): one step of a learn whose AI step asked checks - `rounds` is every round so far, this one last, the
+ * answers masked like the samples (POST /api/learn/step).
+ */
 export interface LearnHost {
   callLearn(payload: LearnPayload): Promise<LearnCallResult>;
   callRepair(payload: LearnPayload, previousRules: LearnResult, problems: RepairProblem[], round: LoopRound): Promise<LearnCallResult>;
+  callStep(payload: LearnPayload, rounds: CheckRound[]): Promise<LearnCallResult>;
 }
 
 // ---------- convert ----------

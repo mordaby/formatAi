@@ -41,12 +41,14 @@ describe('requests', () => {
     expect(sentBody(fetchMock)).toEqual({ payload, turnstileToken: 'tok' });
   });
 
-  it('learn(): leaves the token out when there is none, and adds noCache only when asked', async () => {
+  it('learn(): leaves the token out when there is none, and adds noCache and rulesNow only when asked', async () => {
     const { api, fetchMock } = apiWith(() => json({ rules: null, verified: false, problems: [], cached: false }));
     await api.learn(payload);
     expect(sentBody(fetchMock, 0)).toEqual({ payload });
     await api.learn(payload, { noCache: true });
     expect(sentBody(fetchMock, 1)).toEqual({ payload, noCache: true });
+    await api.learn(payload, { noCache: true, rulesNow: true });
+    expect(sentBody(fetchMock, 2)).toEqual({ payload, noCache: true, rulesNow: true });
   });
 
   it('repair(): POSTs learnId, payload, previousRules and problems', async () => {
@@ -64,6 +66,19 @@ describe('requests', () => {
     expect(sentBody(fetchMock, 0)).toEqual({ learnId: 'L1', payload, previousRules: rules, problems: [], overfitRepaired: true });
     await api.repair('L1', payload, rules, [], { overfitRepaired: false });
     expect(sentBody(fetchMock, 1)).not.toHaveProperty('overfitRepaired');
+  });
+
+  it('step(): POSTs the learn\'s id as the token, the payload and every round so far (AI code checks), and passes the abort signal', async () => {
+    const answer = { rules: null, checks: [{ check: 'values', column: 'Size' }], verified: false, problems: [], counted: false, failedAttempts: 0 };
+    const { api, fetchMock } = apiWith(() => json(answer));
+    const rounds = [{ checks: [{ check: 'values' as const, column: 'Size' }], answers: [{ rows: 10, distinct: 2, empty: 0, top: [] }] }];
+    const abort = new AbortController();
+    await expect(api.step('L1', payload, rounds, { signal: abort.signal })).resolves.toEqual(answer);
+    const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe('https://api.test/api/learn/step');
+    expect(init.method).toBe('POST');
+    expect(init.signal).toBe(abort.signal);
+    expect(sentBody(fetchMock)).toEqual({ token: 'L1', payload, rounds });
   });
 
   it('only ever sends JSON: no method takes a File or Blob (SPEC 2/15)', async () => {

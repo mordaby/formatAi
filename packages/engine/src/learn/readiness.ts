@@ -40,6 +40,8 @@ export interface AiReadinessOptions {
   /** Completion mode (LEARN_PROMPT "Completing a partial rules file"): the rules to keep and what is missing; `built.payload.complete` carries them. */
   complete?: CompleteOptions;
   caps?: PayloadCaps;
+  /** `BuildPayloadOptions.patternHints` (default true): false leaves the pattern hints out (the eval's `--no-pattern-hints`). */
+  patternHints?: boolean;
 }
 
 function issue(code: AiReadinessIssueCode, params?: Record<string, string | number>): AiReadinessIssue {
@@ -70,6 +72,7 @@ export function aiReadiness(analysis: PairAnalysis, preflight: PreflightResult, 
     ...(opts.masker ? { masker: opts.masker } : {}),
     ...(opts.target ? { target: opts.target } : {}),
     ...(opts.complete ? { complete: opts.complete } : {}),
+    ...(opts.patternHints === false ? { patternHints: false } : {}),
     caps,
   });
   const bytes = payloadBytes(built.payload);

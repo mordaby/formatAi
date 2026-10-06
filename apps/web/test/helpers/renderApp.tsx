@@ -111,6 +111,7 @@ export function fakeApi(over: Partial<Omit<Api, 'auth' | 'registry' | 'contact'>
     session: vi.fn(async () => ({ anonId: true, tier: 'free', limits: tiers.anonymous })),
     learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false })),
     repair: vi.fn(),
+    step: vi.fn(),
     baseUrl: '',
     auth: {
       providers: vi.fn(async () => ['google', 'microsoft']),

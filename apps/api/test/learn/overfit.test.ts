@@ -108,6 +108,32 @@ describe('runChecks: layer 6a, the overfitting guards', () => {
     expect(runChecks(wire(discountRules('if(rowNumber() <> 1, round(amount * 0.1, 2), 0)')), discountPayload(), { tier: 'registered' }).problems.map((p) => p.kind)).toContain('overfit');
   });
 
+  it('a case list only its atoms show (an or of IDs per class: one case of many rows, one atom per row) is left to the browser (owner amendment, 2026-10-06)', () => {
+    // Person, Qty -> Person, Class: the class written out ID by ID, as gpt-5's escalation did on a real file (synthetic IDs here).
+    const people = ['P-01', 'P-02', 'P-03', 'P-04', 'P-05', 'P-06', 'P-07', 'P-08'];
+    const classes = ['Small', 'Small', 'Small', 'Big', 'Big', 'Big', 'Medium', 'Medium'];
+    const payload: LearnPayload = {
+      ...basicPayload(),
+      input: { ...basicPayload().input, columns: [{ i: 0, header: 'Person', type: 'idLike' }, { i: 1, header: 'Qty', type: 'integer' }] },
+      output: { ...basicPayload().output, columns: [{ i: 0, header: 'Person', type: 'idLike' }, { i: 1, header: 'Class', type: 'text' }] },
+      samples: people.map((p, i) => ({ in: [p, i + 2], out: [p, classes[i]!] })),
+    };
+    const ids = (from: number, to: number): string => people.slice(from, to).map((p) => `person = "${p}"`).join(', ');
+    const formula = `switch(or(${ids(0, 3)}), "Small", or(${ids(3, 6)}), "Big", qty = 24, "Big", oneOf(qty, 30, 40), "Small", "Medium")`;
+    const rules: LearnResult = {
+      ...correctRules(),
+      input: { sheet: { pick: 'first' }, headerRow: 'auto', columns: [{ id: 'person', header: 'Person', type: 'idLike' }, { id: 'qty', header: 'Qty', type: 'integer' }] },
+      transform: { computed: [{ id: 'class', type: 'text', expr: f(formula) }], valueMaps: [], sort: [] },
+      output: { sheetName: 'Out', direction: 'ltr', language: 'en', titleRows: [], columns: [{ header: 'Person', from: 'person' }, { header: 'Class', from: 'class' }] },
+    };
+    for (const overfit of ['repair', 'fallBack'] as const) {
+      const { problems, rules: checked, overfitFallbacks } = runChecks(wire(rules), payload, { tier: 'registered', overfit });
+      expect(problems).toEqual([]);
+      expect(checked?.output.columns[1]).toEqual({ header: 'Class', from: 'class' });
+      expect(overfitFallbacks).toBe(0);
+    }
+  });
+
   it('a column code reported (reason overfit) is never sent back as "unsupported despite evidence", even with a hint for it', () => {
     const p: LearnPayload = { ...discountPayload(), hints: [{ out: 1, rel: 'mulConst', in: [1], const: 0.1, round: 2, coverage: 0.75, failsOn: [0] }] };
     const { problems } = runChecks(wire(discountRules(BY_POSITION)), p, { tier: 'registered', overfit: 'fallBack' });

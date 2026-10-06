@@ -8,7 +8,9 @@
 // - Timeout: if a call is still running after `timeoutMs` of worker-busy time, the
 //   worker is terminated and re-created on the next call, and the call rejects with
 //   `RpcTimeoutError`. The timer is paused while a host callback is in flight, so a
-//   slow LLM response is never mistaken for a hung parser.
+//   slow LLM response is never mistaken for a hung parser. A progress event may grant
+//   the call more busy time (`opts.extraTimeOn`): work the caller knows is coming and
+//   bounded (the learn's rounds of AI code checks) is not mistaken for a hang either.
 // - `opts.signal` aborts the same way (terminate + restart).
 //
 // The worker is created lazily through `createWorker`, so tests can pass a fake and
@@ -84,6 +86,11 @@ export interface CallOptions {
   host?: HostFunctions;
   /** Worker-busy time before the call is abandoned. Defaults to the client's `defaultTimeoutMs`. */
   timeoutMs?: number;
+  /**
+   * Worker-busy time a progress event grants the call on top of `timeoutMs`, in ms (0: none). Asked of every progress event, before
+   * `onProgress`; while a host callback is in flight (the timer paused) the time is added for when it resumes.
+   */
+  extraTimeOn?: (progress: unknown) => number;
   signal?: AbortSignal;
 }
 
@@ -175,9 +182,12 @@ export class RpcClient {
     const p = this.pending.get(msg.id);
     if (!p) return;
     switch (msg.type) {
-      case 'progress':
+      case 'progress': {
+        const extra = p.opts.extraTimeOn?.(msg.progress) ?? 0;
+        if (extra > 0) this.extend(p, extra);
         p.opts.onProgress?.(msg.progress);
         return;
+      }
       case 'result':
         this.settle(p);
         p.resolve(msg.value);
@@ -233,6 +243,16 @@ export class RpcClient {
     clearTimeout(p.timer);
     p.timer = undefined;
     p.remainingMs = Math.max(0, p.remainingMs - (Date.now() - p.armedAt));
+  }
+
+  /** More busy time for a running call: added to what is left, the timer re-armed (or, paused, the time is there when it resumes). */
+  private extend(p: Pending, ms: number): void {
+    if (p.timer === undefined) {
+      p.remainingMs += ms;
+      return;
+    }
+    this.pause(p);
+    this.arm(p, p.remainingMs + ms);
   }
 
   private settle(p: Pending): void {

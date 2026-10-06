@@ -207,6 +207,55 @@ export function wireAnswerSchema(opts: WireSchemaOptions = {}): z.ZodType {
   return opts.alternatives === false ? WireLearnResultSchema : WireLearnResultWithAlternativesSchema;
 }
 
+// ---------- learn-v9: the AI code checks (docs/proposals/ai-code-checks.md; SPEC 21 v14) ----------
+//
+// One answer schema for EVERY call of a learn-v9 learn - the first, each step, the repairs, the escalation: `{ checks, rules }`, exactly one
+// of them non-null (code enforces "exactly one": `splitStepAnswer`). One schema keeps the provider's prompt cache working across the steps
+// (OpenAI caches the system prompt, the schema and the input in that order: a schema that changed between steps would make each step pay
+// the whole input again). Both fields are required and nullable, so the OpenAI strict rewrite keeps them as they are (a required field is
+// never one of the "optional in disguise" nulls `stripOpenAiNulls` drops). The checks carry no `maxItems`, length or number bounds: not
+// every provider takes them - the caps (`limits.learn.checks`) are in the prompt and enforced by the API (`acceptChecks`).
+
+const WireCheckLetSchema = z.strictObject({ id: z.string(), expr: z.string() });
+const wireCheckCommon = { let: z.array(WireCheckLetSchema).optional(), where: z.string().optional() };
+const WireCheckSchema = z.discriminatedUnion('check', [
+  z.strictObject({ check: z.literal('test'), column: z.string(), rule: z.string(), ...wireCheckCommon }),
+  z.strictObject({ check: z.literal('ranges'), column: z.string(), by: z.string(), ...wireCheckCommon }),
+  z.strictObject({ check: z.literal('dependsOn'), column: z.string(), on: z.array(z.string()), ...wireCheckCommon }),
+  z.strictObject({ check: z.literal('values'), column: z.string(), ...wireCheckCommon }),
+  // (`limit` a plain number on the wire: zod's `int()` would add the safe-integer bounds as minimum / maximum, which not every provider takes.)
+  z.strictObject({ check: z.literal('rows'), let: wireCheckCommon.let, where: z.string(), limit: z.number() }),
+]);
+const WireStepSchema = z.strictObject({ checks: z.array(WireCheckSchema).nullable(), rules: WireLearnResultSchema.nullable() });
+
+/** The zod schema behind `learnStepWireJsonSchema` (tests read what it accepts). learn-v9 is learn-v7 plus checks: its rules carry no `alternatives`. */
+export function wireStepSchema(): z.ZodType {
+  return WireStepSchema;
+}
+
+/** The JSON Schema every call of a learn-v9 learn is constrained to (`{ checks, rules }`; see the section comment above). */
+export function learnStepWireJsonSchema(): Record<string, unknown> {
+  return z.toJSONSchema(WireStepSchema) as Record<string, unknown>;
+}
+
+/** A learn-v9 answer, unwrapped: the rules (`fromWire` / `runChecks` take them from here as from any answer), the checks asked, or neither. */
+export type StepAnswer =
+  | { kind: 'rules'; rules: unknown }
+  | { kind: 'checks'; checks: unknown[] }
+  | { kind: 'invalid'; message: string };
+
+/**
+ * Unwraps a raw (untrusted, not yet validated) learn-v9 answer. DECISION: rules win - an answer with rules AND checks is taken as its rules
+ * (the checks are not run: the answer is complete, and no step is worth asking for); `checks: []` is no question. Neither, or an answer that
+ * is not an object, is `invalid`: a schema problem for the repair round, which must answer with the rules.
+ */
+export function splitStepAnswer(json: unknown): StepAnswer {
+  if (!isRecord(json)) return { kind: 'invalid', message: 'the answer must be one object: {"checks": [...], "rules": null} or {"checks": null, "rules": the rules file}' };
+  if (isRecord(json.rules)) return { kind: 'rules', rules: json.rules };
+  if (Array.isArray(json.checks) && json.checks.length > 0) return { kind: 'checks', checks: json.checks };
+  return { kind: 'invalid', message: 'answer with "rules" (the rules file, "checks": null) or with "checks" (at least one check, "rules": null)' };
+}
+
 /**
  * Takes the learn-v8 `alternatives` off a raw (untrusted, not yet validated) answer, so the answer itself is checked exactly as before
  * (`LearnResultSchema` is strict and knows nothing of them) and each alternative on its own. `alternatives` is the raw list (or undefined

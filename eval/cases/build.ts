@@ -21,6 +21,7 @@
 import type { LearnResult } from '@formatai/shared';
 import type { OutputFileSpec } from '@formatai/engine';
 import { makeValidIsraeliId } from '@formatai/engine';
+import { adversarialCaseBuilders } from './buildAdversarial';
 import { hardCaseBuilders } from './buildHard';
 import { stressCaseBuilders } from './buildStress';
 import { casesRoot, mkRules, runConvert, writeCase, type CaseSpec, type FileArtifact } from './lib/caseKit';
@@ -1589,6 +1590,7 @@ async function main(): Promise<void> {
     buildCase13, buildCase14, buildRegistryA, buildRegistryB, buildRegistryC,
     ...hardCaseBuilders,
     ...stressCaseBuilders,
+    ...adversarialCaseBuilders,
   ];
   for (const build of builders) {
     const spec = await build();

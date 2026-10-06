@@ -117,6 +117,8 @@ export const API_ERROR_CODES = [
   'invalidLearnId',
   // 400: a loop round's rows (SPEC 9.3) are malformed or larger than the loop allows (rows per round, rows in one learn, the payload byte cap).
   'invalidRows',
+  // 400 (AI code checks, SPEC 21 v14): a step's rounds are malformed or larger than a learn allows (rounds, checks, rows, the payload byte cap).
+  'invalidRounds',
   // 403: Turnstile token missing or rejected (anonymous learns, SPEC 9.5).
   'turnstileFailed',
   // 429: a per-tier limit was hit; `limit` says which one (see LIMIT_CODES).
@@ -167,6 +169,8 @@ export const LIMIT_CODES = [
   'learnsPerDay',
   'learnsPerMonth',
   'repairsPerLearn',
+  // 429 (AI code checks, SPEC 21 v14): one learn already made every step of checks it may (`limits.learn.checks.maxRounds`).
+  'stepsPerLearn',
   // 429: the user's AI-learn quota for its period is used up (`period` accompanies it).
   'aiLearns',
   // 403: saved formats (registered: lifetime total; delete frees a slot).

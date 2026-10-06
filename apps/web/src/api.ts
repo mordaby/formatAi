@@ -5,7 +5,7 @@
 //
 // SPEC 2/15: the only bodies ever sent are JSON (the learn payload, rules, problems).
 // There is deliberately no method that takes a File or a Blob.
-import type { LearnPayload, LearnRequest, LearnResponse, LearnResult, RepairProblem, RepairRequest, RepairResponse, Sample, SessionResponse } from '@formatai/shared';
+import type { CheckRound, LearnPayload, LearnRequest, LearnResponse, LearnResult, RepairProblem, RepairRequest, RepairResponse, Sample, SessionResponse, StepRequest, StepResponse } from '@formatai/shared';
 import { createAdminApi, type AdminApi } from './api/admin';
 import { createAuthApi, type AuthApi } from './api/auth';
 import { createContactApi, type ContactApi } from './api/contact';
@@ -17,8 +17,11 @@ export { ApiError, isApiError, toApiError, type ApiFailureCode, type ClientError
 export interface Api {
   /** GET /api/session: sets/reads the anonymous-id cookie and reports the tier and its limits. */
   session(signal?: AbortSignal): Promise<SessionResponse>;
-  /** POST /api/learn. `turnstileToken` is required for anonymous visitors when Turnstile is configured. */
-  learn(payload: LearnPayload, opts?: { turnstileToken?: string | undefined; noCache?: boolean; signal?: AbortSignal }): Promise<LearnResponse>;
+  /**
+   * POST /api/learn. `turnstileToken` is required for anonymous visitors when Turnstile is configured. `rulesNow` (learn-v9): the answer must be
+   * the rules, never checks - the fresh learn that stands in for a round of the learning loop.
+   */
+  learn(payload: LearnPayload, opts?: { turnstileToken?: string | undefined; noCache?: boolean; rulesNow?: boolean; signal?: AbortSignal }): Promise<LearnResponse>;
   /**
    * POST /api/learn/repair: one round of the learning loop, at most `limits.llm.browserRepairCalls` per `learnId`. `rows`: every row the loop sent
    * so far, masked. `overfitRepaired`: the learn already had its one repair for a rule that copies rows (SPEC 9.2 layer 6).
@@ -30,6 +33,11 @@ export interface Api {
     problems: RepairProblem[],
     opts?: { signal?: AbortSignal; rows?: Sample[] | undefined; overfitRepaired?: boolean | undefined },
   ): Promise<RepairResponse>;
+  /**
+   * POST /api/learn/step (AI code checks, SPEC 21 v14): one step of a learn whose AI step asked checks. `token` is the learn's `learnId` (the
+   * same one for every step and for the repairs after); `rounds` every round so far, this one last, the answers masked like the samples.
+   */
+  step(token: string, payload: LearnPayload, rounds: CheckRound[], opts?: { signal?: AbortSignal }): Promise<StepResponse>;
   /** Sign-in: providers, who is signed in, sign out, the saved language, linking, the AI quota. */
   auth: AuthApi;
   /** A signed-in user's formats and conversions, and the learn outcome report. */
@@ -54,12 +62,17 @@ export function createApi(options: CreateApiOptions = {}): Api {
         payload,
         ...(opts.turnstileToken ? { turnstileToken: opts.turnstileToken } : {}),
         ...(opts.noCache ? { noCache: true } : {}),
+        ...(opts.rulesNow ? { rulesNow: true } : {}),
       };
       return request<LearnResponse>('POST', '/api/learn', req, opts.signal);
     },
     repair: (learnId, payload, previousRules, problems, opts = {}) => {
       const req: RepairRequest = { payload, previousRules, problems, learnId, ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}), ...(opts.overfitRepaired ? { overfitRepaired: true } : {}) };
       return request<RepairResponse>('POST', '/api/learn/repair', req, opts.signal);
+    },
+    step: (token, payload, rounds, opts = {}) => {
+      const req: StepRequest = { token, payload, rounds };
+      return request<StepResponse>('POST', '/api/learn/step', req, opts.signal);
     },
     auth: createAuthApi(request),
     registry: createRegistryApi(request),

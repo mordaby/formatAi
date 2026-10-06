@@ -47,6 +47,13 @@ export interface BuildPayloadOptions {
   /** Completion mode: the rules to keep and what is missing; `payload.complete` carries them (constants masked like the samples). */
   complete?: CompleteOptions;
   caps?: PayloadCaps;
+  /**
+   * Whether the payload carries the pattern hints - `bands`, `dependsOn`, `contains`: what the pair analysis GUESSES about a column it could
+   * not explain (default true, as always). False (the eval's `--no-pattern-hints`, docs/proposals/ai-code-checks.md section 8): they are left
+   * out, and so are the sample rows they would have pulled in; every other hint - the facts code proved, a copy, a template, `mul`, a window -
+   * is sent as before. It measures the AI code checks against those hints: if checks alone do as well, the hints go.
+   */
+  patternHints?: boolean;
 }
 
 export interface BuildPayloadResult {
@@ -560,13 +567,20 @@ function byteSize(payload: LearnPayload): number {
 // Entry point
 // ---------------------------------------------------------------------------
 
+/** The pattern hints (`BuildPayloadOptions.patternHints`): a column's dependency, its bands, a composition - guesses, not proven relations. */
+export const PATTERN_HINT_RELS = ['bands', 'dependsOn', 'contains'] as const;
+
+function isPatternHint(h: HintCandidate): boolean {
+  return (PATTERN_HINT_RELS as readonly string[]).includes(h.rel);
+}
+
 export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult, opts: BuildPayloadOptions = {}): BuildPayloadResult {
   const caps = opts.caps ?? limits.payload;
   const masker = opts.masker;
   const isFamilies = analysis.shape.kind === 'families';
   const families = analysis.shape.kind === 'families' ? analysis.shape.families : [];
 
-  const hints = relationsToHints(analysis, preflight);
+  const hints = opts.patternHints === false ? relationsToHints(analysis, preflight).filter((h) => !isPatternHint(h)) : relationsToHints(analysis, preflight);
   const must = mustIncludeRows(hints, families, isFamilies);
 
   const pairPriority = isFamilies ? [] : buildPairPriority(analysis, must.pairRows, caps.maxPairs);

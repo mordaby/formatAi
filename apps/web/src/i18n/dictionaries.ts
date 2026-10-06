@@ -154,14 +154,23 @@ export const en = {
   'sendPanel.item.rows.on': 'Up to 12 sample rows. Names, ID numbers and other text are replaced with look-alike values first.',
   'sendPanel.item.rows.off': 'Up to 12 sample rows, exactly as they are.',
   'sendPanel.item.hints': 'What your computer already worked out: which columns are copied, reformatted or calculated.',
+  // AI code checks (SPEC 21 v14): before it answers, the AI step may ask code to check ideas on every row.
+  'sendPanel.item.checks': 'If the AI asks to check an idea first, your computer answers with counts and ranges from your example, and at most a few more rows, sent like the sample rows (within the same {rows} rows).',
   'sendPanel.item.loop': 'If the rules then get rows of your example wrong: up to {rounds} more requests, each with some of those rows (at most {rows} rows in all), sent like the sample rows.',
   'sendPanel.note.before': 'If your computer can solve it alone, nothing is sent at all. When something is sent, the exact data appears here.',
   'sendPanel.lead.sent': 'This is exactly what was sent.',
   'sendPanel.kind.learn': 'Learn request',
   'sendPanel.kind.repair': 'Fix request',
   'sendPanel.kind.round': 'Fix request, round {n} of {of}',
+  // A round of the learning loop sent as a new learn: the result came from an earlier learn of files laid out the same way (no learn to fix).
+  'sendPanel.kind.fresh': 'New learn request, instead of fix round {n} of {of}',
+  'sendPanel.fresh.note': 'Rules from an earlier learn of files laid out like these did not match every row of your example, so the AI learns again from the start. This request carries the same summary and nothing else: no rules, no rows it got wrong.',
   'sendPanel.rows.one': 'It carries 1 row of your example the rules got wrong (every row sent so far).',
   'sendPanel.rows.other': 'It carries {n} rows of your example the rules got wrong (every row sent so far).',
+  // A step of AI code checks: the checks the AI asked and your computer's answers, every round so far.
+  'sendPanel.kind.step': "Answers to the AI's checks, round {n} of {of}",
+  'sendPanel.checkRows.one': 'Its answers show 1 row of your example (every row the checks showed so far).',
+  'sendPanel.checkRows.other': 'Its answers show {n} rows of your example (every row the checks showed so far).',
   'sendPanel.json': 'Data sent (JSON)',
 
   // SPEC 16.1 screen 2: pre-flight
@@ -192,6 +201,8 @@ export const en = {
   'learning.round.one': 'Checking every row of your example: sending 1 row the rules got wrong (round {n} of {of}).',
   'learning.round.other': 'Checking every row of your example: sending {rows} rows the rules got wrong (round {n} of {of}).',
   'learning.round.none': 'Checking every row of your example: sending what still did not match (round {n} of {of}).',
+  // AI code checks (SPEC 21 v14): the AI step asked code to check an idea on every row before it answers.
+  'learning.checks': 'The AI is checking an idea on your rows (round {n} of {of}).',
   'learning.done': 'Done',
 
   'error.tryAgain': 'Try again',
@@ -335,14 +346,20 @@ export const he: Record<MessageKey, string> = {
   'sendPanel.item.rows.on': 'עד 12 שורות דוגמה. שמות, מספרי זהות וטקסט אחר מוחלפים קודם בערכים מדומים.',
   'sendPanel.item.rows.off': 'עד 12 שורות דוגמה, בדיוק כפי שהן.',
   'sendPanel.item.hints': 'מה שהמחשב שלך כבר הבין: אילו עמודות מועתקות, מעוצבות מחדש או מחושבות.',
+  'sendPanel.item.checks': 'אם ה-AI מבקש קודם לבדוק רעיון, המחשב שלכם עונה בספירות ובטווחים מתוך הדוגמה שלכם, ולכל היותר בעוד כמה שורות, שנשלחות כמו שורות הדוגמה (בתוך אותן {rows} שורות).',
   'sendPanel.item.loop': 'אם הכללים טועים בשורות מהדוגמה שלכם: עד {rounds} בקשות נוספות, בכל אחת חלק מהשורות האלה (עד {rows} שורות בסך הכול), שנשלחות כמו שורות הדוגמה.',
   'sendPanel.note.before': 'אם המחשב שלך יכול לפתור את זה לבד, לא נשלח דבר. כשנשלח משהו, הנתונים המדויקים מופיעים כאן.',
   'sendPanel.lead.sent': 'זה בדיוק מה שנשלח.',
   'sendPanel.kind.learn': 'בקשת למידה',
   'sendPanel.kind.repair': 'בקשת תיקון',
   'sendPanel.kind.round': 'בקשת תיקון, סבב {n} מתוך {of}',
+  'sendPanel.kind.fresh': 'בקשת למידה חדשה, במקום סבב תיקון {n} מתוך {of}',
+  'sendPanel.fresh.note': 'כללים מלמידה קודמת של קבצים באותו מבנה לא התאימו לכל שורה בדוגמה שלכם, ולכן ה-AI לומד מחדש מההתחלה. הבקשה הזו כוללת את אותו סיכום ותו לא: בלי כללים ובלי שורות שהם טעו בהן.',
   'sendPanel.rows.one': 'היא כוללת שורה אחת מהדוגמה שלכם שהכללים טעו בה (כל השורות שנשלחו עד כה).',
   'sendPanel.rows.other': 'היא כוללת {n} שורות מהדוגמה שלכם שהכללים טעו בהן (כל השורות שנשלחו עד כה).',
+  'sendPanel.kind.step': 'תשובות לבדיקות של ה-AI, סבב {n} מתוך {of}',
+  'sendPanel.checkRows.one': 'התשובות בה מציגות שורה אחת מהדוגמה שלכם (כל השורות שהבדיקות הציגו עד כה).',
+  'sendPanel.checkRows.other': 'התשובות בה מציגות {n} שורות מהדוגמה שלכם (כל השורות שהבדיקות הציגו עד כה).',
   'sendPanel.json': 'הנתונים שנשלחו (JSON)',
 
   'preflight.warnTitle': 'דבר אחד לבדוק קודם',
@@ -370,6 +387,7 @@ export const he: Record<MessageKey, string> = {
   'learning.round.one': 'בודקים כל שורה בדוגמה שלכם: שולחים שורה אחת שהכללים טעו בה (סבב {n} מתוך {of}).',
   'learning.round.other': 'בודקים כל שורה בדוגמה שלכם: שולחים {rows} שורות שהכללים טעו בהן (סבב {n} מתוך {of}).',
   'learning.round.none': 'בודקים כל שורה בדוגמה שלכם: שולחים את מה שעדיין לא התאים (סבב {n} מתוך {of}).',
+  'learning.checks': 'ה-AI בודק רעיון מול השורות שלכם (סבב {n} מתוך {of}).',
   'learning.done': 'הושלם',
 
   'error.tryAgain': 'נסו שוב',

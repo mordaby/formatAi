@@ -43,11 +43,11 @@ function realEngine() {
 }
 
 /** A fake API where a save is REMEMBERED: the next read of any conversion of the source returns what the server would (the source change reaches them all). */
-function apiWithServer(opts: { formats?: { id: string; formatId: string; formatName: string }[]; status?: 'verified' | 'needsReview' } = {}): { api: FakeConvertApi; stored: Map<string, Rules>; saves: { id: string; body: UpdateConversionRequest }[] } {
+function apiWithServer(opts: { formats?: { id: string; formatId: string; formatName: string }[]; status?: 'verified' | 'needsReview'; rules?: Rules } = {}): { api: FakeConvertApi; stored: Map<string, Rules>; saves: { id: string; body: UpdateConversionRequest }[] } {
   const formats = opts.formats ?? [{ id: 'c1', formatId: 'F1', formatName: 'Load file' }];
   const source = sourceEntry({ sourceId: 's1', conversions: formats.map((f) => ({ conversionId: f.id, formatId: f.formatId, formatName: f.formatName })) });
   const api = fakeConvertApi({ entries: [source] });
-  const stored = new Map<string, Rules>(formats.map((f) => [f.id, structuredClone(RULES)]));
+  const stored = new Map<string, Rules>(formats.map((f) => [f.id, structuredClone(opts.rules ?? RULES)]));
   const versions = new Map<string, number>(formats.map((f) => [f.id, 1]));
   const saves: { id: string; body: UpdateConversionRequest }[] = [];
   const read = api.conversion.getMockImplementation()!;
@@ -337,6 +337,36 @@ describe('saying yes', () => {
     await screen.findByText('Your file is ready');
     expect(api.saveRules).toHaveBeenCalledTimes(1);
     expect(plain(screen.getByTestId('kept-rules'))).toContain('Not saved as a rule');
+  });
+});
+
+describe('a list copied from the example in the stored rules (owner decision 2026-10-06: asked at Save only)', () => {
+  // Supplier by Item Code: a lookup table of the example's codes, kept at the Save that asked about it.
+  const withList: Rules = {
+    ...RULES,
+    transform: {
+      ...RULES.transform,
+      computed: [{ id: 'c_supplier', type: 'text', expr: { op: 'lookup', table: 'suppliers', key: { col: 'c_code' }, return: 'supplier', onMissing: 'flag' } }],
+      tables: [{ name: 'suppliers', columns: ['code', 'supplier'], rows: ['00001', '00002', '00003', '00004'].map((code, i) => [code, `Supplier ${i + 1}`]) }],
+    },
+    output: { ...RULES.output, columns: [...RULES.output.columns, { header: 'Supplier', from: 'c_supplier' }] },
+  };
+
+  it('"Do this every time?" saves the new version at once, the list as it is: nothing new is stored, so nothing is asked', async () => {
+    const { engine } = realEngine();
+    const { api, saves } = apiWithServer({ rules: withList });
+    renderConvert(<ConvertPage />, { api, engine });
+    await drop();
+    await screen.findByText(REVIEW);
+    fix(3, 'Qty', '', { every: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Create the file' }));
+    expect(await screen.findByText('Your file is ready')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(saves).toHaveLength(1);
+    const saved = saves[0]!.body.rules as Rules;
+    expect(saved.transform.tables).toEqual(withList.transform.tables);
+    expect(saved.output.columns.at(-1)).toEqual({ header: 'Supplier', from: 'c_supplier' });
+    expect(saved.input.columns[1]!.readAs).toEqual({ 'N/A': '' });
   });
 });
 

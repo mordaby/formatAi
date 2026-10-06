@@ -59,8 +59,13 @@ export interface LoopState {
   sent: CounterexampleRow[];
   /** Input rows sent only in a round's problems, because they did not fit the byte cap (see the file header). */
   named: number[];
-  /** Input rows the payload itself already sends (its samples and dropped rows): never sent again. */
+  /** Input rows the payload itself already sends (its samples and dropped rows), and the rows the AI code checks showed: never sent again. */
   inPayload: number[];
+  /**
+   * Rows the AI code checks showed before the first answer (learn-v9, `learn/checks.ts`): they count toward `maxRowsTotal` like the loop's own
+   * (the payload's samples and dropped rows are counted from the payload itself).
+   */
+  checkRows: number;
   /** Answers judged so far. */
   answers: number;
   /** The best answer so far (an index into the answers, in the order judged; -1: none yet) and its wrong rows. */
@@ -68,9 +73,12 @@ export interface LoopState {
   bestWrong: number;
 }
 
-/** The loop before the first answer. `inPayload`: the input rows of the payload's samples and dropped rows (`BuildPayloadResult`). */
-export function startLoop(inPayload: readonly number[]): LoopState {
-  return { rounds: 0, sent: [], named: [], inPayload: [...inPayload], answers: 0, best: -1, bestWrong: Number.POSITIVE_INFINITY };
+/**
+ * The loop before the first answer. `inPayload`: the input rows of the payload's samples and dropped rows (`BuildPayloadResult`).
+ * `shownByChecks`: the input rows the AI code checks showed (learn-v9): never sent again, and counted toward `maxRowsTotal`.
+ */
+export function startLoop(inPayload: readonly number[], shownByChecks: readonly number[] = []): LoopState {
+  return { rounds: 0, sent: [], named: [], inPayload: [...inPayload, ...shownByChecks], checkRows: shownByChecks.length, answers: 0, best: -1, bestWrong: Number.POSITIVE_INFINITY };
 }
 
 /** The latest answer, as the browser judged it on every row of the example. */
@@ -291,7 +299,7 @@ export function loopStep(state: LoopState, latest: LoopAnswer, ctx: LoopContext)
   if (state.rounds >= caps.maxRounds) return stop('roundCap');
 
   const sentRows = new Set([...state.inPayload, ...state.sent.map((r) => r.inRow), ...state.named]);
-  const budget = Math.min(caps.rowsPerRound, caps.maxRowsTotal - payloadRowCount(ctx.payload) - state.sent.length - state.named.length);
+  const budget = Math.min(caps.rowsPerRound, caps.maxRowsTotal - payloadRowCount(ctx.payload) - (state.checkRows ?? 0) - state.sent.length - state.named.length);
   const anyNew = pickCounterexamples(latest.wrongRows, sentRows, 1).length > 0;
   if (anyNew && budget <= 0) return stop('rowCap');
 

@@ -31,7 +31,7 @@ const engineOf = (): EngineClient => createEngineClient({ createWorker: () => lo
 async function localRules(engine: EngineClient): Promise<LearnResult> {
   const res: LearnOutput = await engine.learn(
     { input: { name: 'in.csv', bytes: bytesOf(CSV.input) }, output: { name: 'out.csv', bytes: bytesOf(CSV.output) }, masking: false, tier: 'paid', ai: 'notAllowed' },
-    { callLearn: async () => { throw new Error('no AI step here'); }, callRepair: async () => { throw new Error('no AI step here'); } },
+    { callLearn: async () => { throw new Error('no AI step here'); }, callRepair: async () => { throw new Error('no AI step here'); }, callStep: async () => { throw new Error('no AI step here'); } },
   );
   if (res.path !== 'partial' || !res.rules) throw new Error(`expected a partial result, got ${res.path}`);
   return res.rules;

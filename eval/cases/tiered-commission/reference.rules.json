@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "input": {
+    "sheet": {
+      "pick": "first"
+    },
+    "headerRow": "auto",
+    "columns": [
+      {
+        "id": "agent",
+        "header": "סוכן",
+        "type": "text",
+        "required": true
+      },
+      {
+        "id": "amount",
+        "header": "סכום",
+        "type": "decimal",
+        "required": true
+      }
+    ]
+  },
+  "transform": {
+    "computed": [
+      {
+        "id": "rate",
+        "type": "decimal",
+        "expr": {
+          "op": "switch",
+          "cases": [
+            {
+              "when": {
+                "op": "lt",
+                "args": [
+                  {
+                    "col": "amount"
+                  },
+                  {
+                    "const": 1000
+                  }
+                ]
+              },
+              "then": {
+                "const": 0.05
+              }
+            },
+            {
+              "when": {
+                "op": "lt",
+                "args": [
+                  {
+                    "col": "amount"
+                  },
+                  {
+                    "const": 5000
+                  }
+                ]
+              },
+              "then": {
+                "const": 0.07
+              }
+            }
+          ],
+          "else": {
+            "const": 0.1
+          }
+        }
+      },
+      {
+        "id": "commission",
+        "type": "decimal",
+        "expr": {
+          "op": "round",
+          "arg": {
+            "op": "mul",
+            "args": [
+              {
+                "col": "amount"
+              },
+              {
+                "col": "rate"
+              }
+            ]
+          },
+          "digits": 2
+        }
+      }
+    ],
+    "valueMaps": [],
+    "sort": []
+  },
+  "output": {
+    "sheetName": "עמלות",
+    "direction": "rtl",
+    "language": "he",
+    "titleRows": [],
+    "headerStyle": {
+      "bold": true
+    },
+    "columns": [
+      {
+        "header": "סוכן",
+        "from": "agent"
+      },
+      {
+        "header": "סכום",
+        "from": "amount",
+        "format": "#,##0.00"
+      },
+      {
+        "header": "שיעור",
+        "from": "rate",
+        "format": "0.00"
+      },
+      {
+        "header": "עמלה",
+        "from": "commission",
+        "format": "#,##0.00"
+      }
+    ]
+  },
+  "validations": [],
+  "unsupported": [],
+  "assumptions": [],
+  "name": "מכירות -> עמלות לפי מדרגות",
+  "meta": {
+    "source": "examplePair",
+    "status": "verified"
+  }
+}

@@ -125,6 +125,12 @@ describe('checkProductionConfig', () => {
     expect(check({ PUBLIC_ORIGIN: 'http://localhost:8790' }).problems).toEqual([]);
   });
 
+  it('AI code checks (SPEC 21 v14): LEARN_CHECKS is off, admin or all (or unset); anything else stops the start, naming it, never the value', () => {
+    for (const ok of [undefined, 'off', 'admin', 'all', 'ALL']) expect(check({ LEARN_CHECKS: ok }).problems).toEqual([]);
+    const typo = check({ LEARN_CHECKS: 'adminz' });
+    expect(typo.problems).toEqual(['LEARN_CHECKS must be one of off, admin, all (or unset: off)']);
+  });
+
   it('wants the web app built', () => {
     const { problems } = check({}, false);
     expect(problems).toHaveLength(1);

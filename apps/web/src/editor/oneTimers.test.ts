@@ -1,6 +1,6 @@
 // Answering a one-time question (SPEC 21 v12 item 20, `oneTimers.ts`) on rules in any state, and the one-time cells in the editor's state:
 // one undo step with the rules, never "unsaved changes" on their own (they are never saved).
-import type { OneTimeQuestion } from '@formatai/engine';
+import type { OneTimeRowQuestion as OneTimeQuestion } from '@formatai/engine';
 import type { Expr, LearnResult, Validation } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { applyEdit, createEditorState, markSaved, redo, undo } from './model';

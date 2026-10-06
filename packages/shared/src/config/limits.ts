@@ -79,7 +79,7 @@ export const limits = {
    * DECISION: placeholder numbers (SPEC 20.4), tuned later from `limit_hit` events.
    */
   protection: {
-    /** Simple in-memory per-IP request rate limit on POST /api/learn and /api/learn/repair. */
+    /** Simple in-memory per-IP request rate limit on POST /api/learn, /api/learn/step and /api/learn/repair. */
     learnRequestsPerIpPerMinute: 10,
     rateLimitWindowMs: 60_000,
     /** Cloudflare Turnstile siteverify call timeout; a timeout counts as a failed check. */
@@ -318,6 +318,49 @@ export const limits = {
      */
     oneTimer: {
       maxQuestions: 3,
+    },
+    /**
+     * AI code checks (docs/proposals/ai-code-checks.md, owner decision 2026-10-05; SPEC 21 v14, 9.1): before it answers, the AI step (prompt
+     * learn-v9) may ask code a few closed, typed questions about the WHOLE example - `test`, `ranges`, `dependsOn`, `values`, `rows`
+     * (`checks.ts`) - and the browser answers them on every row (engine `learn/checks.ts`), masked like the samples. At most `maxRounds` rounds
+     * of at most `maxChecksPerRound` checks; after the last round the answer must be the rules. Rows an answer shows count toward
+     * `loop.maxRowsTotal` together with the samples and the loop's rows; past it an answer gives counts only.
+     */
+    checks: {
+      maxRounds: 3,
+      maxChecksPerRound: 4,
+      /** `test`: failing rows shown. */
+      maxFailingRows: 3,
+      /** `dependsOn`: conflicting pairs of rows shown. */
+      maxConflicts: 2,
+      /** `ranges`: past this many runs the answer is `clean: false` with the run count only. */
+      maxRuns: 12,
+      /** `values`: the most common values listed. */
+      maxValues: 10,
+      /** `rows`: the most rows one check may ask for (`limit`). */
+      maxRowsPerCheck: 5,
+      /** Helper columns (`let`) one check may define. */
+      maxLets: 3,
+      /** `dependsOn`: columns in `on`. */
+      maxOn: 2,
+      /**
+       * Characters of one formula of a check (`rule`, a `let`, `where`). DECISION: a quarter of `rules.maxFormulaChars` - a check tests one
+       * idea, and every round is sent again with each later step, under the payload byte cap.
+       */
+      maxFormulaChars: 1000,
+      /** Characters of a column reference (`column`, `by`, `on`): a header or an id. */
+      maxRefChars: 200,
+      /**
+       * The time one check may take in the browser's worker (or the eval). It is measured between the steps of the check (a check runs the
+       * engine once on every row and cannot be stopped inside that run), and a check past it answers `{ error }` instead.
+       */
+      timeBudgetMs: 5000,
+      /**
+       * Who gets learn-v9 in the app: `off` - nobody (learn-v7, as before); `admin` - the admin accounts only (`ADMIN_EMAILS` /
+       * `MICROSOFT_ADMIN_OIDS`); `all` - every AI learn. The API's `LEARN_CHECKS` env var overrides it (`off|admin|all`). The eval turns it
+       * on with `--prompt learn-v9`. DECISION (owner, 2026-10-05): off until the eval passes, then admin first.
+       */
+      mode: 'off',
     },
   },
   /**

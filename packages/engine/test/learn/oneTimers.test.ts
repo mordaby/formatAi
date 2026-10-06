@@ -332,12 +332,18 @@ describe('discount-hand-edited: the answers learn-v8 and learn-v8.1 wrote for it
 });
 
 describe('every kept rules file of the measurement (learn-v7 and learn-v8, both modes, the noE1 arm, the MVP runs)', () => {
-  it('asks no question on any of them: questions stay rare', async () => {
+  it('asks no one-row question on any of them, and one copied list: questions stay rare', async () => {
     const asked: string[] = [];
+    const lists: unknown[] = [];
     for (const k of KEPT) {
       const q = oneTimeQuestions(k.rules, await caseAnalysis(k.case));
-      if (q.questions.length > 0) asked.push(k.sources[0]!);
+      if (q.questions.some((x) => x.kind !== 'copiedList')) asked.push(k.sources[0]!);
+      for (const x of q.questions) if (x.kind === 'copiedList') lists.push([k.sources[0], x.header, x.keyColumn, x.entries, x.list.kind]);
     }
     expect(asked).toEqual([]);
+    // (owner amendment, 2026-10-06) learn-v8's SKU column written as a table of the example's 27 codes, each with its padding (100 ->
+    // 000100), keyed on the SKU - different on every row. Next month's file has the same SKUs, so it passes there too: code cannot tell a
+    // real list from a copy, and asks.
+    expect(lists).toEqual([['cmp-learn-v8-full/stock-count-warehouse-report.full', 'מקט', 'מקט', 27, 'lookup']]);
   }, 120_000);
 });

@@ -142,3 +142,58 @@ describe('fulfillment-external-column: the memorized warehouse list learn-v8 wro
     expect(result.verification?.verified).toBe(true);
   });
 });
+
+describe('a class written out ID by ID (owner amendment, 2026-10-06: gpt-5\'s escalation on the owner\'s file; synthetic IDs here)', () => {
+  // 48 people, Qty x Price; Class by that total (Small below 1,000, Medium below 5,000, else Big) - nothing in the input says the total.
+  const N = 48;
+  const qty = (i: number): number => 1 + ((i * 7) % 20);
+  const price = (i: number): number => 50 + ((i * 37) % 400);
+  const classOf = (i: number): string => (qty(i) * price(i) < 1000 ? 'Small' : qty(i) * price(i) < 5000 ? 'Medium' : 'Big');
+  const person = (i: number): string => `P-${100 + i}`;
+  const csv = (lines: string[]): { bytes: Uint8Array; name: string } => ({ bytes: new TextEncoder().encode(`${lines.join('\n')}\n`), name: 'f.csv' });
+  const rows = Array.from({ length: N }, (_, i) => i);
+  const input = csv(['Person,Qty,Price', ...rows.map((i) => `${person(i)},${qty(i)},${price(i)}`)]);
+  const output = csv(['Person,Class', ...rows.map((i) => `${person(i)},${classOf(i)}`)]);
+  const listOf = (c: string): string => rows.filter((i) => classOf(i) === c).map((i) => `person = "${person(i)}"`).join(', ');
+  const parsed = parseFormula(`switch(or(${listOf('Small')}), "Small", or(${listOf('Big')}), "Big", qty = 99, "Big", oneOf(qty, 97, 98), "Small", "Medium")`);
+  if (!parsed.ok) throw new Error(parsed.error.message);
+  const memorized: LearnResult = {
+    schemaVersion: 1,
+    input: {
+      sheet: { pick: 'first' },
+      headerRow: 'auto',
+      columns: [
+        { id: 'person', header: 'Person', type: 'text' },
+        { id: 'qty', header: 'Qty', type: 'integer' },
+        { id: 'price', header: 'Price', type: 'integer' },
+      ],
+    },
+    transform: { computed: [{ id: 'class', type: 'text', expr: parsed.expr }], valueMaps: [], sort: [] },
+    output: {
+      file: { type: 'csv', delimiter: ',', encoding: 'utf8', quote: 'minimal', header: true },
+      sheetName: 'f',
+      direction: 'ltr',
+      language: 'en',
+      titleRows: [],
+      columns: [{ header: 'Person', from: 'person' }, { header: 'Class', from: 'class' }],
+    },
+    validations: [],
+    unsupported: [],
+    assumptions: [],
+  };
+
+  it('is found on every row (its or-lists pick many rows as cases, one each as atoms): one repair, then "needs your input" - and the IDs are gone', async () => {
+    expect(rows.filter((i) => classOf(i) !== 'Medium').length).toBeGreaterThanOrEqual(12);
+    const ai = aiStep(memorized, [memorized]);
+    const result = await learnFromExamples({ input, output, masking: false, tier: 'paid', callLearn: ai.callLearn, callRepair: ai.callRepair });
+    expect(result.path).toBe('llm');
+    expect(ai.rounds[0]!.problems.filter((p) => p.kind === 'overfit')).toEqual([
+      { kind: 'overfit', out: 1, message: expect.stringContaining('Column "Class": this rule copies particular rows of the example (it is a list of 4 cases whose conditions name') },
+    ]);
+    expect(ai.rounds.slice(1).some((r) => r.problems.some((p) => p.kind === 'overfit'))).toBe(false);
+    expect(result.unsupported).toEqual([{ outputColumn: 'Class', reasonCode: 'overfit' }]);
+    expect(result.rules?.transform.computed).toEqual([]);
+    expect(JSON.stringify(result.rules)).not.toContain('P-1');
+    expect(result.verification?.verified).toBe(true);
+  });
+});

@@ -84,6 +84,9 @@ export function errorView(i18n: I18n, error: FlowError): ErrorView {
         // SPEC 11, 21 v5 item 2: the AI quota is used up - say for how long, and offer the upgrade (paid plans are set up by the team).
         case 'limitHit':
           if (error.limit === 'aiLearns') return { tone: 'block', text, todo: i18n.t('aiLimit.local'), action: 'upgrade' };
+          // The limits of one learn - every round of the learning loop (SPEC 9.3) or every step of AI code checks (SPEC 21 v14) it may make:
+          // only a signed-in user gets that far, so this is no reason to sign in. A new learn may go further.
+          if (error.limit === 'repairsPerLearn' || error.limit === 'stepsPerLearn') return { tone: 'block', text, action: 'tryAgain' };
           return { tone: 'info', text, action: 'signIn' };
         case 'anonBudgetExhausted':
         // The session ended (or the AI step was called signed out): the local result stays, sign in to finish.

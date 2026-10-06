@@ -84,7 +84,8 @@ const privacyEn: LegalDoc = {
           ul: [
             'the column names, and a profile of each column: its type, its shape, how many cells are empty, and its smallest and largest value;',
             'a sample of rows: up to {pairs} pairs of an input row and the output row made from it, and up to {dropped} rows the example left out. If the first answer does not match every row of your example, up to {rounds} more requests carry some of the rows it got wrong. In one learn, at most {rows} rows leave your computer in all;',
-            'what your computer has already worked out, for example which columns are copied or calculated.',
+            'what your computer has already worked out, for example which columns are copied or calculated;',
+            'if the AI asks to check an idea, your computer answers with counts and ranges from your example, and at most a few more rows, masked like the sample rows, within the same limit of {rows} rows.',
           ],
         },
         {
@@ -238,7 +239,8 @@ const privacyHe: LegalDoc = {
           ul: [
             'שמות העמודות ופרופיל של כל עמודה: הסוג, הצורה, כמה תאים ריקים, והערך הקטן והגדול ביותר;',
             'דוגמה של שורות: עד {pairs} זוגות של שורת קלט ושורת הפלט שנוצרה ממנה, ועד {dropped} שורות שהדוגמה השמיטה. אם התשובה הראשונה לא תואמת כל שורה בדוגמה שלכם, עד {rounds} בקשות נוספות נושאות חלק מהשורות שהיא טעתה בהן. בלמידה אחת יוצאות מהמחשב שלכם לכל היותר {rows} שורות בסך הכול;',
-            'מה שהמחשב שלכם כבר הבין, למשל אילו עמודות מועתקות או מחושבות.',
+            'מה שהמחשב שלכם כבר הבין, למשל אילו עמודות מועתקות או מחושבות;',
+            'אם ה-AI מבקש לבדוק רעיון, המחשב שלכם עונה בספירות ובטווחים מתוך הדוגמה שלכם, ולכל היותר בעוד כמה שורות, מוסתרות כמו שורות הדוגמה, בתוך אותה מגבלה של {rows} שורות.',
           ],
         },
         {

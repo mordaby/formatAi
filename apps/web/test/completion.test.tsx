@@ -207,6 +207,61 @@ describe('"Finish with AI" completes only what is missing', () => {
     await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
   });
 
+  it('AI code checks: while the AI checks an idea on the rows the panel says which round, the step goes under the learn\'s id, and the answer applies', async () => {
+    const step = vi.fn(async () => ({ rules: null, verified: true, problems: [], counted: true, failedAttempts: 0 }));
+    const api = fakeApi({ user: USER, learn: vi.fn(async () => ({ rules: null, checks: [{ check: 'values' as const, column: 'Total' }], verified: false, problems: [], learnId: 'L1', cached: false, counted: false, failedAttempts: 0 })), step });
+    const fake = fakeEngine();
+    let release!: () => void;
+    const round = { checks: [{ check: 'values', column: 'Total' }], answers: [{ rows: 30, distinct: 30, empty: 0, top: [] }] };
+    type Host = { callLearn(p: unknown): Promise<{ checks?: unknown[] }>; callStep(p: unknown, rounds: unknown[]): Promise<unknown> };
+    type Opts = { onProgress?: (p: unknown) => void };
+    fake.learn.mockImplementation((async (args: CompletionArgs, host: Host, opts: Opts) => {
+      if (!args.complete) return partialOutput();
+      const payload = { masking: false, output: { columns: [] }, samples: [], complete: { fixed: {}, columns: args.complete.columns, parts: args.complete.parts } };
+      const first = await host.callLearn(payload);
+      expect(first.checks).toEqual(round.checks); // (the checks answer reaches the engine as checks)
+      opts.onProgress?.({ phase: 'learning', attempt: 'learn', checkRound: { n: 1, of: 3 } });
+      await new Promise<void>((resolve) => (release = resolve));
+      await host.callStep(payload, [round]);
+      opts.onProgress?.({ phase: 'verifying' });
+      return completionOutput(args, { checks: { rounds: 1, asked: 1, rowsShown: 0, dropped: 0, errors: 0 } });
+    }) as never);
+    await start(fake.engine, api);
+    fireEvent.click(finishButton());
+    const line1 = await screen.findByTestId('completion-checks');
+    expect(line1.textContent).toBe('The AI is checking an idea on your rows (round 1 of 3).');
+    expect(line1.closest('[role="status"]')).toBeTruthy();
+    await act(async () => release());
+    await screen.findByTestId('completion-done');
+    expect(screen.queryByTestId('completion-checks')).toBeNull();
+    expect(step).toHaveBeenCalledTimes(1);
+    expect((step.mock.calls[0] as unknown[]).slice(0, 3)).toEqual(['L1', expect.objectContaining({ complete: expect.anything() }), [round]]);
+    await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    expect(await screen.findByText("Answers to the AI's checks, round 1 of 3", { exact: false })).toBeTruthy();
+  });
+
+  it('AI code checks: a step the API refuses keeps the rules as they were and says why, in the shared words', async () => {
+    const api = fakeApi({
+      user: USER,
+      learn: vi.fn(async () => ({ rules: null, checks: [{ check: 'values' as const, column: 'Total' }], verified: false, problems: [], learnId: 'L1', cached: false, counted: false, failedAttempts: 0 })),
+      step: vi.fn(async () => {
+        throw new ApiError('limitHit', 429, { limit: 'stepsPerLearn' });
+      }),
+    });
+    const { engine } = engineWith(async (args, host) => {
+      const payload = { masking: false, output: { columns: [] }, samples: [], complete: { fixed: {}, columns: args.complete!.columns, parts: args.complete!.parts } };
+      await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn(payload);
+      await (host as { callStep(p: unknown, r: unknown[]): Promise<unknown> }).callStep(payload, [{ checks: [{ check: 'values', column: 'Total' }], answers: [{ rows: 30, distinct: 30, empty: 0, top: [] }] }]);
+      return completionOutput(args);
+    });
+    await start(engine, api);
+    fireEvent.click(finishButton());
+    expect((await screen.findByTestId('completion-error')).textContent).toBe('The AI already checked every idea it may for this learn.');
+    expect(screen.getByText('Your rules were kept as they were')).toBeTruthy();
+    expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
+  });
+
   it('"See what we send" shows the completion payload: the rules to keep and what is missing (and only after a call was made)', async () => {
     const api = fakeApi({ user: USER });
     const { engine } = engineWith(async (args, host) => {

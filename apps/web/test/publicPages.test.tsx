@@ -69,6 +69,12 @@ describe.each([
       expect(text).toContain('Anthropic ו-OpenAI');
       expect(text).toContain('ערכים מדומים');
     }
+    // AI code checks (SPEC 21 v14): what answering the AI's checks sends, within the same row limit
+    expect(text).toContain(
+      lang === 'en'
+        ? `if the AI asks to check an idea, your computer answers with counts and ranges from your example, and at most a few more rows, masked like the sample rows, within the same limit of ${limits.learn.loop.maxRowsTotal} rows.`
+        : `אם ה-AI מבקש לבדוק רעיון, המחשב שלכם עונה בספירות ובטווחים מתוך הדוגמה שלכם, ולכל היותר בעוד כמה שורות, מוסתרות כמו שורות הדוגמה, בתוך אותה מגבלה של ${limits.learn.loop.maxRowsTotal} שורות.`,
+    );
     // the numbers come from config, and are filled in
     expect(text).toContain(`${limits.learn.loop.maxRowsTotal}`);
     expect(text).toContain(`${limits.cache.ttlDays}`);
