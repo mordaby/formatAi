@@ -1,6 +1,6 @@
 # Proposal: what a saved format may keep
 
-Status: **approved, being built** (2026-10-06). It writes down the model agreed in chat on 2026-10-06; the owner took every
+Status: **approved, built** (2026-10-06; SPEC 21 v15). It writes down the model agreed in chat on 2026-10-06; the owner took every
 recommendation of section 9 (the bold options). It generalizes the copied-list question built in #55 and builds on the identifier
 masking of #56.
 
