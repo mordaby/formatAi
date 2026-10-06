@@ -139,6 +139,13 @@ function findHeaderOutput(rows: Cell[][], colCount: number): number {
   for (let r = 0; r < limit; r++) {
     if (looksLikeHeaderRow(rows[r], colCount)) return r;
   }
+  // DECISION (found by the engine stress test, eval/STRESS.md): an output of ONE column has a header too - its first non-empty
+  // cell, when that is text. `looksLikeHeaderRow` asks for two cells, so a one-column example ("Customer No" over 50 numbers) was
+  // read with no header, its header a data row matching no input row. Output mode only: an input's header search is unchanged.
+  if (colCount === 1) {
+    const first = rows.findIndex((row) => !isRowEmpty(row));
+    if (first >= 0 && first < limit && cellType(cellAt(rows, first, 0)) === 'text') return first;
+  }
   return -1;
 }
 

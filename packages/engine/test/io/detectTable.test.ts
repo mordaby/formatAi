@@ -246,6 +246,16 @@ describe('detectTable - output mode', () => {
     expect(d.ok).toBe(false);
     expect(d.issues).toEqual([{ code: 'noHeaderRow', severity: 'reject' }]);
   });
+
+  // Found by the engine stress test (eval/STRESS.md): a one-column output's header was read as a data row.
+  it('one column: its first non-empty cell is the header when it is text', () => {
+    const d = detectTable(sheet([row(null), row('Customer No'), row(115592511), row(115442050)]), { mode: 'output' });
+    expect(d).toMatchObject({ ok: true, headerRow: 1, dataStart: 2, dataEnd: 3 });
+    expect(detectTable(sheet([row('Name'), row('Dana'), row('Noa')]), { mode: 'output' })).toMatchObject({ ok: true, headerRow: 0 });
+    // A number on top is no header; an input's header search is unchanged (it needs two cells).
+    expect(detectTable(sheet([row(7), row('Dana')]), { mode: 'output' }).ok).toBe(false);
+    expect(detectTable(sheet([row('Customer No'), row(1), row(2), row(3)])).ok).toBe(false);
+  });
 });
 
 describe('detectTable - headerRow override', () => {
