@@ -32,6 +32,12 @@ export const OPEN_FINDINGS: OpenFinding[] = [
     seeds: ['mixed:69'],
     matches: (f, r) => f.kind === 'holdoutSilent' && ['mixed:69'].includes(seedOf(r)),
   },
+  {
+    id: 'O4',
+    title: 'Time: 20,000 x 20 with an xlsx input: learn 7-14 s, convert 5-13 s with an xlsx output (reading a 20,000-row workbook is about 4 s: SheetJS, then the ExcelJS overlay)',
+    seeds: ['timing:4', 'timing:7', 'timing:8', 'timing:9'],
+    matches: (f, r) => f.kind === 'slow' && r.fileType === 'xlsx',
+  },
 ];
 
 /** The open finding a failure is, or undefined for a new failure. */
