@@ -357,6 +357,8 @@ function typedCopy(ctx: Ctx, analysis: PairAnalysis, i: number, out: number, out
   let expr: Expr | null = null;
   let computedType: ColumnType = 'text';
   if (want === 'number' && (type === 'idLike' || type === 'text')) {
+    // IDs stored as whole numbers are declared `integer` instead (`declareNumericIds`, which a computed column reading them would stop).
+    if (type === 'idLike' && inputHoldsWholeNumbers(analysis, i)) return null;
     // (`toNumber` gives a decimal; a whole number is written the same either way)
     expr = { op: 'toNumber', arg: { col: inputId } };
     computedType = 'decimal';
