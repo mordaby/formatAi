@@ -122,6 +122,8 @@ describe('POST /api/learn', () => {
       // SPEC 9.2 layer 6: a rule that copies rows of the example - the repair it asks for, and the columns code reported after it (none here)
       overfit: 0,
       overfitFallback: 0,
+      // docs/proposals/saved-format-contents.md section 4: the browser's one round for a list column (never raised by the server's checks)
+      list: 0,
     });
   });
 

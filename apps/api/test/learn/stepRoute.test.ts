@@ -205,3 +205,59 @@ describe('the learning loop of a learn-v9 learn', () => {
     expect(fake.calls[1]!.schema).toEqual(fake.calls[0]!.schema);
   });
 });
+
+// Logic first (docs/proposals/saved-format-contents.md section 4): the one round for a list (`list` problems) may be answered with checks
+// first under learn-v9; the browser sends the round again with its rounds of checks (`RepairRequest.rounds`), within the repair calls a learn has.
+describe('POST /api/learn/repair: the round for a list may ask checks (learn-v9)', () => {
+  const LIST = { kind: 'list', out: 1, message: 'Column "Total" is a list of 30 fixed values, one per ID. Find the rule behind it from the other columns. Only if no rule exists - the value depends on each ID itself, or comes from outside the file - keep the list.' };
+
+  it('checks back while another repair call is left; sent again with the rounds, the rules come (never cached)', async () => {
+    const { app: a, fake, store } = await start('all');
+    fake.enqueue(answersRules());
+    const { learnId, rules } = (await post(a, '/api/learn', { payload: basicPayload() })).json();
+    const cached = store.cacheEntries.size;
+    fake.enqueue(asksChecks);
+    const first = await post(a, '/api/learn/repair', { learnId, payload: basicPayload(), previousRules: rules, problems: [LIST] });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ rules: null, checks: [CHECK], verified: false, problems: [] });
+    fake.enqueue(answersRules());
+    const second = await post(a, '/api/learn/repair', { learnId, payload: basicPayload(), previousRules: rules, problems: [LIST], rounds: [ROUND(1)] });
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({ verified: true });
+    expect(second.json().checks).toBeUndefined();
+    expect(JSON.parse(fake.calls[2]!.content[2]!.text)).toMatchObject({ round: 1, checks: [CHECK] });
+    expect(store.cacheEntries.size).toBe(cached);
+  });
+
+  it('the learn\'s last repair call must answer with the rules: checks there go to its server repair', async () => {
+    const { app: a, fake } = await start('all');
+    fake.enqueue(answersRules());
+    const { learnId, rules } = (await post(a, '/api/learn', { payload: basicPayload() })).json();
+    for (let i = 1; i < limits.llm.browserRepairCalls; i++) {
+      fake.enqueue(answersRules());
+      expect((await post(a, '/api/learn/repair', { learnId, payload: basicPayload(), previousRules: rules, problems: [] })).statusCode).toBe(200);
+    }
+    fake.enqueue(asksChecks);
+    fake.enqueue(answersRules());
+    const last = await post(a, '/api/learn/repair', { learnId, payload: basicPayload(), previousRules: rules, problems: [LIST] });
+    expect(last.json().checks).toBeUndefined();
+    expect(last.json().verified).toBe(true);
+  });
+
+  it('rounds are refused on a round that is not about a list, and for a learn not sent learn-v9 (400 invalidRounds)', async () => {
+    const v9 = await start('all');
+    v9.fake.enqueue(answersRules());
+    const learned = (await post(v9.app, '/api/learn', { payload: basicPayload() })).json();
+    const notList = await post(v9.app, '/api/learn/repair', { learnId: learned.learnId, payload: basicPayload(), previousRules: learned.rules, problems: [], rounds: [ROUND(1)] });
+    expect(notList.statusCode).toBe(400);
+    expect(notList.json()).toEqual({ error: 'invalidRounds' });
+    const malformed = await post(v9.app, '/api/learn/repair', { learnId: learned.learnId, payload: basicPayload(), previousRules: learned.rules, problems: [LIST], rounds: [{ checks: 'x' }] });
+    expect(malformed.json()).toEqual({ error: 'invalidRounds' });
+    await app!.close();
+    const off = await start(undefined);
+    off.fake.enqueue({ json: correctRulesWireJson() });
+    const plain = (await post(off.app, '/api/learn', { payload: basicPayload() })).json();
+    const res = await post(off.app, '/api/learn/repair', { learnId: plain.learnId, payload: basicPayload(), previousRules: plain.rules, problems: [LIST], rounds: [ROUND(1)] });
+    expect(res.json()).toEqual({ error: 'invalidRounds' });
+  });
+});

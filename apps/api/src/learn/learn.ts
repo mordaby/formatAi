@@ -20,6 +20,7 @@ import {
   learnResultWireJsonSchema,
   learnStepWireJsonSchema,
   limits,
+  REPAIR_INSTRUCTION_V7,
   RULES_NOW_INSTRUCTION_V9,
   splitStepAnswer,
   toWire,
@@ -103,7 +104,7 @@ export interface LlmCallRecord {
 }
 
 /** Every `RepairProblem` kind, for `problemCounts` (SPEC 15: counts only, never text). */
-const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'fixedMismatch', 'diff', 'rowCount', 'layout', 'unsupportedDespiteEvidence', 'truncated', 'overfit'] as const;
+const REPAIR_PROBLEM_KINDS = ['formula', 'schema', 'reference', 'type', 'limit', 'formatMismatch', 'fixedMismatch', 'diff', 'rowCount', 'layout', 'unsupportedDespiteEvidence', 'truncated', 'overfit', 'list'] as const;
 
 /** Prompt audit X2: the problem of an answer cut off at the output-token limit (no payload text: SPEC 15). */
 const TRUNCATED_PROBLEM: RepairProblem = {
@@ -566,6 +567,12 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
 export interface RepairOptions extends LearnOptions {
   /** Every row of the example the browser sent so far, this round's included, masked like the samples (`RepairRequest.rows`). */
   rows?: readonly Sample[];
+  /**
+   * Logic first (docs/proposals/saved-format-contents.md section 4): a list's round - its problems carry a `list` problem - may be answered
+   * with AI code checks under learn-v9 while rounds are left (`rounds`, `RepairRequest.rounds`) and another call of the round can follow:
+   * `mayCheck` (the route: a repair call of the learn is left; the eval: the loop's caps). Ignored on any other round.
+   */
+  mayCheck?: boolean;
 }
 
 /**
@@ -596,11 +603,37 @@ export async function repairFromBrowser(
   const overfitRepaired = opts.overfitRepaired === true || problems.some((p) => p.kind === 'overfit');
   // (learn-v9: a round of the learning loop answers with the rules - its repair instruction says so; it carries no rounds of checks.)
   const ctx: CallContext = { completeFn, env, model, head: [block], payload, tier: opts.tier, prefixCache: new Set([model]), rows: opts.rows ?? [], prompt, calls: [], attempts: [], opts, overfitRepaired };
+  // Logic first (docs/proposals/saved-format-contents.md section 4): a list's round, learn-v9, may ask checks first ("a band on the total
+  // fits", "every key always gives one value") while rounds are left and another call of the round may follow. Its repair block then ends
+  // with learn-v7's fix-only instruction (no "answer with the rules": the system prompt says checks may come first), its rounds of checks follow
+  // it, and the round's last call is told to answer with the rules (the version's own instruction, or the rules-now block after rounds).
+  // DECISION: no new prompt text - learn-v7's instruction and learn-v9's blocks as they are.
+  const list = prompt.checks === true && problems.some((p) => p.kind === 'list');
+  const rounds = list ? (opts.rounds ?? []) : [];
+  const checksLeft = list && opts.mayCheck === true && rounds.length < limits.learn.checks.maxRounds;
+  const content = [
+    block,
+    repairContentBlock(previous, problems, checksLeft ? { ...prompt, repair: REPAIR_INSTRUCTION_V7 } : prompt),
+    ...rounds.map((round, i) => roundBlock(round, i + 1, i === rounds.length - 1)),
+    ...(rounds.length > 0 && !checksLeft ? [RULES_NOW_BLOCK] : []),
+  ];
 
-  const first = await callAndCheck(completeFn, env, 'repair', model, [block, repairContentBlock(previous, problems, prompt)], payload, opts.tier, ctx.prefixCache, prompt, ctx.rows, overfitMode(ctx));
+  const first = await callAndCheck(completeFn, env, 'repair', model, content, payload, opts.tier, ctx.prefixCache, prompt, ctx.rows, overfitMode(ctx), checksLeft);
   ctx.calls.push(first.record);
   ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);
+  if (first.attempt.checks) {
+    const dropped = first.attempt.droppedChecks ?? [];
+    return {
+      rules: null,
+      checks: first.attempt.checks,
+      ...(dropped.length > 0 ? { droppedChecks: dropped } : {}),
+      verified: false,
+      problems: [],
+      calls: ctx.calls,
+      ...(ctx.overfitRepaired ? { overfitRepaired: true } : {}),
+    };
+  }
 
   await serverRepairs(ctx, first.attempt);
   return outcomeOfAttempts(ctx);

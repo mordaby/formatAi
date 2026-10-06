@@ -68,8 +68,13 @@ export interface RegisterRegistryRoutesOptions {
   identify?: (req: FastifyRequest) => Identity;
 }
 
-/** How a rules file that failed `checkRulesFile` is answered. */
+/**
+ * How a rules file that failed `checkRulesFile` is answered. Over a cap of what one saved format may keep (docs/proposals/saved-format-contents.md
+ * section 7): 400 `rulesTooLarge`, on every route that stores rules - a new format, a source attached, a new version (the editor's save, the
+ * Run screen's "Do this every time?"), a version restored.
+ */
 function rulesRefusal(reply: FastifyReply, checked: Extract<RulesCheck, { ok: false }>): FastifyReply {
+  if (checked.tooLarge) return fail(reply, 400, { error: 'rulesTooLarge' });
   if (checked.onlyRuleLimit) return fail(reply, 403, { error: 'limitHit', limit: 'rulesPerFormat' });
   return fail(reply, 422, { error: 'invalidRules', problems: checked.problems });
 }

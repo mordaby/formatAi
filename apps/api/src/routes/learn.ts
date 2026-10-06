@@ -113,6 +113,7 @@ interface RepairRequestBody {
   learnId?: unknown;
   rows?: unknown;
   overfitRepaired?: unknown;
+  rounds?: unknown;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -532,6 +533,17 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const payload = parsedPayload.data as unknown as LearnPayload;
     const rows = parsedRows.data as Sample[];
     if (!loopRowsFit(payload, rows)) return fail(reply, 400, { error: 'invalidRows' });
+    // Logic first (docs/proposals/saved-format-contents.md section 4): a list's round answered with AI code checks (learn-v9) is sent again
+    // with its rounds of checks - only a round about a list, only for a learn sent learn-v9, and within the caps a step is held to (the
+    // round's rows included). Absent: the round's first call, as before.
+    let rounds: CheckRound[] = [];
+    if (body?.rounds !== undefined) {
+      const parsedRounds = CheckRoundsSchema.safeParse(body.rounds);
+      const listRound = body.problems.some((p) => p.kind === 'list');
+      if (!parsedRounds.success || !listRound || !checksFor(identity)) return fail(reply, 400, { error: 'invalidRounds' });
+      rounds = parsedRounds.data as CheckRound[];
+      if (!stepFits(withRows(payload, rows), rounds)) return fail(reply, 400, { error: 'invalidRounds' });
+    }
 
     const owner = ownerOf(identity);
     const now = protection.now();
@@ -574,6 +586,9 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
         prompt,
         rows,
         overfitRepaired: body.overfitRepaired === true,
+        // (a list's round may ask checks only while another repair call of this learn is left to answer them)
+        ...(rounds.length > 0 ? { rounds } : {}),
+        mayCheck: uses < limits.llm.browserRepairCalls,
       }),
       checked,
       owner,
@@ -583,8 +598,8 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     await recordCalls(learnCheck.uuid, identity, outcome.calls, now);
     // The repaired rules replace the owner's entry for this structure, so a later cache hit returns
-    // the better version rather than the one the browser had to repair.
-    await saveToCache(owner, learnCacheKey(payload), payload, outcome, now, prompt);
+    // the better version rather than the one the browser had to repair. (Not an answer made after rounds of checks: like a step's, never cached.)
+    if (rounds.length === 0) await saveToCache(owner, learnCacheKey(payload), payload, outcome, now, prompt);
 
     // A round whose answer passes the server checks makes the learn a success (a round never counts on its own, and however many rounds a
     // learn takes it counts once: `markSucceeded` is idempotent); one that does not changes nothing - the learn's failure was recorded when
@@ -595,6 +610,8 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const res: RepairResponse = {
       rules: outcome.rules,
       ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
+      // (a list's round, learn-v9: checks instead of rules - the browser answers them and sends the round again with `rounds`)
+      ...(outcome.checks ? { checks: outcome.checks, ...(outcome.droppedChecks ? { droppedChecks: outcome.droppedChecks } : {}) } : {}),
       verified: outcome.verified,
       problems: outcome.problems,
       ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
