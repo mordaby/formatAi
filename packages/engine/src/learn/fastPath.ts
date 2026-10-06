@@ -305,6 +305,48 @@ function outputHoldsNonText(analysis: PairAnalysis, out: number): boolean {
   return false;
 }
 
+/** The kind every non-empty cell of the example's output column `out` holds: numbers, text, or null for a mix (or dates, booleans). */
+function outputCellKind(analysis: PairAnalysis, out: number): 'number' | 'text' | null {
+  let kind: 'number' | 'text' | null = null;
+  for (const sheetRow of analysis.output.dataRows) {
+    const v = analysis.output.sheet.rows[sheetRow]?.[out];
+    if (!v || v.v === null || v.v === '') continue;
+    const k = typeof v.v === 'number' && v.isDate !== true ? 'number' : typeof v.v === 'string' ? 'text' : null;
+    if (k === null || (kind !== null && k !== kind)) return null;
+    kind = k;
+  }
+  return kind;
+}
+
+const NUMBER_COLUMN_TYPES: ReadonlySet<ColumnType> = new Set(['integer', 'decimal', 'currency', 'percent']);
+
+/**
+ * A copy in the kind of value the example shows. The `copy` relation takes a number and text that reads as the same number for one value
+ * (a csv export's "9455433" is the workbook's 9455433), but the rule writes its input column's DECLARED type: a column of long numbers or
+ * of same-length digit text is declared `idLike` (written as text), a number column as numbers. When every cell of the example's output
+ * (a workbook: a csv shows both the same) is the other kind, the copy converts - `toNumber` to numbers, `toText` to text - instead of
+ * writing what the example does not hold. Null: a plain copy writes the right kind.
+ */
+function typedCopy(ctx: Ctx, analysis: PairAnalysis, i: number, out: number, outHeader: string): string | null {
+  if (analysis.layout.file.type !== 'xlsx' || i >= analysis.input.columnCount) return null;
+  const inputId = ensureInputColumn(ctx, analysis, i);
+  const type = declaredType(ctx, i);
+  const want = outputCellKind(analysis, out);
+  let expr: Expr | null = null;
+  let computedType: ColumnType = 'text';
+  if (want === 'number' && (type === 'idLike' || type === 'text')) {
+    // (`toNumber` gives a decimal; a whole number is written the same either way)
+    expr = { op: 'toNumber', arg: { col: inputId } };
+    computedType = 'decimal';
+  } else if (want === 'text' && NUMBER_COLUMN_TYPES.has(type)) {
+    expr = { op: 'toText', arg: { col: inputId } };
+  }
+  if (expr === null) return null;
+  const id = newComputedId(ctx, outHeader);
+  ctx.computed.push({ id, type: computedType, expr });
+  return id;
+}
+
 /** A constant of a calculation that is only right after rounding must be this round (significant digits) to be taken as a rate. */
 const MAX_EXACT_CONST_DIGITS = 4;
 
@@ -411,7 +453,7 @@ export function columnFrom(ctx: Ctx, analysis: PairAnalysis, outHeader: string, 
   switch (rel.rel) {
     case 'copy': {
       use(rel.in[0]);
-      return plainRead(ctx, analysis, rel.in[0], outHeader);
+      return typedCopy(ctx, analysis, rel.in[0], rel.out, outHeader) ?? plainRead(ctx, analysis, rel.in[0], outHeader);
     }
     case 'normalize': {
       use(rel.in[0]);
