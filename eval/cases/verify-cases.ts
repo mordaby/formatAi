@@ -104,7 +104,7 @@ async function checkRowOrder(
   const sniff = outWb.fileType === 'csv' || outWb.fileType === 'txt' ? sniffDelimitedText(outputFile.bytes) : undefined;
   const analysis = analyzePair(inWb, outWb, sniff ? { outputSniff: sniff } : {});
   if (!analysis.ok) {
-    ok(`${label}: (the pair analysis stops: ${analysis.error.code}; no row order to check)`);
+    ok(`${label}: (the pair analysis stops: ${analysis.issues.map((i) => i.code).join(', ')}; no row order to check)`);
     return;
   }
   const v = verifyAgainstExample(rules, analysis);
