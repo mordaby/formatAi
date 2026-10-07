@@ -43,8 +43,8 @@ export interface ProtectionStore {
   transitionCounter(key: string, from: number, to: number, expiresAt?: Date): Promise<boolean>;
   /** What UTC day `day` (`yyyy-mm-dd`) has spent so far. */
   getSpend(day: string): Promise<DaySpend>;
-  /** Atomically adds a call's cost to the day's total (and to the anonymous total when `anonymous`). */
-  addSpend(day: string, usd: number, anonymous: boolean): Promise<void>;
+  /** Atomically adds a call's cost to the day's total. */
+  addSpend(day: string, usd: number): Promise<void>;
   /** The owner's saved rules for a structure hash, or null (also null once older than `notBefore`). */
   getCachedRules(owner: string, key: string, notBefore: Date): Promise<unknown | null>;
   /** Saves (or replaces) the owner's rules for a structure hash. */
@@ -90,15 +90,11 @@ export function createMongoStore(appDb: AppDb): ProtectionStore {
 
     async getSpend(day) {
       const doc = await appDb.budgets.findOne({ day });
-      return { spendUsd: doc?.spendUsd ?? 0, anonSpendUsd: doc?.anonSpendUsd ?? 0 };
+      return { spendUsd: doc?.spendUsd ?? 0 };
     },
 
-    async addSpend(day, usd, anonymous) {
-      await appDb.budgets.updateOne(
-        { day },
-        { $inc: { spendUsd: usd, anonSpendUsd: anonymous ? usd : 0 } },
-        { upsert: true },
-      );
+    async addSpend(day, usd) {
+      await appDb.budgets.updateOne({ day }, { $inc: { spendUsd: usd } }, { upsert: true });
     },
 
     async getCachedRules(owner, key, notBefore) {
@@ -218,13 +214,12 @@ export function createMemoryStore(now: () => Date = () => new Date()): MemorySto
     },
 
     async getSpend(day) {
-      return { ...(spend.get(day) ?? { spendUsd: 0, anonSpendUsd: 0 }) };
+      return { ...(spend.get(day) ?? { spendUsd: 0 }) };
     },
 
-    async addSpend(day, usd, anonymous) {
-      const s = spend.get(day) ?? { spendUsd: 0, anonSpendUsd: 0 };
+    async addSpend(day, usd) {
+      const s = spend.get(day) ?? { spendUsd: 0 };
       s.spendUsd += usd;
-      if (anonymous) s.anonSpendUsd += usd;
       spend.set(day, s);
     },
 

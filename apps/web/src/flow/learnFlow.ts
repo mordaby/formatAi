@@ -16,6 +16,7 @@
 import { limits, payloadBytes, stepBytes, withRows, type AiLearnQuotaState, type CheckRound, type Format, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type RepairResponse, type Sample, type Tier } from '@formatai/shared';
 import type { AnalysisStage, CompleteOptions, LearnCallResult, PreflightIssue } from '@formatai/engine';
 import type { Api } from '../api';
+import { learnRequest, repairRequest, stepRequest, type LearnRequestOptions, type RepairRequestOptions } from '../api/learnRequests';
 import { webConfig } from '../config';
 import type { EngineClient } from '../worker/engineClient';
 import type { CheckRoundInfo, LearnArgs, LearnHost, LearnOutput, LearnProgress, LoopRoundInfo, SentColumns } from '../worker/engineApi';
@@ -70,7 +71,15 @@ export interface AiInfo {
   exhausted?: boolean | undefined;
   /** The server returned saved rules for this exact structure without an LLM call (SPEC 9.5). */
   cached?: boolean | undefined;
+  /** The prompt version the answer was learned with, as the server says (API audit 2026-10-07): what a save stores, never a constant. */
+  promptVersion?: string | undefined;
 }
+
+/**
+ * What a flow tells the app about the AI step as soon as it knows (`LearnFlowDeps.onAi`): what is left of the AI formats, as the server just
+ * said (an answer, a round, a step, an outcome report), or a refusal (for the quota, or because the session is gone).
+ */
+export type AiEvent = { quota: AiLearnQuotaState } | { error: FlowError };
 
 export type LearnFlowState =
   | { status: 'idle'; sent: readonly SentRecord[] }
@@ -114,8 +123,8 @@ export interface StartParams {
   /** SPEC 7.2: on by default in the UI. */
   masking: boolean;
   /**
-   * SPEC 21 v5 item 1: 'notAllowed' (not signed in) never reaches the AI step: the learn ends with the local
-   * result (`path: 'partial'`) when the fast path can't finish it. Default: 'allowed'.
+   * SPEC 21 v5 item 1: 'notAllowed' never reaches the AI step: the learn ends with the local result (`path: 'partial'`) when the fast path
+   * can't finish it. Default: 'notAllowed' (owner decision: the AI step never runs unless the user chose it - the caller says 'allowed').
    */
   ai?: 'allowed' | 'notAllowed';
   /** SPEC 5 A2 attach mode: the format this source must produce. */
@@ -125,7 +134,8 @@ export interface StartParams {
   /**
    * Completion mode (LEARN_PROMPT "Completing a partial rules file"): the AI step only produces what is missing from the rules the user has
    * (`fixedRules`), which it must leave unchanged. `exampleId`: the example the screen's live check already uses, kept by the worker.
-   * The result carries `completion`; nothing is replaced here - the caller decides what to do with a result that passes (or fails) the lock.
+   * The result carries `completion`; nothing is replaced here - the caller decides what to do with a result that passes (or fails) the lock,
+   * and so the caller reports how it ended (`/outcome`), once it has decided: an answer it does not use is never reported as verified.
    */
   complete?: CompleteOptions & { exampleId?: string | undefined };
 }
@@ -137,15 +147,10 @@ export interface LearnFlowDeps {
   /** Read at the start of every learn, so a sign-in that happens while the screen is open does not replace the flow. Wins over `tier`. */
   getTier?: () => Tier;
   /**
-   * Resolves once it is known who is using the app (`/api/me` has answered). Awaited at the start of every learn, BEFORE `getTier` and
-   * `getAi` are read: a learn started while the answer is still on its way must not run as a visitor's (no AI step, the anonymous limits)
-   * when the person is signed in.
+   * Resolves once it is known who is using the app (`/api/me` has answered). Awaited at the start of every learn, BEFORE `getTier` is read:
+   * a learn started while the answer is still on its way must not run as a visitor's (the anonymous limits) when the person is signed in.
    */
   ready?: () => Promise<void>;
-  /** Whether the AI step is allowed, for a learn that did not say (`StartParams.ai`): read after `ready`. Default: allowed. */
-  getAi?: () => 'allowed' | 'notAllowed';
-  /** A fresh Cloudflare Turnstile token per learn call, when Turnstile is on (SPEC 9.5). */
-  getTurnstileToken?: () => Promise<string | undefined>;
   maxFileBytes?: number;
   /**
    * Called after a payload has been recorded in `state.sent` (so a UI can show it) and
@@ -154,6 +159,11 @@ export interface LearnFlowDeps {
    * spending LLM calls by accident.
    */
   beforeSend?: (record: SentRecord) => void | Promise<void>;
+  /**
+   * Every flow tells the app the same way (C10): the quota after each answer of the API and each outcome report, and a refusal the run ended
+   * with (the app shows the quota everywhere, and reads who is signed in again when the session is gone). See app/aiReport.ts.
+   */
+  onAi?: (event: AiEvent) => void;
 }
 
 const IDLE: LearnFlowState = { status: 'idle', sent: [] };
@@ -197,16 +207,12 @@ export class LearnFlow {
     if (this.lastParams) void this.run(this.lastParams, true);
   }
 
-  /** Stop whatever is running (the worker is restarted) and go back to idle. */
+  /** Stop whatever is running and go back to idle (the worker is told to drop the call; it is not restarted, so what it holds for other screens stays). */
   cancel(): void {
     this.runId++;
     this.abort?.abort();
     this.abort = null;
     this.set(IDLE);
-  }
-
-  reset(): void {
-    this.cancel();
   }
 
   // ---------- the run ----------
@@ -246,13 +252,11 @@ export class LearnFlow {
       }
     }
 
-    const token = (): Promise<string | undefined> => this.deps.getTurnstileToken?.() ?? Promise.resolve(undefined);
-
     // Who is using the app has to be known before the tier and the AI step are decided (see `LearnFlowDeps.ready`).
     try {
       await this.deps.ready?.();
     } catch {
-      // Not knowing is the same as nobody signed in: the learn goes on with what `getTier`/`getAi` say.
+      // Not knowing is the same as nobody signed in: the learn goes on with what `getTier` says.
     }
     if (stale()) return;
 
@@ -260,10 +264,11 @@ export class LearnFlow {
       callLearn: async (payload, columns) => {
         try {
           await record({ kind: 'learn', payload, ...(columns ? { columns } : {}) });
-          const res = await this.deps.api.learn(payload, { turnstileToken: await token(), signal: abort.signal });
+          const res = await this.deps.api.learn(payload, { signal: abort.signal });
           learnId = res.learnId;
           lastProblems = res.problems;
-          ai = { learnId: res.learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, cached: res.cached };
+          ai = { learnId: res.learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, cached: res.cached, promptVersion: res.promptVersion };
+          if (res.quota && !stale()) this.deps.onAi?.({ quota: res.quota });
           return asCallResult(res);
         } catch (e) {
           hostError = e;
@@ -283,36 +288,27 @@ export class LearnFlow {
         // AI step must answer with the rules (learn-v9's "answer with the rules now"), never ask checks the loop has no way to answer.
         if (fresh) rowsBeforeLearnId = round.rows.length;
         const rows = fresh ? [] : round.rows.slice(rowsBeforeLearnId);
+        // What the repair carries besides the payload, the rules and the problems - recorded and sent as one (`sentBody` builds the same body).
+        // (the round for a list, learn-v9: sent again with its rounds of checks answered - `LoopRound.checks`)
+        const opts: RepairRequestOptions = { rows, overfitRepaired: round.overfitRepaired, rounds: round.checks };
         try {
           const n = { n: round.round, of: round.maxRounds };
-          await record(
-            fresh
-              ? { kind: 'repair', fresh: true, payload, round: n }
-              : {
-                  kind: 'repair',
-                  payload,
-                  previousRules,
-                  problems,
-                  round: n,
-                  ...(rows.length > 0 ? { rows } : {}),
-                  ...(round.overfitRepaired ? { overfitRepaired: true } : {}),
-                  ...(round.checks && round.checks.length > 0 ? { rounds: round.checks } : {}),
-                },
-          );
-          // (the round for a list, learn-v9: sent again with its rounds of checks answered - `LoopRound.checks`)
+          await record(fresh ? { kind: 'repair', fresh: true, payload, round: n } : { kind: 'repair', payload, previousRules, problems, round: n, ...recordedRepair(opts) });
           const res = fresh
-            ? await this.deps.api.learn(payload, { turnstileToken: await token(), noCache: true, rulesNow: true, signal: abort.signal })
-            : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, rows, overfitRepaired: round.overfitRepaired, rounds: round.checks });
+            ? await this.deps.api.learn(payload, { ...FRESH_LEARN, signal: abort.signal })
+            : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, ...opts });
           lastProblems = res.problems;
           // (the next round repairs the fresh learn, under its own learnId)
           if (fresh) learnId = (res as LearnResponse).learnId;
           ai = {
             ...ai,
             ...(fresh ? { learnId: (res as LearnResponse).learnId } : {}),
+            ...(res.promptVersion ? { promptVersion: res.promptVersion } : {}),
             counted: res.counted,
             failedAttempts: res.failedAttempts,
             quota: res.quota ?? ai?.quota,
           };
+          if (res.quota && !stale()) this.deps.onAi?.({ quota: res.quota });
           return asCallResult(res);
         } catch (e) {
           hostError = e;
@@ -328,7 +324,8 @@ export class LearnFlow {
           await record({ kind: 'step', payload, rounds, round: { n: rounds.length, of: limits.learn.checks.maxRounds } });
           const res = await this.deps.api.step(learnId, payload, rounds, { signal: abort.signal });
           lastProblems = res.problems;
-          ai = { ...ai, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota ?? ai?.quota };
+          ai = { ...ai, ...(res.promptVersion ? { promptVersion: res.promptVersion } : {}), counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota ?? ai?.quota };
+          if (res.quota && !stale()) this.deps.onAi?.({ quota: res.quota });
           return asCallResult(res);
         } catch (e) {
           hostError = e;
@@ -338,7 +335,7 @@ export class LearnFlow {
     };
 
     try {
-      const args = await readArgs(params, this.deps.getTier?.() ?? this.deps.tier, tryAnyway, params.ai ?? this.deps.getAi?.());
+      const args = await readArgs(params, this.deps.getTier?.() ?? this.deps.tier, tryAnyway, params.ai ?? 'notAllowed');
       if (stale()) return; // cancelled or superseded while the files were being read
       const result = await this.deps.engine.learn(args, host, {
         signal: abort.signal,
@@ -361,18 +358,17 @@ export class LearnFlow {
         this.set({ status: 'error', error: { kind: 'learnFailed', problems: lastProblems }, sent });
       } else {
         this.set({ status: 'done', result, sent, ...(ai ? { ai } : {}), ...(tryAnyway ? { tryAnyway: true } : {}) });
-        // SPEC 21 v5 item 3: the browser reports its own full verification, and the answer says what counted.
-        if (result.path === 'llm' && ai?.learnId && result.verification) {
-          // A completion answer counts as good only when it kept every fixed element, matches the example (leaving out columns that have no rule)
-          // and produced something of what was asked.
-          const c = result.completion;
-          const good = c ? c.fixedProblems.length === 0 && c.matches && c.produced.columns + c.produced.parts > 0 : result.verification.verified;
-          void this.reportOutcome(runId, ai.learnId, good ? 'verified' : 'failed');
+        // SPEC 21 v5 item 3: the browser reports its own full verification, and the answer says what counted. (Not a completion: whether its
+        // answer is used is the caller's decision - the lock, the match, and the user's edits made meanwhile - so the caller reports it.)
+        if (result.path === 'llm' && ai?.learnId && result.verification && !params.complete) {
+          void this.reportOutcome(runId, ai.learnId, result.verification.verified ? 'verified' : 'failed');
         }
       }
     } catch (e) {
       if (stale() || isCancellation(e)) return;
-      this.set({ status: 'error', error: toFlowError(e, hostError), sent });
+      const error = toFlowError(e, hostError);
+      this.set({ status: 'error', error, sent });
+      if (error.kind === 'api') this.deps.onAi?.({ error });
     } finally {
       if (this.abort === abort) this.abort = null;
     }
@@ -382,6 +378,7 @@ export class LearnFlow {
   private async reportOutcome(runId: number, learnId: string, outcome: 'verified' | 'failed'): Promise<void> {
     try {
       const res = await this.deps.api.registry.learnOutcome(learnId, outcome);
+      if (runId === this.runId) this.deps.onAi?.({ quota: res.quota });
       const s = this.state;
       if (runId !== this.runId || s.status !== 'done') return;
       this.set({ ...s, ai: { ...s.ai, learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, exhausted: res.exhausted } });
@@ -396,26 +393,36 @@ export class LearnFlow {
   }
 }
 
+/** The fresh learn that stands in for a round of the learning loop: uncached, and it must answer with the rules (learn-v9). */
+const FRESH_LEARN: LearnRequestOptions = { noCache: true, rulesNow: true };
+
+/** What a repair's record keeps of its options (only what is there): exactly what `sentBody` gives back to the request builder. */
+function recordedRepair(opts: RepairRequestOptions): Pick<SentRecord, 'rows' | 'overfitRepaired' | 'rounds'> {
+  return {
+    ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}),
+    ...(opts.overfitRepaired ? { overfitRepaired: true } : {}),
+    ...(opts.rounds && opts.rounds.length > 0 ? { rounds: opts.rounds } : {}),
+  };
+}
+
 /**
- * The JSON body of the request a record stands for, exactly as `Api` sends it ("See what we send" shows it) - apart from the learn's id (a
- * repair's `learnId`, a step's `token`) and the Turnstile token, which carry nothing from the files. A fresh learn in a loop round is a learn:
- * the payload, `noCache` and `rulesNow`, nothing else.
+ * The JSON body of the request a record stands for, exactly as `Api` sends it ("See what we send" shows it): built by the same request builders
+ * the API client uses (api/learnRequests.ts), so the two cannot drift - apart from the learn's id (a repair's `learnId`, a step's `token`) and
+ * the Turnstile token, which carry nothing from the files. A fresh learn in a loop round is a learn: the payload, `noCache` and `rulesNow`.
  */
 export function sentBody(rec: SentRecord): object {
   switch (rec.kind) {
     case 'learn':
-      return { payload: rec.payload };
-    case 'step':
-      return { payload: rec.payload, rounds: rec.rounds ?? [] };
-    case 'repair':
-      if (rec.fresh) return { payload: rec.payload, noCache: true, rulesNow: true };
-      return {
-        payload: rec.payload,
-        previousRules: rec.previousRules,
-        problems: rec.problems,
-        ...(rec.rows && rec.rows.length > 0 ? { rows: rec.rows } : {}),
-        ...(rec.overfitRepaired ? { overfitRepaired: true } : {}),
-      };
+      return learnRequest(rec.payload);
+    case 'step': {
+      const { token: _token, ...body } = stepRequest('', rec.payload, rec.rounds ?? []);
+      return body;
+    }
+    case 'repair': {
+      if (rec.fresh) return learnRequest(rec.payload, FRESH_LEARN);
+      const { learnId: _learnId, ...body } = repairRequest('', rec.payload, rec.previousRules!, rec.problems ?? [], { rows: rec.rows, overfitRepaired: rec.overfitRepaired, rounds: rec.rounds });
+      return body;
+    }
   }
 }
 
@@ -456,7 +463,7 @@ function stateForProgress(p: LearnProgress, sent: readonly SentRecord[]): LearnF
   }
 }
 
-async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai: 'allowed' | 'notAllowed' | undefined): Promise<LearnArgs> {
+async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai: 'allowed' | 'notAllowed'): Promise<LearnArgs> {
   const [input, output] = await Promise.all([params.input.arrayBuffer(), params.output.arrayBuffer()]);
   return {
     input: { name: params.input.name, bytes: input },
@@ -464,7 +471,7 @@ async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai:
     masking: params.masking,
     tier,
     ...(tryAnyway ? { tryAnyway: true } : {}),
-    ...(ai ? { ai } : {}),
+    ai,
     ...(params.target ? { target: params.target } : {}),
     ...(params.complete ? { complete: { fixedRules: params.complete.fixedRules, columns: params.complete.columns, parts: params.complete.parts }, ...(params.complete.exampleId ? { keepExampleId: params.complete.exampleId } : {}) } : {}),
   };

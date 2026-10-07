@@ -3,8 +3,9 @@ import { stripAiNotes, type AiStepPartCode, type LearnResult, type Rules, type T
 import { useLearnFlow, type UseLearnFlow } from '../flow/useLearnFlow';
 import { peekResultSession, seedResultSession } from '../pages/Result/session';
 import { webConfig } from '../config';
+import { useOnAi } from './aiReport';
 import { useMe } from './Me';
-import { fileOf, getPendingStore, storeFile, type PendingLearn, type PendingResult } from './pendingLearn';
+import { fileOf, getPendingStore, keepPendingWithinTheHour, storeFile, type PendingLearn, type PendingResult } from './pendingLearn';
 import { useSignIn } from './SignIn';
 
 /**
@@ -66,11 +67,10 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const signIn = useSignIn();
   const meRef = useRef(me);
   meRef.current = me;
-  // Read at the start of every learn, so a sign-in never replaces the flow (and with it a result on screen).
+  // Read at the start of every learn, so a sign-in never replaces the flow (and with it a result on screen). (The AI step never runs by
+  // itself, whoever is signed in: a learn is the free engine unless it says otherwise - `StartParams.ai` - and the AI step is the user's
+  // choice on the Result screen: "Finish with AI", or Home's "Learn with AI", which that screen acts on once the free result is in.)
   const getTier = useCallback((): Tier => meRef.current.tier, []);
-  // The AI step never runs by itself, whoever is signed in: a learn is the free engine, and the AI step is the user's choice on the
-  // Result screen ("Finish with AI", or Home's "Learn with AI", which that screen acts on once the free result is in).
-  const getAi = useCallback((): 'allowed' | 'notAllowed' => 'notAllowed', []);
   // ... and a learn started before that answer is waiting for it (it would otherwise run as a visitor's - tier, limits and all).
   const meAnswered = useRef<{ promise: Promise<void>; resolve(): void } | null>(null);
   if (meAnswered.current === null) {
@@ -89,8 +89,10 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   );
   // No anti-bot widget here: the free learn never reaches the AI step (the one thing Turnstile guarded), so it asks for no token.
   // (The Turnstile code stays: the lead form will use it.)
-  const flow = useLearnFlow({ getTier, ready: whenMeKnown, getAi });
-  const completion = useLearnFlow({ getTier, ready: whenMeKnown });
+  // What either flow learns about the AI step - what is left, a refusal - is told the app the one way (app/aiReport.ts).
+  const onAi = useOnAi();
+  const flow = useLearnFlow({ getTier, ready: whenMeKnown, onAi });
+  const completion = useLearnFlow({ getTier, ready: whenMeKnown, onAi });
   const [input, setInput] = useState<File | null>(null);
   const [output, setOutput] = useState<File | null>(null);
   const [masking, setMasking] = useState(true);
@@ -100,16 +102,18 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const latest = useRef({ input, output, masking, state: flow.state });
   latest.current = { input, output, masking, state: flow.state };
 
-  const { start, reset } = flow;
-  const { start: startCompletion, reset: resetCompletion } = completion;
+  const { start, cancel: reset } = flow;
+  const { start: startCompletion, cancel: resetCompletion } = completion;
   const begin = useCallback(
     (opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean }) => {
       if (!input || !output) return;
       if (opts?.deep !== undefined) setDeepAnalysis(opts.deep);
-      // (no `ai` given: the free engine only, see `getAi`)
+      // A new learn replaces the result: a "Finish with AI" still at work on the old one has nothing left to finish.
+      resetCompletion();
+      // (no `ai` given: the free engine only)
       void start({ input, output, masking, ...(opts?.ai ? { ai: opts.ai } : {}) });
     },
-    [input, output, masking, start],
+    [input, output, masking, start, resetCompletion],
   );
   const finishWithAi = useCallback(() => begin({ ai: 'allowed' }), [begin]);
   const completeWithAi = useCallback(
@@ -138,6 +142,16 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   }, [reset, resetCompletion]);
 
   // ---- keeping what has been learned across the trip to the provider (SPEC 5 E) ----
+  // ... for an hour at most, as the privacy page says: dropped on its hour while a tab is open, and at once on a page load past it.
+  const withinTheHour = useRef<ReturnType<typeof keepPendingWithinTheHour> | null>(null);
+  useEffect(() => {
+    const hour = keepPendingWithinTheHour();
+    withinTheHour.current = hour;
+    return () => {
+      hour.stop();
+      withinTheHour.current = null;
+    };
+  }, []);
   useEffect(() => {
     signIn.setBeforeRedirect(async ({ reason }) => {
       const { input: i, output: o, masking: m, state } = latest.current;
@@ -165,6 +179,8 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
         result,
       };
       await getPendingStore().save(record);
+      // (a sign-in that does not leave after all - a blocked redirect - must not keep it past its hour either)
+      withinTheHour.current?.check();
     });
     return () => signIn.setBeforeRedirect(null);
   }, [signIn]);
@@ -248,21 +264,6 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       ranOnce.current = true;
     }
   }, [restoring, status, doneResult, restored]);
-
-  // The API says the session is gone (a stale "signed in"): read who is signed in again, so "Sign in" works.
-  const flowError = flow.state.status === 'error' ? flow.state.error : undefined;
-  const sessionGone = flowError?.kind === 'api' && (flowError.code === 'signInForAi' || flowError.code === 'signInRequired');
-  const { refresh } = me;
-  useEffect(() => {
-    if (sessionGone) void refresh();
-  }, [sessionGone, refresh]);
-
-  // What is left of the AI learns, as the learn reported it.
-  const quota = flow.state.status === 'done' ? flow.state.ai?.quota : undefined;
-  const { setQuota } = me;
-  useEffect(() => {
-    if (quota) setQuota(quota);
-  }, [quota, setQuota]);
 
   const value = useMemo<LearnSession>(
     () => ({ flow, completion, input, output, masking, deepAnalysis, setInput, setOutput, setMasking, begin, finishWithAi, completeWithAi, startOver, restoring }),

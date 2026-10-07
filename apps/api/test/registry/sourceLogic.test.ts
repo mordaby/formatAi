@@ -1,7 +1,7 @@
 // The pure half of sources (no database): merging a saved conversion into an existing source, writing a source's structure into
 // a conversion, and choosing the source a file belongs to (SPEC 8.15).
 import { checkSourceLock, sourceOf } from '@formatai/engine';
-import type { LearnResult, Rules, SourceStructure } from '@formatai/shared';
+import { limits, type LearnResult, type Rules, type SourceStructure } from '@formatai/shared';
 import { ObjectId } from 'mongodb';
 import { describe, expect, it } from 'vitest';
 import type { SourceDoc } from '../../src/models.js';
@@ -292,6 +292,26 @@ describe('readAs (SPEC 8.4a): what a column reads another way belongs to the sou
     const clash = mergeForReuse(source, withMap({ 'N/A': '0' }));
     expect(clash.ok).toBe(false);
     if (!clash.ok) expect(clash.problems.map((p) => p.path)).toEqual(['input.columns[1].readAs']);
+  });
+
+  it('API audit: mergeForReuse holds the union to the cap one column may read another way (each side within it, together past it)', () => {
+    const texts = (from: number, n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`t${from + i}`, String(from + i)]));
+    const max = limits.rules.maxReadAsPerColumn;
+    const source = sourceOf(withMap(texts(0, 60)));
+    const over = mergeForReuse(source, withMap(texts(60, max - 59)));
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.problems).toEqual([expect.objectContaining({ kind: 'sourceMismatch', path: 'input.columns[1].readAs' })]);
+    expect(mergeForReuse(source, withMap(texts(60, max - 60))).ok).toBe(true);
+  });
+
+  it('API audit: applySource with a tier says when the rebuilt rules are over a cap of a save (never written)', () => {
+    const texts = Object.fromEntries(Array.from({ length: limits.rules.maxReadAsPerColumn + 1 }, (_, i) => [`t${i}`, String(i)]));
+    const big = { ...sourceOf(one()) };
+    big.inputSignature = { columns: big.inputSignature.columns.map((c, i) => (i === 1 ? { ...c, readAs: texts } : c)) };
+    expect(applySource(one(), big).overCap).toBeNull(); // no tier: not checked
+    const over = applySource(one(), big, new Map(), 'paid').overCap;
+    expect(over).toMatchObject({ ok: false, onlyRuleLimit: false, problems: [expect.objectContaining({ kind: 'limit' })] });
+    expect(applySource(one(), sourceOf(withMap({ 'N/A': '' })), new Map(), 'paid').overCap).toBeNull();
   });
 
   it('mergeFromEdit: the editing conversion’s readAs IS the source’s afterwards (set, changed or taken away)', () => {

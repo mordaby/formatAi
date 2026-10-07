@@ -255,10 +255,6 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
     en: "You've reached a limit. Sign in or come back later to keep going.",
     he: 'הגעתם למגבלה. התחברו או חזרו מאוחר יותר כדי להמשיך.',
   },
-  anonBudgetExhausted: {
-    en: 'Sign in to keep going.',
-    he: 'התחברו כדי להמשיך.',
-  },
   budgetExhausted: {
     en: "We've reached our limit for today. Please try again tomorrow.",
     he: 'הגענו למגבלה להיום. אנא נסו שוב מחר.',
@@ -369,6 +365,11 @@ export const limitMessages: Record<LimitCode, Localized> = {
   aiLearns: {
     en: "You've used all your AI learns for now.",
     he: 'ניצלתם את כל למידות ה-AI שלכם לעכשיו.',
+  },
+  // API audit C1: the day's cap on requests to the AI (whatever they ended in), not the plan's AI learns.
+  aiRequestsPerDay: {
+    en: "You've reached today's limit of requests to the AI. It resets tomorrow; everything that works without the AI keeps working.",
+    he: 'הגעתם למכסה היומית של בקשות ל-AI. היא תתחדש מחר; כל מה שעובד בלי AI ממשיך לעבוד.',
   },
   savedFormats: {
     en: "You've saved as many formats as your plan allows. Delete one to make room.",

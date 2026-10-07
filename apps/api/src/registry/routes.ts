@@ -15,7 +15,6 @@
 //   GET    /api/conversions/:id/versions            history (newest first)
 //   POST   /api/conversions/:id/restore/:version    restore an earlier version as a new one
 //   POST   /api/conversions/:id/runs                count a run (counts only)
-//   POST   /api/conversions/:id/aliases             save a confirmed column mapping as an alias (forwarded to its source)
 //   GET    /api/signatures                          every source's input signature with the formats it feeds (matching runs in the browser)
 //   ...and the source routes of `sourceRoutes.ts`.
 import { checkFormatLock, checkSourceLock, deepEqual } from '@formatai/engine';
@@ -40,8 +39,9 @@ import type { Identity } from '../protection/identity.js';
 import type { Protection } from '../protection/index.js';
 import { newFormatsKey } from '../protection/keys.js';
 import { reserveLearn } from '../protection/reserve.js';
-import { isRecord, nameKey, parseAlias, parseName, parseRun, parseSaveFields, parseSourceChoice, parseUpdateFields } from './bodies.js';
-import { createRegistryContext, fail, type Caller } from './context.js';
+import { isRecord } from '../http.js';
+import { nameKey, parseName, parseRun, parseSaveFields, parseSourceChoice, parseUpdateFields } from './bodies.js';
+import { createRegistryContext, fail, rulesRefusal, type Caller } from './context.js';
 import { conversionWrite, saveVersion, versionCap } from './conversionStore.js';
 import {
   aggregateSources,
@@ -57,8 +57,8 @@ import { applyFormat, headerRenames } from './propagate.js';
 import { checkRulesFile, formatFields, lockProblems, plain, signatureOf, withMeta, type RulesCheck } from './rules.js';
 import { commitSource, planName, planSource, settleSource } from './sourceResolve.js';
 import { applySource, inputChecksEdited, mergeFromEdit, structureOfDoc, withReadAsOf, withSourceAliases } from './sourceLogic.js';
-import { addSourceAlias, formatNamesOf, registerSourceRoutes } from './sourceRoutes.js';
-import { countSourceFormats, isDuplicateKey, propagateSource, renameSource, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
+import { formatNamesOf, registerSourceRoutes } from './sourceRoutes.js';
+import { countSourceFormats, isDuplicateKey, propagateSource, renameSource, sourceEditOverCap, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
 
 export interface RegisterRegistryRoutesOptions {
   /** Null when no database is configured: every route then answers 503 `unavailable`. */
@@ -66,17 +66,6 @@ export interface RegisterRegistryRoutesOptions {
   protection: Protection;
   /** Tests: who is calling (default: `identityOf`). */
   identify?: (req: FastifyRequest) => Identity;
-}
-
-/**
- * How a rules file that failed `checkRulesFile` is answered. Over a cap of what one saved format may keep (docs/proposals/saved-format-contents.md
- * section 7): 400 `rulesTooLarge`, on every route that stores rules - a new format, a source attached, a new version (the editor's save, the
- * Run screen's "Do this every time?"), a version restored.
- */
-function rulesRefusal(reply: FastifyReply, checked: Extract<RulesCheck, { ok: false }>): FastifyReply {
-  if (checked.tooLarge) return fail(reply, 400, { error: 'rulesTooLarge' });
-  if (checked.onlyRuleLimit) return fail(reply, 403, { error: 'limitHit', limit: 'rulesPerFormat' });
-  return fail(reply, 422, { error: 'invalidRules', problems: checked.problems });
 }
 
 /** Gives a conversion back as it was before `next` was written, so it never disagrees with a format or source that didn't take the change. */
@@ -224,15 +213,27 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       updatedAt: now,
     };
 
-    try {
-      await d.formats.insertOne(formatDoc);
-      await d.conversions.insertOne(conversionDoc);
-    } catch (err) {
-      // No half-saved format, and the month's count is given back: nothing was created.
+    // No half-saved format, and the month's count is given back: nothing was created.
+    const undo = async (): Promise<void> => {
       await d.formats.deleteOne({ _id: formatId }).catch(() => undefined);
       if (source.created) await d.sources.deleteOne({ _id: source.id, ownerId: caller.ownerId }).catch(() => undefined);
       await refund();
+    };
+    let overLimit = false;
+    try {
+      await d.formats.insertOne(formatDoc);
+      // API audit (2026-10-07): the saved-formats check above is a read, then a write - two saves at once could both pass it. The formats
+      // are counted again with this one in: over the plan's number, this save is taken back. DECISION: of two saves that raced for the last
+      // slot both may be taken back (the user saves again) - never one format too many.
+      overLimit = typeof tier.savedFormats === 'number' && (await d.formats.countDocuments({ ownerId: caller.ownerId })) > tier.savedFormats;
+      if (!overLimit) await d.conversions.insertOne(conversionDoc);
+    } catch (err) {
+      await undo();
       throw err;
+    }
+    if (overLimit) {
+      await undo();
+      return fail(reply, 403, { error: 'limitHit', limit: 'savedFormats' });
     }
     await settleSource(d, caller.ownerId, source.id, planned.plan, now, choice.inputHeaders);
 
@@ -497,14 +498,34 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     // (The lock lets a flag check differ from the source's, so an edit of the conversion's own input checks counts as one too.)
     if (checkSourceLock(rules, structure).length > 0 || inputChecksEdited(rules, before)) {
       const merge = mergeFromEdit(structure, rules, before);
-      const applied = applySource(rules, merge.structure);
+      const applied = applySource(rules, merge.structure, new Map(), caller.tier);
       if (applied.needsReview) return fail(reply, 422, { error: 'sourceMismatch', problems: applied.problems });
+      if (applied.overCap) return rulesRefusal(reply, applied.overCap);
       rules = applied.rules;
       if (!deepEqual(merge.structure, structure)) sourceEdit = merge;
     }
 
     // SPEC 8.12: an edit that changes the output side changes the FORMAT, for all its sources.
     const formatChanged = checkFormatLock(rules, formatOfDoc(format)).length > 0;
+
+    // API audit (2026-10-07): the other conversions take the change too - each is held to the caps of a save BEFORE anything is written, and
+    // an edit any of them would take past a cap is refused as that save would be (`rulesRefusal`). (Format siblings: below, the same rebuild.)
+    const newFormat = formatChanged ? formatOfDoc(formatFields(rules)) : null;
+    const renames = formatChanged ? headerRenames(before, rules) : new Map<string, string>();
+    const siblings = newFormat
+      ? await d.conversions.find({ ownerId: caller.ownerId, formatId: format._id!, _id: { $ne: conv._id! } }).toArray()
+      : [];
+    if (newFormat) {
+      for (const sibling of siblings) {
+        const parsed = RulesSchema.safeParse(sibling.rules);
+        const over = parsed.success ? applyFormat(parsed.data as unknown as Rules, newFormat, renames, caller.tier).overCap : null;
+        if (over) return rulesRefusal(reply, over);
+      }
+    }
+    if (sourceEdit) {
+      const over = await sourceEditOverCap(d, caller.ownerId, source._id!, sourceEdit.structure, sourceEdit.renames, caller.tier, conv._id!);
+      if (over) return rulesRefusal(reply, over);
+    }
 
     const refused = await rename();
     if (refused) return refused;
@@ -582,12 +603,8 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
         return fail(reply, 409, { error: 'versionConflict' });
       }
 
-      // Every other source of the format takes the new output side (SPEC 8.12 "Editing a format").
-      const newFormat = formatOfDoc(changed);
-      const renames = headerRenames(before, rules);
-      const siblings = await d.conversions
-        .find({ ownerId: caller.ownerId, formatId: format._id!, _id: { $ne: conv._id! } })
-        .toArray();
+      // Every other source of the format takes the new output side (SPEC 8.12 "Editing a format"). (`newFormat`, `renames` and `siblings`
+      // were read, and held to the caps, before anything was written - see above.)
       others = siblings.length;
       const siblingSources = await sourceNames(d, caller, siblings);
       for (const sibling of siblings) {
@@ -595,9 +612,9 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
           const cur = attempt === 0 ? sibling : await d.conversions.findOne({ _id: sibling._id!, ownerId: caller.ownerId });
           if (!cur) break;
           const parsed = RulesSchema.safeParse(cur.rules);
+          const propagated = parsed.success ? applyFormat(parsed.data as unknown as Rules, newFormat!, renames, caller.tier) : null;
           let written: ConversionDoc;
-          if (parsed.success) {
-            const propagated = applyFormat(parsed.data as unknown as Rules, newFormat, renames);
+          if (propagated && !propagated.overCap) {
             const status: ConversionStatus = propagated.needsReview ? 'needsReview' : cur.status;
             const rewritten: Rules = { ...propagated.rules, meta: { ...propagated.rules.meta, status } };
             written = conversionWrite(
@@ -606,7 +623,8 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
               now,
             );
           } else {
-            // Stored rules that no longer parse cannot be rebuilt: leave them, flagged for review.
+            // Stored rules that no longer parse cannot be rebuilt, and rebuilt rules over a cap of a save are never written (one that changed
+            // since the check above): leave them, flagged for review.
             written = { ...cur, status: 'needsReview', version: cur.version + 1, updatedAt: now };
           }
           if (await saveVersion(d, caller.ownerId, cur, written)) {
@@ -622,7 +640,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     // SPEC 8.15 "Editing a source": the other conversions of the source take the input side, whatever format they feed.
     let affectedConversions = 0;
     if (writtenSource && sourceEdit) {
-      const propagated = await propagateSource(d, caller.ownerId, writtenSource._id!, sourceEdit.structure, sourceEdit.renames, now, { except: conv._id! });
+      const propagated = await propagateSource(d, caller.ownerId, writtenSource._id!, sourceEdit.structure, sourceEdit.renames, now, { except: conv._id!, tier: caller.tier });
       affectedConversions = propagated.conversions;
       const names = await formatNamesOf(d, caller.ownerId, propagated.needsReview);
       for (const f of propagated.needsReview) {
@@ -736,9 +754,13 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     if (sourceProblems.length > 0) {
       if (!sourceProblems.every((p) => p.path.endsWith('.readAs'))) return fail(reply, 422, { error: 'sourceMismatch', problems: sourceProblems });
       sourceEdit = withReadAsOf(structure, restored);
-      const applied = applySource(restored, sourceEdit);
+      const applied = applySource(restored, sourceEdit, new Map(), caller.tier);
       if (applied.needsReview) return fail(reply, 422, { error: 'sourceMismatch', problems: applied.problems });
+      if (applied.overCap) return rulesRefusal(reply, applied.overCap);
       restored = applied.rules;
+      // (API audit 2026-10-07: the source's other conversions take it too - held to the caps of a save before anything is written.)
+      const over = await sourceEditOverCap(d, caller.ownerId, source._id!, sourceEdit, new Map(), caller.tier, conv._id!);
+      if (over) return rulesRefusal(reply, over);
     }
 
     const next = conversionWrite(
@@ -758,7 +780,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
         await revertConversionWrite(d, caller.ownerId, conv, next);
         return fail(reply, 409, { error: 'versionConflict' });
       }
-      await propagateSource(d, caller.ownerId, written._id!, sourceEdit, new Map(), now, { except: conv._id! });
+      await propagateSource(d, caller.ownerId, written._id!, sourceEdit, new Map(), now, { except: conv._id!, tier: caller.tier });
     }
     await syncRequired(d, caller.ownerId, source._id!);
     return reply.send({ conversion: conversionSummary(next, source.name) });
@@ -781,30 +803,6 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     );
     if (!updated) return fail(reply, 404, { error: 'notFound' });
     return reply.send({ runCount: updated.runCount, lastRunAt: lastRunAt.toISOString() });
-  });
-
-  app.post('/api/conversions/:id/aliases', async (req, reply) => {
-    const g = guard(req, reply);
-    if (!g) return reply;
-    const { db: d, caller } = g;
-
-    const conv = await ownedConversion(d, caller, idParam(req));
-    if (!conv) return fail(reply, 404, { error: 'notFound' });
-    const request = isRecord(req.body) ? parseAlias(req.body) : null;
-    if (!request) return fail(reply, 400, { error: 'invalidRequest' });
-
-    // DECISION: kept working for the web app as it was, and forwarded to the conversion's SOURCE (SPEC 8.15: a confirmed mapping is
-    // saved once, on the source, and reaches every format it feeds). The answer is still this conversion's signature.
-    const source = await sourceOfConversion(d, caller, conv);
-    if (!source) return fail(reply, 404, { error: 'notFound' });
-    const parsed = RulesSchema.safeParse(conv.rules);
-    if (!parsed.success) return fail(reply, 422, { error: 'invalidRules' });
-    if (!(parsed.data as unknown as Rules).input.columns.some((c) => c.header === request.header)) return fail(reply, 400, { error: 'invalidRequest' });
-    const res = await addSourceAlias(d, caller.ownerId, source, request, protection.now());
-    if (!res.ok) return fail(reply, res.status, res.body);
-    await syncRequired(d, caller.ownerId, source._id!);
-    const fresh = await d.conversions.findOne({ _id: conv._id!, ownerId: caller.ownerId }, { projection: { inputSignature: 1 } });
-    return reply.send({ inputSignature: fresh?.inputSignature ?? conv.inputSignature });
   });
 
   // ------------------------------------------------------- signatures

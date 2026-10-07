@@ -177,7 +177,7 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 | `PUBLIC_ORIGIN` | optional | Overrides the origin (a custom domain later). Defaults `WEB_ORIGIN` and `API_PUBLIC_URL`, which can still be set on their own |
 | `PORT` | Render | Render sets 10000; the API listens on it |
 | `WEB_DIST` | optional | Folder of the built web app; default `apps/web/dist` |
-| `LLM_MODEL_FIRST_TRY`, `LLM_MODEL_ESCALATION` | optional | Override the models in `packages/shared/src/config/models.ts` without a code change |
+| `LLM_MODEL_FIRST_TRY`, `LLM_MODEL_ESCALATION` | optional | Override the models in `packages/shared/src/config/models.ts` without a code change. The model must have a price in `packages/shared/src/config/prices.ts` (the same for `LLM_FALLBACK_MODEL_*`): a production start stops on one that has none, and an unpriced model is counted at the highest configured price |
 | `LLM_FALLBACK_MODEL_FIRST_TRY`, `LLM_FALLBACK_MODEL_ESCALATION` | optional | The same for the fallback provider's two slots (default `gpt-5-mini`, `gpt-5`) |
 
 ## Known limits
@@ -186,6 +186,19 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
   appends to what the client sent rather than replacing it (the community reports disagree on the details), so a determined client can invent
   its IP and slip the per-IP request limit. That limit is one of several guards: the AI step is for signed-in users only, with a per-user
   quota, Turnstile, and the daily budgets. To tighten: count the hops (e.g. `TRUST_PROXY=2`) once you can see the real addresses in a test request, and change the variable.
+  **Owner action (API audit, 2026-10-07): set `TRUST_PROXY` to the measured hop count** in the Render dashboard (Environment), not `true`:
+  send one request with a made-up `X-Forwarded-For: 203.0.113.9` header and see which address the API takes for you - the hop count is the
+  number of proxies between you and the service (Render's own, usually 1). With `true`, a client that rotates the header gets a fresh
+  per-IP allowance on every request; the public forms are now also held to a global daily cap (`limits.contact.globalPerDay`, 200
+  stored a day) and the AI to a per-user daily request cap (`limits.protection.aiRequestsPerDay`), so a spoofed address cannot fill the
+  database or spend the budget, but the per-IP limits only mean something with the right count. (`render.yaml` keeps `true` until you
+  have measured it.)
+- **Turnstile must be turned back on (owner action).** `TURNSTILE_DISABLED=true` was for the first deploy only (section 3): while it is
+  set the public forms and the anonymous paths are protected by the rate limits alone. Do section 5 - set `TURNSTILE_SITE_KEY` and
+  `TURNSTILE_SECRET_KEY`, delete `TURNSTILE_DISABLED` - and check that the start log no longer says "Turnstile is OFF".
+- **The public forms' global cap.** Past `limits.contact.globalPerDay` stored submissions in a UTC day (leads, waitlist and feedback
+  together), every form answers "too many requests" until the next UTC day - a flood from invented addresses stops the forms for a
+  day rather than filling the Atlas storage. Raise it in config if real traffic ever comes close.
 - **One instance.** The per-IP request limiter is in memory; keep `numInstances: 1` (usage counters, budgets and the cache are in MongoDB and are fine at any size).
 - **Startup.** The API runs its TypeScript source through `tsx`, as in development: a start takes a couple of seconds longer than compiled code.
 - **Custom domain later.** Add it in Render, set `PUBLIC_ORIGIN=https://that.domain`, and add the new redirect URIs / origin in Google, Entra and Turnstile (the old ones can stay until you switch).

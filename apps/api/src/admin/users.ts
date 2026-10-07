@@ -47,7 +47,7 @@ export async function listUsers(
 function aiLimit(user: StoredUser): number | null {
   const quota = tiers[user.tier].aiLearns;
   if (quota.period === 'unlimited') return null;
-  return user.limitOverrides?.aiLearns ?? user.limitOverrides?.learnsToLlm ?? quota.count;
+  return user.limitOverrides?.aiLearns ?? quota.count;
 }
 
 export async function presentUsers(db: AppDb, users: readonly StoredUser[], now: Date): Promise<AdminUserRow[]> {

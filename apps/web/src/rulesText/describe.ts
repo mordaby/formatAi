@@ -315,7 +315,7 @@ type LayoutArea = 'rows' | 'file' | 'title' | 'summary' | 'blank';
 function layoutAreas(issues: VerificationLike['layoutIssues']): Set<LayoutArea> {
   const areas = new Set<LayoutArea>();
   for (const { code } of issues) {
-    if (code === 'rowCount' || code === 'unalignedRows') areas.add('rows');
+    if (code === 'rowCount' || code === 'rowOrder' || code === 'unalignedRows') areas.add('rows');
     else if (code === 'fileSettings') areas.add('file');
     else if (code === 'titleRow') areas.add('title');
     else if (code === 'summaryRow') areas.add('summary');

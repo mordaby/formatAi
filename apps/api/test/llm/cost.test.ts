@@ -27,17 +27,28 @@ describe('computeCostUsd (SPEC 9.4)', () => {
     expect(computeCostUsd(models.anthropic.firstTry, zeroUsage)).toBe(0);
   });
 
-  it('reports $0 and warns once for a model with no price entry (e.g. an LLM_MODEL_* override)', () => {
+  it('API audit C6: prices a model with no price entry (e.g. an LLM_MODEL_* override) at the HIGHEST configured price, and warns once', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const usage: LlmUsage = { tokensIn: 1_000_000, tokensOut: 1_000_000, tokensCachedRead: 1_000_000, tokensCachedWrite: 1_000_000 };
+    const all = Object.values(prices);
+    const top = (rate: 'inputPerMTok' | 'outputPerMTok' | 'cacheReadPerMTok' | 'cacheWritePerMTok') => Math.max(...all.map((p) => p[rate]));
 
-    const cost1 = computeCostUsd('some-unpriced-model', { ...zeroUsage, tokensIn: 1_000_000 });
-    const cost2 = computeCostUsd('some-unpriced-model', { ...zeroUsage, tokensIn: 1_000_000 });
+    const cost1 = computeCostUsd('some-unpriced-model', usage);
+    const cost2 = computeCostUsd('some-unpriced-model', usage);
 
-    expect(cost1).toBe(0);
-    expect(cost2).toBe(0);
+    expect(cost1).toBeCloseTo(top('inputPerMTok') + top('outputPerMTok') + top('cacheReadPerMTok') + top('cacheWritePerMTok'), 9);
+    expect(cost1).toBeGreaterThan(0); // was $0: the budget never saw the call
+    for (const model of Object.keys(prices)) expect(cost1).toBeGreaterThanOrEqual(computeCostUsd(model, usage));
+    expect(cost2).toBe(cost1);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('some-unpriced-model'));
 
+    warn.mockRestore();
+  });
+
+  it('never takes an inherited object key for a price', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(computeCostUsd('constructor', { ...zeroUsage, tokensIn: 1_000_000 })).toBeGreaterThan(0);
     warn.mockRestore();
   });
 

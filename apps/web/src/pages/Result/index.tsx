@@ -2,18 +2,19 @@
 // the local result before the AI step (SPEC 21 v5), the AI quota, "this looks like your format X" (SPEC 5 A2), and saving.
 // Once the learn is saved (a format and its first source) the SAME screen becomes the editor of that source: its address is the
 // source's own, the example files stay in the worker for the live check, and every further save is a new version of the source.
-import { defaultSourceName, limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
+import { defaultSourceName, limits, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
 import { completionPlan, fixedColumnShare, isCompletable } from '@formatai/shared';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { aiLeftLabel } from '../../app/aiQuota';
+import { useOnAi } from '../../app/aiReport';
 import { LeaveDialog } from '../../app/LeaveGuard';
 import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
 import { copiedListsOf, findingsToConfirm, lineIds } from '../../editor';
+import { SentLink } from '../../app/SendPanel';
 import { useSignIn } from '../../app/SignIn';
 import { Cell } from '../../components/Cell';
-import type { AiInfo } from '../../flow/learnFlow';
+import type { AiInfo, SentRecord } from '../../flow/learnFlow';
 import type { UseLearnFlow } from '../../flow/useLearnFlow';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
@@ -21,6 +22,7 @@ import { Button, Dialog, InlineMessage } from '../../ui';
 import type { LearnOutput } from '../../worker/engineApi';
 import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
 import { Versions } from '../Format/Versions';
+import { AiNote } from './AiNote';
 import { useCopiedListGate } from './CopiedListSave';
 import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
 import { filledNote } from './filledNote';
@@ -41,10 +43,11 @@ export type ResultPageProps = UseLearnFlow;
 
 export function ResultPage({ state }: ResultPageProps) {
   if (state.status !== 'done' || !state.result.rules) return null;
-  return <ResultScreen result={state.result} ai={state.ai} />;
+  return <ResultScreen result={state.result} ai={state.ai} sent={state.sent} />;
 }
 
-function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefined }) {
+/** `sent`: what the learn of this result sent (a learn with the AI step: "See what we send" shows it, with every "Finish with AI" after it). */
+function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | undefined; sent: readonly SentRecord[] }) {
   const { t } = useI18n();
   const { api } = useServices();
   const session = useLearnSession();
@@ -69,8 +72,11 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // answer that passes the fixed lock and the verification replaces them (see useCompletion). It never runs unless the user chose it: the
   // panel's button, or Home's "Learn with AI" (acted on below, once per result).
   // learn-v7: the notes of an applied answer go into the session (never into the rules): see `ResultSession.aiNotes`.
-  const completion = useCompletion(kept.store, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
+  const completion = useCompletion(kept, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
   const completed = completion.completed;
+  // "See what we send" (SPEC 15) for every request this result took: its learn's (a whole learn with the AI step), then its "Finish with AI".
+  const completionSent = kept.completion ? session.completion.state.sent : undefined;
+  const allSent = useMemo(() => (completionSent ? [...sent, ...completionSent] : sent), [sent, completionSent]);
   // A list copied from the example (owner decision 2026-10-06), and an identifier-shaped value (docs/proposals/saved-format-contents.md section
   // 6): never asked on screen - the rules are used as they are - but at Save, before the rules are stored, in one popup (`CopiedListSave`):
   // the completion's answer's lists, then the learn's.
@@ -120,13 +126,10 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // (a copied list is not among them: it is asked at Save, see `copied`).
   const oneTimers = useMemo(() => oneTimeQuestionsOf(completed?.oneTimers, result.path === 'llm' ? result.oneTimers?.questions : undefined), [completed?.oneTimers, result]);
   const [confirmWhole, setConfirmWhole] = useState(false);
-  // What the AI step reported for the answer on screen (the completion's, once one has been applied).
+  // What the AI step reported for the answer on screen (the completion's, once one has been applied). (What is left of the AI formats is
+  // kept by the flows themselves - `onAi`, app/aiReport.ts - whether or not an answer was used.)
   const aiInfo = completed ? completed.ai : ai;
-  const { setQuota } = me;
-  const quotaNow = completed?.ai?.quota;
-  useEffect(() => {
-    if (quotaNow) setQuota(quotaNow);
-  }, [quotaNow, setQuota]);
+  const onAi = useOnAi();
 
   // SPEC 21 v5 item 1: the free engine's own result, shown before the AI step. Once the AI step has completed it, it is an ordinary result.
   const partial = result.path === 'partial' && !completed ? result.partial : undefined;
@@ -200,7 +203,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       masking: session.masking,
       ...(suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
-      ...(learnPath === 'local' ? {} : { promptVersion }),
+      // (API audit 2026-10-07: the prompt version the server says it learned with - learn-v9 for an admin under LEARN_CHECKS - never a constant.)
+      ...(learnPath !== 'local' && aiInfo?.promptVersion ? { promptVersion: aiInfo.promptVersion } : {}),
     };
     void save.run({
       persist: () => api.registry.createFormat(body),
@@ -219,7 +223,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         if (info.metaStatus === 'differencesAccepted' && aiInfo?.learnId) {
           api.registry
             .learnOutcome(aiInfo.learnId, 'accepted')
-            .then((r) => me.setQuota(r.quota))
+            .then((r) => onAi({ quota: r.quota }))
             .catch(() => undefined);
         }
       },
@@ -385,6 +389,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           downloading={download.status === 'busy'}
         />
       )}
+      <SentLink sent={allSent} masking={session.masking} />
       {/* ... and the rows the user called a one-time change (SPEC 21 v12 item 20), until the first save. */}
       {(unfinished || (!source && (info.live?.oneTime?.length ?? 0) > 0)) && (
         <UnfinishedRows
@@ -523,27 +528,6 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
         <PartialSignInDialog open={popupOpen} partial={partial} totalColumns={rules.output.columns.length} onClose={() => setPopupOpen(false)} />
       )}
     </>
-  );
-}
-
-/** What the AI step reported: how many AI formats are left, and - when the result did not match every row - which try this was. */
-function AiNote({ ai, verified }: { ai: AiInfo; verified: boolean }) {
-  const i18n = useI18n();
-  const { t, code } = i18n;
-  const max = limits.learn.maxFailedAiAttempts;
-  const tried = ai.failedAttempts ?? 0;
-  if (!ai.quota && (verified || tried === 0)) return null;
-  return (
-    <div className="ai-note" data-testid="ai-note">
-      {ai.exhausted ? (
-        <InlineMessage tone="warn" title={t('aiExhausted.title', { n: max })} todo={t('aiExhausted.todo')}>
-          {code({ kind: 'apiError', code: 'aiAttemptsExhausted', counted: ai.counted === true })}
-        </InlineMessage>
-      ) : !verified && tried > 0 ? (
-        <InlineMessage tone="info">{t('ai.attempt', { n: tried, max })}</InlineMessage>
-      ) : null}
-      {ai.quota ? <p className="muted tabular">{aiLeftLabel(i18n, ai.quota)}</p> : null}
-    </div>
   );
 }
 

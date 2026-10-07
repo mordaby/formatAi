@@ -15,7 +15,6 @@ export const adminEn = {
   'admin.tab.inbox': 'Leads and feedback',
   'admin.loading': 'Loading…',
   'admin.loadFailed': "We couldn't load this. Try again.",
-  'admin.notAdmin': 'This page is for admins only.',
   'admin.na': 'n/a',
 
   // ----- overview -----
@@ -160,7 +159,6 @@ export const adminHe: Record<keyof typeof adminEn, string> = {
   'admin.tab.inbox': 'פניות ומשוב',
   'admin.loading': 'טוענים…',
   'admin.loadFailed': 'לא הצלחנו לטעון. נסו שוב.',
-  'admin.notAdmin': 'הדף הזה מיועד למנהלים בלבד.',
   'admin.na': 'לא ידוע',
 
   'admin.period.label': 'טווח זמן',

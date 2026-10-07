@@ -9,7 +9,9 @@
 // Then an external classification, when the caller gives one (`ColumnClassHints`, by header: the AI step's, later) may tighten anything to
 // masked, and loosen a text column to a `category` only when code confirms it (few values, each on 2 rows or more, no identifier shape, no
 // identifier or person word in the name); it never loosens an identifier. Last, a copy keeps one class: an output column that copies an
-// input column is an identifier when either is, so a sample's `in` and `out` carry the same fake.
+// input column is an identifier when either is, so a sample's `in` and `out` carry the same fake. Amendment 2026-10-07 (engine audit):
+// so does every relation that keeps part of the value (`KEEPS_VALUE`: padLeft, numberFormat, substr, split; a concat or template from an
+// identifier input) - the 5-digit tail of an ID number was a measure, sent real.
 // DECISION (owner): no guess from how values are used or repeat - an integer column with no identifier word in its name is a measure, sent
 // real (a customer number named "Ref" included): a name the lists miss is what the external classification will add.
 //
@@ -156,20 +158,37 @@ function withHint(code: ClassifiedColumn, hint: ColumnClassHint, header: string,
 // The example's columns
 // ---------------------------------------------------------------------------
 
-/** Relations whose output IS the operand's value (a copy). */
-const COPIES: ReadonlySet<string> = new Set(['copy', 'normalize']);
+/**
+ * Relations whose output keeps part of an input value, verified by code on the example's rows (the analysis' relations, at its minimum
+ * coverage) - amendment 2026-10-07 (engine audit): identifier status passes through every one of them, not only a copy.
+ *  - `both`: the output is the value, or a part of it, so an identifier on EITHER side makes both identifiers (a copy, a case change,
+ *    the value padded with zeros, rendered with a number format, a substr or a split part of it: the output's digits are the input's).
+ *  - `toOutput`: the output holds the whole value of each input among other text (a concat, a template): an identifier input makes the
+ *    output an identifier; an identifier output says nothing of its other inputs (an amount beside an ID stays a measure).
+ */
+const KEEPS_VALUE: Readonly<Record<string, 'both' | 'toOutput'>> = {
+  copy: 'both',
+  normalize: 'both',
+  padLeft: 'both',
+  numberFormat: 'both',
+  substr: 'both',
+  split: 'both',
+  concat: 'toOutput',
+  template: 'toOutput',
+};
 
-/** The input columns each output column copies (a `COPIES` relation at the analysis' minimum coverage; a fixed fan-out's positions too). */
-function copiedInputs(analysis: PairAnalysis): [number, number][] {
+/** The input columns each output column keeps (part of) the value of, and which way identifier status passes (a fixed fan-out's positions too). */
+function keptInputs(analysis: PairAnalysis): { out: number; in: number; way: 'both' | 'toOutput' }[] {
   const all = [...analysis.columns];
   if (analysis.shape.kind === 'families' && analysis.shape.pattern.mode === 'fixedFanOut') {
     for (const position of analysis.shape.pattern.positions) all.push(...position);
   }
-  const pairs: [number, number][] = [];
+  const pairs: { out: number; in: number; way: 'both' | 'toOutput' }[] = [];
   for (const ca of all) {
     for (const r of ca.relations) {
-      const i = r.in[0];
-      if (COPIES.has(r.rel) && i !== undefined && i < analysis.input.columnCount) pairs.push([ca.out, i]);
+      const way = KEEPS_VALUE[r.rel];
+      if (way === undefined) continue;
+      for (const i of r.in) if (i < analysis.input.columnCount) pairs.push({ out: ca.out, in: i, way });
     }
   }
   return pairs;
@@ -192,12 +211,19 @@ export function classifyColumns(analysis: PairAnalysis): ColumnClasses {
   const outRows = analysis.output.dataRows;
   const outSheet = analysis.output.sheet.rows;
   const output = analysis.output.headers.map((h, o) => one(analysis.output.profile[o], h, { n: outRows.length, at: (k) => outSheet[outRows[k]!]?.[o] }));
-  for (const [o, i] of copiedInputs(analysis)) {
-    const a = input[i];
-    const b = output[o];
-    if (!a || !b || (a.class === 'identifier') === (b.class === 'identifier')) continue;
-    if (a.class !== 'identifier') input[i] = { class: 'identifier', by: 'copy' };
-    else output[o] = { class: 'identifier', by: 'copy' };
+  // (Until nothing changes: an output that becomes an identifier through one input passes it back to another it copies.)
+  const kept = keptInputs(analysis);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const { out: o, in: i, way } of kept) {
+      const a = input[i];
+      const b = output[o];
+      if (!a || !b || (a.class === 'identifier') === (b.class === 'identifier')) continue;
+      if (a.class === 'identifier') output[o] = { class: 'identifier', by: 'copy' };
+      else if (way === 'both') input[i] = { class: 'identifier', by: 'copy' };
+      else continue;
+      changed = true;
+    }
   }
   const classes: ColumnClasses = { input: input.map((c) => c.class), output: output.map((c) => c.class), detail: { input, output } };
   CACHE.set(analysis, classes);

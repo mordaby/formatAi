@@ -12,6 +12,7 @@
 // conversion's rules (`packages/engine/src/registry/sourceOf.ts`, pure) and held to them by the source lock
 // (`checkSourceLock`, SPEC 8.15). The engine never needs the Source at run time: every rules file stays self-contained.
 import { z } from 'zod';
+import { limits } from './config/limits';
 import {
   ColumnTypeSchema,
   HeaderRowSchema,
@@ -101,7 +102,8 @@ export const SourceColumnSchema = z.strictObject({
   aliases: z.array(z.string().min(1)),
   type: ColumnTypeSchema,
   required: z.boolean(),
-  padLeft: z.number().int().positive().optional(),
+  // (API audit 2026-10-07: bounded like a rules file's input column, `limits.rules.maxPadLength`.)
+  padLeft: z.number().int().positive().max(limits.rules.maxPadLength).optional(),
   inputFormats: z.array(z.string().min(1)).optional(),
   readAs: ReadAsSchema.optional(),
 });

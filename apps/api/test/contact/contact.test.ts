@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { limits } from '@formatai/shared';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { contactDayKey } from '../../src/contact/routes.js';
+import { contactDayKey, contactGlobalDayKey } from '../../src/contact/routes.js';
 import { createMemoryContactStore, createMongoContactStore, type ContactStore } from '../../src/contact/store.js';
 import { connectDb, ensureIndexes, type AppDb } from '../../src/db.js';
 import { loadEnv } from '../../src/env.js';
@@ -14,6 +14,7 @@ import { dayKey } from '../../src/protection/keys.js';
 import { createMemoryStore, createMongoStore, type ProtectionStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
 import { anonCookie, makeEnv, makeTurnstileFetch, nextIp, stubIdentify, testUserId, type TurnstileCall } from '../protection/harness.js';
+import { dropTestDb } from '../setup/testDbs.js';
 
 const mongoUri = process.env.MONGODB_URI;
 const SECRET = 'contact-test-secret';
@@ -64,10 +65,9 @@ function mongoKit(): Kit {
       await ensureIndexes(appDb);
     },
     async teardown() {
-      if (!appDb) return;
-      await appDb.db.dropDatabase();
-      await appDb.client.close();
+      const db = appDb;
       appDb = null;
+      await dropTestDb(db);
     },
     async make() {
       const db = appDb!;
@@ -415,6 +415,25 @@ function defineSuite(kit: Kit): void {
       expect((await h.post('/api/feedback', feedback, { user: null, ip })).statusCode).toBe(200);
     });
 
+    it('API audit: caps the forms stored in one UTC day from EVERY address together (an invented address gets past the per-IP cap)', async () => {
+      expect(limits.contact.globalPerDay).toBe(200);
+      const h = await setup();
+      // The day's forms so far, each from an address of its own (as rotating X-Forwarded-For makes them): up to one short of the cap.
+      await h.handle.protectionStore.incrementCounter(contactGlobalDayKey(dayKey(NOW)), limits.contact.globalPerDay - 1, new Date(NOW.getTime() + 2 * 24 * 3_600_000));
+      expect((await h.post('/api/leads', lead, { user: null })).statusCode).toBe(200);
+      for (const [url, body] of [['/api/feedback', feedback], ['/api/waitlist', waitlist], ['/api/leads', lead]] as const) {
+        const over = await h.post(url, body, { user: null }); // (a fresh address each time)
+        expect(over.statusCode).toBe(429);
+        expect(over.json()).toEqual({ error: 'rateLimited' });
+        expect(Number(over.headers['retry-after'])).toBeGreaterThan(60);
+      }
+      expect(await h.handle.leads()).toHaveLength(1);
+      expect(await h.handle.feedback()).toHaveLength(0);
+      // Next UTC day: a new count.
+      h.clock.current = new Date('2026-10-06T00:30:00.000Z');
+      expect((await h.post('/api/feedback', feedback, { user: null })).statusCode).toBe(200);
+    });
+
     it('a refused (malformed) request does not use up the daily allowance', async () => {
       const h = await setup();
       const ip = nextIp();
@@ -442,8 +461,7 @@ describe.skipIf(!mongoUri)('MongoDB indexes for the public forms (SPEC 13)', () 
       expect(leadIndexes).toEqual(expect.arrayContaining(['leads_createdAt', 'leads_kind_createdAt']));
       expect((await db!.feedback.indexes()).map((i) => i.name)).toContain('feedback_createdAt');
     } finally {
-      await db!.db.dropDatabase();
-      await db!.client.close();
+      await dropTestDb(db);
     }
   });
 });

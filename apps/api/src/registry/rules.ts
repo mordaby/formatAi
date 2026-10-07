@@ -21,6 +21,7 @@ import {
   type SignatureColumn,
   type Tier,
 } from '@formatai/shared';
+import { isRecord } from '../http.js';
 
 /** What the rules file is checked to be (SPEC 9.2 layers 1-4: structure, references, types, limits). */
 export type RulesCheck =
@@ -61,8 +62,7 @@ export function checkRulesFile(input: unknown, tier: Tier): RulesCheck {
   }
   const rules = parsed.data as unknown as Rules;
   // The caps of what a saved format may keep, first (SPEC 21 v15): a plain refusal, never problems to fix one by one. (Counts only.)
-  const tooLarge = contentLimitProblems(rules);
-  if (tooLarge.length > 0) return { ok: false, onlyRuleLimit: false, tooLarge: true, problems: [] };
+  if (contentLimitProblems(rules).length > 0) return TOO_LARGE;
 
   const problems: RepairProblem[] = [];
   let ruleLimit = false;
@@ -71,15 +71,43 @@ export function checkRulesFile(input: unknown, tier: Tier): RulesCheck {
       problems.push({ kind: 'reference', message: p.path ? `${p.path}: ${p.message}` : p.message });
     }
     for (const p of typeCheck(rules)) problems.push({ kind: 'type', path: p.path, message: p.message });
-    for (const p of checkLimits(rules, tier)) {
-      if (isRuleLimitProblem(p)) ruleLimit = true;
-      else problems.push({ kind: 'limit', ...(p.path !== undefined ? { path: p.path } : {}), message: p.message });
-    }
+    ruleLimit = limitProblemsInto(rules, tier, problems);
   } catch {
     problems.push({ kind: 'reference', message: 'the rules could not be checked' });
   }
 
   if (problems.length === 0 && !ruleLimit) return { ok: true, rules };
+  return { ok: false, problems, onlyRuleLimit: problems.length === 0 && ruleLimit };
+}
+
+const TOO_LARGE: Extract<RulesCheck, { ok: false }> = { ok: false, onlyRuleLimit: false, tooLarge: true, problems: [] };
+
+/** The engine's `checkLimits` problems of `rules` pushed into `problems`, but the tier's rule count; returns whether that count is over. */
+function limitProblemsInto(rules: Rules, tier: Tier, problems: RepairProblem[]): boolean {
+  let ruleLimit = false;
+  for (const p of checkLimits(rules, tier)) {
+    if (isRuleLimitProblem(p)) ruleLimit = true;
+    else problems.push({ kind: 'limit', ...(p.path !== undefined ? { path: p.path } : {}), message: p.message });
+  }
+  return ruleLimit;
+}
+
+/**
+ * API audit (2026-10-07): the caps every route that stores rules holds them to - what one saved format may keep (`contentLimitProblems`)
+ * and the tier's limits (`checkLimits`: rules per format, the expression budgets, `readAs` per column) - for rules the SERVER builds:
+ * a format edit or a source edit written into the other conversions (`applyFormat`, `applySource`). `checkRulesFile` holds a file the
+ * browser sends to the same caps. Null when the rules are within all of them; otherwise the refusal `rulesRefusal` answers, as a save would.
+ */
+export function overCap(rules: Rules, tier: Tier): Extract<RulesCheck, { ok: false }> | null {
+  if (contentLimitProblems(rules).length > 0) return TOO_LARGE;
+  const problems: RepairProblem[] = [];
+  let ruleLimit = false;
+  try {
+    ruleLimit = limitProblemsInto(rules, tier, problems);
+  } catch {
+    problems.push({ kind: 'limit', message: 'the rules could not be checked' });
+  }
+  if (problems.length === 0 && !ruleLimit) return null;
   return { ok: false, problems, onlyRuleLimit: problems.length === 0 && ruleLimit };
 }
 
@@ -100,10 +128,6 @@ export interface SaveMeta {
   model?: string;
   promptVersion?: string;
   now: Date;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 /**

@@ -376,13 +376,38 @@ export function payloadBytes(payload: LearnPayload): number {
   return new TextEncoder().encode(JSON.stringify(payload)).length;
 }
 
+/** A sample's output rows: one row, or a family's rows (`out: PayloadCell[][]`; `[]` is a family of none). */
+function outRowsOf(sample: Sample): readonly PayloadCell[][] {
+  return sample.out.length === 0 || Array.isArray(sample.out[0]) ? (sample.out as PayloadCell[][]) : [sample.out as PayloadCell[]];
+}
+
+const cellFits = (v: PayloadCell): boolean => typeof v !== 'string' || v.length <= limits.payload.maxCellChars;
+
+/**
+ * Whether every cell of these rows is within the payload's cell length (`limits.payload.maxCellChars`, in UTF-16 units like the browser's
+ * cut): the browser cuts every cell it sends to it - the samples', the dropped rows', the learning loop's rows.
+ */
+export function sampleCellsFit(samples: readonly Sample[], dropped: readonly (readonly PayloadCell[])[] = []): boolean {
+  return samples.every((s) => s.in.every(cellFits) && outRowsOf(s).every((row) => row.every(cellFits))) && dropped.every((row) => row.every(cellFits));
+}
+
+/**
+ * Whether a payload is within what the browser builds (SPEC 7.3), as the server checks it on every AI route (API audit C4, 2026-10-07: the
+ * first learn checked neither): its UTF-8 size (`limits.payload.maxBytes`) and every sample and dropped cell's length (`maxCellChars`).
+ */
+export function payloadFits(payload: LearnPayload): boolean {
+  return sampleCellsFit(payload.samples, payload.dropped ?? []) && payloadBytes(payload) <= limits.payload.maxBytes;
+}
+
 /**
  * Whether the rows of a loop round fit the caps, as the server checks them (the browser's loop never sends more): at most
- * `maxRowsTotal` masked rows in one learn, the payload's own samples and dropped rows included, and the payload with every row added
- * no larger than the payload byte cap. (The rows one round may add, `rowsPerRound`, are checked against the round's number.)
+ * `maxRowsTotal` masked rows in one learn, the payload's own samples and dropped rows included, every cell of a row within the payload's
+ * cell length, and the payload with every row added no larger than the payload byte cap. (The rows one round may add, `rowsPerRound`, are
+ * checked against the round's number.)
  */
 export function loopRowsFit(payload: LearnPayload, rows: readonly Sample[]): boolean {
   if (payloadRowCount(payload) + rows.length > limits.learn.loop.maxRowsTotal) return false;
+  if (!sampleCellsFit(rows)) return false;
   return payloadBytes(withRows(payload, rows)) <= limits.payload.maxBytes;
 }
 
@@ -414,8 +439,11 @@ const PROFILE_TYPES = [
 ] as const;
 const ProfileTypeSchema = z.enum(PROFILE_TYPES);
 
+/** A column position (0-based): never past Excel's last column (API audit C3, `limits.payload.maxColumnIndex`). */
+const ColumnIndexSchema = z.number().int().min(0).max(limits.payload.maxColumnIndex);
+
 const PayloadColumnSchema = z.looseObject({
-  i: z.number().int().min(0),
+  i: ColumnIndexSchema,
   header: z.string(),
   type: ProfileTypeSchema,
   shape: z.string().optional(),
@@ -423,6 +451,13 @@ const PayloadColumnSchema = z.looseObject({
   format: z.string().optional(),
   width: z.number().optional(),
 });
+
+/** One side's columns: within the column cap, and each position named once (two columns cannot sit in one place). */
+const PayloadColumnsSchema = z
+  .array(PayloadColumnSchema)
+  .min(1)
+  .max(limits.payload.maxColumns)
+  .refine((columns) => new Set(columns.map((c) => c.i)).size === columns.length, { message: 'column positions must be unique' });
 
 const SampleSchema = z.looseObject({
   in: z.array(PayloadCellSchema),
@@ -439,26 +474,62 @@ export const LearnPayloadSchema = z.looseObject({
     sheetName: z.string(),
     direction: z.enum(['rtl', 'ltr']),
     layout: z.looseObject({}),
-    columns: z.array(PayloadColumnSchema).min(1).max(limits.payload.maxColumns),
+    columns: PayloadColumnsSchema,
   }),
   output: z.looseObject({
     file: z.looseObject({ type: z.enum(['xlsx', 'csv', 'txt']) }),
     layout: z.looseObject({}),
-    columns: z.array(PayloadColumnSchema).min(1).max(limits.payload.maxColumns),
+    columns: PayloadColumnsSchema,
   }),
   target: z.looseObject({}).optional(),
   complete: z
     .looseObject({
       fixed: z.looseObject({}),
-      columns: z.array(z.number().int().min(0)).max(limits.payload.maxColumns),
+      columns: z.array(ColumnIndexSchema).max(limits.payload.maxColumns),
       parts: z.array(z.enum(AI_STEP_PART_CODES)).max(AI_STEP_PART_CODES.length),
     })
     .optional(),
   samples: z.array(SampleSchema).min(1).max(MAX_SAMPLES),
   dropped: z.array(z.array(PayloadCellSchema)).max(limits.payload.maxDropped).optional(),
   hints: z.array(z.unknown()),
-  skipColumns: z.array(z.number().int().min(0)).optional(),
+  skipColumns: z.array(ColumnIndexSchema).max(limits.payload.maxColumns).optional(),
 });
 
 /** A loop round's `rows` (`RepairRequest.rows`): sample-shaped rows, never more than a learn may send in total. */
 export const LoopRowsSchema = z.array(SampleSchema).max(limits.learn.loop.maxRowsTotal);
+
+/**
+ * A loop round's `problems` (`RepairRequest.problems`, API audit C9 2026-10-07): each one a `RepairProblem` of a known kind with its fields
+ * of the right types, at most `limits.learn.loop.maxProblems` of them. Before, any array passed: `[null]` threw a TypeError (500) after the
+ * round was counted. The fields the server never reads stay open (`looseObject`), like the payload's; `actual` may be absent (JSON drops an
+ * undefined cell).
+ */
+const ProblemMessageSchema = z.string();
+const ProblemColumnSchema = z.number().int().min(0);
+const RepairProblemSchema = z.discriminatedUnion('kind', [
+  z.looseObject({ kind: z.literal('formula'), path: z.string(), offset: z.number().int(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('schema'), path: z.string(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('reference'), message: ProblemMessageSchema }),
+  z.looseObject({
+    kind: z.literal('diff'),
+    out: ProblemColumnSchema,
+    sample: z.number().int().min(0).optional(),
+    familyRow: z.number().int().min(0).optional(),
+    row: z.looseObject({ in: z.array(PayloadCellSchema), out: z.array(PayloadCellSchema) }).optional(),
+    made: z.array(PayloadCellSchema).optional(),
+    expected: PayloadCellSchema.optional(),
+    actual: PayloadCellSchema.optional(),
+  }),
+  z.looseObject({ kind: z.literal('rowCount'), expected: z.number().int().min(0), actual: z.number().int().min(0) }),
+  z.looseObject({ kind: z.literal('layout'), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('formatMismatch'), path: z.string(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('fixedMismatch'), path: z.string(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('type'), path: z.string(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('limit'), path: z.string().optional(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('unsupportedDespiteEvidence'), out: ProblemColumnSchema, message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('overfit'), out: ProblemColumnSchema, message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('list'), out: ProblemColumnSchema, message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('truncated'), message: ProblemMessageSchema }),
+]);
+
+export const RepairProblemsSchema = z.array(RepairProblemSchema).max(limits.learn.loop.maxProblems);

@@ -23,7 +23,7 @@ describe('useLearnFlow', () => {
       opts?.onProgress?.({ phase: 'checking', stage: 'profile', fraction: 0.5 });
       return { path: 'local', preflight: { status: 'ok', issues: [], skipColumns: [] }, rules: {}, verification: { verified: true }, assumptions: [], unsupported: [], calls: [], stages: {} } as unknown as LearnOutput;
     });
-    const engine = { learn, convert: vi.fn(), verify: vi.fn(), terminate: vi.fn() } as unknown as EngineClient;
+    const engine = { learn, convert: vi.fn(), terminate: vi.fn() } as unknown as EngineClient;
 
     let latest!: ReturnType<typeof useLearnFlow>;
     function Probe() {
@@ -58,7 +58,7 @@ describe('useConvert', () => {
       totalRows: 2,
     };
     const convert = vi.fn(async () => out);
-    const engine = { learn: vi.fn(), convert, verify: vi.fn(), terminate: vi.fn() } as unknown as EngineClient;
+    const engine = { learn: vi.fn(), convert, terminate: vi.fn() } as unknown as EngineClient;
     const rules = { output: { file: { type: 'csv' }, columns: [] } } as unknown as LearnResult;
 
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
@@ -103,7 +103,6 @@ describe('useConvert', () => {
     const engine = {
       learn: vi.fn(),
       convert: vi.fn(async () => ({ ok: false, error: { code: 'missingRequiredColumns', missing: ['Amount'] } }) as ConvertOutput),
-      verify: vi.fn(),
       terminate: vi.fn(),
     } as unknown as EngineClient;
     let latest!: ReturnType<typeof useConvert>;

@@ -5,8 +5,9 @@
 //
 // SPEC 2/15: this NEVER leaves the browser: it is written to and read from IndexedDB only, no network code is
 // anywhere near it. It is dropped once restored, and after an hour (`webConfig.pendingLearn.maxAgeMs`) whether or
-// not it was. Every browser storage call is wrapped: private windows, blocked site data and quota errors just mean
-// "nothing was kept", and the app carries on without it.
+// not it was - the privacy page promises it: every page load drops a copy past its hour at once, and an open tab
+// drops one when its hour is up (`keepPendingWithinTheHour`). Every browser storage call is wrapped: private windows,
+// blocked site data and quota errors just mean "nothing was kept", and the app carries on without it.
 import type { LearnResult, Rules } from '@formatai/shared';
 import { webConfig } from '../config';
 
@@ -161,6 +162,38 @@ export function getPendingStore(): PendingLearnStore {
 /** Tests: replace the store (pass undefined to go back to the default). */
 export function setPendingStore(store: PendingLearnStore | undefined): void {
   current = store;
+}
+
+/**
+ * The hour the privacy page promises ("kept ... for up to an hour ... and then deleted"), enforced - not only when the app next starts and
+ * restores: at once on every page load (a copy past its hour is dropped by `load`, whoever is signed in and whatever the screen), and while
+ * the tab is open a timer drops the copy when its hour is up (one this tab kept for a sign-in that did not leave after all, or one another tab
+ * kept: the store is read again every `sweepEveryMs`). `check()` reads it again now (after this tab kept one); `stop()` ends the timers.
+ */
+export function keepPendingWithinTheHour(getStore: () => PendingLearnStore = getPendingStore): { check(): void; stop(): void } {
+  const { maxAgeMs, sweepEveryMs } = webConfig.pendingLearn;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+  const check = (): void => {
+    void (async () => {
+      const record = await getStore().load(); // (a copy past its hour is dropped by this very read)
+      if (stopped) return;
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+      // (a moment past the hour, so that the copy reads as too old then)
+      if (record) timer = setTimeout(check, Math.max(0, record.savedAt + maxAgeMs - Date.now()) + 1000);
+    })().catch(() => undefined);
+  };
+  check();
+  const sweep = setInterval(check, sweepEveryMs);
+  return {
+    check,
+    stop: () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+      clearInterval(sweep);
+    },
+  };
 }
 
 /** A dropped `File`, as it is kept: name, type and bytes. */

@@ -124,12 +124,11 @@ export const API_ERROR_CODES = [
   'invalidRows',
   // 400 (AI code checks, SPEC 21 v14): a step's rounds are malformed or larger than a learn allows (rounds, checks, rows, the payload byte cap).
   'invalidRounds',
-  // 403: Turnstile token missing or rejected (anonymous learns, SPEC 9.5).
+  // 403: Turnstile token missing or rejected - a visitor's public form (leads, waitlist, feedback). (The AI step is for signed-in users
+  // only, SPEC 21 v5: no learn asks for it any more.)
   'turnstileFailed',
   // 429: a per-tier limit was hit; `limit` says which one (see LIMIT_CODES).
   'limitHit',
-  // 429: the daily anonymous budget is spent - the UI says "Sign in to keep going".
-  'anonBudgetExhausted',
   // 503: the daily overall budget is spent - the kill switch.
   'budgetExhausted',
   // 429: too many requests from one IP in a minute.
@@ -183,6 +182,9 @@ export const LIMIT_CODES = [
   'stepsPerLearn',
   // 429: the user's AI-learn quota for its period is used up (`period` accompanies it).
   'aiLearns',
+  // 429 (API audit C1): the user's requests that call the AI today (learn, step, repair - whatever they ended in) reached
+  // `limits.protection.aiRequestsPerDay` for the tier.
+  'aiRequestsPerDay',
   // 403: saved formats (registered: lifetime total; delete frees a slot).
   'savedFormats',
   // 429: paid tier's new formats this calendar month (DECISION 9).

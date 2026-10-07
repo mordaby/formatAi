@@ -19,10 +19,9 @@ import type { AppDb } from '../db.js';
 import type { Env } from '../env.js';
 import type { FunctionRequestStatus } from '../models.js';
 import { identityOf, type Identity } from '../protection/identity.js';
-import { normalizeIp } from '../protection/ip.js';
 import type { Protection } from '../protection/index.js';
-import { createRateLimiter } from '../protection/rateLimit.js';
-import { fail } from '../registry/context.js';
+import { fail } from '../http.js';
+import { createRateLimiter, limitByIp } from '../protection/rateLimit.js';
 import { objectIdOf } from '../registry/ids.js';
 import { actorOf, listAudit, recordChanges, undoRecorded, type AuditChange } from './audit.js';
 import { listContacts } from './contacts.js';
@@ -70,11 +69,8 @@ export function registerAdminRoutes(app: FastifyInstance, opts: RegisterAdminRou
       void reply.header('cache-control', 'no-store');
 
       // 1. The rate limit comes first: a flood must not reach the session's data, let alone the database.
-      const verdict = limiter.hit(normalizeIp(req.ip));
-      if (!verdict.allowed) {
-        void reply.header('retry-after', String(verdict.retryAfterSec));
-        return fail(reply, 429, { error: 'rateLimited' });
-      }
+      const limited = await limitByIp(limiter, req, reply);
+      if (limited) return limited;
       // 2. Signed in? 3. An admin? The server decides, from the session.
       const identity = identify(req);
       if (identity.kind !== 'user' || !objectIdOf(identity.userId)) return fail(reply, 401, { error: 'signInRequired' });

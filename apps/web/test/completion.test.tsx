@@ -2,7 +2,7 @@
 // the rules on screen (code-solved columns and the user's edits) are the fixed part, and an answer replaces them only when it passed the
 // fixed lock and the verification. When it cannot complete, the same button is the whole learn again, behind "This replaces your current rules". And the
 // regression tests of the owner's bug: a signed-in user's partial result shows "Finish with AI" however they got there.
-import type { LearnPayload, LearnResult, Rules } from '@formatai/shared';
+import { promptVersion, type LearnPayload, type LearnResult, type Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
@@ -10,6 +10,7 @@ import { createMemoryPendingStore, setPendingStore, storeFile, type PendingLearn
 import { learnFromExamples } from '@formatai/engine';
 import { ordersRules } from '../src/editor/testkit';
 import type { LearnOutput } from '../src/worker/engineApi';
+import { conversionSummary, createFormatResponse, formatSummary } from './helpers/registryKit';
 import { csv, fakeApi, fakeEngine, learnResult, renderApp, USER } from './helpers/renderApp';
 
 const { redirectTo } = vi.hoisted(() => ({ redirectTo: vi.fn() }));
@@ -154,6 +155,20 @@ describe('"Finish with AI" completes only what is missing', () => {
     expect(screen.queryByRole('button', { name: 'Finish with AI' })).toBeNull();
     expect(screen.queryByTestId('ai-step-parts')).toBeNull();
     expect(screen.getByText('Everything you had was kept as it was.', { exact: false })).toBeTruthy();
+  });
+
+  it('the panel\'s status region is there, empty, before the run - and the run\'s progress, then what it came to, are said in it (C9)', async () => {
+    let release!: () => void;
+    const { engine } = engineWith((args) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(args)))));
+    await start(engine);
+    const region = screen.getByTestId('deep-status');
+    expect(region.getAttribute('role')).toBe('status');
+    expect(region.textContent).toBe('');
+    fireEvent.click(finishButton());
+    await waitFor(() => expect(within(region).getByTestId('completion-running')).toBeTruthy());
+    await act(async () => release());
+    await waitFor(() => expect(within(region).getByTestId('completion-done')).toBeTruthy());
+    expect(screen.getByTestId('deep-status')).toBe(region); // the same region all along
   });
 
   it('while it works the rules stay as they are, and the button says it is busy', async () => {
@@ -402,8 +417,54 @@ describe('"Finish with AI" completes only what is missing', () => {
     expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
   });
 
+  it('an answer that collides with an edit made while it worked is not used, and is reported as not used (failed) - never as verified', async () => {
+    const learnOutcome = vi.fn(async () => ({ counted: false, quota: { remaining: 3, period: 'month' as const, limit: null }, failedAttempts: 1, exhausted: false }));
+    const api = fakeApi({ user: USER, registry: { learnOutcome } });
+    let release!: () => void;
+    const answered = new Promise<void>((resolve) => (release = resolve));
+    const { engine } = engineWith(async (args, host) => {
+      await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: false, output: { columns: [] }, samples: [], skipColumns: [] });
+      await answered;
+      // The answer renamed Supplier too - the user renamed it meanwhile, differently: the two cannot both stand.
+      const out = completionOutput(args);
+      out.rules!.output.columns[1] = { ...out.rules!.output.columns[1]!, header: 'Supplier name' };
+      return out;
+    });
+    await start(engine, api);
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-running');
+    await renameSupplier();
+    await act(async () => release());
+    expect((await screen.findByTestId('completion-kept')).textContent).toBe(
+      'Something you changed while the deep analysis was working clashes with its answer, so its answer was not used. Try again.',
+    );
+    await waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', 'failed'));
+    expect(learnOutcome).not.toHaveBeenCalledWith('L1', 'verified');
+    expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
+    expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
+  });
+
+  it('an answer that was counted but not used still updates what is left of the AI formats (the account menu says it)', async () => {
+    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 1, period: 'month' as const, limit: null }, failedAttempts: 1, exhausted: false }));
+    const api = fakeApi({
+      user: USER,
+      learn: vi.fn(async () => ({ rules: null, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 1, period: 'month' as const, limit: null } })),
+      registry: { learnOutcome },
+    });
+    const { engine } = engineWith(async (args, host) => {
+      await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: false, output: { columns: [] }, samples: [], skipColumns: [] });
+      return completionOutput(args, {}, { matches: false });
+    });
+    await start(engine, api);
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-kept');
+    fireEvent.click(await screen.findByRole('button', { name: 'Account menu for Dana Levi' }));
+    const panel = await screen.findByRole('group', { name: 'Account' });
+    await waitFor(() => expect(panel.textContent).toContain('AI formats left this month: 1'));
+  });
+
   it('the learn outcome is reported on the answer\'s own learn id (verified only when lock, match and production all hold)', async () => {
-    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
+    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const, limit: null }, failedAttempts: 0, exhausted: false }));
     const api = fakeApi({ user: USER, registry: { learnOutcome } });
     const { engine } = engineWith(async (args, host) => {
       await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: false, output: { columns: [] }, samples: [], skipColumns: [] });
@@ -413,6 +474,100 @@ describe('"Finish with AI" completes only what is missing', () => {
     fireEvent.click(finishButton());
     await screen.findByTestId('completion-done');
     await waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', 'verified'));
+  });
+});
+
+describe('leaving the Result screen and coming back keeps "Finish with AI" as it was (the session keeps it, not the screen)', () => {
+  /** The same start as `start`, on the app's data router: the test goes to another screen and back the way a link does. */
+  async function startRouted(engine: ReturnType<typeof fakeEngine>['engine'], api = fakeApi({ user: USER })) {
+    const view = renderApp({ engine, api, dataRouter: true });
+    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });
+    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('Orders report.csv')] } });
+    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Learn the format/ }));
+    });
+    await screen.findByTestId('rules-map');
+    return { api, router: view.router! };
+  }
+  type Router = Awaited<ReturnType<typeof startRouted>>['router'];
+  /** To the privacy page (with unsaved edits, "Leave without saving?" first: the edits stay in the session) ... */
+  async function away(router: Router) {
+    await act(async () => void router.navigate('/privacy'));
+    const leave = screen.queryByRole('button', { name: 'Leave without saving' });
+    if (leave) await act(async () => void fireEvent.click(leave));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/privacy'));
+    expect(screen.queryByTestId('rules-map')).toBeNull();
+  }
+  /** ... and back to the result. */
+  async function back(router: Router) {
+    await act(async () => void router.navigate('/result'));
+    await screen.findByTestId('rules-map');
+  }
+
+  it('an answer that arrives while the user is away - edits made before it started - is applied when they come back, not thrown away as "changed"', async () => {
+    let release!: () => void;
+    const { engine } = engineWith((args) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(args)))));
+    const { router } = await startRouted(engine);
+    await renameSupplier();
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-running');
+    await away(router);
+    await act(async () => release());
+    await back(router);
+    expect((await screen.findByTestId('completion-done')).textContent).toContain('The deep analysis finished');
+    expect(screen.queryByTestId('completion-kept')).toBeNull();
+    await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
+    expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
+  });
+
+  it('coming back while it still works: the panel says so, the fields stay read-only, and the answer then merges what was edited meanwhile', async () => {
+    let release!: () => void;
+    const { engine } = engineWith((args) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(args)))));
+    const { router } = await startRouted(engine);
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-running');
+    await away(router);
+    await back(router);
+    expect(screen.getByTestId('completion-running')).toBeTruthy();
+    expect(line('col:Total').getAttribute('data-ai-running')).toBe('true');
+    await renameSupplier();
+    await act(async () => release());
+    expect((await screen.findByTestId('completion-done')).textContent).toContain('The deep analysis finished');
+    expect(screen.getByText('What you changed while it worked was kept too.')).toBeTruthy();
+    expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
+    await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
+  });
+
+  it('an applied answer is not applied twice, and after leaving and coming back Save still asks about its copied list and saves it as the AI\'s', async () => {
+    // The answer keeps a list copied from the example (the supplier codes): the Save popup must ask about it, whatever screens came between.
+    const supplierList = { kind: 'copiedList' as const, out: 1, header: 'Supplier', keyColumn: 'Supplier', entries: 2, list: { kind: 'valueMap' as const, column: 'supplier' } };
+    // (the AI step answers through the API, which says the prompt version it learned with: the save must carry THAT one - API audit)
+    const { engine, learn } = engineWith(async (args, host) => {
+      await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: false, output: { columns: [] }, samples: [], skipColumns: [] });
+      return completionOutput(args, { oneTimers: { questions: [supplierList], handedOff: [] } });
+    });
+    const createFormat = vi.fn(async () => createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1', version: 1 }) }));
+    const apiLearn = vi.fn(async () => ({ rules: null, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 1, period: 'month' as const, limit: null }, promptVersion: 'learn-v9' as const }));
+    const { router } = await startRouted(engine, fakeApi({ user: USER, learn: apiLearn, registry: { createFormat } }));
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-done');
+    await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
+    await away(router);
+    await back(router);
+    expect(learn).toHaveBeenCalledTimes(2); // nothing ran again
+    expect(screen.getByTestId('completion-done')).toBeTruthy();
+    expect(line('col:Total').getAttribute('data-ai-step')).toBeNull();
+    const save = screen.getByRole('button', { name: 'Save format' }) as HTMLButtonElement;
+    await waitFor(() => expect(save.disabled).toBe(false));
+    await act(async () => void fireEvent.click(save));
+    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(within(box).getByTestId('copied-list-dialog').textContent).toContain('Supplier');
+    expect(createFormat).not.toHaveBeenCalled();
+    await act(async () => void fireEvent.click(within(box).getByRole('button', { name: 'Keep it' })));
+    await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+    expect((createFormat.mock.calls[0] as unknown as [{ learnPath: string; promptVersion?: string }])[0]).toMatchObject({ learnPath: 'llm', promptVersion: 'learn-v9' });
+    expect(promptVersion).not.toBe('learn-v9'); // the server's version, kept with the applied answer in the session - never the browser's constant
   });
 });
 
@@ -431,6 +586,22 @@ describe('"Finish with AI" is the whole learn when it cannot complete, and asks 
     await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
     expect(learn.mock.calls[1]![0]).toMatchObject({ ai: 'allowed', tier: 'registered' });
     expect((learn.mock.calls[1]![0] as CompletionArgs).complete).toBeUndefined();
+  });
+
+  it('the whole learn\'s requests are in "See what we send" on the result it gives (not only a completion\'s)', async () => {
+    const { engine } = engineWith(async (_args, host) => {
+      await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: true, output: { columns: [{ i: 0, header: 'whole-learn-marker' }] }, samples: [] });
+      return learnResult({ path: 'llm' });
+    }, covered);
+    await start(engine);
+    expect(screen.queryByRole('button', { name: 'See what we send' })).toBeNull(); // (the free learn sent nothing)
+    await act(async () => void fireEvent.click(finishButton()));
+    await screen.findByTestId('rules-map');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'See what we send' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    const records = await screen.findAllByTestId('send-record');
+    expect(records).toHaveLength(1);
+    expect(records[0]!.textContent).toContain('whole-learn-marker');
   });
 
   it('with edits it asks "This replaces your current rules"; "Keep my rules" changes nothing', async () => {

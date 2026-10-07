@@ -234,6 +234,65 @@ describe('buildSampleInputTable', () => {
     const table = buildSampleInputTable(payload);
     expect(table.rows[0]![1]).toEqual({ v: '2024-03-15' });
   });
+
+  it('API audit C3: has the listed columns only, each read at its position - a huge position builds no huge table', () => {
+    const payload: LearnPayload = {
+      ...basicPayload(),
+      input: {
+        ...basicPayload().input,
+        columns: [
+          { i: 4_294_967_294, header: 'Amount', type: 'decimal' },
+          { i: 0, header: 'ID', type: 'idLike' },
+        ],
+      },
+      samples: [{ in: ['A1', 10], out: ['A1', 20] }],
+    };
+    const started = Date.now();
+    const table = buildSampleInputTable(payload);
+    expect(Date.now() - started).toBeLessThan(100); // was minutes (or out of memory) at this position
+    expect(table.headers).toEqual(['ID', 'Amount']);
+    expect(table.rows[0]).toEqual([{ v: 'A1' }, null]);
+  });
+
+  it('a gap between positions is no column of its own (the rules find their columns by header)', () => {
+    const payload: LearnPayload = {
+      ...basicPayload(),
+      input: {
+        ...basicPayload().input,
+        columns: [
+          { i: 0, header: 'ID', type: 'idLike' },
+          { i: 3, header: 'Amount', type: 'decimal' },
+        ],
+      },
+      samples: [{ in: ['A1', 'x', 'y', 10], out: ['A1', 20] }, { in: ['A2', 'x', 'y', 5], out: ['A2', 10] }],
+    };
+    const table = buildSampleInputTable(payload);
+    expect(table.headers).toEqual(['ID', 'Amount']);
+    expect(table.rows[0]).toEqual([{ v: 'A1' }, { v: 10 }]);
+    expect(runOnSamples(correctRules(), payload)).toEqual([]);
+  });
+});
+
+describe('runOnSamples compares like the browser (API audit P1: engine cellsMatch)', () => {
+  const csvPayload = (outs: [string, string][]): LearnPayload =>
+    basicPayload({
+      output: { ...basicPayload().output, file: { type: 'csv' } },
+      samples: outs.map(([id, total], i) => ({ in: [id, (i + 1) * 5], out: [id, total] })),
+    });
+
+  it('a csv / txt example: plain-number text equals the number the rules make ("10.00" is 10)', () => {
+    expect(runOnSamples(correctRules(), csvPayload([['A1', '10'], ['A2', '20.00']]))).toEqual([]);
+  });
+
+  it('...but never text a delimited writer would not write for it: a currency sign, grouping', () => {
+    const problems = runOnSamples(correctRules(), csvPayload([['A1', '₪10'], ['A2', '2,0']]));
+    expect(problems.filter((p) => p.kind === 'diff').map((p) => (p as { out: number }).out)).toEqual([1, 1]);
+  });
+
+  it('a workbook: text that reads like a number is still not one (typed, as before)', () => {
+    const problems = runOnSamples(correctRules(), basicPayload({ samples: [{ in: ['A1', 10], out: ['A1', '20'] }] }));
+    expect(problems).toContainEqual({ kind: 'diff', out: 1, sample: 0, expected: '20', actual: 20 });
+  });
 });
 
 describe('runOnSamples: a column reported as unsupported', () => {

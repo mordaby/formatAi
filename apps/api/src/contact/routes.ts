@@ -3,7 +3,8 @@
 //   per-IP rate limit (in memory: a flood does not even reach Cloudflare or the database)
 //   -> the body is checked (shared `checkLead` / `checkWaitlist` / `checkFeedback`: caps, trimmed, whitelisted fields)
 //   -> Turnstile, for a visitor (a signed-in user has passed a sign-in; the rate limits still apply to them)
-//   -> a durable per-IP daily cap on a KEYED HASH of the IP (`usage_counters`) -> the document is stored.
+//   -> a durable per-IP daily cap on a KEYED HASH of the IP (`usage_counters`) -> a global daily cap (every address together) -> the
+//   document is stored.
 //
 // SPEC 15: nothing here stores or logs an IP, a token, or what the visitor typed. The stored document holds only the whitelisted
 // fields, the page path, and who sent it (`anonId`, `userId`). Every refusal is a stable code (`{ error }`, shared `API_ERROR_CODES`):
@@ -13,16 +14,16 @@ import {
   checkLead,
   checkWaitlist,
   limits,
-  type ApiErrorBody,
   type ContactCheck,
   type ContactResponse,
 } from '@formatai/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { FeedbackDoc, LeadDoc } from '../models.js';
 import { identityOf, type Identity } from '../protection/identity.js';
-import { hashIp, normalizeIp } from '../protection/ip.js';
+import { fail } from '../http.js';
+import { hashIp } from '../protection/ip.js';
 import { dailyCounterExpiry, dayKey, endOfUtcDay } from '../protection/keys.js';
-import { createRateLimiter } from '../protection/rateLimit.js';
+import { createRateLimiter, limitByIp } from '../protection/rateLimit.js';
 import type { Protection } from '../protection/index.js';
 import { objectIdOf } from '../registry/ids.js';
 import type { ContactStore } from './store.js';
@@ -37,14 +38,13 @@ export interface RegisterContactRoutesOptions {
 /** The counter that bounds one IP's stored submissions in a UTC day: a keyed hash, never the address (SPEC 13 `ip:<hash>:<day>`). */
 export const contactDayKey = (ipHash: string, day: string): string => `ip:${ipHash}:contact:${day}`;
 
+/** API audit (2026-10-07): the counter of every stored submission in a UTC day, whatever its address (`limits.contact.globalPerDay`). */
+export const contactGlobalDayKey = (day: string): string => `contact:all:${day}`;
+
 interface Admitted<T> {
   fields: T;
   identity: Identity;
   at: Date;
-}
-
-function fail(reply: FastifyReply, status: number, body: ApiErrorBody): FastifyReply {
-  return reply.code(status).send(body);
 }
 
 export function registerContactRoutes(app: FastifyInstance, opts: RegisterContactRoutesOptions): void {
@@ -59,12 +59,7 @@ export function registerContactRoutes(app: FastifyInstance, opts: RegisterContac
   });
 
   /** Per-IP request rate limit: runs before the body is even parsed. */
-  const rateLimit = async (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> => {
-    const verdict = limiter.hit(normalizeIp(req.ip));
-    if (verdict.allowed) return undefined;
-    void reply.header('retry-after', String(verdict.retryAfterSec));
-    return fail(reply, 429, { error: 'rateLimited' });
-  };
+  const rateLimit = (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> => limitByIp(limiter, req, reply);
 
   /**
    * The checks every form shares: the body, then Turnstile (visitors), then the daily cap. Returns the checked fields and who is
@@ -85,11 +80,15 @@ export function registerContactRoutes(app: FastifyInstance, opts: RegisterContac
     }
 
     const at = now();
-    const used = await protection.store.incrementCounter(contactDayKey(hashIp(req.ip, secret), dayKey(at)), 1, dailyCounterExpiry(at));
-    if (used > limits.contact.perIpPerDay) {
+    const untilTomorrow = (): { refusal: FastifyReply } => {
       void reply.header('retry-after', String(Math.max(1, Math.ceil((endOfUtcDay(at).getTime() - at.getTime()) / 1000))));
       return { refusal: fail(reply, 429, { error: 'rateLimited' }) };
-    }
+    };
+    const used = await protection.store.incrementCounter(contactDayKey(hashIp(req.ip, secret), dayKey(at)), 1, dailyCounterExpiry(at));
+    if (used > limits.contact.perIpPerDay) return untilTomorrow();
+    // API audit (2026-10-07): and every address together (`limits.contact.globalPerDay`) - an invented address gets past the cap above.
+    const all = await protection.store.incrementCounter(contactGlobalDayKey(dayKey(at)), 1, dailyCounterExpiry(at));
+    if (all > limits.contact.globalPerDay) return untilTomorrow();
     return { fields: checked.value, identity, at };
   }
 

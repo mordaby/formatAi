@@ -36,7 +36,7 @@ describe.each(['en', 'he'] as const)('error code -> message (%s)', (lang) => {
   });
 
   it('the anonymous limits nudge towards signing in; the budget and the anti-bot check do not', () => {
-    expect(errorView(i18n, api('anonBudgetExhausted'))).toMatchObject({ tone: 'info', action: 'signIn', text: apiErrorMessages.anonBudgetExhausted[lang] });
+    expect(errorView(i18n, api('signInForAi'))).toMatchObject({ tone: 'info', action: 'signIn', text: apiErrorMessages.signInForAi[lang] });
     expect(errorView(i18n, api('limitHit', { limit: 'learnsPerDay' }))).toMatchObject({ tone: 'info', action: 'signIn' });
     expect(errorView(i18n, api('budgetExhausted'))).toMatchObject({ tone: 'block', action: 'none' });
     expect(errorView(i18n, api('turnstileFailed'))).toMatchObject({ tone: 'block', action: 'reload' });
@@ -46,6 +46,15 @@ describe.each(['en', 'he'] as const)('error code -> message (%s)', (lang) => {
     for (const limit of ['repairsPerLearn', 'stepsPerLearn'] as const) {
       expect(errorView(i18n, api('limitHit', { limit }))).toEqual({ tone: 'block', text: limitMessages[limit][lang], action: 'tryAgain' });
     }
+  });
+
+  it("API audit C1: the day's cap on requests to the AI is an amber block that says what keeps working - no sign-in, no retry", () => {
+    expect(errorView(i18n, api('limitHit', { limit: 'aiRequestsPerDay' }))).toEqual({
+      tone: 'block',
+      text: limitMessages.aiRequestsPerDay[lang],
+      todo: i18n.t('aiLimit.local'),
+      action: 'none',
+    });
   });
 
   it('rate limiting says when to try again, when the server said', () => {

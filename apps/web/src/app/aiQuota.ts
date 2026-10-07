@@ -68,11 +68,15 @@ export function aiOutLine(i18n: Pick<I18n, 't' | 'lang'>, period: AiLearnPeriod,
 
 /**
  * What the plan includes, and when they come back: "Your plan includes 3 AI formats a month. They come back on 1 November." The count is
- * the plan's (`tiers[tier].aiLearns`); the period is the one the server counted.
+ * the user's own as the server says it (`quota.limit`: an admin may have given this account another number), else the plan's
+ * (`tiers[tier].aiLearns`); when it is not the plan's, the line says so - "Your account includes 10 ..." (API audit P2). The period is the one
+ * the server counted.
  */
-export function aiPlanLine(i18n: Pick<I18n, 't' | 'lang'>, tier: Tier, period: AiLearnPeriod, now: Date = new Date()): string {
+export function aiPlanLine(i18n: Pick<I18n, 't' | 'lang'>, tier: Tier, period: AiLearnPeriod, now: Date = new Date(), limit: number | null = null): string {
   const { t, lang } = i18n;
-  const n = tiers[tier].aiLearns.count;
-  if (period === 'month' || period === 'day') return t(`aiOut.plan.${period}`, { n, date: aiRenewText(lang, period, now) ?? '' });
-  return t('aiOut.plan.lifetime', { n });
+  const plan = tiers[tier].aiLearns.count;
+  const n = limit ?? plan;
+  const whose = n === plan ? 'plan' : 'account';
+  if (period === 'month' || period === 'day') return t(`aiOut.${whose}.${period}`, { n, date: aiRenewText(lang, period, now) ?? '' });
+  return t(`aiOut.${whose}.lifetime`, { n });
 }

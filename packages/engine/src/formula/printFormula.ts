@@ -74,12 +74,24 @@ function printNumber(v: number): string {
   return printNonNegativeNumber(v);
 }
 
+/**
+ * A non-negative finite number in plain decimal notation, the only one formula text has (no exponent): the shortest digits that read back
+ * as the same number (`toString`'s), with the decimal point moved by hand where `toString` writes an exponent - from 1e21 up, and below
+ * 1e-6. API audit (2026-10-07): it used to throw there, and a rules file holding such a constant (an AI answer's) could not be printed
+ * back into a repair call - a 500. `parseFormula` reads the digits back to the same number.
+ */
 function printNonNegativeNumber(v: number): string {
+  if (!Number.isFinite(v)) throw new Error(`printFormula: ${v} is not a finite number`);
   const s = v.toString();
-  if (s.includes('e') || s.includes('E')) {
-    throw new Error(`printFormula: number ${v} would need exponential notation, which formula text doesn't support`);
-  }
-  return s;
+  const e = s.indexOf('e');
+  if (e < 0) return s;
+  const [int = '', frac = ''] = s.slice(0, e).split('.');
+  const digits = int + frac;
+  // Where the decimal point goes in `digits` (`1.5e-7`: -6, so six zeros after "0."; `1e21`: 22, so 21 zeros after the "1").
+  const point = int.length + Number(s.slice(e + 1));
+  if (point <= 0) return `0.${'0'.repeat(-point)}${digits}`;
+  if (point >= digits.length) return digits + '0'.repeat(point - digits.length);
+  return `${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
 function printConst(v: ExprConstValue): string {

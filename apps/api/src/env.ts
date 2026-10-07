@@ -70,6 +70,12 @@ const OPTIONAL_STRING_KEYS = [
    * and forms are then protected by the rate limits only, and the start log says so. Remove it once the keys are set.
    */
   'TURNSTILE_DISABLED',
+  /**
+   * Development only: "true" offers the throw-away sign-in (`POST /api/dev/session`) even when the web app or the API is reached at an address
+   * that is not this machine (a phone on the LAN, a tunnel). Without it that route exists only for a local web app and API, and never in
+   * production (API audit 2026-10-07).
+   */
+  'DEV_SIGN_IN',
   'VITE_TURNSTILE_SITE_KEY',
   /** Public Turnstile site key served by GET /api/session; falls back to `VITE_TURNSTILE_SITE_KEY` (same repo-root .env). */
   'TURNSTILE_SITE_KEY',

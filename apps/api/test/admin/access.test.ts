@@ -112,6 +112,8 @@ function defineSuite(kit: AuthKit): void {
       expect((res.json() as AdminUpdateUserResponse).user).toMatchObject({ id, tier: 'paid', aiLearns: { limit: 7 } });
       expect(((await person.get('/api/me')).json() as MeResponse).user!.tier).toBe('paid');
       expect((await person.get('/api/__identity')).json()).toMatchObject({ kind: 'user', userId: id, tier: 'paid', learnLimitOverride: 7 });
+      // API audit P2: the quota says the user's OWN limit - the override, not the plan's number
+      expect((await person.get('/api/learn/quota')).json()).toEqual({ quota: { remaining: 7, period: 'month', limit: 7 } });
 
       // the audit log names the admin who did it, as she signed in
       const audit = (await admin.get('/api/admin/audit')).json() as { entries: { adminEmail: string | null; action: string; targetId: string }[] };

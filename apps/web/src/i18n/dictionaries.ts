@@ -27,7 +27,6 @@ export const en = {
   'app.name': 'formatAI',
   'app.tagline': 'Teach a format once. Use it every month.',
 
-  'lang.toggle.label': 'Language',
   'lang.name.en': 'English',
   'lang.name.he': 'עברית',
   'lang.switchTo.en': 'Switch to English',
@@ -78,13 +77,11 @@ export const en = {
   'convert.rowsOut': 'Rows out',
   'convert.flags': 'Rows to check',
   'convert.missingColumns': 'These columns are missing from the file: {columns}',
-  'convert.noTable': "We couldn't find a table in this file.",
 
   // ---------- M2 app shell and first screens ----------
   'common.close': 'Close',
   'common.copy': 'Copy',
   'common.copied': 'Copied',
-  'common.comingSoon': 'Coming soon',
 
   'skip.toMain': 'Skip to content',
   'header.signIn': 'Sign in',
@@ -92,7 +89,6 @@ export const en = {
   'footer.business': 'Business',
   'footer.privacy': 'Privacy',
   'footer.terms': 'Terms',
-  'page.backHome': 'Back to the start',
 
   // SPEC 5 E: the sign-in wall
   'signIn.title': 'Sign in',
@@ -231,7 +227,6 @@ export const he: Record<MessageKey, string> = {
   'app.name': 'formatAI',
   'app.tagline': 'מלמדים פורמט פעם אחת. משתמשים בו כל חודש.',
 
-  'lang.toggle.label': 'שפה',
   'lang.name.en': 'English',
   'lang.name.he': 'עברית',
   'lang.switchTo.en': 'Switch to English',
@@ -279,13 +274,11 @@ export const he: Record<MessageKey, string> = {
   'convert.rowsOut': 'שורות בפלט',
   'convert.flags': 'שורות לבדיקה',
   'convert.missingColumns': 'העמודות האלה חסרות בקובץ: {columns}',
-  'convert.noTable': 'לא מצאנו טבלה בקובץ הזה.',
 
   // ---------- M2 app shell and first screens ----------
   'common.close': 'סגירה',
   'common.copy': 'העתקה',
   'common.copied': 'הועתק',
-  'common.comingSoon': 'בקרוב',
 
   'skip.toMain': 'דלגו לתוכן',
   'header.signIn': 'התחברות',
@@ -293,7 +286,6 @@ export const he: Record<MessageKey, string> = {
   'footer.business': 'לעסקים',
   'footer.privacy': 'פרטיות',
   'footer.terms': 'תנאי שימוש',
-  'page.backHome': 'חזרה להתחלה',
 
   'signIn.title': 'התחברות',
   'signIn.save': 'התחברו כדי לשמור את הפורמט הזה ולהשתמש בו בקובץ של החודש הבא.',

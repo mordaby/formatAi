@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LEARN_SYSTEM_PROMPT, learnPromptOf, limits, models, promptVersion, REPAIR_INSTRUCTION, REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V8 } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
-import { createFakeProvider, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
+import { createFakeProvider, LlmError, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
 import {
   allUnsupportedWireJson,
@@ -442,5 +442,68 @@ describe('repairFromBrowser(): one round of the learning loop', () => {
     expect(outcome.calls).toHaveLength(2);
     expect(outcome.verified).toBe(false);
     expect(outcome.rules).toEqual(correctRules());
+  });
+});
+
+describe('API audit C8: a call that got no answer gets no repair', () => {
+  it('learn: a provider error on the first call goes straight to the escalation (another model), with no repair call', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ error: new LlmError('timeout', 'fake', 'no answer in time', { unavailable: 'timeout' }) });
+    fake.enqueue({ json: correctRulesWireJson() });
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    expect(outcome.calls.map((c) => [c.purpose, c.outcome])).toEqual([
+      ['learn', 'error:timeout'],
+      ['escalation', 'verified'],
+    ]);
+    expect(outcome.verified).toBe(true);
+  });
+
+  it("a loop round: the round's call failed - no server repair of it", async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ error: new LlmError('providerError', 'fake', 'HTTP 500', { unavailable: 'serverError' }) });
+    fake.enqueue({ json: correctRulesWireJson() }); // never asked for
+    const outcome = await repairFromBrowser(basicPayload(), wrongRoundingRules(), [{ kind: 'layout', message: 'x' }], { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    expect(outcome.calls.map((c) => c.outcome)).toEqual(['error:providerError']);
+    expect(fake.calls).toHaveLength(1);
+    expect(outcome.verified).toBe(false);
+  });
+
+  it('an answer that did not parse still gets its repair (only a call with no answer is skipped)', async () => {
+    const fake = createFakeProvider();
+    fake.enqueue({ json: schemaBrokenRulesJson() });
+    fake.enqueue({ json: correctRulesWireJson() });
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake) });
+    expect(outcome.calls.map((c) => c.purpose)).toEqual(['learn', 'repair']);
+    expect(outcome.verified).toBe(true);
+  });
+});
+
+describe('API audit (2026-10-07): an answer can never make the repair a 500', () => {
+  it("a constant past toString's plain digits (1e21) is printed back into the repair call, not thrown", async () => {
+    const fake = createFakeProvider();
+    const wrong = structuredClone(correctRulesWireJson()) as { transform: { computed: { expr: string }[] } };
+    wrong.transform.computed[0]!.expr = 'amount * 1000000000000000000000';
+    fake.enqueue({ json: wrong });
+    fake.enqueue({ json: correctRulesWireJson() });
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake), noEscalation: true });
+    expect(outcome.verified).toBe(true);
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls[1]!.content.at(-1)!.text).toContain('amount * 1000000000000000000000');
+  });
+
+  it('rules that cannot be printed back are a failed call of the learn (error:requestNotBuilt, nothing sent), never an exception', async () => {
+    const fake = createFakeProvider();
+    const base = wrongRoundingRules();
+    const unprintable = {
+      ...base,
+      transform: { ...base.transform, computed: [{ id: 'total', type: 'decimal' as const, expr: { op: 'mul' as const, args: [{ col: 'amount' }, { const: Number.POSITIVE_INFINITY }] } }] },
+    };
+    const outcome = await withServerRepairRounds(0, () =>
+      repairFromBrowser(basicPayload(), unprintable, [{ kind: 'layout', message: 'x' }], { tier: 'registered', env, complete: fakeCompleteFn(fake) }),
+    );
+    expect(fake.calls).toHaveLength(0);
+    expect(outcome.verified).toBe(false);
+    expect(outcome.calls.map((c) => c.outcome)).toEqual(['error:requestNotBuilt']);
+    expect(outcome.problems[0]).toMatchObject({ kind: 'schema', message: expect.stringContaining('could not be built') });
   });
 });

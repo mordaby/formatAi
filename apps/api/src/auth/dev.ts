@@ -1,7 +1,7 @@
 // DEVELOPMENT ONLY: `POST /api/dev/session` creates a throw-away test user and signs the caller in as them, so the
 // signed-in screens can be tried (and screenshotted) without a real Google/Microsoft sign-in, which needs the
-// owner's OAuth client. `registerAuth` registers this route only when NODE_ENV is not `production`; in a
-// production process the route does not exist (404). Users made here are ordinary documents with a
+// owner's OAuth client. `registerAuth` registers this route only when NODE_ENV is not `production` AND the web app and
+// the API are on this machine (or `DEV_SIGN_IN=true` says so: `devSignInAllowed`); otherwise the route does not exist (404). Users made here are ordinary documents with a
 // `provider: 'google'` identity whose subject is `dev-<random>` and an email under the reserved `.test` TLD, so
 // they never collide with (or are mistaken for) a real account.
 import { randomBytes } from 'node:crypto';

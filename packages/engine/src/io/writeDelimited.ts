@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js';
-import type { OutCell, OutputColumn, OutputFileSpec, OutputSheet } from '../types';
+import type { OutCell, OutputFileSpec, OutputSheet } from '../types';
 
 const INJECTION_PREFIX_RE = /^[=+\-@]/;
 
@@ -55,15 +55,16 @@ const PLAIN_NUMBER_RE = /^-?\d+(\.\d+)?$/;
 /**
  * Formula-injection guard (SPEC 15), shared by csv and txt: a text cell
  * starting with = + - @ gets a leading apostrophe, unless the value is itself
- * a number (a genuinely numeric value can't carry a formula). A numeric column
- * exempts only text that is a plain number ("-123"): it still holds text - a
- * value its type could not read is kept as it is (and flagged), and its header,
- * title and summary-label cells are text - and "=SUM(A1:A9)" there is as live
- * as anywhere else.
+ * a number (a genuinely numeric value can't carry a formula). Text that is a
+ * plain number ("-123", "-1192964702.4") is exempt in EVERY column (amendment
+ * 2026-10-07, engine audit, stress finding O2): a plain number cannot be a
+ * formula, and the apostrophe made "'-1192964702.4" of a value the example
+ * shows as the number. Anything else - "=SUM(A1:A9)", "-5 units", "+972-50-..."
+ * - is guarded in every column, a numeric one too.
  */
-function applyInjectionGuard(text: string, cell: OutCell, column: OutputColumn | undefined): string {
+function applyInjectionGuard(text: string, cell: OutCell): string {
   if (typeof cell.v === 'number' || !INJECTION_PREFIX_RE.test(text)) return text;
-  if (column?.numeric === true && PLAIN_NUMBER_RE.test(text)) return text;
+  if (PLAIN_NUMBER_RE.test(text)) return text;
   return `'${text}`;
 }
 
@@ -97,14 +98,13 @@ function quoteField(text: string, delimiter: string, quoteMode: QuoteMode, row: 
 
 function buildField(
   cell: OutCell,
-  column: OutputColumn | undefined,
   delimiter: string,
   quoteMode: QuoteMode,
   row: number,
   col: number
 ): string {
   const raw = cellRawText(cell);
-  const guarded = applyInjectionGuard(raw, cell, column);
+  const guarded = applyInjectionGuard(raw, cell);
   return quoteField(guarded, delimiter, quoteMode, row, col);
 }
 
@@ -197,7 +197,7 @@ export function writeDelimited(sheet: OutputSheet, spec: OutputFileSpec): Uint8A
   const rows = header ? sheet.rows : sheet.rows.filter((r) => r.kind !== 'header');
 
   const fields: string[][] = rows.map((row, rIdx) =>
-    row.cells.map((cell, cIdx) => buildField(cell, sheet.columns[cIdx], delimiter, quoteMode, rIdx, cIdx))
+    row.cells.map((cell, cIdx) => buildField(cell, delimiter, quoteMode, rIdx, cIdx))
   );
 
   if (encoding === 'windows1255') {

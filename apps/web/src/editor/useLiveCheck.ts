@@ -33,6 +33,8 @@ export interface UseLiveCheck {
   saveStatus: SaveStatus;
   /** Static-check problems for the current rules, in plain words, tied to lines of the rules map. */
   problems: ExplainedProblem[];
+  /** The static checks have answered for the current rules (`problems` is theirs, not just "not checked yet"). */
+  problemsChecked: boolean;
 }
 
 export function useLiveCheck(options: UseLiveCheckOptions): UseLiveCheck {
@@ -78,6 +80,7 @@ export function useLiveCheck(options: UseLiveCheckOptions): UseLiveCheck {
       apply: () => scheduler.apply(),
       saveStatus,
       problems,
+      problemsChecked: staticCurrent !== null,
     };
   }, [state, editor.rev, editor.rules, exampleId, scheduler, onlyColumns]);
 }

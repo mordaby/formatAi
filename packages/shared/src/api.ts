@@ -2,6 +2,7 @@
 // browser bundle can import them freely. The server's source of truth is `apps/api/src/routes`.
 import type { Check, CheckRound } from './checks';
 import type { ApiErrorCode, LimitCode } from './codes';
+import type { PromptVersion } from './config/prompts';
 import type { AiLearnPeriod, TierLimits } from './config/tiers';
 import type { LearnPayload, RepairProblem, Sample } from './payload';
 import type { LearnAlternative, LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, Validation } from './rules/schema';
@@ -18,6 +19,8 @@ export interface ApiErrorBody {
   period?: AiLearnPeriod;
   /** `aiAttemptsExhausted`: true when this very answer counted the pair as one AI learn (SPEC 21 v5). */
   counted?: boolean;
+  /** `limitHit { limit: 'aiLearns' }` (API audit P2): the caller's quota as it stands - none left, and their own limit. */
+  quota?: AiLearnQuotaState;
   /** `invalidRules` / `formatMismatch` / `sourceMismatch` (registry): what failed, in the same shape a repair call takes. */
   problems?: ApiProblem[];
 }
@@ -31,11 +34,11 @@ export interface SessionResponse {
   tier: 'free';
   /** The tier's limits: the client-enforced ones (rows, columns, preview) and the rest, for display. */
   limits: TierLimits;
-  /** Present when Turnstile is configured; absent in dev without it (learns then skip the check). */
+  /** Present when Turnstile is configured; absent in dev without it (the public forms then skip the check). */
   turnstileSiteKey?: string;
 }
 
-/** POST /api/learn body. `turnstileToken` is required for anonymous visitors when Turnstile is configured. */
+/** POST /api/learn body. (`turnstileToken` is not read: the AI step is for signed-in users only, who are never asked - SPEC 21 v5.) */
 export interface LearnRequest {
   payload: LearnPayload;
   turnstileToken?: string;
@@ -66,6 +69,12 @@ export interface LearnResponse {
   learnId?: string;
   /** True when saved rules for this exact structure were returned without an LLM call. */
   cached: boolean;
+  /**
+   * API audit (2026-10-07): the prompt version this answer was learned with - learn-v9 for the learns `LEARN_CHECKS` gives it to, the
+   * default otherwise; a cache hit's is the version its entry was stored for. The browser saves THIS with the format (`promptVersion`), never
+   * its own constant. (On every answer of the API; optional for an older one.)
+   */
+  promptVersion?: PromptVersion;
   /** SPEC 21 v5: the caller's AI-learn quota after this answer (absent on a cache hit, which costs nothing). */
   quota?: AiLearnQuotaState;
   /** True when this answer counted as one AI learn (it verified on the server). A learn that only failed the
@@ -110,6 +119,11 @@ export interface AiLearnQuotaState {
   /** AI learns still available in the period; `null` for an unlimited quota. */
   remaining: number | null;
   period: AiLearnPeriod;
+  /**
+   * API audit P2 (2026-10-07): how many AI learns THIS user has in the period - the plan's (`tiers[tier].aiLearns.count`), or the admin's
+   * override of it (`users.limitOverrides.aiLearns`); `null` for an unlimited quota.
+   */
+  limit: number | null;
 }
 
 /** GET /api/learn/quota (signed-in only): what is left of the caller's AI learns, before any learn was made. */
@@ -289,8 +303,8 @@ export interface RecordRunRequest {
   flagged: number;
 }
 
-/** POST /api/sources/:id/aliases (and, forwarded to the conversion's source, POST /api/conversions/:id/aliases) body
- * (SPEC 5 C): the file's header `alias` was confirmed to be the input column `header`. */
+/** POST /api/sources/:id/aliases body (SPEC 5 C): the file's header `alias` was confirmed to be the input column `header`. (The old
+ * conversion route, `POST /api/conversions/:id/aliases`, which forwarded it to the source, is gone: API audit 2026-10-07.) */
 export interface AddAliasRequest {
   header: string;
   alias: string;

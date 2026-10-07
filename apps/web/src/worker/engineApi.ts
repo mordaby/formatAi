@@ -15,7 +15,6 @@ import type {
   RunError,
   RunSummary,
   SentColumn,
-  VerifyResult,
 } from '@formatai/engine';
 import type {
   BatchArgs,
@@ -78,7 +77,7 @@ export type LearnProgress =
   /**
    * `unexplained`: headers of the output columns code could not find in the input file (SPEC 6.4, informational: the AI step tries them); first try only.
    * `round` (a repair): which round of the learning loop it is, of how many at most, and how many rows the rules got wrong it sends.
-   * `checkRound` (the first try, AI code checks): the AI step asked code to check ideas on every row - which round of checks it is, of how many at most.
+   * `checkRound` (AI code checks: the first try, or the round for a list): the AI step asked code to check ideas on every row - which round of checks it is, of how many at most.
    */
   | { phase: 'learning'; attempt: 'learn' | 'repair'; unexplained?: string[]; round?: LoopRoundInfo; checkRound?: CheckRoundInfo }
   | { phase: 'verifying' };
@@ -158,18 +157,6 @@ export type ConvertOutput =
 
 export type { ConvertResult };
 
-// ---------- verify ----------
-
-export interface VerifyArgs {
-  input: FileBytes;
-  output: FileBytes;
-  rules: LearnResult | Rules;
-  /** SPEC 8.11 "One-off exceptions": 1-based example row numbers marked "fixed by hand". */
-  exceptions?: number[];
-}
-
-export type VerifyOutput = { ok: true; verification: VerifyResult } | { ok: false; reason: 'analysisFailed' };
-
 // ---------- inspect ----------
 
 /** A quick look at a dropped file, so the drop zone can show its size ("1,204 rows, 8 columns") before anything is learned. */
@@ -188,7 +175,6 @@ export interface EngineMethodMap {
   learn: { args: LearnArgs; result: LearnOutput; progress: LearnProgress };
   inspect: { args: InspectArgs; result: InspectOutput; progress: never };
   convert: { args: ConvertArgs; result: ConvertOutput; progress: never };
-  verify: { args: VerifyArgs; result: VerifyOutput; progress: never };
   loadExample: { args: LoadExampleArgs; result: LoadExampleOutput; progress: never };
   liveCheck: { args: LiveCheckArgs; result: LiveCheckResult; progress: never };
   /** Like `liveCheck`, but every row (the editor's Apply). */

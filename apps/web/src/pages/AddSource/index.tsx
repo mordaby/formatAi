@@ -4,21 +4,22 @@
 // learn runs in attach mode - the format is the `target`, the AI only decides how THIS input produces the format's columns - and
 // the result opens in the same map and editor, ready to save as a new conversion of the format (a link from the source to it).
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
-import { defaultSourceName, limits, promptVersion } from '@formatai/shared';
+import { defaultSourceName } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { isAiQuotaHit, useAiLimit } from '../../app/AiLimit';
+import { isAiQuotaHit, useAiLimit, useQuotaRefusal } from '../../app/AiLimit';
+import { useOnAi } from '../../app/aiReport';
 import { useLearnSession } from '../../app/LearnSession';
 import { LinkButton } from '../../app/LinkButton';
 import { useMe } from '../../app/Me';
 import { RequireSignIn } from '../../app/RequireSignIn';
-import { SendPanel } from '../../app/SendPanel';
+import { SendPanel, SentLink } from '../../app/SendPanel';
 import { useSignIn } from '../../app/SignIn';
 import { useFileInfo } from '../../app/useFileInfo';
 import { useLoad } from '../../app/useLoad';
 import { webConfig } from '../../config';
 import { copiedListsOf, EditorStore, findingsToConfirm } from '../../editor';
-import type { AiInfo } from '../../flow/learnFlow';
+import type { AiInfo, SentRecord } from '../../flow/learnFlow';
 import { useLearnFlow } from '../../flow/useLearnFlow';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
@@ -30,6 +31,7 @@ import { LearningNotReady } from '../LearningNotReady';
 import { LearningPreflight } from '../LearningPreflight';
 import { LearningProgress } from '../LearningProgress';
 import { isRunning, useProgressVisible, useStepHistory } from '../learningSteps';
+import { AiNote } from '../Result/AiNote';
 import { TextField } from '../Result/fields';
 import { useCopiedListGate } from '../Result/CopiedListSave';
 import { compareOutput, fileTypeOfName, type OutputMismatch, type OutputFileType } from '../Result/matchFormat';
@@ -171,7 +173,9 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
 
   // (a stable function: a new one every render would make a new flow every render, and drop the learn in progress)
   const getTier = useCallback(() => meRef.current.tier, []);
-  const flow = useLearnFlow({ getTier });
+  // What the learn learns about the AI step (what is left, a refusal) is told the app the same way as everywhere (app/aiReport.ts).
+  const onAi = useOnAi();
+  const flow = useLearnFlow({ getTier, onAi });
   const target = useMemo(() => formatOf(format), [format]);
 
   const [sourceName, setSourceName] = useState('');
@@ -215,38 +219,32 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   };
 
   // The AI step was refused for the quota: the out-of-AI-formats dialog says so (and when they come back) over the form, the files kept -
-  // not an error screen. The known quota is 0 from here on.
+  // not an error screen - the way every flow says it.
   const aiLimit = useAiLimit();
   const quotaError = state.status === 'error' && isAiQuotaHit(state.error) ? state.error : undefined;
-  const { setQuota } = me;
-  const { reset } = flow;
-  useEffect(() => {
-    if (!quotaError) return;
-    if (quotaError.period) setQuota({ remaining: 0, period: quotaError.period });
-    reset();
-    aiLimit.open({ period: quotaError.period });
-  }, [quotaError, setQuota, reset, aiLimit]);
+  useQuotaRefusal(quotaError, aiLimit.open, { then: flow.cancel });
 
   let view;
   if (state.status === 'warn' || state.status === 'blocked') {
     view = <LearningPreflight key={state.status} state={state} onConfirm={flow.confirm} onCancel={flow.cancel} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (state.status === 'notReady') {
-    view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.reset} />;
+    view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.cancel} />;
   } else if (state.status === 'error' && !quotaError) {
-    view = <LearningError key="error" error={state.error} onRetry={begin} onChangeFiles={flow.reset} onSignIn={() => signIn.open('keepGoing')} />;
+    view = <LearningError key="error" error={state.error} onRetry={begin} onChangeFiles={flow.cancel} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (state.status === 'done' && state.result.rules) {
     view = (
       <AttachResult
         key="result"
         result={state.result}
         ai={state.ai}
+        sent={state.sent}
         format={format}
         target={target}
         sourceCount={sourceCount}
         sourceName={nameTrimmed}
         input={input}
         masking={masking}
-        onChangeFiles={flow.reset}
+        onChangeFiles={flow.cancel}
       />
     );
   } else if (progressVisible && isRunning(state)) {
@@ -379,6 +377,8 @@ export function MismatchList({ mismatches }: { mismatches: OutputMismatch[] }) {
 interface AttachResultProps {
   result: LearnOutput;
   ai: AiInfo | undefined;
+  /** What the learn sent ("See what we send", SPEC 15): shown with the result too. */
+  sent: readonly SentRecord[];
   format: FormatDetail;
   target: Format;
   sourceCount: number;
@@ -390,12 +390,20 @@ interface AttachResultProps {
 }
 
 /** The learned source, in the same map and editor as any result; saving adds it to the format (the format lock is checked live and by the server). */
-function AttachResult({ result, ai, format, target, sourceName, input, masking, onChangeFiles }: AttachResultProps) {
+function AttachResult({ result, ai, sent, format, target, sourceName, input, masking, onChangeFiles }: AttachResultProps) {
   const { t } = useI18n();
   const { api } = useServices();
   const me = useMe();
+  const signIn = useSignIn();
+  const onAi = useOnAi();
   const navigate = useNavigate();
   const rules = result.rules!;
+  // The session ended (a save refused for it): read who is signed in, and sign in again in a new tab - this page, the learn and the edits
+  // stay as they are (RequireSignIn keeps the screen while the wall is up).
+  const signInAgain = (): void => {
+    void me.refresh();
+    signIn.open('expired', { newTab: true });
+  };
   const [store] = useState(() => new EditorStore(rules));
   const save = useSave<AttachSourceResponse>();
   // A list copied from the example (owner decision 2026-10-06), and an identifier-shaped value (docs/proposals/saved-format-contents.md
@@ -422,7 +430,8 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
       // (SPEC 21 v11 item 9), and the server makes it unique. Nothing when no name is left of it ("Source N").
       ...(sourceName !== '' ? { sourceName } : suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
-      ...(learnPath === 'local' ? {} : { promptVersion }),
+      // (API audit 2026-10-07: the prompt version the server says it learned with - learn-v9 for an admin under LEARN_CHECKS - never a constant.)
+      ...(learnPath !== 'local' && ai?.promptVersion ? { promptVersion: ai.promptVersion } : {}),
     };
     void save.run({
       persist: () => api.registry.attachSource(format.id, body),
@@ -431,7 +440,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
         if (info.metaStatus === 'differencesAccepted' && ai?.learnId) {
           api.registry
             .learnOutcome(ai.learnId, 'accepted')
-            .then((r) => me.setQuota(r.quota))
+            .then((r) => onAi({ quota: r.quota }))
             .catch(() => undefined);
         }
         void me.refreshFormats();
@@ -484,19 +493,16 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
 
   const banners = () => (
     <>
-      {ai?.exhausted || ((ai?.failedAttempts ?? 0) > 0 && result.verification?.verified !== true) ? (
-        <InlineMessage tone={ai?.exhausted ? 'warn' : 'info'} {...(ai?.exhausted ? { title: t('aiExhausted.title', { n: limits.learn.maxFailedAiAttempts }) } : {})}>
-          {ai?.exhausted ? t('aiExhausted.todo') : t('ai.attempt', { n: ai?.failedAttempts ?? 0, max: limits.learn.maxFailedAiAttempts })}
-        </InlineMessage>
-      ) : null}
+      {ai ? <AiNote ai={ai} verified={result.verification?.verified === true} /> : null}
       {save.state.status === 'saved' && (
         <InlineMessage tone="info" actions={<Link to={`/formats/${format.id}`}>{t('save.viewFormats')}</Link>}>
           {/* the name is the server's word: it chose it when nothing was typed */}
           <p>{t('add.saved', { source: save.state.value.source.name, format: format.name })}</p>
         </InlineMessage>
       )}
-      {failure && <SaveFailureMessage failure={failure} onSignIn={() => undefined} {...(problemsTitle ? { problemsTitle } : {})} />}
+      {failure && <SaveFailureMessage failure={failure} onSignIn={signInAgain} {...(problemsTitle ? { problemsTitle } : {})} />}
       {download.status === 'failed' && <InlineMessage tone="warn">{t('result.downloadFailed')}</InlineMessage>}
+      <SentLink sent={sent} masking={masking} />
     </>
   );
 
@@ -514,7 +520,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
       name={shownName}
       learnedNote={t('edit.note', { format: format.name })}
       previewLimit={null}
-      onSignIn={() => undefined}
+      onSignIn={signInAgain}
       actions={actions}
       banners={banners}
       footer={

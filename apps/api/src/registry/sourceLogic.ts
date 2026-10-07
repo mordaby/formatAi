@@ -22,6 +22,7 @@ import {
 } from '@formatai/engine';
 import {
   checkRules,
+  limits,
   type ApiProblem,
   type InputColumn,
   type LearnResult,
@@ -30,9 +31,11 @@ import {
   type SourceColumn,
   type SourceLockProblem,
   type SourceStructure,
+  type Tier,
   type Validation,
 } from '@formatai/shared';
 import type { SourceDoc } from '../models.js';
+import { overCap, type RulesCheck } from './rules.js';
 
 const cloneColumn = (c: SourceColumn): SourceColumn => ({
   ...c,
@@ -116,6 +119,12 @@ export function mergeForReuse(source: SourceStructure, rules: LearnResult | Rule
           merged[from] = to;
           changed = true;
         }
+      }
+      // API audit (2026-10-07): the union is held to the cap one column may read another way (`limits.rules.maxReadAsPerColumn`), as a
+      // save is - every conversion of the source would take it. Past it the conversion does not fit this source.
+      const n = Object.keys(merged).length;
+      if (n > limits.rules.maxReadAsPerColumn) {
+        problems.push({ kind: 'sourceMismatch', path: `input.columns[${i}].readAs`, message: `column "${c.header}" would read ${n} cell texts another way with the source's, more than ${limits.rules.maxReadAsPerColumn}` });
       }
       s.readAs = merged;
     }
@@ -270,6 +279,11 @@ export interface SourceApplied {
   /** The rebuilt rules do not resolve (references, types, source lock). */
   needsReview: boolean;
   problems: ApiProblem[];
+  /**
+   * API audit (2026-10-07): with a `tier`, the rebuilt rules over a cap of a save (`overCap`): never written - what the route answers
+   * instead (it checks every conversion of the source before writing anything). Null when within them, or when no tier was given.
+   */
+  overCap: Extract<RulesCheck, { ok: false }> | null;
 }
 
 /**
@@ -288,7 +302,7 @@ export interface SourceApplied {
  * before. After a merge (`mergeForReuse`) the source may hold a `flag` check that another conversion brought, on a column this one
  * also reads: it comes along, and that never changes the conversion's output (flags only mark rows).
  */
-export function applySource(target: Rules, source: SourceStructure, renames: ReadonlyMap<string, string> = new Map()): SourceApplied {
+export function applySource(target: Rules, source: SourceStructure, renames: ReadonlyMap<string, string> = new Map(), tier?: Tier): SourceApplied {
   const known = source.inputSignature.columns;
   const columns: InputColumn[] = [];
   for (const c of target.input.columns) {
@@ -329,7 +343,7 @@ export function applySource(target: Rules, source: SourceStructure, renames: Rea
   for (const p of typeCheck(rules)) problems.push({ kind: 'type', path: p.path, message: p.message } satisfies RepairProblem);
   for (const p of checkSourceLock(rules, source)) problems.push(p);
 
-  return { rules, changed: !deepEqual(target, rules), needsReview: problems.length > 0, problems };
+  return { rules, changed: !deepEqual(target, rules), needsReview: problems.length > 0, problems, overCap: tier ? overCap(rules, tier) : null };
 }
 
 /**

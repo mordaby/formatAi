@@ -3,10 +3,11 @@
 // the backstop for tests and other callers; this check is what the owner sees first, with EVERY missing setting in one
 // message instead of one per restart. It never prints a value: only names, and what a value must look like.
 import { existsSync } from 'node:fs';
-import { LEARN_CHECKS_MODES, learnChecksModeOf } from '@formatai/shared';
+import { LEARN_CHECKS_MODES, learnChecksModeOf, models, type LlmProviderName } from '@formatai/shared';
 import path from 'node:path';
 import { isTurnstileDisabled, repoRoot, type Env } from './env.js';
 import { PROVIDER_TABLE } from './auth/providers.js';
+import { hasPrice } from './llm/cost.js';
 
 /** A signing secret shorter than this is a guess waiting to happen (`openssl rand -base64 48` gives 64). */
 export const MIN_SECRET_CHARS = 32;
@@ -85,6 +86,25 @@ export function checkProductionConfig(
     problems.push(`LLM_FALLBACK_PROVIDER=${fallback} is for development: set LLM_FALLBACK_PROVIDER=openai (or anthropic) in production, or remove it for no fallback`);
   } else if (fallback && !apiKeyOf(env, fallback)) {
     problems.push(`${API_KEY_NAMES[fallback]} is not set (LLM_FALLBACK_PROVIDER=${fallback}; remove LLM_FALLBACK_PROVIDER for no fallback)`);
+  }
+
+  // API audit C6 (2026-10-07): every model a call may go to has a price in config (`prices.ts`) - the defaults of the primary and the
+  // fallback, and every LLM_MODEL_* / LLM_FALLBACK_MODEL_* override. An unpriced model is counted at the highest configured price
+  // (`llm/cost.ts`), which keeps the budget safe but wrong: the owner adds its price first. (The dev CLI and the fake are refused above.)
+  const priced = (provider: LlmProviderName, slot: 'firstTry' | 'escalation', override: string | undefined): void => {
+    for (const [model, name] of [[models[provider][slot], `the ${provider} ${slot} default`], [override, 'an override']] as const) {
+      if (model && !hasPrice(model)) {
+        problems.push(`no price configured for the model "${model}" (${name}): add it to packages/shared/src/config/prices.ts, or use a priced model`);
+      }
+    }
+  };
+  if (env.LLM_PROVIDER !== 'claude-cli' && env.LLM_PROVIDER !== 'fake') {
+    priced(env.LLM_PROVIDER, 'firstTry', env.LLM_MODEL_FIRST_TRY);
+    priced(env.LLM_PROVIDER, 'escalation', env.LLM_MODEL_ESCALATION);
+  }
+  if (fallback && fallback !== 'claude-cli' && fallback !== 'fake') {
+    priced(fallback, 'firstTry', env.LLM_FALLBACK_MODEL_FIRST_TRY);
+    priced(fallback, 'escalation', env.LLM_FALLBACK_MODEL_ESCALATION);
   }
 
   // AI code checks (SPEC 21 v14): who gets learn-v9. A value that is no mode is a typo that would silently mean "nobody".

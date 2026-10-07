@@ -42,7 +42,8 @@ describe('completePayloadOf: the complete field', () => {
     expect(f.schemaVersion).toBe(1);
     const tag = f.transform.computed.find((x) => x.id === 'tag')!;
     expect(tag.expr).toBe(`concat(${itemId}, "-Zzqx")`); // formula text, not a tree
-    expect(f.transform.valueMaps[0]!.map).toEqual([{ key: 'a', value: 'b' }]); // pairs, not a record
+    // Pairs, not a record - and none of them (engine audit, 2026-10-07): a value map goes with its shape only, its entries are data.
+    expect(f.transform.valueMaps[0]!.map).toEqual([]);
     expect(f.name).toBeUndefined();
     expect(f.meta).toBeUndefined();
   });

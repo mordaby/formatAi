@@ -297,11 +297,24 @@ function valueMapHasRepeat(analysis: PairAnalysis, inCol: number): boolean {
   return false;
 }
 
-/** Whether the example's output cells of column `out` are real numbers or dates (not text): a value map can only write text. */
+/** A number as a csv / txt file writes it (no leading zero, which a code keeps): what a workbook would hold as a number. */
+const PLAIN_NUMBER_TEXT = /^-?(0|[1-9]\d*)(\.\d+)?$/;
+const NUMBER_OR_DATE_TYPES: ReadonlySet<string> = new Set(['integer', 'decimal', 'currency', 'percent', 'date']);
+
+/**
+ * Whether the example's output column `out` holds numbers or dates (not text): a value map can only write text. A workbook says it by its
+ * cells; a csv / txt output holds text only (every cell is a string), so - amendment 2026-10-07 (engine audit, stress finding O3) - it is
+ * judged by the column's profile type (numbers, amounts, percents, dates) or a cell that is a plain number. (A value map from a group to
+ * last month's totals was built and verified on a csv output, where a workbook said `thinEvidence`.)
+ */
 function outputHoldsNonText(analysis: PairAnalysis, out: number): boolean {
+  const delimited = analysis.layout.file.type !== 'xlsx';
+  if (delimited && NUMBER_OR_DATE_TYPES.has(analysis.output.profile[out]?.type ?? '')) return true;
   for (const sheetRow of analysis.output.dataRows) {
     const cell = analysis.output.sheet.rows[sheetRow]?.[out];
-    if (cell && cell.v !== null && (typeof cell.v === 'number' || cell.isDate === true)) return true;
+    if (!cell || cell.v === null) continue;
+    if (typeof cell.v === 'number' || cell.isDate === true) return true;
+    if (delimited && typeof cell.v === 'string' && PLAIN_NUMBER_TEXT.test(cell.v.trim())) return true;
   }
   return false;
 }

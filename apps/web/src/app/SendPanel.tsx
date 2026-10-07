@@ -1,8 +1,9 @@
 import { limits, newCheckRows } from '@formatai/shared';
+import { useId, useState } from 'react';
 import { sentBody, type SentRecord } from '../flow/learnFlow';
 import type { SentColumns } from '../worker/engineApi';
 import { useI18n } from '../i18n';
-import { CodeBlock, Panel } from '../ui';
+import { Button, CodeBlock, Panel } from '../ui';
 
 export interface SendPanelProps {
   /** What the browser has sent so far (`flow.state.sent`). Empty before the first learn call. */
@@ -76,6 +77,27 @@ export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
         </>
       )}
     </Panel>
+  );
+}
+
+/**
+ * "See what we send" once something WAS sent, on a screen that shows a result (the Result screen: the learn and every "Finish with AI"; Add a
+ * source: its learn): the link, and the panel it opens. Nothing is shown before anything was sent.
+ */
+export function SentLink({ sent, masking }: { sent: readonly SentRecord[]; masking: boolean }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  if (sent.length === 0) return null;
+  return (
+    <>
+      <p className="privacy__line">
+        <Button variant="link" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen((o) => !o)}>
+          {t('sendPanel.title')}
+        </Button>
+      </p>
+      {open && <SendPanel id={id} sent={sent} masking={masking} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 

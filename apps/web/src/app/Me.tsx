@@ -15,6 +15,9 @@ export type AuthNotice = { kind: 'error'; code: AuthRedirectError } | { kind: 'l
  * left of the AI learns. Everything that depends on being signed in - the tier a learn is checked against, whether the
  * AI step may run, the account menu, My formats - reads this.
  */
+/** A quota as a screen reports it: the server's whole state, or only what changed (none left, after a refusal) - `limit` then stays as known. */
+export type AiQuotaUpdate = Omit<AiLearnQuotaState, 'limit'> & { limit?: number | null };
+
 export interface Me {
   /** `loading` until `/api/me` has answered once. */
   status: 'loading' | 'ready';
@@ -25,6 +28,8 @@ export interface Me {
   providers: AuthProviderId[] | null;
   /** What is left of the AI learns (null when unknown, or not signed in). */
   quota: AiLearnQuotaState | null;
+  /** Nobody is signed in because the user signed out here (not because a session ended by itself). Until someone signs in again. */
+  signedOut: boolean;
   notice: AuthNotice | null;
   /** How many formats the signed-in user has saved (null: not signed in, or not known yet). Home offers "Run a format" first when there are some. */
   formatCount: number | null;
@@ -36,8 +41,11 @@ export interface Me {
   refresh(): Promise<void>;
   /** POST /api/auth/logout. Resolves false when it did not work. */
   signOut(): Promise<boolean>;
-  /** A learn (or its outcome) reported the quota: show it. */
-  setQuota(quota: AiLearnQuotaState | undefined): void;
+  /**
+   * A learn (or its outcome) reported the quota: show it. MERGED into what is known (API audit P2): an update without the user's `limit` (a
+   * refusal that only says none are left) keeps the one the server said before.
+   */
+  setQuota(quota: AiQuotaUpdate | undefined): void;
   dismissNotice(): void;
   /** Starts linking the other provider: the browser goes to it and comes back with `?linked=`. Resolves false when it could not start. */
   linkProvider(provider: AuthProviderId): Promise<boolean>;
@@ -65,6 +73,7 @@ export function MeProvider({ children }: { children: ReactNode }) {
   const [quota, setQuotaState] = useState<AiLearnQuotaState | null>(null);
   const [notice, setNotice] = useState<AuthNotice | null>(null);
   const [formatCount, setFormatCount] = useState<number | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
 
   const alive = useRef(true);
   useEffect(() => {
@@ -82,7 +91,10 @@ export function MeProvider({ children }: { children: ReactNode }) {
     try {
       const next = await auth.me();
       // (the same person again is not a change: nothing that reads `user` needs to run for it)
-      if (alive.current) setUser((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      if (alive.current) {
+        setUser((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+        if (next) setSignedOut(false);
+      }
     } catch {
       // The server is unreachable: keep what we know (anonymous, at the start).
     } finally {
@@ -210,6 +222,7 @@ export function MeProvider({ children }: { children: ReactNode }) {
       return false;
     }
     if (alive.current) {
+      setSignedOut(true);
       setUser(null);
       setQuotaState(null);
       setFormatCount(null);
@@ -231,14 +244,14 @@ export function MeProvider({ children }: { children: ReactNode }) {
     [auth, location.pathname],
   );
 
-  const setQuota = useCallback((next: AiLearnQuotaState | undefined) => {
-    if (next) setQuotaState(next);
+  const setQuota = useCallback((next: AiQuotaUpdate | undefined) => {
+    if (next) setQuotaState((prev) => ({ limit: null, ...prev, ...next }));
   }, []);
   const dismissNotice = useCallback(() => setNotice(null), []);
 
   const value = useMemo<Me>(
-    () => ({ status, user, tier: user?.tier ?? 'anonymous', providers, quota, notice, formatCount, refreshFormats, setFormatCount, refresh, signOut, setQuota, dismissNotice, linkProvider }),
-    [status, user, providers, quota, notice, formatCount, refreshFormats, setFormatCount, refresh, signOut, setQuota, dismissNotice, linkProvider],
+    () => ({ status, user, tier: user?.tier ?? 'anonymous', providers, quota, signedOut, notice, formatCount, refreshFormats, setFormatCount, refresh, signOut, setQuota, dismissNotice, linkProvider }),
+    [status, user, providers, quota, signedOut, notice, formatCount, refreshFormats, setFormatCount, refresh, signOut, setQuota, dismissNotice, linkProvider],
   );
   return <MeContext.Provider value={value}>{children}</MeContext.Provider>;
 }

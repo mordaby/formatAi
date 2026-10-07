@@ -74,6 +74,8 @@ export interface FillSummary {
   filled: FillCount[];
   /** Cut-off checks added (`cutoffRange` validations, SPEC 8.8). */
   checks: number;
+  /** The time budget (`FillOptions.deadline`) stopped the fill: what was not reached is left as the AI wrote it. */
+  stopped?: true;
 }
 
 export interface FillResult extends FillSummary {
@@ -85,6 +87,12 @@ export interface FillResult extends FillSummary {
 export interface FillOptions {
   /** Completion mode: the user's rules. A part of the answer equal to one of theirs is theirs, and code never changes it. */
   fixed?: LearnResult;
+  /**
+   * Engine audit (2026-10-07, `limits.learn.judge`): the time (`now()`) past which nothing more is filled - checked between the kinds and
+   * before each condition (a run of the rules is not stopped inside). What was not reached stays as the AI wrote it (`FillResult.stopped`).
+   */
+  deadline?: number;
+  now?: () => number;
 }
 
 const KIND_ORDER: readonly FillKind[] = ['lookup', 'valueMap', 'valueList', 'cutoff', 'band', 'dayMonthOrder', 'dedupeKeep', 'filterList'];
@@ -219,10 +227,21 @@ class Filler {
   checks = 0;
   readonly ambiguities: FillAmbiguity[] = [];
 
+  /** Set once the deadline passed. */
+  stopped = false;
+
   constructor(
     readonly analysis: PairAnalysis,
     private readonly fixed: LearnResult | undefined,
+    private readonly deadline?: number,
+    private readonly now: () => number = Date.now,
   ) {}
+
+  /** Whether the time budget is spent (`FillOptions.deadline`): from then on nothing more is filled. */
+  past(): boolean {
+    if (!this.stopped && this.deadline !== undefined && this.now() > this.deadline) this.stopped = true;
+    return this.stopped;
+  }
 
   count(kind: FillKind, n: number): void {
     if (n > 0) this.counts.set(kind, (this.counts.get(kind) ?? 0) + n);
@@ -252,20 +271,19 @@ export function fillParams(answer: LearnResult, analysis: PairAnalysis, opts: Fi
   if (answer.transform.group !== undefined && !answer.transform.group.showDetailRows) return none;
   if (analysis.alignment.rows.length === 0 || runOn(answer, analysis) === null) return none;
 
-  const f = new Filler(analysis, opts.fixed);
+  const f = new Filler(analysis, opts.fixed, opts.deadline, opts.now);
   let rules = clone(answer);
-  rules = fillRowChoices(rules, f);
-  rules = fillDayMonth(rules, f);
-  rules = fillLookups(rules, f);
-  rules = fillValueMaps(rules, f);
+  // (Each kind only while the time budget lasts: `FillOptions.deadline`.)
+  for (const step of [fillRowChoices, fillDayMonth, fillLookups, fillValueMaps]) if (!f.past()) rules = step(rules, f);
   // DECISION: an across-row (window) function reads other rows, so a condition forced on every row at once would not show what one row
   // does: conditions are left as the AI wrote them when the rules hold a window.
-  if (!hasWindow(rules)) rules = fillConditions(rules, f);
+  if (!hasWindow(rules) && !f.past()) rules = fillConditions(rules, f);
 
+  const stopped = f.stopped ? { stopped: true as const } : {};
   const filled = KIND_ORDER.filter((k) => f.counts.has(k)).map((kind) => ({ kind, count: f.counts.get(kind)! }));
-  if (filled.length === 0) return { ...none, ambiguities: f.ambiguities };
-  if (wrongOf(rules, analysis) > wrongOf(answer, analysis)) return { ...none, ambiguities: f.ambiguities };
-  return { rules, filled, checks: f.checks, ambiguities: f.ambiguities };
+  if (filled.length === 0) return { ...none, ...stopped, ambiguities: f.ambiguities };
+  if (wrongOf(rules, analysis) > wrongOf(answer, analysis)) return { ...none, ...stopped, ambiguities: f.ambiguities };
+  return { rules, filled, checks: f.checks, ...stopped, ambiguities: f.ambiguities };
 }
 
 // ---------------------------------------------------------------------------
@@ -835,6 +853,7 @@ function fillConditions(rules: LearnResult, f: Filler): LearnResult {
     // One run of the rules as they are, with every site's value probed, shared by the sites until one of them changes the rules.
     let now: Run | null | undefined;
     for (let s = 0; s < count && budget > 0; s++) {
+      if (f.past()) return rules;
       // Sites are found again on the current rules: a fill changes constants and lists, never how many sites there are or their order.
       const sites = sitesNow();
       const site = sites[s]!;

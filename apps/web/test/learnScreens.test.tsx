@@ -229,14 +229,6 @@ describe('API errors on the learn screen', () => {
     await waitFor(() => screen.getByRole('button', { name: 'Change files' }));
   }
 
-  it('anonBudgetExhausted: "Sign in to keep going." with a Sign in button', async () => {
-    await failWith(new ApiError('anonBudgetExhausted', 429));
-    const main = within(screen.getByRole('main'));
-    expect(main.getByText('Sign in to keep going.')).toBeTruthy();
-    fireEvent.click(main.getByRole('button', { name: 'Sign in' }));
-    expect(screen.getByRole('dialog', { name: 'Sign in' })).toBeTruthy();
-  });
-
   it('limitHit shows the text of its own limit', async () => {
     await failWith(new ApiError('limitHit', 429, { limit: 'learnsPerDay' }));
     expect(screen.getByRole('status').textContent).toContain("You've used today's free tries. Come back tomorrow, or sign in to keep going.");

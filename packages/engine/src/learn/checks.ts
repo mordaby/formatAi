@@ -55,7 +55,7 @@ import type { InputTable, OutCell, RawCell } from '../types';
 import type { PairAnalysis } from './analyze';
 import { isoOfSerial } from './analyze/cells';
 import { unmaskRules, type Masker } from './mask';
-import { inputClass, outputClass } from './classify';
+import { inputClass, isMasked, outputClass } from './classify';
 import { counterexampleSample } from './payload';
 import { cellMatchesExample, exampleCellAt } from './verify';
 
@@ -476,19 +476,28 @@ interface Prepared {
  * (`classify.ts`) for the example's own columns; for a computed column (a `let`, the `test` rule, the user's), `identifier` when it reads an
  * identifier column, directly or through another computed column, else `text` as before. DECISION: anything computed from an identifier is
  * masked like one (a copy, `in0 + 0`, is that ID; a count such as its length is masked too and reads wrong - safe, never a real ID).
+ * Amendment 2026-10-07 (engine audit): anything computed from ANY masked column - an identifier or text - is masked as an `identifier`, the
+ * class that hides numbers too: a number read from a text column (`toNumber(in3)`, a part of a name's digits) was masked as `text`, which
+ * sends numbers real.
  */
-function maskTypeOf(ref: Ref, n: Names, exprs: ReadonlyMap<string, Expr>, seen: Set<string> = new Set()): ColumnClass {
+function maskTypeOf(ref: Ref, n: Names, exprs: ReadonlyMap<string, Expr>): ColumnClass {
   if (ref.kind === 'in') return inputClass(n.analysis, ref.pos);
   if (ref.kind === 'out') return outputClass(n.analysis, ref.pos);
-  if (seen.has(ref.id)) return 'text';
+  return readsMasked(ref, n, exprs, new Set()) ? 'identifier' : 'text';
+}
+
+/** Whether a column's values come from a masked column of the example (an identifier or text), directly or through computed columns. */
+function readsMasked(ref: Ref, n: Names, exprs: ReadonlyMap<string, Expr>, seen: Set<string>): boolean {
+  if (ref.kind === 'in') return isMasked(inputClass(n.analysis, ref.pos));
+  if (ref.kind === 'out') return isMasked(outputClass(n.analysis, ref.pos));
+  if (seen.has(ref.id)) return false; // (read already)
   seen.add(ref.id);
   const expr = exprs.get(ref.id);
-  if (expr === undefined) return 'text';
-  for (const name of namesOf(expr)) {
+  if (expr === undefined) return false;
+  return [...namesOf(expr)].some((name) => {
     const read = resolveName(name, n);
-    if (read && maskTypeOf(read, n, exprs, seen) === 'identifier') return 'identifier';
-  }
-  return 'text';
+    return read !== null && read !== undefined && readsMasked(read, n, exprs, seen);
+  });
 }
 
 function prepare(a: Answering, check: Check, fields: { name: string; value: string }[], extra: readonly ExtraFormula[]): Prepared {

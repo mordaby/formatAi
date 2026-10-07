@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkFormatLock, checkLimits, formatOf, readWorkbook, typeCheck } from '@formatai/engine';
+import { analyzePair, checkFormatLock, checkLimits, formatOf, readWorkbook, sniffDelimitedText, typeCheck, verifyAgainstExample } from '@formatai/engine';
 import { checkRules, RulesSchema } from '@formatai/shared';
 import type { Rules } from '@formatai/shared';
 import { convertFile } from '@formatai/engine';
@@ -87,6 +87,30 @@ async function checkReproduces(
     return;
   }
   ok(`${label}: convertFile(${what}) reproduces ${expectedFile.fileName} byte-for-byte`);
+}
+
+/**
+ * The engine audit (2026-10-07): the full verification compares the row order too (`rowOrder`). The reference rules must write the
+ * example's rows in the example's order - a check of the order check itself (ties, duplicates, groups, expanded rows) on every case.
+ */
+async function checkRowOrder(
+  label: string,
+  rules: Rules,
+  inputFile: { fileName: string; bytes: Uint8Array },
+  outputFile: { fileName: string; bytes: Uint8Array },
+): Promise<void> {
+  const inWb = await readWorkbook(inputFile.bytes, inputFile.fileName);
+  const outWb = await readWorkbook(outputFile.bytes, outputFile.fileName);
+  const sniff = outWb.fileType === 'csv' || outWb.fileType === 'txt' ? sniffDelimitedText(outputFile.bytes) : undefined;
+  const analysis = analyzePair(inWb, outWb, sniff ? { outputSniff: sniff } : {});
+  if (!analysis.ok) {
+    ok(`${label}: (the pair analysis stops: ${analysis.issues.map((i) => i.code).join(', ')}; no row order to check)`);
+    return;
+  }
+  const v = verifyAgainstExample(rules, analysis);
+  const order = v.layoutIssues.filter((i) => i.code === 'rowOrder');
+  if (order.length > 0) fail(label, `the full verification reports the reference rules' row order: ${order[0]!.message}`);
+  else ok(`${label}: the reference rules write the example's row order (verification ${v.verified ? 'verified' : `${v.matched}/${v.total}`})`);
 }
 
 /** A case whose example output was edited by hand in `expected` rows: the rules differ from output.* in exactly that many data rows. */
@@ -176,6 +200,7 @@ async function main(): Promise<void> {
 
       if (meta.handEditedRows !== undefined) await checkDiffersInRows(label, rules, input, output, meta.handEditedRows);
       else await checkReproduces(label, rules, input, output, 'input -> output');
+      await checkRowOrder(label, rules, input, output);
       if (nextInput && nextOutput) {
         await checkReproduces(label, rules, nextInput, nextOutput, 'next.input -> next.output');
       }

@@ -196,7 +196,7 @@ describe('Home: "Learn the format" and "Learn with AI"', () => {
   });
 
   it('with no AI formats left the button stays on (it opens the out-of-AI-formats dialog, see aiOut.test) and the line is a notice; "Learn the format" still works', async () => {
-    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' as const })) } });
+    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' as const, limit: null })) } });
     const { engine } = engineWith(async (a) => completionOutput(a));
     renderApp({ engine, api });
     await dropFiles();
@@ -433,14 +433,14 @@ describe('the panel on the Result screen', () => {
 
 describe('quota', () => {
   it('says what is left in the words of the period', async () => {
-    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 2, period: 'day' as const })) } });
+    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 2, period: 'day' as const, limit: null })) } });
     const { engine } = engineWith(async (a) => completionOutput(a));
     await toResult(engine, api);
     await waitFor(() => expect(screen.getByTestId('deep-uses').textContent).toBe('Uses 1 AI format (2 left today), and only if it succeeds.'));
   });
 
   it('with none left the run is not offered, and it says so (the fields are then "the best we can do for now", and delivered)', async () => {
-    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' as const })) } });
+    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' as const, limit: null })) } });
     const { engine, learn } = engineWith(async (a) => completionOutput(a));
     await toResult(engine, api);
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Finish with AI' })).toBeNull());
@@ -451,7 +451,7 @@ describe('quota', () => {
   });
 
   it('a plan with no limit says so', async () => {
-    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: null, period: 'unlimited' as const })) } });
+    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: null, period: 'unlimited' as const, limit: null })) } });
     const { engine } = engineWith(async (a) => completionOutput(a));
     await toResult(engine, api);
     await waitFor(() => expect(screen.getByTestId('deep-uses').textContent).toBe('Uses 1 AI format, and only if it succeeds. Your plan has no limit.'));

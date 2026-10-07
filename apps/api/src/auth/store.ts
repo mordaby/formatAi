@@ -4,7 +4,7 @@
 import { limits } from '@formatai/shared';
 import { MongoServerError, ObjectId, type Filter } from 'mongodb';
 import type { AppDb } from '../db.js';
-import type { EventDoc, LearnCacheDoc, UserDoc, UserIdentity } from '../models.js';
+import type { EventDoc, UserDoc, UserIdentity } from '../models.js';
 import type { ProviderIdentity } from './providers.js';
 
 export type StoredUser = UserDoc & { _id: ObjectId };
@@ -34,9 +34,8 @@ export interface AuthStore {
   addIdentity(userId: ObjectId, identity: UserIdentity): Promise<AddIdentityResult>;
   setUiLanguage(userId: ObjectId, uiLanguage: string): Promise<StoredUser | null>;
   /**
-   * SPEC 12: attaches the browser's anonId to the user, gives its past events the `userId` (only those that
-   * have none) and re-owns its `learn_cache` entries from `anon:<id>` to `user:<id>` (the user's own entry wins
-   * when both have one for the same structure).
+   * SPEC 12: attaches the browser's anonId to the user and gives its past events the `userId` (only those that have none). (It used to
+   * re-own the anonymous visitor's `learn_cache` entries too: the AI step is for signed-in users only, SPEC 21 v5, so there are none.)
    */
   attachAnon(userId: ObjectId, anonId: string): Promise<void>;
   insertEvent(event: EventDoc): Promise<void>;
@@ -73,9 +72,6 @@ function isDuplicateKey(err: unknown): boolean {
 // ---------------------------------------------------------------------------------------------------------------------
 // MongoDB
 // ---------------------------------------------------------------------------------------------------------------------
-
-/** How many `learn_cache` entries one sign-in re-owns at most (an anonymous visitor has very few). */
-const MAX_REOWNED_CACHE_ENTRIES = 500;
 
 export function createMongoAuthStore(appDb: AppDb): AuthStore {
   const { users, sessions } = appDb;
@@ -158,21 +154,8 @@ export function createMongoAuthStore(appDb: AppDb): AuthStore {
       );
       // `userId: null` also matches events stored without the field. Events already owned by another user stay theirs.
       await appDb.events.updateMany({ anonId, userId: null } as unknown as Filter<EventDoc>, { $set: { userId } });
-
-      const from = `anon:${anonId}`;
-      const to = `user:${userId.toHexString()}`;
-      const entries = await appDb.learnCache
-        .find({ owner: from }, { projection: { _id: 1 } })
-        .limit(MAX_REOWNED_CACHE_ENTRIES)
-        .toArray();
-      for (const { _id } of entries) {
-        try {
-          await appDb.learnCache.updateOne({ _id }, { $set: { owner: to } });
-        } catch (err) {
-          if (!isDuplicateKey(err)) throw err;
-          await appDb.learnCache.deleteOne({ _id }); // the user already has this structure cached
-        }
-      }
+      // (API audit 2026-10-07: no learn cache is re-owned any more - the AI step is for signed-in users only, SPEC 21 v5, so an anonymous
+      // visitor has none.)
     },
 
     async insertEvent(event) {
@@ -210,15 +193,7 @@ export interface MemoryAuthStore extends AuthStore {
   readonly events: EventDoc[];
 }
 
-export interface MemoryAuthStoreOptions {
-  /**
-   * The protection store's cache entries (`MemoryStore.cacheEntries`, keyed `<owner>\0<key>`), so a sign-in can
-   * re-own them like the Mongo store does with the `learn_cache` collection.
-   */
-  learnCache?: Map<string, LearnCacheDoc>;
-}
-
-export function createMemoryAuthStore(opts: MemoryAuthStoreOptions = {}): MemoryAuthStore {
+export function createMemoryAuthStore(): MemoryAuthStore {
   const users = new Map<string, StoredUser>();
   const sessions = new Map<string, StoredSession>();
   const events: EventDoc[] = [];
@@ -293,17 +268,6 @@ export function createMemoryAuthStore(opts: MemoryAuthStoreOptions = {}): Memory
       const u = users.get(userId.toHexString());
       if (u && !u.anonIds.includes(anonId)) u.anonIds = [...u.anonIds, anonId].slice(-limits.auth.maxAnonIds);
       for (const e of events) if (e.anonId === anonId && e.userId === undefined) e.userId = userId;
-
-      const cache = opts.learnCache;
-      if (!cache) return;
-      const from = `anon:${anonId}`;
-      const to = `user:${userId.toHexString()}`;
-      for (const [k, doc] of [...cache.entries()]) {
-        if (doc.owner !== from) continue;
-        cache.delete(k);
-        const target = `${to}\0${doc.key}`;
-        if (!cache.has(target)) cache.set(target, { ...doc, owner: to });
-      }
     },
 
     async insertEvent(event) {
