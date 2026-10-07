@@ -111,7 +111,7 @@ describe('the value filter: a request that mentions a payload value is rejected 
     ['a year inside a date cell', req({ purpose: 'Keeps only 2026.' })],
     ['a number in the name', req({ name: 'addNinetyNine99' })],
     ['a header word (API audit C7: headers are the user text)', req({ purpose: 'Uses the amount column.' })],
-    ['an output header word in an argument name', req({ args: [{ name: 'totalValue', type: 'number' }] })],
+    ['an output header word in an argument name', req({ args: [{ name: 'totalValue', type: 'decimal' }] })],
   ])('rejects %s', (_label, r) => {
     expect(requestMentionsPayloadValue(r, values)).toBe(true);
   });
