@@ -15,7 +15,6 @@
 //   GET    /api/conversions/:id/versions            history (newest first)
 //   POST   /api/conversions/:id/restore/:version    restore an earlier version as a new one
 //   POST   /api/conversions/:id/runs                count a run (counts only)
-//   POST   /api/conversions/:id/aliases             save a confirmed column mapping as an alias (forwarded to its source)
 //   GET    /api/signatures                          every source's input signature with the formats it feeds (matching runs in the browser)
 //   ...and the source routes of `sourceRoutes.ts`.
 import { checkFormatLock, checkSourceLock, deepEqual } from '@formatai/engine';
@@ -40,7 +39,7 @@ import type { Identity } from '../protection/identity.js';
 import type { Protection } from '../protection/index.js';
 import { newFormatsKey } from '../protection/keys.js';
 import { reserveLearn } from '../protection/reserve.js';
-import { isRecord, nameKey, parseAlias, parseName, parseRun, parseSaveFields, parseSourceChoice, parseUpdateFields } from './bodies.js';
+import { isRecord, nameKey, parseName, parseRun, parseSaveFields, parseSourceChoice, parseUpdateFields } from './bodies.js';
 import { createRegistryContext, fail, rulesRefusal, type Caller } from './context.js';
 import { conversionWrite, saveVersion, versionCap } from './conversionStore.js';
 import {
@@ -57,7 +56,7 @@ import { applyFormat, headerRenames } from './propagate.js';
 import { checkRulesFile, formatFields, lockProblems, plain, signatureOf, withMeta, type RulesCheck } from './rules.js';
 import { commitSource, planName, planSource, settleSource } from './sourceResolve.js';
 import { applySource, inputChecksEdited, mergeFromEdit, structureOfDoc, withReadAsOf, withSourceAliases } from './sourceLogic.js';
-import { addSourceAlias, formatNamesOf, registerSourceRoutes } from './sourceRoutes.js';
+import { formatNamesOf, registerSourceRoutes } from './sourceRoutes.js';
 import { countSourceFormats, isDuplicateKey, propagateSource, renameSource, sourceEditOverCap, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
 
 export interface RegisterRegistryRoutesOptions {
@@ -803,30 +802,6 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     );
     if (!updated) return fail(reply, 404, { error: 'notFound' });
     return reply.send({ runCount: updated.runCount, lastRunAt: lastRunAt.toISOString() });
-  });
-
-  app.post('/api/conversions/:id/aliases', async (req, reply) => {
-    const g = guard(req, reply);
-    if (!g) return reply;
-    const { db: d, caller } = g;
-
-    const conv = await ownedConversion(d, caller, idParam(req));
-    if (!conv) return fail(reply, 404, { error: 'notFound' });
-    const request = isRecord(req.body) ? parseAlias(req.body) : null;
-    if (!request) return fail(reply, 400, { error: 'invalidRequest' });
-
-    // DECISION: kept working for the web app as it was, and forwarded to the conversion's SOURCE (SPEC 8.15: a confirmed mapping is
-    // saved once, on the source, and reaches every format it feeds). The answer is still this conversion's signature.
-    const source = await sourceOfConversion(d, caller, conv);
-    if (!source) return fail(reply, 404, { error: 'notFound' });
-    const parsed = RulesSchema.safeParse(conv.rules);
-    if (!parsed.success) return fail(reply, 422, { error: 'invalidRules' });
-    if (!(parsed.data as unknown as Rules).input.columns.some((c) => c.header === request.header)) return fail(reply, 400, { error: 'invalidRequest' });
-    const res = await addSourceAlias(d, caller.ownerId, source, request, protection.now());
-    if (!res.ok) return fail(reply, res.status, res.body);
-    await syncRequired(d, caller.ownerId, source._id!);
-    const fresh = await d.conversions.findOne({ _id: conv._id!, ownerId: caller.ownerId }, { projection: { inputSignature: 1 } });
-    return reply.send({ inputSignature: fresh?.inputSignature ?? conv.inputSignature });
   });
 
   // ------------------------------------------------------- signatures

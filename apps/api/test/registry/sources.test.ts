@@ -652,11 +652,12 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       expect((await call('POST', `/api/sources/${sourceId}/aliases`, { header: 'Amount', alias: 'X' }, { user: OTHER_USER })).status).toBe(404);
     });
 
-    it('the old conversion route still works and is forwarded to the source (the other format learns it too)', async () => {
+    it('API audit: the old conversion route is gone (404) - an alias is saved on the source, and the other format learns it too', async () => {
       const { a, b, sourceId } = await oneSourceTwoFormats();
-      const res = await call('POST', `/api/conversions/${a.conversion.id}/aliases`, { header: 'ID', alias: 'Identifier' }, paid);
+      expect((await call('POST', `/api/conversions/${a.conversion.id}/aliases`, { header: 'ID', alias: 'Identifier' }, paid)).status).toBe(404);
+      expect((await source(sourceId)).inputSignature.columns[0].aliases).toEqual([]);
+      const res = await call('POST', `/api/sources/${sourceId}/aliases`, { header: 'ID', alias: 'Identifier' }, paid);
       expect(res.status).toBe(200);
-      expect(res.body.inputSignature.columns[0]).toMatchObject({ header: 'ID', aliases: ['Identifier'] });
       expect((await source(sourceId)).inputSignature.columns[0].aliases).toEqual(['Identifier']);
       expect((await detail(b.conversion.id)).rules.input.columns[0].aliases).toEqual(['Identifier']);
       // and a later editor save that starts from the stored rules keeps it
@@ -871,7 +872,6 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       expect((await call('GET', `/api/conversions/${id}`, undefined, paid)).status).toBe(404);
       expect((await call('PATCH', `/api/conversions/${id}`, { sourceName: 'x' }, paid)).status).toBe(404);
       expect((await call('POST', `/api/conversions/${id}/restore/1`, {}, paid)).status).toBe(404);
-      expect((await call('POST', `/api/conversions/${id}/aliases`, { header: 'ID', alias: 'Code' }, paid)).status).toBe(404);
     });
 
     it("`sourceFormats` is how many formats the conversion's source feeds, and a save says so", async () => {

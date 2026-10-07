@@ -303,8 +303,8 @@ export interface RecordRunRequest {
   flagged: number;
 }
 
-/** POST /api/sources/:id/aliases (and, forwarded to the conversion's source, POST /api/conversions/:id/aliases) body
- * (SPEC 5 C): the file's header `alias` was confirmed to be the input column `header`. */
+/** POST /api/sources/:id/aliases body (SPEC 5 C): the file's header `alias` was confirmed to be the input column `header`. (The old
+ * conversion route, `POST /api/conversions/:id/aliases`, which forwarded it to the source, is gone: API audit 2026-10-07.) */
 export interface AddAliasRequest {
   header: string;
   alias: string;

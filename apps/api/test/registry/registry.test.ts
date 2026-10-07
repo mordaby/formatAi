@@ -103,7 +103,6 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
         ['GET', `/api/conversions/${id}/versions`],
         ['POST', `/api/conversions/${id}/restore/1`, {}],
         ['POST', `/api/conversions/${id}/runs`, { rows: 1, flagged: 0 }],
-        ['POST', `/api/conversions/${id}/aliases`, { header: 'ID', alias: 'x' }],
         ['GET', '/api/signatures'],
       ];
       for (const [method, url, body] of routes) {
@@ -140,7 +139,6 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
         ['GET', `/api/conversions/${s1}/versions`],
         ['POST', `/api/conversions/${s1}/restore/1`, {}],
         ['POST', `/api/conversions/${s1}/runs`, { rows: 1, flagged: 0 }],
-        ['POST', `/api/conversions/${s1}/aliases`, { header: 'ID', alias: 'Code' }],
       ];
       for (const [method, url, body] of routes) {
         const res = await call(method, url, body, { user: OTHER_USER });
@@ -972,10 +970,11 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect((await detail(body.conversion.id)).runCount).toBe(0);
     });
 
-    it('saves a confirmed mapping as a new alias of the input column, visible in the signature (no new version)', async () => {
+    it('saves a confirmed mapping (on the source) as a new alias of the input column, visible in the signature (no new version)', async () => {
       const { body } = await create();
       const id = body.conversion.id as string;
-      const res = await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: ' Sum insured ' });
+      const aliases = `/api/sources/${body.source.id as string}/aliases`;
+      const res = await call('POST', aliases, { header: 'Amount', alias: ' Sum insured ' });
       expect(res.status).toBe(200);
       expect(res.body.inputSignature.columns[1]).toEqual({ header: 'Amount', aliases: ['Sum insured'], type: 'decimal', required: false });
 
@@ -986,32 +985,32 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect(sig.columns[1].aliases).toEqual(['Sum insured']);
 
       // Idempotent - also for the same alias in another case, or the column's own header.
-      await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'sum insured' });
-      await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'amount' });
+      await call('POST', aliases, { header: 'Amount', alias: 'sum insured' });
+      await call('POST', aliases, { header: 'Amount', alias: 'amount' });
       expect((await detail(id)).rules.input.columns[1].aliases).toEqual(['Sum insured']);
     });
 
     it('refuses an alias that already names another input column, an unknown column, and too many aliases', async () => {
       const { body } = await create();
-      const id = body.conversion.id as string;
-      const clash = await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'id' });
+      const aliases = `/api/sources/${body.source.id as string}/aliases`;
+      const clash = await call('POST', aliases, { header: 'Amount', alias: 'id' });
       expect(clash.status).toBe(409);
       expect(clash.body).toEqual({ error: 'aliasConflict' });
-      const unknown = await call('POST', `/api/conversions/${id}/aliases`, { header: 'Nope', alias: 'x' });
+      const unknown = await call('POST', aliases, { header: 'Nope', alias: 'x' });
       expect(unknown.status).toBe(400);
       expect(unknown.body).toEqual({ error: 'invalidRequest' });
-      expect((await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: '  ' })).status).toBe(400);
+      expect((await call('POST', aliases, { header: 'Amount', alias: '  ' })).status).toBe(400);
 
       for (let i = 0; i < limits.registry.maxAliasesPerColumn; i++) {
-        expect((await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: `A${i}` })).status).toBe(200);
+        expect((await call('POST', aliases, { header: 'Amount', alias: `A${i}` })).status).toBe(200);
       }
-      expect((await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'one too many' })).status).toBe(400);
+      expect((await call('POST', aliases, { header: 'Amount', alias: 'one too many' })).status).toBe(400);
     });
 
     it('keeps an alias through a later save that starts from the stored rules', async () => {
       const { body } = await create();
       const id = body.conversion.id as string;
-      await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'Value' });
+      await call('POST', `/api/sources/${body.source.id as string}/aliases`, { header: 'Amount', alias: 'Value' });
       await save(id, edited(await rulesOf(id), (r) => { r.transform.computed[0]!.expr = mul('amount', 5); }));
       const sig = (await call('GET', '/api/signatures')).body.signatures[0];
       expect(sig.columns[1].aliases).toEqual(['Value']);
