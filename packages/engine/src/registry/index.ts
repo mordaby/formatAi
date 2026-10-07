@@ -8,3 +8,5 @@ export * from './matchConversions';
 export * from './checkFixedLock';
 export * from './restoreFixed';
 export * from './inputColumnsUsed';
+export * from './matchFormats';
+export * from './conformToFormat';
