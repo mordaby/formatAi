@@ -8,7 +8,9 @@
 //   * anything else leaves the rules exactly as they were and says so plainly;
 //   * while it works, the fields it is asked for (and the shape of the columns) are read-only (`EditorStore.setLock`, see Workbench) and
 //     the rest can be edited: the answer is MERGED with those edits (`mergeRules`, the rules as they were at the start being the common
-//     ground). Only edits that collide with the answer keep it out.
+//     ground). Only edits that collide with the answer keep it out;
+//   * it reports how the run ended (`/outcome`) only once it has decided: `verified` for an answer it applied, `failed` for one it did not use
+//     (whatever the reason) - an answer that never reached the rules is never counted as one that did.
 //
 // What it keeps about a run (what was asked, the rules and the editor's revision at the start, whether the answer has been dealt with, what
 // it came to, the applied answer's verification and report) lives in the result's session (`ResultSession.completion`), like the edits: the
@@ -18,6 +20,7 @@ import type { AmbiguousColumn, FillSummary, OneTimeQuestion, VerifyResult } from
 import type { CheckRoundInfo, LearnOutput, LoopRoundInfo } from '../../worker/engineApi';
 import { useEffect, useReducer, useRef } from 'react';
 import { useLearnSession } from '../../app/LearnSession';
+import { useServices } from '../../services';
 import { mergeRules, type EditableRules } from '../../editor';
 import type { AiInfo, LearnFlowState } from '../../flow/learnFlow';
 import type { FlowError } from '../../flow/errors';
@@ -44,8 +47,6 @@ export interface CompletionPlanInput {
 
 /** An applied answer: the verification that let it replace the rules, the AI step's report, and what the screen asks about it. */
 export interface CompletedRun {
-  /** The completion flow's result it came from (the outcome report folds into the same flow state). */
-  result: LearnOutput;
   verification: VerifyResult;
   ai: AiInfo | undefined;
   filled: FillSummary | undefined;
@@ -66,8 +67,8 @@ export interface CompletionRecord {
   /** What it was asked for (headers and parts). */
   asked: { columns: string[]; parts: AiStepPartCode[] };
   outcome: CompletionOutcome | null;
-  /** The completion flow's result the last run came to (its outcome report folds into the flow's state a moment later). */
-  result: LearnOutput | null;
+  /** What the AI step reported for the last run, and then the answer to its outcome report (what counted, what is left, the failed attempts). */
+  ai: AiInfo | undefined;
   done: CompletedRun | null;
 }
 
@@ -98,6 +99,7 @@ export interface UseCompletion {
  */
 export function useCompletion(kept: ResultSession, exampleId: string | undefined, onNotes?: (askedHeaders: string[], notes: AiColumnNote[]) => void): UseCompletion {
   const session = useLearnSession();
+  const { api } = useServices();
   const store = kept.store;
   const state = session.completion.state;
   // (the record is the session's, a plain object: a change to it re-renders this screen)
@@ -109,8 +111,28 @@ export function useCompletion(kept: ResultSession, exampleId: string | undefined
     const rec = kept.completion;
     // Only a run THIS result started, and only once: the flow is shared, and its last state stays after the run (and after leaving).
     if (!rec?.pending || state === rec.since) return;
+    const ai = state.status === 'done' ? state.ai : undefined;
     const settle = (outcome: CompletionOutcome | null, done: CompletedRun | null = rec.done): void => {
-      kept.completion = { ...rec, pending: false, outcome, result: state.status === 'done' ? state.result : null, done };
+      kept.completion = { ...rec, pending: false, outcome, ai, done };
+      changed();
+      // SPEC 21 v5 item 3, AFTER the decision: an answer that is used is verified, one that is not - the lock, the match, nothing produced, or
+      // edits it collides with - failed (it is not counted as an AI format that worked).
+      if (outcome && (outcome.kind === 'done' || outcome.kind === 'kept') && ai?.learnId && state.status === 'done' && state.result.path === 'llm') {
+        void report(ai.learnId, outcome.kind === 'done' ? 'verified' : 'failed');
+      }
+    };
+    /** The outcome report; its answer (what counted, what is left) is folded into the record - and into the applied answer's report. */
+    const report = async (learnId: string, verdict: 'verified' | 'failed'): Promise<void> => {
+      let res;
+      try {
+        res = await api.registry.learnOutcome(learnId, verdict);
+      } catch {
+        return; // nothing to tell: the server keeps its own count
+      }
+      const now = kept.completion;
+      if (!now || now.ai?.learnId !== learnId) return;
+      const next: AiInfo = { ...now.ai, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, exhausted: res.exhausted };
+      kept.completion = { ...now, ai: next, done: now.done && now.done.ai?.learnId === learnId ? { ...now.done, ai: next } : now.done };
       changed();
     };
     if (state.status === 'done') {
@@ -133,7 +155,7 @@ export function useCompletion(kept: ResultSession, exampleId: string | undefined
           );
           store.reset(next, { exceptions: s.exceptions, oneTime: s.oneTime, edited: [...s.edited] });
           const done: CompletedRun | null = res.verification
-            ? { result: res, verification: res.verification, ai: state.ai, filled: res.filled, ambiguous: res.ambiguous, oneTimers: res.oneTimers?.questions }
+            ? { verification: res.verification, ai, filled: res.filled, ambiguous: res.ambiguous, oneTimers: res.oneTimers?.questions }
             : null;
           settle({ kind: 'done', asked: { columns: c.columns.length, parts: c.parts.length }, produced: c.produced, merged: edited }, done);
         }
@@ -149,7 +171,7 @@ export function useCompletion(kept: ResultSession, exampleId: string | undefined
     } else if (state.status === 'idle') {
       settle(null); // cancelled meanwhile (a new learn, Start over): nothing came of it
     }
-  }, [state, kept, store, session.completion]);
+  }, [state, kept, store, session.completion, api]);
 
   const start = (plan: CompletionPlanInput): void => {
     const prev = kept.completion;
@@ -160,7 +182,7 @@ export function useCompletion(kept: ResultSession, exampleId: string | undefined
       baseRules: plan.fixedRules,
       asked: { columns: plan.columns.map((i) => plan.fixedRules.output.columns[i]?.header ?? ''), parts: [...plan.parts] },
       outcome: null,
-      result: null,
+      ai: undefined,
       done: prev?.done ?? null,
     };
     changed();
@@ -171,11 +193,7 @@ export function useCompletion(kept: ResultSession, exampleId: string | undefined
   const done = rec?.done ?? null;
   const outcome = rec?.outcome ?? null;
   const ours = rec?.pending === true && state !== rec.since;
-  // The report of the last run (its counted/quota arrive a moment after the answer itself), and of the run that applied.
-  const last = rec?.result && state.status === 'done' && state.result === rec.result ? state.ai : undefined;
-  const live = done && state.status === 'done' && state.result === done.result ? state.ai : undefined;
-  const ai = done ? (live ?? done.ai) : undefined;
-  const exhausted = last?.exhausted === true || (outcome?.kind === 'error' && outcome.error.kind === 'api' && outcome.error.code === 'aiAttemptsExhausted');
+  const exhausted = rec?.ai?.exhausted === true || (outcome?.kind === 'error' && outcome.error.kind === 'api' && outcome.error.code === 'aiAttemptsExhausted');
 
   return {
     running: ours && isRunning(state),
@@ -184,7 +202,7 @@ export function useCompletion(kept: ResultSession, exampleId: string | undefined
     columnsAsked: rec?.asked.columns.length ?? 0,
     asked: rec?.asked ?? null,
     outcome,
-    completed: done ? { verification: done.verification, ai, filled: done.filled, ambiguous: done.ambiguous, oneTimers: done.oneTimers } : null,
+    completed: done ? { verification: done.verification, ai: done.ai, filled: done.filled, ambiguous: done.ambiguous, oneTimers: done.oneTimers } : null,
     exhausted,
     start,
   };

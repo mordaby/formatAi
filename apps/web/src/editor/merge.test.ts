@@ -85,6 +85,54 @@ describe('mergeRules', () => {
     const o = answer(b);
     expect(mergeRules(b, o, answer(b))).toEqual(o);
   });
+
+  // The lists with no id or name (the audit's case: while the AI works on one column, the user fills another by hand) are matched by what
+  // their entries are about, so both sides changing their length is no conflict.
+  it('unsupported columns are matched by their output column: the user filled one by hand, the answer reported another - both stay', () => {
+    const b: EditableRules = { ...base(), unsupported: [{ outputColumn: 'Remarks', reasonCode: 'externalData' }] };
+    const o = structuredClone(b);
+    o.output.columns = o.output.columns.map((c) => (c.header === 'Remarks' ? { ...c, from: 'note' } : c));
+    o.unsupported = [];
+    const t = answer(b);
+    t.output.columns = t.output.columns.map((c) => (c.header === 'Shipped' ? { header: 'Shipped', from: null } : c));
+    t.unsupported = [...t.unsupported, { outputColumn: 'Shipped', reasonCode: 'externalData' }];
+    const merged = mergeRules(b, o, t)!;
+    expect(merged).not.toBeNull();
+    expect(merged.unsupported).toEqual([{ outputColumn: 'Shipped', reasonCode: 'externalData' }]);
+    expect(merged.output.columns.find((c) => c.header === 'Remarks')?.from).toBe('note');
+    expect(merged.output.columns.find((c) => c.header === 'Total')?.from).toBe('total');
+  });
+
+  it('... and the same column changed differently on both sides is still a conflict', () => {
+    const b: EditableRules = { ...base(), unsupported: [{ outputColumn: 'Remarks', reasonCode: 'externalData' }] };
+    const o = structuredClone(b);
+    o.unsupported = [{ outputColumn: 'Remarks', reasonCode: 'noRelation' as never }];
+    const t = structuredClone(b);
+    t.unsupported = [{ outputColumn: 'Remarks', reasonCode: 'ambiguous' as never }];
+    expect(mergeRules(b, o, t)).toBeNull();
+  });
+
+  it('assumptions are matched by output column and reason: one gone on one side, one added on the other - no conflict', () => {
+    const b: EditableRules = { ...base(), assumptions: [{ outputColumn: 'Qty', reasonCode: 'dateFormat' as never }] };
+    const o = structuredClone(b);
+    o.assumptions = [];
+    const t = structuredClone(b);
+    t.assumptions = [...t.assumptions, { outputColumn: 'Total', reasonCode: 'rounding' as never }, { reasonCode: 'sortGuessed' as never }];
+    expect(mergeRules(b, o, t)!.assumptions).toEqual([{ outputColumn: 'Total', reasonCode: 'rounding' }, { reasonCode: 'sortGuessed' }]);
+  });
+
+  it('checks are matched by what they say: a check the user added and one the answer added both stay; one the user removed stays removed', () => {
+    const b: EditableRules = { ...base(), validations: [{ column: 'qty', rule: 'required', severity: 'flag' }, { column: 'sku', rule: 'unique', severity: 'block' }] };
+    const o = structuredClone(b);
+    o.validations = [{ severity: 'flag', rule: 'required', column: 'qty' }, { column: 'price', rule: 'range', min: 0, severity: 'flag' }];
+    const t = structuredClone(b);
+    t.validations = [...t.validations, { on: 'output', column: 'Total', rule: 'required', severity: 'flag' }];
+    expect(mergeRules(b, o, t)!.validations).toEqual([
+      { severity: 'flag', rule: 'required', column: 'qty' },
+      { column: 'price', rule: 'range', min: 0, severity: 'flag' },
+      { on: 'output', column: 'Total', rule: 'required', severity: 'flag' },
+    ]);
+  });
 });
 
 describe('lockProblem', () => {

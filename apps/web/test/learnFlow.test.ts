@@ -627,24 +627,18 @@ describe('LearnFlow: completion mode (complete)', () => {
     expect(state(flow).status).toBe('done');
   });
 
-  it('reports the learn as verified only when the lock held, the answer matched and something was produced', async () => {
-    const cases: [string, Record<string, unknown>, string][] = [
-      ['all good', GOOD, 'verified'],
-      ['a fixed element changed', { ...GOOD, fixedProblems: [{ kind: 'fixedMismatch', path: 'x', message: 'y' }] }, 'failed'],
-      ['it did not match', { ...GOOD, matches: false }, 'failed'],
-      ['it produced nothing', { ...GOOD, produced: { columns: 0, parts: 0 } }, 'failed'],
-    ];
-    for (const [, completion, outcome] of cases) {
-      const { engine } = fakeEngine(async (_a, host) => {
-        await host.callLearn(PAYLOAD);
-        return result({ path: 'llm', completion });
-      });
-      const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
-      const api = fakeApi({ registry: { learnOutcome } } as unknown as Partial<Api>);
-      const { flow } = makeFlow(engine, api);
-      await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'allowed', complete: COMPLETE });
-      await vi.waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', outcome));
-    }
+  it('never reports how a completion ended: whether its answer is used is the caller\'s decision (useCompletion reports it after deciding)', async () => {
+    const { engine } = fakeEngine(async (_a, host) => {
+      await host.callLearn(PAYLOAD);
+      return result({ path: 'llm', completion: GOOD });
+    });
+    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
+    const api = fakeApi({ registry: { learnOutcome } } as unknown as Partial<Api>);
+    const { flow } = makeFlow(engine, api);
+    await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'allowed', complete: COMPLETE });
+    expect(flow.getState()).toMatchObject({ status: 'done', ai: { learnId: 'L1' } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(learnOutcome).not.toHaveBeenCalled();
   });
 
   it('tryAnyway: passes it on, and the done state remembers that the learn was continued past the warning', async () => {

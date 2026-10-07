@@ -125,7 +125,8 @@ export interface StartParams {
   /**
    * Completion mode (LEARN_PROMPT "Completing a partial rules file"): the AI step only produces what is missing from the rules the user has
    * (`fixedRules`), which it must leave unchanged. `exampleId`: the example the screen's live check already uses, kept by the worker.
-   * The result carries `completion`; nothing is replaced here - the caller decides what to do with a result that passes (or fails) the lock.
+   * The result carries `completion`; nothing is replaced here - the caller decides what to do with a result that passes (or fails) the lock,
+   * and so the caller reports how it ended (`/outcome`), once it has decided: an answer it does not use is never reported as verified.
    */
   complete?: CompleteOptions & { exampleId?: string | undefined };
 }
@@ -361,13 +362,10 @@ export class LearnFlow {
         this.set({ status: 'error', error: { kind: 'learnFailed', problems: lastProblems }, sent });
       } else {
         this.set({ status: 'done', result, sent, ...(ai ? { ai } : {}), ...(tryAnyway ? { tryAnyway: true } : {}) });
-        // SPEC 21 v5 item 3: the browser reports its own full verification, and the answer says what counted.
-        if (result.path === 'llm' && ai?.learnId && result.verification) {
-          // A completion answer counts as good only when it kept every fixed element, matches the example (leaving out columns that have no rule)
-          // and produced something of what was asked.
-          const c = result.completion;
-          const good = c ? c.fixedProblems.length === 0 && c.matches && c.produced.columns + c.produced.parts > 0 : result.verification.verified;
-          void this.reportOutcome(runId, ai.learnId, good ? 'verified' : 'failed');
+        // SPEC 21 v5 item 3: the browser reports its own full verification, and the answer says what counted. (Not a completion: whether its
+        // answer is used is the caller's decision - the lock, the match, and the user's edits made meanwhile - so the caller reports it.)
+        if (result.path === 'llm' && ai?.learnId && result.verification && !params.complete) {
+          void this.reportOutcome(runId, ai.learnId, result.verification.verified ? 'verified' : 'failed');
         }
       }
     } catch (e) {

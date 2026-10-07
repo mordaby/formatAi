@@ -403,6 +403,33 @@ describe('"Finish with AI" completes only what is missing', () => {
     expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
   });
 
+  it('an answer that collides with an edit made while it worked is not used, and is reported as not used (failed) - never as verified', async () => {
+    const learnOutcome = vi.fn(async () => ({ counted: false, quota: { remaining: 3, period: 'month' as const }, failedAttempts: 1, exhausted: false }));
+    const api = fakeApi({ user: USER, registry: { learnOutcome } });
+    let release!: () => void;
+    const answered = new Promise<void>((resolve) => (release = resolve));
+    const { engine } = engineWith(async (args, host) => {
+      await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: false, output: { columns: [] }, samples: [], skipColumns: [] });
+      await answered;
+      // The answer renamed Supplier too - the user renamed it meanwhile, differently: the two cannot both stand.
+      const out = completionOutput(args);
+      out.rules!.output.columns[1] = { ...out.rules!.output.columns[1]!, header: 'Supplier name' };
+      return out;
+    });
+    await start(engine, api);
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-running');
+    await renameSupplier();
+    await act(async () => release());
+    expect((await screen.findByTestId('completion-kept')).textContent).toBe(
+      'Something you changed while the deep analysis was working clashes with its answer, so its answer was not used. Try again.',
+    );
+    await waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', 'failed'));
+    expect(learnOutcome).not.toHaveBeenCalledWith('L1', 'verified');
+    expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
+    expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
+  });
+
   it('the learn outcome is reported on the answer\'s own learn id (verified only when lock, match and production all hold)', async () => {
     const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
     const api = fakeApi({ user: USER, registry: { learnOutcome } });
