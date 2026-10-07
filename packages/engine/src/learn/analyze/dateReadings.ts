@@ -7,6 +7,7 @@
 // output value only has to match one of them. A guard that is too strict would let a wrong constant through; one that is too
 // lenient only sends a column to the AI step.
 
+import { limits } from '@formatai/shared';
 import { compileDateParser, ymdToSerial, type Ymd } from '../../values/dates';
 import { DATE, NUM, TEXT, parseTextDate, type ColumnData } from './cells';
 
@@ -19,8 +20,7 @@ const NAME_FORMATS = ['D MMMM YYYY', 'D בMMMM YYYY', 'D MMM YYYY', 'MMMM D, YYY
 let nameParsers: ((text: string) => Ymd | null)[] | undefined;
 
 /** Plain numbers read as Excel serials only in the range of 1910-01-01 .. 2099-12-31 (as `dateSources` does). */
-const SERIAL_MIN = 3654;
-const SERIAL_MAX = 73415;
+const { serialDateMin: SERIAL_MIN, serialDateMax: SERIAL_MAX } = limits.analysis;
 
 /** Every serial a text cell can be read as, by the formats above; empty when it reads as no date. */
 function textReadings(text: string): number[] {

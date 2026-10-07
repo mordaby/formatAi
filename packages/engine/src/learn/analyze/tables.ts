@@ -5,6 +5,7 @@
 // never by a word list alone.
 
 import Decimal from 'decimal.js';
+import { limits } from '@formatai/shared';
 import { detectFileSpecWithConfidence, type HeaderConfidence } from '../../io/detectFileSpec';
 import { detectTable, nonEmptySheets } from '../../io/detectTable';
 import { isFooterLabel } from '../../io/text';
@@ -149,7 +150,7 @@ function firstRowIsHeader(sheet: RawSheet, inputHeaders: string[]): boolean {
   const cells = (sheet.rows[r] ?? []).filter((c) => !isEmptyRaw(c));
   if (cells.length < 2) return false;
   const hits = cells.filter((c) => known.has(normFast(rawText(c)).toLowerCase())).length;
-  return hits / cells.length >= 0.5;
+  return hits / cells.length >= limits.analysis.tables.firstRowHeaderShare;
 }
 
 /**
@@ -505,7 +506,7 @@ export function classifyRows(sheet: RawSheet, det: TableDetection, cols: ColumnD
   const structural = (r: number, scope: ScopeStats): boolean => {
     const n = scope.rows.length;
     if (n >= 2) {
-      for (let c = 0; c < C; c++) if (cols[c]!.kind[r] === EMPTY && scope.ne[c]! >= 0.9 * n) return true;
+      for (let c = 0; c < C; c++) if (cols[c]!.kind[r] === EMPTY && scope.ne[c]! >= limits.analysis.tables.summaryEmptyShare * n) return true;
       if (bold[r] && scope.bold < n / 2) return true;
     }
     const label = labelOf(cols, r);

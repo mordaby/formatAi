@@ -2,7 +2,7 @@
 // ranges, and the flags the learn step needs (key, leadingZerosLost, israeliId,
 // serialDates). Pure and deterministic.
 
-import type { PayloadColumn, PayloadColumnStats, ProfileType } from '@formatai/shared';
+import { limits, type PayloadColumn, type PayloadColumnStats, type ProfileType } from '@formatai/shared';
 import type { RawCell } from '../../types';
 import { isValidIsraeliId } from '../../values/israeliId';
 import {
@@ -19,9 +19,11 @@ import {
 } from './cells';
 import type { ColumnProfile, ProfileOptions, ProfileTable } from './types';
 
-const MAX_SHAPES = 4;
-const MAX_SHAPE_CHARS = 80;
-const MAX_SHAPE_VALUE_LEN = 30;
+// The thresholds are config (`limits.analysis.profile`, SPEC 7.1): see there for what each means.
+const PROFILE = limits.analysis.profile;
+const MAX_SHAPES = PROFILE.maxShapes;
+const MAX_SHAPE_CHARS = PROFILE.maxShapeChars;
+const MAX_SHAPE_VALUE_LEN = PROFILE.maxShapeValueChars;
 const DIGITS_RE = /^\d+$/;
 const PERCENT_FMT_RE = /%/;
 const CURRENCY_FMT_RE = /[₪$€]|\[\$[^\]]*\]|ש"ח|ש״ח|NIS/;
@@ -61,7 +63,7 @@ export function isSafeShape(shape: string): boolean {
 }
 
 /** Values read for the shape signature: spread over the whole column. */
-const SHAPE_SAMPLE = 2000;
+const SHAPE_SAMPLE = PROFILE.shapeSampleRows;
 
 function shapeSignature(col: ColumnData): string | undefined {
   const counts = new Map<string, number>();
@@ -82,7 +84,7 @@ function shapeSignature(col: ColumnData): string | undefined {
   const covered = top.reduce((s, [, n]) => s + n, 0);
   // DECISION: a shape is only useful when a few alternatives describe most values;
   // free text (names, notes) gets no shape rather than a misleading one.
-  if (covered / total < 0.5) return undefined;
+  if (covered / total < PROFILE.shapeMinCoveredShare) return undefined;
   const sig = top
     .map(([s]) => s)
     .sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0))
@@ -191,7 +193,7 @@ export function profileColumn(
   const distinctRatio = nonEmpty === 0 ? 0 : distinctCount / nonEmpty;
   const isKey = n >= 2 && nonEmpty === n && distinctCount === n;
 
-  // Israeli id: 9 digits with a valid check digit on >= 95% of rows, after padding.
+  // Israeli id: 9 digits with a valid check digit on >= 95% (`israeliIdMinShare`) of rows, after padding.
   let israeliId = false;
   if (nonEmpty > 0 && digitStrings && maxDigits <= 9) {
     let valid = 0;
@@ -199,10 +201,10 @@ export function profileColumn(
     for (let k = 0; k < n; k++) {
       if (col.kind[k] === EMPTY) continue;
       const t = col.text[k]!.trim();
-      if (t.length >= 7) long++;
+      if (t.length >= PROFILE.israeliIdMinChars) long++;
       if (isValidIsraeliId(t)) valid++;
     }
-    israeliId = valid / nonEmpty >= 0.95 && long / nonEmpty >= 0.95;
+    israeliId = valid / nonEmpty >= PROFILE.israeliIdMinShare && long / nonEmpty >= PROFILE.israeliIdMinShare;
   }
 
   // Leading zeros lost: digit strings, none with a leading zero, some shorter than
@@ -221,8 +223,8 @@ export function profileColumn(
     (anyLeadingZero ||
       israeliId ||
       leadingZerosLost ||
-      minDigits >= 8 ||
-      (nText === nonEmpty && minDigits === maxDigits && minDigits >= 5 && distinctRatio >= 0.5))
+      minDigits >= PROFILE.idLikeMinDigits ||
+      (nText === nonEmpty && minDigits === maxDigits && minDigits >= PROFILE.idLikeSameLengthMinDigits && distinctRatio >= PROFILE.idLikeMinDistinctShare))
   ) {
     // DECISION: digit strings are ids when zeros matter, when they're Israeli ids,
     // when they're long (>= 8 digits: too long to be a plausible amount), or when
@@ -312,7 +314,7 @@ function round3(x: number): number {
 export function toPayloadColumn(p: ColumnProfile): PayloadColumn {
   const stats: PayloadColumnStats = { empty: round3(p.emptyRate) };
   // DECISION: "values" (a count) when there are at most 20 distinct values, else the ratio.
-  if (p.distinctCount <= 20) stats.values = p.distinctCount;
+  if (p.distinctCount <= PROFILE.payloadMaxListedDistinct) stats.values = p.distinctCount;
   else stats.distinct = round3(p.distinctRatio);
   if (p.len) stats.len = p.len;
   if (p.range) stats.range = p.range;

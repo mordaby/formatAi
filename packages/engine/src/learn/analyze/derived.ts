@@ -47,16 +47,12 @@ import { mulberry32 } from './prng';
 import { MAX_FAILING, type RelationEnv } from './relations';
 import type { ColumnAnalysis, Derivation, RelationKind } from './types';
 
+// The thresholds are config (`limits.analysis`, SPEC 6.2 step 4): see there for what each means.
 /** At most this many breakpoints between bands (so at most 6 bands). */
-export const MAX_BREAKPOINTS = 5;
+export const MAX_BREAKPOINTS = limits.analysis.bands.maxBreakpoints;
 /** A band must hold at least this many rows that agree with it. */
-export const MIN_BAND_ROWS = 2;
-/** Fewer aligned rows than this can't show a dependency. */
-const MIN_ROWS = 6;
-/** Columns considered for a two-column dependency: the ones with the fewest distinct values. */
-const MAX_PAIR_COLUMNS = 10;
-/** Two columns are combined only when their value pairs fit a table this big (bounds memory, not evidence). */
-const MAX_PAIR_TABLE = 1_000_000;
+export const MIN_BAND_ROWS = limits.analysis.bands.minBandRows;
+const { minRows: MIN_ROWS, maxPairColumns: MAX_PAIR_COLUMNS, maxPairTableCells: MAX_PAIR_TABLE, maxConstantSources: MAX_CONSTANT_SOURCES } = limits.analysis.derived;
 
 /**
  * An unknown column no detector explained AND the input does not determine (as far as code can tell): its values may come from somewhere
@@ -526,9 +522,6 @@ function compositionDerivation(env: RelationEnv, out: ColumnData): Derivation | 
 
 // ---------- a constant the input can write ----------
 
-/** At most this many columns are named in the hint of a constant the input can write (`dependsOn` takes one or two). */
-const MAX_CONSTANT_SOURCES = 2;
-
 /**
  * The derivation of a column whose every row holds one value that the input can write as well (relations.ts
  * `constantSources`: a copy, the month of a date column, a fixed part of a text): it depends on those columns, in the
@@ -542,15 +535,9 @@ export function constantDerivation(env: RelationEnv, sources: readonly number[])
 
 // ---------- the chance check for bands ----------
 
-/** How many shuffles of the output values the chance check runs. */
-const CHANCE_SHUFFLES = 200;
-/** A band rule is reported only when shuffled output values pass the same search at most this often. */
-const CHANCE_MAX_RATE = 0.01;
-/**
- * Above this many rows the check is skipped: luck cannot line a few hundred rows up into a few ranges of >= 2 rows each (measured: no
- * random column passed from 60 rows on), and the shuffles would cost time for nothing.
- */
-const CHANCE_MAX_ROWS = 1000;
+// How many shuffles, the rate a shuffled column may pass at, and the row count above which the check is skipped (luck cannot line a few
+// hundred rows up into a few ranges of >= 2 rows each: measured, no random column passed from 60 rows on) are config (`limits.analysis.chance`).
+const { shuffles: CHANCE_SHUFFLES, maxRate: CHANCE_MAX_RATE, maxRows: CHANCE_MAX_ROWS } = limits.analysis.chance;
 
 /**
  * Whether the band rule `found` (by sorting by one of `cols`) beats chance (owner concern 2026-10-05: a wrong hint misleads the AI step).

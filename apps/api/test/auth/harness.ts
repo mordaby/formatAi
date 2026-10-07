@@ -48,7 +48,7 @@ export interface AuthHandle {
   events(): Promise<EventDoc[]>;
   sessionCount(): Promise<number>;
   setTier(userId: string, tier: 'registered' | 'paid'): Promise<void>;
-  /** Stores rules for a structure hash under an owner (`anon:<id>` / `user:<id>`) - what a learn's cache write does. */
+  /** Stores rules for a structure hash under an owner string (`user:<id>`; a test may also use an `anon:<id>` one, to show nothing moves it) - what a learn's cache write does. */
   putCache(owner: string, key: string): Promise<void>;
   hasCache(owner: string, key: string): Promise<boolean>;
 }

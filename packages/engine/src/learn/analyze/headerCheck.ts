@@ -12,11 +12,12 @@
 // the header and analyzes the rows below; "as data" reads every row as data. This
 // module only judges their results.
 
+import { limits } from '@formatai/shared';
 import { keys, type ColumnData } from './cells';
 import type { PairAnalysis } from './types';
 
 /** Share of rows that must be explained for a reading to count as "the rows are explained" (SPEC 6.2 partial hints). */
-export const HEADER_MIN_EXPLAINED = 0.9;
+export const HEADER_MIN_EXPLAINED = limits.analysis.headerMinExplainedShare;
 
 /**
  * Share of the output data rows that are aligned to an input row and satisfy the

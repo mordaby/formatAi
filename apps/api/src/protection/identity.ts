@@ -24,9 +24,12 @@ export type Identity =
       learnLimitOverride?: number;
     };
 
-/** The cache/ownership scope: `anon:<id>` when not signed in, `user:<id>` when signed in. */
-export function ownerOf(identity: Identity): string {
-  return identity.kind === 'anon' ? `anon:${identity.anonId}` : `user:${identity.userId}`;
+/**
+ * The cache/ownership scope of a signed-in user: `user:<id>`. The AI step (the only thing that uses it) is for signed-in users only,
+ * so there is no anonymous scope.
+ */
+export function ownerOf(identity: Extract<Identity, { kind: 'user' }>): string {
+  return `user:${identity.userId}`;
 }
 
 // ---- the anonId cookie ----

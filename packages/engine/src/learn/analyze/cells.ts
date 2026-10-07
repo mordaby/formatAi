@@ -4,7 +4,7 @@
 // are kept next to the float used for quick pre-filters.
 
 import Decimal from 'decimal.js';
-import type { PayloadCell } from '@formatai/shared';
+import { limits, type PayloadCell } from '@formatai/shared';
 import type { RawCell } from '../../types';
 import { isValidYmd, serialToYmd, ymdToSerial, type Ymd } from '../../values/dates';
 import { parseNumber } from '../../values/numbers';
@@ -77,7 +77,7 @@ const PLAIN_NUMBER = /^-?\d{1,15}(\.\d{1,15})?$/;
 /** Canonical decimal text of a number stored as text ("1,234.50", "₪100", "12%"), else null. */
 export function numericText(s: string): string | null {
   const t = s.trim();
-  if (t.length === 0 || t.length > 40 || !HAS_DIGIT.test(t)) return null;
+  if (t.length === 0 || t.length > limits.analysis.maxNumericTextChars || !HAS_DIGIT.test(t)) return null;
   if (HAS_LETTER.test(t) && !CURRENCY_WORD.test(t)) return null;
   if (DIGIT_GROUPS.test(t)) return null;
   if (PLAIN_NUMBER.test(t)) {

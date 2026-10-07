@@ -11,7 +11,7 @@ export type Reservation = { ok: true } | { ok: false; limitCode: LimitCode };
 /**
  * Reserves one learn on every counter in `specs`. If any counter would exceed its limit, every
  * counter this call touched is rolled back and the refusing counter's `limitCode` is returned -
- * nothing is recorded for a refused learn (events arrive in M4). Throws (after rolling back what it
+ * nothing is recorded for a refused learn (the `limit_hit` event is not written yet: SPEC 14.1). Throws (after rolling back what it
  * had reserved) if the store fails, so a database outage refuses learns rather than letting them
  * through uncounted.
  */

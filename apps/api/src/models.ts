@@ -261,8 +261,8 @@ export interface BudgetDoc {
 }
 
 /**
- * SPEC 9.5 `learn_cache`: saved rules per (owner, structure hash). The owner is `anon:<anonId>` now,
- * `user:<id>` from M3. DECISION: a cached entry is only ever returned to the SAME owner - rules can hold
+ * SPEC 9.5 `learn_cache`: saved rules per (owner, structure hash). The owner is `user:<id>`: the cache is for signed-in users only,
+ * because the AI step is (SPEC 21 v5; an entry an older version wrote under `anon:<anonId>` is never read, and expires). DECISION: a cached entry is only ever returned to the SAME owner - rules can hold
  * constants derived from one user's data (value-map entries, filter values, labels), see
  * `protection/cache.ts`. TTL-expired through `createdAt` (config `limits.cache.ttlDays`).
  */
