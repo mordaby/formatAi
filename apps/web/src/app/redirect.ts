@@ -6,3 +6,8 @@ export function redirectTo(url: string): void {
   suspendLeaveGuard();
   window.location.assign(url);
 }
+
+/** A sign-in that must not leave this page (its work is only in memory): the provider opens in a new tab, and this one stays as it is. */
+export function openInNewTab(url: string): void {
+  window.open(url, '_blank', 'noopener');
+}

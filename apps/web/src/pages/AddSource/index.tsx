@@ -397,8 +397,15 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
   const { t } = useI18n();
   const { api } = useServices();
   const me = useMe();
+  const signIn = useSignIn();
   const navigate = useNavigate();
   const rules = result.rules!;
+  // The session ended (a save refused for it): read who is signed in, and sign in again in a new tab - this page, the learn and the edits
+  // stay as they are (RequireSignIn keeps the screen while the wall is up).
+  const signInAgain = (): void => {
+    void me.refresh();
+    signIn.open('expired', { newTab: true });
+  };
   const [store] = useState(() => new EditorStore(rules));
   const save = useSave<AttachSourceResponse>();
   // A list copied from the example (owner decision 2026-10-06), and an identifier-shaped value (docs/proposals/saved-format-contents.md
@@ -498,7 +505,7 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
           <p>{t('add.saved', { source: save.state.value.source.name, format: format.name })}</p>
         </InlineMessage>
       )}
-      {failure && <SaveFailureMessage failure={failure} onSignIn={() => undefined} {...(problemsTitle ? { problemsTitle } : {})} />}
+      {failure && <SaveFailureMessage failure={failure} onSignIn={signInAgain} {...(problemsTitle ? { problemsTitle } : {})} />}
       {download.status === 'failed' && <InlineMessage tone="warn">{t('result.downloadFailed')}</InlineMessage>}
       <SentLink sent={sent} masking={masking} />
     </>
@@ -518,7 +525,7 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
       name={shownName}
       learnedNote={t('edit.note', { format: format.name })}
       previewLimit={null}
-      onSignIn={() => undefined}
+      onSignIn={signInAgain}
       actions={actions}
       banners={banners}
       footer={

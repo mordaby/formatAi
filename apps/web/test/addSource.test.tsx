@@ -13,8 +13,9 @@ import type { LearnHost } from '../src/worker/engineApi';
 import { conversionSummary, formatSummary, getFormatResponse, sourceSummary } from './helpers/registryKit';
 import { csv, fakeApi, fakeEngine, learnResult, RULES, renderApp, USER } from './helpers/renderApp';
 
-const { downloaded } = vi.hoisted(() => ({ downloaded: vi.fn() }));
+const { downloaded, openInNewTab } = vi.hoisted(() => ({ downloaded: vi.fn(), openInNewTab: vi.fn() }));
 vi.mock('../src/flow/download', async (orig) => ({ ...(await orig<typeof import('../src/flow/download')>()), downloadBytes: downloaded }));
+vi.mock('../src/app/redirect', () => ({ redirectTo: vi.fn(), openInNewTab }));
 
 beforeEach(() => {
   document.cookie = 'lang=; Path=/; Max-Age=0';
@@ -334,6 +335,73 @@ describe('the Add a source screen', () => {
   it('a visitor is asked to sign in', async () => {
     renderApp({ api: fakeApi(), route: ROUTE });
     expect(await screen.findByText('Sign in to see your saved formats.')).toBeTruthy();
+  });
+
+  // The audit's C7: the session ran out while the learned source was on screen. Taking the screen away lost the learn (and the AI format spent
+  // on it) and every edit; the Sign in button did nothing.
+  it('a session that ends while the result is open keeps the screen, the learn and the edits; signing in again (a new tab) carries on, and the save goes', async () => {
+    let signedIn = true;
+    const me = vi.fn(async () => (signedIn ? USER : null));
+    const attachSource = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError('signInRequired', 401))
+      .mockResolvedValue({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' }), source: { id: 'S2', name: 'Supplier B', formats: 1 } });
+    const api = fakeApi({
+      user: USER,
+      auth: { me },
+      registry: { getFormat: vi.fn(async () => format), attachSource },
+      learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0 })),
+    });
+    const { engine, learn } = fakeEngine(
+      async (host: LearnHost) => {
+        await host.callLearn({ masking: true } as never);
+        return learnResult({ path: 'llm' });
+      },
+      undefined,
+      { readHeaders: vi.fn(async ({ file }: { file: { name: string } }) => ({ ok: true, headers: HEADERS_OF[file.name] ?? [], sheetName: 'S', direction: 'ltr', rows: 3 })) },
+    );
+    renderApp({ api, engine, route: ROUTE });
+    await screen.findByTestId('add-format-columns');
+    await drop('Example input', csv('supplier-b.csv'));
+    await drop('Example output', xlsx('load.xlsx'));
+    await waitFor(() => expect(learnButton().disabled).toBe(false));
+    await act(async () => void fireEvent.click(learnButton()));
+    await screen.findByTestId('rules-map');
+    const addSource = () => screen.getByRole('button', { name: 'Add source' }) as HTMLButtonElement;
+    await waitFor(() => expect(addSource().disabled).toBe(false));
+
+    // The session ends: the save is refused for it, and "who is signed in" says nobody.
+    signedIn = false;
+    await act(async () => void fireEvent.click(addSource()));
+    const wall = await screen.findByRole('dialog', { name: 'Sign in' });
+    expect(within(wall).getByText('Your sign-in has ended. Sign in again to save - everything on this page stays as it is.')).toBeTruthy();
+    expect(within(wall).getByText('Signing in opens a new tab. When you are done there, come back to this tab: your work is here.')).toBeTruthy();
+    // The screen is still there behind it - the learned source, not the "sign in to see your formats" page.
+    expect(screen.getByTestId('rules-map')).toBeTruthy();
+    expect(screen.queryByText('Sign in to see your saved formats.')).toBeNull();
+    expect(screen.getByTestId('session-expired')).toBeTruthy();
+
+    // Signing in opens the provider in a new tab; this page goes nowhere.
+    fireEvent.click(within(wall).getByRole('button', { name: 'Continue with Google' }));
+    await waitFor(() => expect(openInNewTab).toHaveBeenCalledTimes(1));
+    expect(String(openInNewTab.mock.calls[0]![0])).toContain('/api/auth/google/start?returnTo=');
+    expect(screen.getByTestId('rules-map')).toBeTruthy();
+    // Closed, the wall comes back from the save message's "Sign in" (it used to do nothing).
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Sign in' })).toBeNull());
+    fireEvent.click(screen.getAllByRole('button', { name: 'Sign in' }).at(-1)!);
+    expect(await screen.findByRole('dialog', { name: 'Sign in' })).toBeTruthy();
+
+    // Back in this tab, signed in: the same screen carries on - nothing was learned again (no second AI format) - and the save goes.
+    signedIn = true;
+    await act(async () => void window.dispatchEvent(new Event('focus')));
+    await waitFor(() => expect(screen.queryByTestId('session-expired')).toBeNull());
+    expect(screen.queryByRole('dialog', { name: 'Sign in' })).toBeNull();
+    expect(learn).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(addSource().disabled).toBe(false));
+    await act(async () => void fireEvent.click(addSource()));
+    await waitFor(() => expect(attachSource).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/Supplier B/)).toBeTruthy();
   });
 });
 

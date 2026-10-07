@@ -44,6 +44,9 @@ export const accountEn = {
   'signIn.going': 'Taking you to {provider}…',
   'signIn.keptLocal': 'It is kept in this browser only, for an hour, and is never sent to us.',
   'signIn.failed': "We couldn't start the sign-in. Try again.",
+  'signIn.expired': 'Your sign-in has ended. Sign in again to save - everything on this page stays as it is.',
+  'signIn.newTab': 'Signing in opens a new tab. When you are done there, come back to this tab: your work is here.',
+  'signIn.newTab.opened': 'Sign in in the new tab, then come back here.',
 
   // ----- the local result, before the AI step (SPEC 21 v5 item 1) -----
   'partial.popup.title': 'Sign in to finish',
@@ -195,6 +198,9 @@ export const accountHe: Record<keyof typeof accountEn, string> = {
   'signIn.going': 'מעבירים אתכם אל {provider}…',
   'signIn.keptLocal': 'זה נשמר בדפדפן הזה בלבד, לשעה אחת, ולא נשלח אלינו.',
   'signIn.failed': 'לא הצלחנו להתחיל את ההתחברות. נסו שוב.',
+  'signIn.expired': 'החיבור שלכם הסתיים. התחברו שוב כדי לשמור - כל מה שבעמוד הזה נשאר כפי שהוא.',
+  'signIn.newTab': 'ההתחברות נפתחת בכרטיסייה חדשה. כשתסיימו שם, חזרו לכרטיסייה הזו: העבודה שלכם כאן.',
+  'signIn.newTab.opened': 'התחברו בכרטיסייה החדשה, ואז חזרו לכאן.',
 
   'partial.popup.title': 'התחברו כדי להשלים',
   'partial.popup.one':
