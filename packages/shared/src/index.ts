@@ -20,6 +20,7 @@ export * from './config/limits';
 export * from './config/detection';
 export * from './config/masking';
 export * from './config/tiers';
+export * from './config/features';
 export * from './config/models';
 export * from './config/prices';
 export * from './config/pricing';

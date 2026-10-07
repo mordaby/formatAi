@@ -3,11 +3,13 @@
 // web app can also learn its limits and the Turnstile site key without a build-time copy of them.
 import type { FastifyInstance } from 'fastify';
 import { tiers, type SessionResponse } from '@formatai/shared';
-import { isTurnstileDisabled, type Env } from '../env.js';
+import { featuresOf, isTurnstileDisabled, type Env } from '../env.js';
 
 export function registerSessionRoute(app: FastifyInstance, opts: { env: Env }): void {
   // Turnstile off (TURNSTILE_DISABLED): no site key, so the browser shows no widget and sends no token.
   const turnstileSiteKey = isTurnstileDisabled(opts.env) ? undefined : (opts.env.TURNSTILE_SITE_KEY ?? opts.env.VITE_TURNSTILE_SITE_KEY);
+  // The feature switches this server runs with (config/features.ts and their env overrides): the web app shows what they say.
+  const features = featuresOf(opts.env);
 
   app.get('/api/session', async (req, reply) => {
     // The response depends on (and may set) a cookie: never let a shared cache store it.
@@ -18,6 +20,7 @@ export function registerSessionRoute(app: FastifyInstance, opts: { env: Env }): 
       tier: 'free',
       limits: tiers.anonymous,
       ...(turnstileSiteKey ? { turnstileSiteKey } : {}),
+      features,
     };
     return body;
   });

@@ -102,3 +102,12 @@ export const tiers: Record<Tier, TierLimits> = {
     editRules: true,
   },
 };
+
+/**
+ * SPEC 11 "Sources per format": whether a format that has `sources` sources (its conversions) can take one more on this tier - the same
+ * count the API checks before it attaches one (403 `limitHit sourcesPerFormat`), so the web app never offers an add that would fail.
+ */
+export function canAddSource(tier: Tier, sources: number): boolean {
+  const cap = tiers[tier].sourcesPerFormat;
+  return cap === 'unlimited' || sources < cap;
+}

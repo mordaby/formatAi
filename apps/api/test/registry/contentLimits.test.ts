@@ -81,7 +81,7 @@ describe.skipIf(!mongoUri)('every route that stores rules refuses rules over a c
   beforeEach(async () => {
     await Promise.all([appDb.formats.deleteMany({}), appDb.conversions.deleteMany({}), appDb.sources.deleteMany({})]);
     await app?.close();
-    app = await buildServer({ env: makeEnv(), db: appDb, logger: false, store: createMemoryStore(now), now, identify: stubIdentify });
+    app = await buildServer({ env: makeEnv({ FEATURE_FORMAT_SOURCES: 'on' }), db: appDb, logger: false, store: createMemoryStore(now), now, identify: stubIdentify });
     call = makeCaller(app);
   });
 

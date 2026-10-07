@@ -40,7 +40,7 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
     await Promise.all([appDb.formats.deleteMany({}), appDb.conversions.deleteMany({}), appDb.sources.deleteMany({})]);
     // a fresh store per test: the paid tier's monthly count of new formats must not carry over
     await app?.close();
-    app = await buildServer({ env: makeEnv(), db: appDb, logger: false, store: createMemoryStore(now), now, identify: stubIdentify });
+    app = await buildServer({ env: makeEnv({ FEATURE_FORMAT_SOURCES: 'on' }), db: appDb, logger: false, store: createMemoryStore(now), now, identify: stubIdentify });
     call = makeCaller(app);
   });
 

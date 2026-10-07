@@ -147,6 +147,13 @@ describe('checkProductionConfig', () => {
     expect(typo.problems).toEqual(['LEARN_CHECKS must be one of off, admin, all (or unset: off)']);
   });
 
+  it('feature switch "Formats with several sources": FEATURE_FORMAT_SOURCES is on or off (or unset); anything else stops the start', () => {
+    for (const ok of [undefined, '', 'on', 'off', ' ON ', 'Off']) expect(check({ FEATURE_FORMAT_SOURCES: ok }).problems).toEqual([]);
+    for (const typo of ['true', 'yes', '1', 'enabled']) {
+      expect(check({ FEATURE_FORMAT_SOURCES: typo }).problems).toEqual(['FEATURE_FORMAT_SOURCES must be one of on, off (or unset: off)']);
+    }
+  });
+
   it('wants the web app built', () => {
     const { problems } = check({}, false);
     expect(problems).toHaveLength(1);

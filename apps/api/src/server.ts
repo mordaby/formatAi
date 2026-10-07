@@ -7,7 +7,7 @@ import { registerAuth, type AuthOptions } from './auth/index.js';
 import { registerContactRoutes } from './contact/routes.js';
 import { createMemoryContactStore, createMongoContactStore, type ContactStore } from './contact/store.js';
 import type { AppDb } from './db.js';
-import type { Env } from './env.js';
+import { featuresOf, type Env } from './env.js';
 import type { CompleteFn } from './learn/index.js';
 import { registerAnonId, type Identity } from './protection/identity.js';
 import { createProtection, parseTrustProxy } from './protection/index.js';
@@ -143,7 +143,7 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
   registerLearnRoutes(app, { env, protection, complete, identify: opts.identify });
 
   // SPEC 8.12 / 13: saved formats and their conversions (signed-in users only; needs the database).
-  registerRegistryRoutes(app, { db, protection, identify: opts.identify });
+  registerRegistryRoutes(app, { db, protection, identify: opts.identify, features: featuresOf(env) });
 
   // SPEC 14.2: the admin view's API (/api/admin/*), admins only - checked here on the server, whatever the web app shows.
   registerAdminRoutes(app, { db, env, protection, identify: opts.identify });

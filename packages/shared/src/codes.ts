@@ -166,6 +166,9 @@ export const API_ERROR_CODES = [
   'versionConflict',
   // 503: the registry needs the database, which is not configured.
   'unavailable',
+  // 403 (feature switches, `config/features.ts`): the route belongs to a part of the product that is switched off on this server - today
+  // attaching a source to a format while "Formats with several sources" (`FEATURE_FORMAT_SOURCES`) is off.
+  'featureOff',
   // ---- admin (M4, SPEC 14.2) ----
   // 403: signed in, but not an admin (the admin routes check `isAdmin` on the server; the 401 above is for a visitor).
   'forbidden',

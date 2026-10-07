@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LLM_PROVIDERS, type LlmProviderName } from '@formatai/shared';
+import { featureSwitchOf, features, LLM_PROVIDERS, type Features, type LlmProviderName } from '@formatai/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -88,6 +88,11 @@ const OPTIONAL_STRING_KEYS = [
    * `limits.learn.checks.mode` (off). Read with `learnChecksModeOf`; in production any other value stops the start (`productionConfig.ts`).
    */
   'LEARN_CHECKS',
+  /**
+   * Feature switch "Formats with several sources" (`config/features.ts`, owner decision 2026-10-07): `on` | `off`. Unset: the config's
+   * default (off for the MVP). Read with `featuresOf`; in production any other value stops the start (`productionConfig.ts`).
+   */
+  'FEATURE_FORMAT_SOURCES',
 ] as const;
 
 type OptionalStringKey = (typeof OPTIONAL_STRING_KEYS)[number];
@@ -158,6 +163,14 @@ function parseFallbackProvider(raw: string | undefined): LlmProviderName | undef
  * Never logs values (some are secrets) - only this module's own errors,
  * which name the bad key, may include non-secret values like PORT.
  */
+/**
+ * The feature switches this server runs with: the config's defaults (`features`), with the environment's overrides. A value that is not
+ * `on` / `off` keeps the default here (a production start refuses it before this is ever read: `productionConfig.ts`).
+ */
+export function featuresOf(env: Pick<Env, 'FEATURE_FORMAT_SOURCES'>): Features {
+  return { formatSources: featureSwitchOf(env.FEATURE_FORMAT_SOURCES, features.formatSources) ?? features.formatSources };
+}
+
 /** The owner's explicit `TURNSTILE_DISABLED=true` (or 1 / yes): Turnstile is off, whatever the keys say. */
 export function isTurnstileDisabled(env: Pick<Env, 'TURNSTILE_DISABLED'>): boolean {
   return /^(true|1|yes)$/i.test((env.TURNSTILE_DISABLED ?? '').trim());
