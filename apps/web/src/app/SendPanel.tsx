@@ -23,6 +23,34 @@ export interface SendPanelProps {
  */
 export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
   const { t } = useI18n();
+  return (
+    <Panel title={t('sendPanel.title')} onClose={onClose} {...(id ? { id } : {})}>
+      {sent.length === 0 ? <SendBefore masking={masking} /> : <SentRecords sent={sent} />}
+    </Panel>
+  );
+}
+
+/** Before anything is sent: what WILL be sent, in a few lines. */
+export function SendBefore({ masking }: { masking: boolean }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <p>{t('sendPanel.lead.before')}</p>
+      <ul className="bullets">
+        <li>{t('sendPanel.item.columns')}</li>
+        <li>{t(masking ? 'sendPanel.item.rows.on' : 'sendPanel.item.rows.off')}</li>
+        <li>{t('sendPanel.item.hints')}</li>
+        <li>{t('sendPanel.item.checks', { rows: limits.learn.loop.maxRowsTotal })}</li>
+        <li>{t('sendPanel.item.loop', { rounds: limits.learn.loop.maxRounds, rows: limits.learn.loop.maxRowsTotal })}</li>
+      </ul>
+      <p className="muted">{t('sendPanel.note.before')}</p>
+    </>
+  );
+}
+
+/** Once something was sent: exactly what, request by request, with the columns hidden or sent as they are. */
+export function SentRecords({ sent }: { sent: readonly SentRecord[] }) {
+  const { t } = useI18n();
   const kindOf = (rec: SentRecord): string =>
     rec.kind === 'learn'
       ? t('sendPanel.kind.learn')
@@ -44,39 +72,23 @@ export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
   };
   const columns = sent.find((rec) => rec.columns)?.columns;
   return (
-    <Panel title={t('sendPanel.title')} onClose={onClose} {...(id ? { id } : {})}>
-      {sent.length === 0 ? (
-        <>
-          <p>{t('sendPanel.lead.before')}</p>
-          <ul className="bullets">
-            <li>{t('sendPanel.item.columns')}</li>
-            <li>{t(masking ? 'sendPanel.item.rows.on' : 'sendPanel.item.rows.off')}</li>
-            <li>{t('sendPanel.item.hints')}</li>
-            <li>{t('sendPanel.item.checks', { rows: limits.learn.loop.maxRowsTotal })}</li>
-            <li>{t('sendPanel.item.loop', { rounds: limits.learn.loop.maxRounds, rows: limits.learn.loop.maxRowsTotal })}</li>
-          </ul>
-          <p className="muted">{t('sendPanel.note.before')}</p>
-        </>
-      ) : (
-        <>
-          <p>{t('sendPanel.lead.sent')}</p>
-          {columns ? <ColumnsSent columns={columns} /> : null}
-          {sent.map((rec, i) => {
-            const note = rowsNote(rec);
-            return (
-              <div className="send-record" key={i} data-testid="send-record">
-                <p className="send-record__head">
-                  {kindOf(rec)} · {t('sendPanel.size', { kb: (rec.bytes / 1024).toFixed(1) })}
-                </p>
-                {note ? <p className="muted">{note}</p> : null}
-                <CodeBlock label={t('sendPanel.json')} json={sentBody(rec)} />
-              </div>
-            );
-          })}
-          <p className="muted">{t('masking.always')}</p>
-        </>
-      )}
-    </Panel>
+    <>
+      <p>{t('sendPanel.lead.sent')}</p>
+      {columns ? <ColumnsSent columns={columns} /> : null}
+      {sent.map((rec, i) => {
+        const note = rowsNote(rec);
+        return (
+          <div className="send-record" key={i} data-testid="send-record">
+            <p className="send-record__head">
+              {kindOf(rec)} · {t('sendPanel.size', { kb: (rec.bytes / 1024).toFixed(1) })}
+            </p>
+            {note ? <p className="muted">{note}</p> : null}
+            <CodeBlock label={t('sendPanel.json')} json={sentBody(rec)} />
+          </div>
+        );
+      })}
+      <p className="muted">{t('masking.always')}</p>
+    </>
   );
 }
 

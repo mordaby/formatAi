@@ -215,7 +215,9 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
 
   const begin = (): void => {
     if (!ready || !input || !output) return;
-    void flow.start({ input, output, masking, ai: 'allowed', target });
+    // The session's own files ("Add to this format" from the Result screen): the user's choices of what is sent go with them.
+    const sameFiles = input === session.input && output === session.output;
+    void flow.start({ input, output, masking, ai: 'allowed', target, ...(sameFiles ? { columnChoices: session.columnChoices } : {}) });
   };
 
   // The AI step was refused for the quota: the out-of-AI-formats dialog says so (and when they come back) over the form, the files kept -

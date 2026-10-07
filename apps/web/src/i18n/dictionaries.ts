@@ -16,6 +16,7 @@ import { adminEn, adminHe } from './admin';
 import { formatsEn, formatsHe } from './formats';
 import { pagesEn, pagesHe } from './pages';
 import { resultEn, resultHe } from './result';
+import { sendPreviewEn, sendPreviewHe } from './sendPreview';
 
 export const en = {
   ...resultEn,
@@ -24,6 +25,7 @@ export const en = {
   ...formatsEn,
   ...convertEn,
   ...pagesEn,
+  ...sendPreviewEn,
   'app.name': 'formatAI',
   'app.tagline': 'Teach a format once. Use it every month.',
 
@@ -224,6 +226,7 @@ export const he: Record<MessageKey, string> = {
   ...formatsHe,
   ...convertHe,
   ...pagesHe,
+  ...sendPreviewHe,
   'app.name': 'formatAI',
   'app.tagline': 'מלמדים פורמט פעם אחת. משתמשים בו כל חודש.',
 

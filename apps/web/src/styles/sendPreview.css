@@ -1,0 +1,154 @@
+/* "See what we send" before the learn (owner, 2026-10-07): the large dialog with the sample rows as they go, and a switch per column. Logical properties only (RTL and LTR alike); colors from the tokens (both themes). */
+
+/* ---------- the large dialog: wide on a desk, a full-screen sheet on a phone ---------- */
+.dialog--large {
+  inline-size: min(100%, 1120px);
+  max-block-size: 92dvh;
+}
+@media (max-width: 640px) {
+  .dialog--large {
+    block-size: 100dvh;
+    max-block-size: 100dvh;
+    border-radius: 0;
+  }
+  .dialog-backdrop:has(.dialog--large) {
+    place-items: stretch;
+  }
+}
+
+/* ---------- the rows ---------- */
+.send-preview__loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.send-preview__notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.send-preview__notes:empty {
+  display: none;
+}
+.send-preview__scroll {
+  max-inline-size: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.send-preview__scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.send-preview__table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+.send-preview__table caption {
+  padding: var(--s-2) var(--s-3);
+  color: var(--ink-2);
+  text-align: start;
+}
+.send-preview__table th,
+.send-preview__table td {
+  max-inline-size: 28ch;
+  padding: 8px 12px;
+  border-block-end: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+}
+.send-preview__table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.send-preview__table thead th {
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 500;
+}
+.send-preview__table tbody tr:last-child > * {
+  border-block-end: 0;
+}
+/* A row of the example that expands to several output rows: the next row starts with a stronger line. */
+.send-preview__table tr.send-preview__first > * {
+  border-block-start: 1px solid var(--line-strong);
+}
+.send-preview__side {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+/* Input | output: the output side starts with a line. */
+.send-preview__side--out,
+.send-preview__out-start,
+.send-preview__table td[data-out-start] {
+  border-inline-start: 2px solid var(--line-strong);
+}
+/* A hidden column's values are look-alikes: a quiet tint says so, the switch says it in words. */
+.send-preview__table td[data-hidden] {
+  background: var(--brand-tint);
+  color: var(--on-brand-tint);
+}
+.send-preview__name {
+  display: block;
+  margin-block-end: var(--s-2);
+  white-space: nowrap;
+}
+
+/* ---------- a column's switch (the masking switch's look, smaller) ---------- */
+.col-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.col-switch .switch__track {
+  inline-size: 36px;
+  block-size: 22px;
+}
+.col-switch .switch__thumb {
+  inline-size: 16px;
+  block-size: 16px;
+}
+.col-switch .switch__input:checked + .switch__track .switch__thumb {
+  inset-inline-start: 17px;
+}
+.col-switch:has(.switch__input:disabled) {
+  cursor: default;
+}
+.col-switch__state {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+.col-switch__note {
+  display: block;
+  max-inline-size: 22ch;
+  margin-block-start: var(--s-1);
+  color: var(--ink-2);
+  font-weight: 400;
+  white-space: normal;
+}
+
+/* ---------- more: the full request, what else is sent, what was sent ---------- */
+.send-preview__more summary {
+  cursor: pointer;
+  color: var(--brand);
+  font-weight: 500;
+}
+.send-preview__more[open] > summary {
+  margin-block-end: var(--s-3);
+}
+.send-preview__more > :not(summary) + :not(summary) {
+  margin-block-start: var(--s-3);
+}
+.send-preview__sent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}

@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { AiLimitNotice, useAiLimit } from '../app/AiLimit';
 import { aiUsesLabel, includedLabel, noAiLeft } from '../app/aiQuota';
-import { SendPanel } from '../app/SendPanel';
+import { SendPreviewDialog } from '../app/SendPreviewDialog';
 import { useLearnSession } from '../app/LearnSession';
 import { useMe } from '../app/Me';
 import { useSignIn } from '../app/SignIn';
@@ -27,7 +27,6 @@ export function HomeForm({ busy }: HomeFormProps) {
   const inputInfo = useFileInfo(input, 'input');
   const outputInfo = useFileInfo(output, 'output');
   const [sendOpen, setSendOpen] = useState(false);
-  const sendId = useId();
   const hintId = useId();
   const aiHintId = useId();
 
@@ -79,12 +78,13 @@ export function HomeForm({ busy }: HomeFormProps) {
         <p className="privacy__line">
           <Icon name="lock" size={16} />
           <span>{t('masking.always')}</span>
-          <Button variant="link" aria-expanded={sendOpen} aria-controls={sendOpen ? sendId : undefined} onClick={() => setSendOpen((o) => !o)}>
+          <Button variant="link" aria-haspopup="dialog" onClick={() => setSendOpen(true)}>
             {t('sendPanel.title')}
           </Button>
         </p>
-        {sendOpen && <SendPanel id={sendId} sent={session.flow.state.sent} masking={masking} onClose={() => setSendOpen(false)} />}
+        <SendPreviewDialog open={sendOpen} onClose={() => setSendOpen(false)} />
       </div>
+
 
       <div className="learn">
         <div className="learn-row">
