@@ -37,7 +37,10 @@ export const columnNames = {
   identifier: [
     'ת.ז', 'ת"ז', 'תעודת זהות', 'מספר זהות', "מס' לקוח", 'מספר לקוח', 'קוד לקוח', 'חשבון', 'מספר חשבון', 'טלפון', 'נייד', 'מייל', 'אימייל',
     'דוא"ל', 'פוליסה', 'דרכון',
+    // Owner decision (2026-10-07): an order number can be traced back to a customer, and masking it never stops a rule from being learned.
+    'מספר הזמנה', "מס' הזמנה",
     'id', 'customer no', 'customer number', 'account', 'account no', 'phone', 'mobile', 'email', 'e-mail', 'policy', 'passport', 'iban',
+    'order no', 'order number', 'order id',
   ],
   /**
    * A measure: a numeric column stays a measure, sent real, however long its numbers (a 1,000,000 price). It wins over an identifier word
