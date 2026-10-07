@@ -487,6 +487,24 @@ async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt>
   return current;
 }
 
+/**
+ * learn-v9: the outcome of a first call that asked checks (a learn's, a step's, a list round's) - the checks, no rules, no repair: the
+ * caller answers them and calls again. Null when the call answered otherwise.
+ */
+function checksOutcome(first: Attempt, ctx: CallContext): LearnOutcome | null {
+  if (!first.checks) return null;
+  const dropped = first.droppedChecks ?? [];
+  return {
+    rules: null,
+    checks: first.checks,
+    ...(dropped.length > 0 ? { droppedChecks: dropped } : {}),
+    verified: false,
+    problems: [],
+    calls: ctx.calls,
+    ...(ctx.overfitRepaired ? { overfitRepaired: true } : {}),
+  };
+}
+
 function outcomeOfAttempts(ctx: CallContext): LearnOutcome {
   const best = bestOf(ctx.attempts);
   return {
@@ -536,19 +554,8 @@ export async function learn(payload: LearnPayload, opts: LearnOptions): Promise<
   ctx.calls.push(first.record);
   ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);
-
-  if (first.attempt.checks) {
-    const dropped = first.attempt.droppedChecks ?? [];
-    return {
-      rules: null,
-      checks: first.attempt.checks,
-      ...(dropped.length > 0 ? { droppedChecks: dropped } : {}),
-      verified: false,
-      problems: [],
-      calls: ctx.calls,
-      ...(ctx.overfitRepaired ? { overfitRepaired: true } : {}),
-    };
-  }
+  const asked = checksOutcome(first.attempt, ctx);
+  if (asked) return asked;
 
   const current = await serverRepairs(ctx, first.attempt);
 
@@ -622,18 +629,8 @@ export async function repairFromBrowser(
   ctx.calls.push(first.record);
   ctx.attempts.push(first.attempt);
   opts.onAttempt?.(first.attempt.problems);
-  if (first.attempt.checks) {
-    const dropped = first.attempt.droppedChecks ?? [];
-    return {
-      rules: null,
-      checks: first.attempt.checks,
-      ...(dropped.length > 0 ? { droppedChecks: dropped } : {}),
-      verified: false,
-      problems: [],
-      calls: ctx.calls,
-      ...(ctx.overfitRepaired ? { overfitRepaired: true } : {}),
-    };
-  }
+  const asked = checksOutcome(first.attempt, ctx);
+  if (asked) return asked;
 
   await serverRepairs(ctx, first.attempt);
   return outcomeOfAttempts(ctx);

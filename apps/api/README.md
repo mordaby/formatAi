@@ -30,7 +30,7 @@ The AI step is for signed-in users only. `POST /api/learn`, `POST /api/learn/rep
 `POST /api/learn/:learnId/outcome` exist in every environment; an anonymous caller gets
 `403 signInForAi` before anything else costs anything (free users get everything that runs locally, and
 the web shows the local result first). For a signed-in user `POST /api/learn` is guarded by, in order:
-a per-IP request rate limit (`limits.protection`), the body shape, the owner's structure cache (a hit costs
+a per-IP request rate limit (`limits.protection`), the body shape and the payload caps (`limits.payload.maxBytes` and every cell within `maxCellChars` - one `admit()` in `routes/learn.ts` for learn, step and repair), the owner's structure cache (a hit costs
 nothing and is served even when the quota is spent), the failed-attempt cap of the example pair, the daily
 budgets (`limits.budgets`), and the user's AI-learn quota (`tiers.*.aiLearns: { count, period }`, period
 `lifetime | month | day | unlimited`). Refusals are `{ error, limit?, period?, counted? }` with a stable code
@@ -44,8 +44,8 @@ budgets (`limits.budgets`), and the user's AI-learn quota (`tiers.*.aiLearns: { 
 | 429 | `limitHit` + `limit: 'repairsPerLearn'` | the learn's rounds of the learning loop are used (`limits.llm.browserRepairCalls`, 3) |
 | 409 | `aiAttemptsExhausted` + `counted` | 3 failed attempts on the same example pair (`limits.learn.maxFailedAiAttempts`); `counted: true` when this very answer counted the pair as one AI learn |
 | 503 | `budgetExhausted` | the daily overall budget is spent (kill switch) |
-| 400 | `invalidPayload`, `invalidPreviousRules`, `invalidProblems`, `invalidLearnId`, `invalidRequest` | malformed body / follow-up without a valid `learnId` |
-| 400 | `invalidRows` | a loop round's `rows` are malformed or larger than the loop allows: more than `limits.learn.loop.rowsPerRound` per round so far, more than `maxRowsTotal` masked rows in the learn (the payload's samples and dropped rows included), or the payload with them added past `limits.payload.maxBytes` |
+| 400 | `invalidPayload`, `invalidPreviousRules`, `invalidProblems`, `invalidLearnId`, `invalidRequest` | malformed body (a payload past `limits.payload.maxBytes`, or a cell past `maxCellChars`, included) / follow-up without a valid `learnId` |
+| 400 | `invalidRows` | a loop round's `rows` are malformed or larger than the loop allows: more than `limits.learn.loop.rowsPerRound` per round so far, more than `maxRowsTotal` masked rows in the learn (the payload's samples and dropped rows included), a cell past `limits.payload.maxCellChars`, or the payload with them added past `limits.payload.maxBytes` |
 
 **The learning loop** (SPEC 9.3, `docs/proposals/learning-loop.md` 3.2): `POST /api/learn/repair` is one round. Its body carries,
 besides the previous rules and the problems, `rows`: every row of the example the browser sent since the learn (masked like the

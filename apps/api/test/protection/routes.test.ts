@@ -170,6 +170,59 @@ function defineProtectionSuite(kit: StoreKit): void {
     });
   });
 
+  // ---------- the payload caps, on every AI route ----------
+
+  describe('the payload caps (SPEC 7.3; API audit C4: the first learn checked neither)', () => {
+    /** Past the payload byte cap: a hint carrying text (hints are not checked one by one). */
+    const tooBig = () => basicPayload({ hints: [{ rel: 'note', text: 'x'.repeat(limits.payload.maxBytes) } as never] });
+    /** A cell longer than the browser ever sends (it cuts each one at `maxCellChars`). */
+    const longCell = () => basicPayload({ samples: [{ in: ['A'.repeat(limits.payload.maxCellChars + 1), 10], out: ['A1', 20] }, { in: ['A2', 5], out: ['A2', 10] }] });
+
+    it('POST /api/learn: 400 invalidPayload past the byte cap or with a cell past its length - no call, nothing reserved', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      for (const payload of [tooBig(), longCell()]) {
+        const res = await h.learn({ payload, noCache: true });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: 'invalidPayload' });
+      }
+      expect(llm.calls).toHaveLength(0);
+      expect(await h.handle.counter(aiLearnsKey(TEST_USER, 'month', h.clock.current))).toBe(0);
+      // A cell exactly at the length is fine (the browser's cut).
+      const atCap = basicPayload({ samples: [{ in: ['A'.repeat(limits.payload.maxCellChars), 10], out: ['A'.repeat(limits.payload.maxCellChars), 20] }, { in: ['A2', 5], out: ['A2', 10] }] });
+      expect((await h.learn({ payload: atCap, noCache: true })).statusCode).toBe(200);
+    });
+
+    it('POST /api/learn: a long cell in the dropped rows is refused too', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const res = await h.learn({ payload: basicPayload({ dropped: [['x'.repeat(limits.payload.maxCellChars + 1), 1]] }), noCache: true });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: 'invalidPayload' });
+      expect(llm.calls).toHaveLength(0);
+    });
+
+    it('POST /api/learn/repair: the same caps on its payload (400 invalidPayload) and on its rows (400 invalidRows), using no round', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const learned = await h.learn({ noCache: true });
+      const { rules, learnId } = learned.json() as { rules: unknown; learnId: string };
+      const before = llm.calls.length;
+      const repair = (payload: unknown, rows?: unknown) =>
+        h.post('/api/learn/repair', { payload, previousRules: rules, problems: [], learnId, ...(rows !== undefined ? { rows } : {}) });
+      for (const payload of [tooBig(), longCell()]) {
+        const res = await repair(payload);
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: 'invalidPayload' });
+      }
+      const res = await repair(basicPayload(), [{ in: ['y'.repeat(limits.payload.maxCellChars + 1), 1], out: ['A9', 2] }]);
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: 'invalidRows' });
+      expect(llm.calls).toHaveLength(before);
+      expect(await h.handle.counter(`repair:${learnId.split('.')[0]}`)).toBe(0);
+    });
+  });
+
   // ---------- repair ----------
 
   describe('POST /api/learn/repair (SPEC 9.3: the learning loop\'s rounds, at most 3, and not a new learn)', () => {

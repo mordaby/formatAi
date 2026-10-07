@@ -1,7 +1,7 @@
 // The learning loop's size rules, shared by the browser's loop and the server's check of a round (SPEC 9.3): the payload as the server
 // checks it (the samples plus every row sent), the rows one learn may send, and the byte cap.
 import { describe, expect, it } from 'vitest';
-import { limits, loopRowsFit, LoopRowsSchema, payloadBytes, payloadRowCount, withRows, type LearnPayload, type Sample } from '../src';
+import { limits, loopRowsFit, LoopRowsSchema, payloadBytes, payloadFits, payloadRowCount, withRows, type LearnPayload, type Sample } from '../src';
 
 function payload(samples: number, dropped = 0): LearnPayload {
   return {
@@ -38,6 +38,22 @@ describe('the loop rows', () => {
     const big: Sample[] = [{ in: ['x'.repeat(limits.payload.maxBytes)], out: ['y'] }];
     expect(payloadBytes(withRows(p, big))).toBeGreaterThan(limits.payload.maxBytes);
     expect(loopRowsFit(p, big)).toBe(false);
+  });
+
+  it('fit: every cell of a row within the payload cell length (the browser cuts each one there; a family\'s rows too)', () => {
+    const max = limits.payload.maxCellChars;
+    expect(loopRowsFit(payload(1), [{ in: ['x'.repeat(max)], out: ['y'.repeat(max)] }])).toBe(true);
+    expect(loopRowsFit(payload(1), [{ in: ['x'.repeat(max + 1)], out: ['y'] }])).toBe(false);
+    expect(loopRowsFit(payload(1), [{ in: ['x'], out: [['y'], ['z'.repeat(max + 1)]] }])).toBe(false);
+  });
+
+  it('payloadFits (API audit C4): the payload alone - its bytes and each sample and dropped cell', () => {
+    const max = limits.payload.maxCellChars;
+    expect(payloadFits(payload(3, 2))).toBe(true);
+    expect(payloadFits({ ...payload(1), samples: [{ in: ['x'.repeat(max + 1)], out: ['y'] }] })).toBe(false);
+    expect(payloadFits({ ...payload(1), dropped: [['x'.repeat(max + 1)]] })).toBe(false);
+    expect(payloadFits({ ...payload(1), hints: [{ text: 'x'.repeat(limits.payload.maxBytes) } as never] })).toBe(false);
+    expect(payloadFits({ ...payload(1), samples: [{ in: [123456789012345678901234567890123456789012345], out: [true] }] })).toBe(true); // numbers are no text
   });
 
   it('the schema takes sample-shaped rows (a dropped row has no output rows) and no more than a learn may send', () => {

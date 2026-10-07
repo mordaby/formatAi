@@ -168,6 +168,18 @@ describe('POST /api/learn answering with checks, then POST /api/learn/step', () 
     expect(big.json()).toEqual({ error: 'invalidRounds' });
     expect(fake.calls).toHaveLength(1);
   });
+
+  it('API audit C4: the payload itself is held to the cell length too (400 invalidPayload), using no step', async () => {
+    const { app: a, fake, store } = await start('all');
+    fake.enqueue(asksChecks);
+    const { learnId } = (await post(a, '/api/learn', { payload: basicPayload() })).json();
+    const long = basicPayload({ samples: [{ in: ['A'.repeat(limits.payload.maxCellChars + 1), 10], out: ['A1', 20] }, { in: ['A2', 5], out: ['A2', 10] }] });
+    const res = await post(a, '/api/learn/step', { token: learnId, payload: long, rounds: [ROUND(1)] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'invalidPayload' });
+    expect(fake.calls).toHaveLength(1);
+    expect(store.counter(`step:${String(learnId).split('.')[0]}`)).toBe(0);
+  });
 });
 
 describe('the fresh learn that stands in for a loop round (rulesNow)', () => {

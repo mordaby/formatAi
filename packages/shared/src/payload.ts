@@ -376,13 +376,38 @@ export function payloadBytes(payload: LearnPayload): number {
   return new TextEncoder().encode(JSON.stringify(payload)).length;
 }
 
+/** A sample's output rows: one row, or a family's rows (`out: PayloadCell[][]`; `[]` is a family of none). */
+function outRowsOf(sample: Sample): readonly PayloadCell[][] {
+  return sample.out.length === 0 || Array.isArray(sample.out[0]) ? (sample.out as PayloadCell[][]) : [sample.out as PayloadCell[]];
+}
+
+const cellFits = (v: PayloadCell): boolean => typeof v !== 'string' || v.length <= limits.payload.maxCellChars;
+
+/**
+ * Whether every cell of these rows is within the payload's cell length (`limits.payload.maxCellChars`, in UTF-16 units like the browser's
+ * cut): the browser cuts every cell it sends to it - the samples', the dropped rows', the learning loop's rows.
+ */
+export function sampleCellsFit(samples: readonly Sample[], dropped: readonly (readonly PayloadCell[])[] = []): boolean {
+  return samples.every((s) => s.in.every(cellFits) && outRowsOf(s).every((row) => row.every(cellFits))) && dropped.every((row) => row.every(cellFits));
+}
+
+/**
+ * Whether a payload is within what the browser builds (SPEC 7.3), as the server checks it on every AI route (API audit C4, 2026-10-07: the
+ * first learn checked neither): its UTF-8 size (`limits.payload.maxBytes`) and every sample and dropped cell's length (`maxCellChars`).
+ */
+export function payloadFits(payload: LearnPayload): boolean {
+  return sampleCellsFit(payload.samples, payload.dropped ?? []) && payloadBytes(payload) <= limits.payload.maxBytes;
+}
+
 /**
  * Whether the rows of a loop round fit the caps, as the server checks them (the browser's loop never sends more): at most
- * `maxRowsTotal` masked rows in one learn, the payload's own samples and dropped rows included, and the payload with every row added
- * no larger than the payload byte cap. (The rows one round may add, `rowsPerRound`, are checked against the round's number.)
+ * `maxRowsTotal` masked rows in one learn, the payload's own samples and dropped rows included, every cell of a row within the payload's
+ * cell length, and the payload with every row added no larger than the payload byte cap. (The rows one round may add, `rowsPerRound`, are
+ * checked against the round's number.)
  */
 export function loopRowsFit(payload: LearnPayload, rows: readonly Sample[]): boolean {
   if (payloadRowCount(payload) + rows.length > limits.learn.loop.maxRowsTotal) return false;
+  if (!sampleCellsFit(rows)) return false;
   return payloadBytes(withRows(payload, rows)) <= limits.payload.maxBytes;
 }
 
