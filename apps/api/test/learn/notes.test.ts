@@ -82,8 +82,13 @@ describe('the value filter: a request that mentions a payload value is rejected 
     for (const n of ['1234.5', '2469', '2026', '31', '7', '14', '99', '1.18', '50']) expect(values.numbers.has(n), n).toBe(true);
   });
 
-  it('does not collect headers, hint structure (positions, relation names) or words shorter than 3 characters', () => {
-    expect(values.words.has('amount')).toBe(false); // a header, not a value
+  it('API audit C7: collects the input and output header words and the sheet names too (sent real: the user text)', () => {
+    for (const w of ['amount', 'total', 'sheet', 'out']) expect(values.words.has(w), w).toBe(true);
+    const named = payloadValues({ ...basicPayload(), input: { ...basicPayload().input, sheetName: 'Cohen Ltd prices' } });
+    for (const w of ['cohen', 'ltd', 'prices']) expect(named.words.has(w), w).toBe(true);
+  });
+
+  it('does not collect hint structure (positions, relation names) or words shorter than 3 characters', () => {
     expect(values.words.has('valuemap')).toBe(false);
     expect(values.words.has('isempty')).toBe(false); // a threshold's operator is structure, not data
     expect(values.words.has('x')).toBe(false);
@@ -105,13 +110,14 @@ describe('the value filter: a request that mentions a payload value is rejected 
     ['a number with leading zeros (007)', req({ purpose: 'Pads to 007.' })],
     ['a year inside a date cell', req({ purpose: 'Keeps only 2026.' })],
     ['a number in the name', req({ name: 'addNinetyNine99' })],
+    ['a header word (API audit C7: headers are the user text)', req({ purpose: 'Uses the amount column.' })],
+    ['an output header word in an argument name', req({ args: [{ name: 'totalValue', type: 'number' }] })],
   ])('rejects %s', (_label, r) => {
     expect(requestMentionsPayloadValue(r, values)).toBe(true);
   });
 
   it.each([
     ['a clean request', req()],
-    ['a header word (headers are not values)', req({ purpose: 'Uses the amount column.' })],
     ['a word of fewer than 3 characters that is a value', req({ purpose: 'Uses x as a marker.' })],
     ['a number that is not in the payload', req({ purpose: 'Returns the last 5 characters.' })],
     ['a longer word that merely contains a value', req({ name: 'highlightRows' })],
@@ -123,7 +129,7 @@ describe('the value filter: a request that mentions a payload value is rejected 
   it('compares only tokens of at least limits.learn.notes.minTokenChars characters (config)', () => {
     expect(limits.learn.notes.minTokenChars).toBe(3);
     const v = payloadValues({ ...basicPayload(), samples: [{ in: ['ab', 5], out: ['ab', 10] }] });
-    expect(v.words.size).toBe(0);
+    expect([...v.words].sort()).toEqual(['amount', 'out', 'sheet', 'total']); // the header and sheet words only: no cell word of 3+ characters
     expect(requestMentionsPayloadValue(req({ purpose: 'Uses ab here.' }), v)).toBe(false);
     expect(requestMentionsPayloadValue(req({ purpose: 'Uses 10 here.' }), v)).toBe(true); // numbers are compared whatever their length
   });

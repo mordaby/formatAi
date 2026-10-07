@@ -127,9 +127,24 @@ function addHintValues(node: unknown, into: { words: Set<string>; numbers: Set<s
   if (collecting) addCell(node, into);
 }
 
-/** Collects the value tokens of the payload: sample cells (pairs and families), dropped rows, hint values and column value ranges. */
+/**
+ * Collects the value tokens of the payload: sample cells (pairs and families), dropped rows, hint values and column value ranges - and the
+ * words of the input and output headers and of the sheet names.
+ *
+ * DECISION (API audit C7, 2026-10-07): headers and sheet names are sent REAL even with masking on (SPEC 7.2), and they are the user's own
+ * text - a header or a sheet named after a customer, a supplier or a period ("Cohen Ltd prices", "Report 2026-09"). A request is stored in
+ * `function_requests`, which every admin reads across users, so it may not echo them either: a request whose name, purpose or argument
+ * names repeat a header word is rejected like one that repeats a cell. (It used to pass: "headers are not values".) The prompt already asks
+ * for general terms only; a request that names a column ("lookupWarehouse(item)") now asks again in general terms or is not recorded.
+ */
 export function payloadValues(payload: LearnPayload): PayloadValues {
   const into = { words: new Set<string>(), numbers: new Set<string>() };
+  // (`target` and the layouts are only shape-checked by the API - `LearnPayloadSchema` - so they are read defensively.)
+  const targetColumns: unknown = (payload.target as { output?: { columns?: unknown } } | undefined)?.output?.columns;
+  const columns: unknown[] = [...payload.input.columns, ...payload.output.columns, ...(Array.isArray(targetColumns) ? targetColumns : [])];
+  for (const c of columns) if (isRecord(c)) addCell(c.header, into);
+  addCell(payload.input.sheetName, into);
+  addCell((payload.output.layout as { sheetName?: unknown } | undefined)?.sheetName, into);
   for (const s of payload.samples) {
     for (const c of s.in as PayloadCell[]) addCell(c, into);
     for (const o of s.out as (PayloadCell | PayloadCell[])[]) {
