@@ -117,35 +117,12 @@ describe('POST /api/learn', () => {
       unsupportedDespiteEvidence: 0,
       // prompt audit X2: an answer cut off at the output-token limit (none here)
       truncated: 0,
-      // learn-v8: the answer's dropped alternatives (none here)
-      invalidAlternative: 0,
       // SPEC 9.2 layer 6: a rule that copies rows of the example - the repair it asks for, and the columns code reported after it (none here)
       overfit: 0,
       overfitFallback: 0,
       // docs/proposals/saved-format-contents.md section 4: the browser's one round for a list column (never raised by the server's checks)
       list: 0,
     });
-  });
-
-  it('the default version (learn-v7) offers no alternatives: any the answer gives are dropped and counted, never in the rules or the cache', async () => {
-    const fake: FakeLlmProvider = createFakeProvider();
-    const alternative = { outputColumn: 'Total', from: 'totalAlt', computed: [{ id: 'totalAlt', type: 'decimal', expr: 'amount + amount' }] };
-    fake.enqueue({ json: { ...(correctRulesWireJson() as object), alternatives: [alternative, { outputColumn: 'Nope', from: 'id', computed: [] }] } });
-    const store = createMemoryStore();
-    app = await buildServer({ env: devEnv(), db: null, logger: false, store, identify: asUser, complete: (req: CompleteRequest) => fake.complete(req) });
-    // Masking ON: with masking OFF nothing is cached at all, so a "never in the cache" check would pass for the wrong reason.
-    const send = () => app!.inject({ method: 'POST', url: '/api/learn', payload: JSON.stringify({ payload: basicPayload({ masking: true }) }), headers: { 'content-type': 'application/json' } });
-
-    const body = (await send()).json();
-    expect(body.verified).toBe(true);
-    expect(body.rules).not.toHaveProperty('alternatives');
-    // (learn-v8 sends them beside the rules: `learn()` with `prompt: 'learn-v8'`, test/learn/alternatives.test.ts)
-    expect(body).not.toHaveProperty('alternatives');
-    expect(store.ledger[0]!.problemCounts.invalidAlternative).toBe(2);
-    // The same structure again: a cache hit carries the rules only.
-    const hit = (await send()).json();
-    expect(hit.cached).toBe(true);
-    expect(hit).not.toHaveProperty('alternatives');
   });
 });
 

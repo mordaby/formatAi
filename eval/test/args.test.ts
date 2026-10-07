@@ -117,15 +117,13 @@ describe('--cases: a substring, or a comma-separated list of them', () => {
   });
 });
 
-describe('parseArgs: --prompt (learn-v8: compare two prompt versions on the same code)', () => {
-  it('takes learn-v7, learn-v8, learn-v8.1 or their noE1 variants (the E1 switch), and nothing else; absent means the current version', () => {
+describe('parseArgs: --prompt (compare two prompt versions on the same code)', () => {
+  it('takes learn-v7 or learn-v9, and nothing else; absent means the current version', () => {
     expect(parseArgs(['--prompt', 'learn-v7']).prompt).toBe('learn-v7');
-    expect(parseArgs(['--prompt=learn-v8']).prompt).toBe('learn-v8');
-    expect(parseArgs(['--prompt', 'learn-v8-noE1']).prompt).toBe('learn-v8-noE1');
-    expect(parseArgs(['--prompt', 'learn-v8.1']).prompt).toBe('learn-v8.1');
-    expect(parseArgs(['--prompt=learn-v8.1-noE1']).prompt).toBe('learn-v8.1-noE1');
+    expect(parseArgs(['--prompt=learn-v9']).prompt).toBe('learn-v9');
     expect(parseArgs([]).prompt).toBeUndefined();
     expect(() => parseArgs(['--prompt', 'learn-v6'])).toThrow(EvalArgsError);
-    expect(() => parseArgs(['--prompt', 'learn-v8-noe1'])).toThrow(/learn-v7, learn-v8, learn-v8-noE1, learn-v8.1, learn-v8.1-noE1/);
+    // (learn-v8 and its variants were measured, rejected and removed: 2026-10-05 / 2026-10-07)
+    expect(() => parseArgs(['--prompt', 'learn-v8'])).toThrow(/expected one of learn-v7, learn-v9, got "learn-v8"/);
   });
 });

@@ -27,7 +27,6 @@ import {
   withRows,
   type Check,
   type CheckRound,
-  type LearnAlternative,
   type LearnPayload,
   type LearnPrompt,
   type PromptVersion,
@@ -96,9 +95,8 @@ export interface LlmCallRecord {
    * product can track things like "how often models write invalid formulas" from the
    * ledger alone. See `eval/lib`'s report for the human-readable version (which also
    * has the actual messages, via `LearnOptions.onAttempt` - a dev-only path this ledger
-   * record deliberately doesn't carry). learn-v8: `invalidAlternative` counts the
-   * alternatives the answer gave that were dropped (`runChecks`; never a repair problem); `overfitFallback` the columns code
-   * reported as unsupported because their rule copied rows (SPEC 9.2 layer 6; never a repair problem either). */
+   * record deliberately doesn't carry). `overfitFallback` counts the columns code
+   * reported as unsupported because their rule copied rows (SPEC 9.2 layer 6; never a repair problem). */
   problemCounts: ProblemCounts;
   /** A `check` call (learn-v9): the checks the answer asked that the API kept, and the ones it dropped. Counts only; absent on any other call. */
   checks?: { asked: number; dropped: number };
@@ -114,16 +112,14 @@ const TRUNCATED_PROBLEM: RepairProblem = {
 };
 
 /**
- * The ledger's per-call counts: each `RepairProblem` kind, plus the answer's dropped alternatives (learn-v8) and the output columns code
- * reported as unsupported because their rule still copied rows of the example after the learn's one repair for it (`overfitFallback`,
+ * The ledger's per-call counts: each `RepairProblem` kind, plus the output columns code reported as unsupported because their rule still copied rows of the example after the learn's one repair for it (`overfitFallback`,
  * SPEC 9.2 layer 6 - the `overfit` problems are the findings that asked for that repair).
  */
-export type ProblemCounts = Record<RepairProblem['kind'] | 'invalidAlternative' | 'overfitFallback', number>;
+export type ProblemCounts = Record<RepairProblem['kind'] | 'overfitFallback', number>;
 
-export function countProblems(problems: readonly RepairProblem[], invalidAlternatives = 0, overfitFallbacks = 0): ProblemCounts {
+export function countProblems(problems: readonly RepairProblem[], overfitFallbacks = 0): ProblemCounts {
   const counts = Object.fromEntries(REPAIR_PROBLEM_KINDS.map((k) => [k, 0])) as ProblemCounts;
   for (const p of problems) counts[p.kind] += 1;
-  counts.invalidAlternative = invalidAlternatives;
   counts.overfitFallback = overfitFallbacks;
   return counts;
 }
@@ -191,8 +187,6 @@ export interface LearnOutcome {
   checks?: Check[];
   /** With `checks`: one short line per check the API dropped, for the next round's `dropped`. */
   droppedChecks?: string[];
-  /** learn-v8: the alternatives of the kept answer that passed their checks (`runChecks`), in its own vocabulary. Never part of `rules`. */
-  alternatives?: LearnAlternative[];
   /** True once an attempt passed every SPEC 9.2 check (layers 1-7) with zero
    * problems - NOT SPEC 9.2 layer 8 (full verification), which only the browser can
    * do, since it alone holds the full real file (SPEC 2). */
@@ -207,7 +201,6 @@ interface Attempt {
   raw: unknown;
   problems: RepairProblem[];
   rules: LearnResult | null;
-  alternatives: LearnAlternative[];
   /** learn-v9: the answer asked these checks (where it may) instead of answering with the rules; `rules` is null. */
   checks?: Check[];
   droppedChecks?: string[];
@@ -283,7 +276,7 @@ async function callAndCheck(
   checksAllowed = false,
 ): Promise<{ record: LlmCallRecord; attempt: Attempt }> {
   // learn-v9: one schema for every call of the learn (the cache); any other version, the rules schema it was written for.
-  const schema = prompt.checks ? learnStepWireJsonSchema() : learnResultWireJsonSchema({ alternatives: prompt.alternatives });
+  const schema = prompt.checks ? learnStepWireJsonSchema() : learnResultWireJsonSchema();
   const promptVersion = prompt.version;
 
   // API audit (2026-10-07): the request is built inside the try - a rules file that cannot be printed back into a repair block is a failed
@@ -297,7 +290,7 @@ async function callAndCheck(
     const step = prompt.checks && !result.truncated ? splitStepAnswer(result.json) : null;
     const asked = step?.kind === 'checks' && checksAllowed ? { ...acceptChecks(step.checks), raw: step.checks.length } : null;
     const answer = step === null ? result.json : step.kind === 'rules' ? step.rules : null;
-    const noRules = { rules: null, alternatives: [], invalidAlternatives: 0, overfitFallbacks: 0 };
+    const noRules = { rules: null, overfitFallbacks: 0 };
     // The learning loop: checked on the samples plus every row the browser sent (`withRows`); a problem on one of those rows names the row.
     // (A cut-off answer is not checked: there is nothing whole to check.)
     const checked = result.truncated
@@ -306,9 +299,9 @@ async function callAndCheck(
         ? { problems: [], ...noRules }
         : step !== null && step.kind !== 'rules'
           ? { problems: [step.kind === 'checks' ? CHECKS_NOT_NOW : { kind: 'schema' as const, path: '', message: step.message }], ...noRules }
-          : runChecks(answer, withRows(payload, rows), { tier, alternatives: prompt.alternatives, overfit });
+          : runChecks(answer, withRows(payload, rows), { tier, overfit });
     const problems = rowsNamed(checked.problems, payload, rows);
-    const { rules, alternatives } = checked;
+    const { rules } = checked;
     // The estimate counts the exact text sent (system prompt, schema, every content block) and received (the raw answer), priced as the
     // model that answered (the fallback's own prices on a fallback call). Its cached prefix is that model's: a fallback call writes the
     // fallback model's prefix, never reads the primary's.
@@ -335,12 +328,12 @@ async function callAndCheck(
       estimate,
       latencyMs: result.latencyMs,
       outcome: result.truncated ? 'truncated' : asked ? 'checks' : outcomeOf(problems),
-      problemCounts: countProblems(problems, checked.invalidAlternatives, checked.overfitFallbacks),
+      problemCounts: countProblems(problems, checked.overfitFallbacks),
       ...(asked ? { checks: { asked: asked.checks.length, dropped: asked.raw - asked.checks.length } } : {}),
     };
     // (`raw` is what a repair sends back when nothing parsed: for learn-v9 the rules part of the answer, never a checks answer.)
     const raw = result.truncated ? null : answer;
-    const attempt: Attempt = { raw, problems, rules, alternatives, ...(asked ? { checks: asked.checks, droppedChecks: asked.dropped } : {}) };
+    const attempt: Attempt = { raw, problems, rules, ...(asked ? { checks: asked.checks, droppedChecks: asked.dropped } : {}) };
     return { record, attempt };
   } catch (err) {
     const kind = blocks === null ? 'requestNotBuilt' : err instanceof LlmError ? err.kind : 'providerError';
@@ -349,7 +342,6 @@ async function callAndCheck(
       raw: null,
       rules: null,
       problems: [{ kind: 'schema', path: '', message: blocks === null ? `the request could not be built: ${message}` : `LLM call failed: ${message}` }],
-      alternatives: [],
       noAnswer: true,
     };
     // A call that failed on the fallback too is recorded as the fallback's (the last provider tried), with why it was tried.
@@ -379,7 +371,7 @@ async function callAndCheck(
  * in WIRE form (the same notation the model itself writes), plus the problems found,
  * plus the fix-only instruction appended to the same block so the system prompt -
  * and its cache breakpoint - never changes. The instruction is the prompt version's own
- * (`LearnPrompt.repair`: learn-v8's says what a row in a problem is, learn-v7 keeps its own). */
+ * (`LearnPrompt.repair`: learn-v9's adds "answer with the rules" to learn-v7's). */
 function repairContentBlock(previous: Attempt, problems: RepairProblem[], prompt: LearnPrompt): ContentBlock {
   const repairBlock: RepairBlock<unknown> = {
     mode: 'repair',
@@ -524,7 +516,6 @@ function outcomeOfAttempts(ctx: CallContext): LearnOutcome {
   const best = bestOf(ctx.attempts);
   return {
     rules: best.rules,
-    ...(best.rules !== null && best.alternatives.length > 0 ? { alternatives: best.alternatives } : {}),
     verified: best.rules !== null && best.problems.length === 0,
     problems: best.problems,
     calls: ctx.calls,
@@ -617,7 +608,7 @@ export async function repairFromBrowser(
   const env = opts.env ?? loadEnv();
   const completeFn = opts.complete ?? defaultComplete;
   const block = payloadBlock(payload);
-  const previous: Attempt = { raw: null, rules: previousRules, problems, alternatives: [] };
+  const previous: Attempt = { raw: null, rules: previousRules, problems };
   const model = opts.models?.firstTry ?? resolveModel(env, 'firstTry');
   const prompt = learnPromptOf(opts.prompt);
   // DECISION: this call always comes after the learn's own first call on the same model, so the cached prefix is already there.

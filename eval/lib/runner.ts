@@ -100,14 +100,6 @@ export interface RunRecord {
   /** The prompt version the AI step was sent (`--prompt`; the current one by default). */
   prompt: string;
   /**
-   * learn-v8: the second rules the AI step gave - the ones the kept answer carried that code tested on every row (`result.alternatives`),
-   * plus every one the API's checks dropped in any call of the learn (`problemCounts.invalidAlternative`). 0 when none.
-   */
-  alternativesProposed: number;
-  /** What they turned out to be, per column, then the dropped ones: "Total bothPass, Tag alternativeOnly, invalid 2" ('' when none). The
-   * outcomes: bothPass (asked of the user), answerOnly / alternativeOnly (one fits: it is the rule), bothFail, invalid (dropped by the API). */
-  alternatives: string;
-  /**
    * The prompt audit's measurement plan (docs/proposals/prompt-audit-learn-v7.md section 5): the output columns this learn's answers gave up
    * on although the payload had a hint for them - the sum of every call's `problemCounts.unsupportedDespiteEvidence`. Each one is a repair:
    * an answer that has one is sent back (a server repair, the escalation, or the loop's first round). 0 when no call was made.
@@ -453,7 +445,6 @@ async function toRunRecord(
     filledByCode: filledLabel(result.filled),
     ambiguities: (result.ambiguities ?? []).map((a) => a.kind).join(' '),
     prompt,
-    ...alternativesOf(result),
     ...callsOf(result),
     ...oneTime,
     ...saved,
@@ -503,8 +494,6 @@ function errorRecord(caseDef: CaseDef, model: string, masking: boolean, run: num
     filledByCode: '',
     ambiguities: '',
     prompt: promptVersion,
-    alternativesProposed: 0,
-    alternatives: '',
     unsupportedDespiteEvidence: 0,
     unsupportedReasons: '',
     problemsByKind: '',
@@ -639,8 +628,8 @@ export function callsOf(
   const kinds = new Map<string, number>();
   const failures = new Map<string, number>();
   for (const c of calls) {
-    // (Counts beside the problem kinds - the dropped alternatives, the columns code reported - are not problems.)
-    for (const [kind, n] of Object.entries(c.problemCounts)) if (kind !== 'invalidAlternative' && kind !== 'overfitFallback') kinds.set(kind, (kinds.get(kind) ?? 0) + n);
+    // (A count beside the problem kinds - the columns code reported - is not a problem.)
+    for (const [kind, n] of Object.entries(c.problemCounts)) if (kind !== 'overfitFallback') kinds.set(kind, (kinds.get(kind) ?? 0) + n);
     if (c.outcome === 'truncated' || c.outcome.startsWith('error:')) failures.set(c.outcome, (failures.get(c.outcome) ?? 0) + 1);
   }
   const rules = result.path === 'llm' ? result.rules : null;
@@ -656,15 +645,6 @@ export function callsOf(
     overfitFound: kinds.get('overfit') ?? 0,
     overfitFellBack: reasons.get('overfit') ?? 0,
   };
-}
-
-/** The alternatives of a learn (learn-v8): those the kept answer carried, as code found them on every row, then the ones the API dropped. */
-export function alternativesOf(result: Pick<LearnFromExamplesResult<LlmCallRecord>, 'path' | 'calls' | 'alternatives'>): Pick<RunRecord, 'alternativesProposed' | 'alternatives'> {
-  const tested = result.alternatives ?? [];
-  const invalid = result.path === 'llm' ? result.calls.reduce((n, c) => n + (c.problemCounts.invalidAlternative ?? 0), 0) : 0;
-  const parts = tested.map((a) => `${a.column} ${a.outcome}`);
-  if (invalid > 0) parts.push(`invalid ${invalid}`);
-  return { alternativesProposed: tested.length + invalid, alternatives: parts.join(', ') };
 }
 
 /** "lookup 47, cutoff 1, 1 check": what code filled, kinds and counts only ('' when nothing). */

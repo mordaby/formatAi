@@ -137,31 +137,6 @@ describe('engine methods, through the worker RPC', () => {
     expect((err as RpcRemoteError).code).toBe('unsupportedFileType');
   });
 
-  it('learn-v8: a second rule the answer gave that also fits every row becomes the ambiguity question the result screen asks', async () => {
-    const client = loopback(engineMethods);
-    const size = (op: 'gte' | 'gt', n: number) => ({ op, args: [{ col: 'qty' }, { const: n }] });
-    const callLearn = vi.fn(async () => {
-      const answer: LearnResult = {
-        schemaVersion: 1,
-        input: { sheet: { pick: 'first' }, headerRow: 'auto', columns: [{ id: 'item', header: 'Item', type: 'text' }, { id: 'qty', header: 'Qty', type: 'integer' }] },
-        transform: { computed: [{ id: 'size', type: 'text', expr: { op: 'if', cond: size('gte', 10), then: { const: 'bulk' }, else: { const: 'single' } } as LearnResult['transform']['computed'][number]['expr'] }], valueMaps: [], sort: [] },
-        output: { sheetName: 'Sheet1', direction: 'ltr', language: 'en', titleRows: [], columns: [{ header: 'Item', from: 'item' }, { header: 'Size', from: 'size' }] },
-        validations: [],
-        unsupported: [],
-        assumptions: [],
-      };
-      const other = { op: 'if', cond: size('gt', 9), then: { const: 'bulk' }, else: { const: 'single' } } as LearnResult['transform']['computed'][number]['expr'];
-      return { rules: answer, alternatives: [{ outputColumn: 'Size', from: 'sizeAlt', computed: [{ id: 'sizeAlt', type: 'text' as const, expr: other }] }], problems: [], calls: [] };
-    });
-    const { args, transfer } = learnArgs(llmPair(), false);
-    // (The answer declares no csv output file, so the loop may ask for a round: nothing comes back from it.)
-    const callRepair = vi.fn(async () => ({ rules: null, problems: [], calls: [] }));
-    const res = await client.call<LearnOutput>('learn', args, { transfer, host: { callLearn, callRepair } });
-    expect(res.alternatives?.map((a) => [a.column, a.outcome])).toEqual([['Size', 'bothPass']]);
-    expect(res.ambiguous?.map((q) => [q.header, q.readings.map((r) => r.kind)])).toEqual([['Size', ['rule', 'alternative']]]);
-    expect(res.rules!.validations.filter((v) => v.rule === 'sameAs')).toEqual([res.ambiguous![0]!.check]);
-  });
-
   it('learn: off the fast path the worker asks the main thread (host) to call the API, with a masked payload', async () => {
     const client = loopback(engineMethods);
     const payloads: LearnPayload[] = [];

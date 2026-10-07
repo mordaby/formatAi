@@ -325,12 +325,6 @@ export const limits = {
       /** A request is rejected (counted, not stored) when its name, purpose or argument names contain a payload value: only tokens of at least this many characters are compared (numbers are compared whatever their length). */
       minTokenChars: 3,
     },
-    /**
-     * learn-v8 (owner decision 2026-10-04; SPEC 9.2, 21 v12 item 17): an answer may give, for an output column, a second rule that also fits
-     * every row it was shown (`alternatives`). At most one per column and at most this many per answer; the API drops the rest (counted in
-     * the call's `problemCounts.invalidAlternative`, never a repair). Each one costs the browser one more run of the rules on the example.
-     */
-    maxAlternatives: 3,
     /** The API's `function_requests` collection (SPEC 13): how many distinct (hashed) owners one request remembers; past it `distinctOwners` stops growing. */
     functionRequests: {
       maxOwnerHashes: 1000,
@@ -370,10 +364,10 @@ export const limits = {
     },
     /**
      * The time the browser spends on ONE AI answer (engine audit, 2026-10-07; `learn/flow.ts` `judge`): code's fill from every row, the
-     * overfitting guards, the full verification and the alternatives each run the rules on every row of the example - up to 100,000 rows on
+     * overfitting guards and the full verification each run the rules on every row of the example - up to 100,000 rows on
      * the paid tier, where one answer took 17 s (fill 15 s, verification 1 s; a 20,000-row example 2.5 s). Measured between steps (a run of
      * the rules cannot be stopped inside). Past it: the fill settles no further condition (the rest stay as the AI wrote them, like past
-     * `fill.maxConditions`), the alternatives are not tried, and the learn makes no further round and no list round - it ends with the best
+     * `fill.maxConditions`), and the learn makes no further round and no list round - it ends with the best
      * answer so far (`LearnFromExamplesResult.timeBudget`, loop end `timeBudget`): verified only when every row matches, otherwise its
      * differences are "needs your input". The questions at the end (one-time edits, lists) are still asked.
      */
@@ -460,7 +454,8 @@ export const limits = {
       /**
        * Who gets learn-v9 in the app: `off` - nobody (learn-v7, as before); `admin` - the admin accounts only (`ADMIN_EMAILS` /
        * `MICROSOFT_ADMIN_OIDS`); `all` - every AI learn. The API's `LEARN_CHECKS` env var overrides it (`off|admin|all`). The eval turns it
-       * on with `--prompt learn-v9`. DECISION (owner, 2026-10-05): off until the eval passes, then admin first.
+       * on with `--prompt learn-v9`. DECISION (owner, 2026-10-05): off until the eval passes, then admin first. Owner decision
+       * (2026-10-07): the code stays, switched off; re-evaluated by 2026-11-15, after the beta with real testers' files.
        */
       mode: 'off',
     },

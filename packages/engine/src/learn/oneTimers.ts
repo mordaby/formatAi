@@ -878,8 +878,8 @@ function withoutKey(e: Expr, table: string, key: TableCellValue): Expr {
 
 /**
  * The check "Not sure" keeps (SPEC 8.8 `sameAs`, `oneTime`): on the computed column the part is in, the column's rule without the part, so a
- * run-time row where the part gives another value than the rest of the rule is flagged. Null when it cannot be said that way (as for an
- * alternative's check): the rest reads other rows (an across-row function runs only in a computed column), it reads a column a value map
+ * run-time row where the part gives another value than the rest of the rule is flagged. Null when it cannot be said that way: the rest
+ * reads other rows (an across-row function runs only in a computed column), it reads a column a value map
  * changes (a check reads it after the maps, the rule before), a value-map entry (the check reads the column after its map), or the rules
  * with it would not pass their checks (the expression too deep, a type that does not fit).
  */

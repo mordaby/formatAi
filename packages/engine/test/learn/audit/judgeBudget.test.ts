@@ -1,7 +1,7 @@
-// Engine audit (2026-10-07), fix 12: code's work on an AI answer - the fill from every row, the guards, the full verification, the
-// alternatives - runs the rules on every row of the example, round after round, at up to 100,000 rows on the paid tier, with no bound. Now
-// each judged answer has a time budget (`limits.learn.judge.timeBudgetMs`, read between steps): past it the fill stops, the alternatives are
-// not tried, and the learn ends with the best answer so far (`timeBudget`, loop end `timeBudget`) - verified only when every row matches.
+// Engine audit (2026-10-07), fix 12: code's work on an AI answer - the fill from every row, the guards, the full verification - runs the
+// rules on every row of the example, round after round, at up to 100,000 rows on the paid tier, with no bound. Now each judged answer has
+// a time budget (`limits.learn.judge.timeBudgetMs`, read between steps): past it the fill stops, and the learn ends with the best answer
+// so far (`timeBudget`, loop end `timeBudget`) - verified only when every row matches.
 import type { Expr, LearnResult } from '@formatai/shared';
 import { limits } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';

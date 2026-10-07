@@ -355,7 +355,7 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
 
   lines.push('### Per learn', '');
   lines.push(
-    '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user). "Alternatives" (learn-v8): the second rules the AI step gave, per column, as code found them on every row (bothPass = asked of the user; answerOnly / alternativeOnly = one fits and is the rule; bothFail), then the ones the API dropped (invalid). ' +
+    '"Filled by code": the data parameters code filled in the kept answer from every row of the example (learning-loop proposal 7.1: lookup / valueMap entries, valueList / filterList values, cutoff / band cut-offs, dayMonthOrder formats, dedupeKeep; "check" = a cut-off range the user is shown). "Ambiguous": what the example could not settle (asked of the user). ' +
       'The prompt audit\'s columns: "Gave up on hinted" (columns given up on despite a hint, over every call), "Unsupported" (the reason codes of the kept answer\'s unsupported columns), "Problems" (every problem kind the calls produced, counted), "Cut off / failed" (calls cut off at the output-token limit - X2 - or failed, by outcome), "Overfit" (the kept answer\'s overfitSuspected assumptions). ' +
       '"Copies rows" (the overfitting guards, SPEC 9.2 layer 6): the overfit problems the calls found - a condition on a row\'s position, a long list of one-row cases, each asking for the learn\'s one repair - and the kept answer\'s columns code then reported as unsupported (reason overfit). ' +
       '"One-time" (SPEC 21 v12 item 20): the questions the Result screen would ask - a part of the kept rules that explains one row of the example only, by column, row and what singles it out (id, amount, date, position); a list copied from the example (owner amendment, 2026-10-06), asked at save, by column, key column and entries ("answered one-time" when the case\'s own answer - "Save without it" - took it out, which its classification then follows) - then the columns with more such parts than are asked (handed off to the guards), and the hold-out if every question were answered "a one-time change". ' +
@@ -365,7 +365,7 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
   const learns = aiLearns(records).sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model) || Number(a.masking) - Number(b.masking) || a.run - b.run || (a.mode ?? '').localeCompare(b.mode ?? ''));
   lines.push(
     markdownTable(
-      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Alternatives', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit', 'Copies rows', 'One-time', 'Saved contents', 'Check rounds', 'Checks asked'],
+      ['Case', ...(tagged ? ['Mode'] : []), 'Model', 'Masking', 'Run', 'LLM calls', 'Loop rounds', 'Rows sent', 'Loop end', 'Filled by code', 'Ambiguous', 'Est. tok in', 'Est. tok cached', 'Est. tok cache write', 'Est. tok out', 'Est. cost (USD)', 'Latency (s)', 'Verified on example', 'Hold-out', 'Gave up on hinted', 'Unsupported', 'Problems', 'Cut off / failed', 'Overfit', 'Copies rows', 'One-time', 'Saved contents', 'Check rounds', 'Checks asked'],
       learns.map((r) => [
         r.case,
         ...(tagged ? [r.mode ?? 'full'] : []),
@@ -378,7 +378,6 @@ function usageSection(records: readonly RunRecord[], groups: readonly GroupSumma
         r.loopEnd || '-',
         r.filledByCode || '-',
         r.ambiguities || '-',
-        r.alternatives || '-',
         r.estInTokens,
         r.estCachedTokens,
         r.estCacheWriteTokens,
@@ -536,8 +535,6 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   'filledByCode',
   'ambiguities',
   'prompt',
-  'alternativesProposed',
-  'alternatives',
   'unsupportedDespiteEvidence',
   'unsupportedReasons',
   'problemsByKind',
@@ -589,10 +586,8 @@ export function printSummary(records: RunRecord[], log: (line: string) => void =
           `verified on example ${u.verified} of ${u.learns}, hold-out ${u.holdOutPass} of ${u.holdOutEligible}; ` +
           `gave up on ${u.gaveUpHinted} hinted column(s), ${u.truncatedCalls} cut-off call(s)`,
       );
-      const proposed = aiLearns(records).filter((r) => r.model === g.model && r.masking === g.masking && (r.mode ?? 'full') === (g.mode ?? 'full'));
-      const alternatives = proposed.reduce((n, r) => n + (r.alternativesProposed ?? 0), 0);
-      if (alternatives > 0) log(`    alternatives: ${alternatives} proposed in ${proposed.filter((r) => (r.alternativesProposed ?? 0) > 0).length} learn(s) - ${outcomeCounts(proposed)}`);
-      const asking = proposed.filter((r) => (r.oneTimeAsked ?? 0) > 0);
+      const learns = aiLearns(records).filter((r) => r.model === g.model && r.masking === g.masking && (r.mode ?? 'full') === (g.mode ?? 'full'));
+      const asking = learns.filter((r) => (r.oneTimeAsked ?? 0) > 0);
       if (asking.length > 0) log(`    one-time questions: ${asking.reduce((n, r) => n + (r.oneTimeAsked ?? 0), 0)} in ${asking.length} learn(s) - ${asking.map((r) => `${r.case}: ${r.oneTimeParts} (${r.oneTimeDefault})`).join('; ')}`);
     }
   }
@@ -600,17 +595,4 @@ export function printSummary(records: RunRecord[], log: (line: string) => void =
   if (failed.length > 0) {
     log(`  ${failed.length} run(s) did not meet expectation - see the report for details.`);
   }
-}
-
-/** "bothPass 1, alternativeOnly 2, invalid 1": the outcomes of the alternatives of these learns, counted (from `RunRecord.alternatives`). */
-export function outcomeCounts(records: readonly Pick<RunRecord, 'alternatives'>[]): string {
-  const counts = new Map<string, number>();
-  for (const r of records) {
-    for (const part of (r.alternatives ?? '').split(', ').filter((p) => p !== '')) {
-      const invalid = /^invalid (\d+)$/.exec(part);
-      const outcome = invalid ? 'invalid' : part.slice(part.lastIndexOf(' ') + 1);
-      counts.set(outcome, (counts.get(outcome) ?? 0) + (invalid ? Number(invalid[1]) : 1));
-    }
-  }
-  return ['bothPass', 'answerOnly', 'alternativeOnly', 'bothFail', 'invalid'].filter((k) => counts.has(k)).map((k) => `${k} ${counts.get(k)}`).join(', ');
 }

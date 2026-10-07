@@ -116,31 +116,6 @@ describe('the AI quota', () => {
   });
 });
 
-describe('learn-v8: the alternatives of an answer', () => {
-  it('go from the API response to the engine beside the rules (the worker tests them on every row); none, nothing extra', async () => {
-    const alternatives = [{ outputColumn: 'Total', from: 'totalAlt', computed: [{ id: 'totalAlt', type: 'decimal' as const, expr: { col: 'amount' } }] }];
-    const got: unknown[] = [];
-    for (const response of [llmResponse({ alternatives }), llmResponse()]) {
-      cleanup();
-      const api = fakeApi({ user: USER, learn: vi.fn(async () => response) });
-      const { engine } = fakeEngine(async (host: LearnHost) => {
-        got.push(await host.callLearn({ masking: true } as never));
-        return learnResult({ path: 'llm', verification: VERIFIED });
-      });
-      renderApp({ engine, api });
-      fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });
-      fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('Orders report.csv')] } });
-      await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
-      await act(async () => void fireEvent.click(screen.getByRole('button', { name: /Learn the format/ })));
-      await screen.findByTestId('rules-map');
-    }
-    expect(got).toEqual([
-      { rules: RULES, problems: [], calls: [], alternatives },
-      { rules: RULES, problems: [], calls: [] },
-    ]);
-  });
-});
-
 describe('the outcome the browser reports (SPEC 21 v5 item 3)', () => {
   it('a learn that verified against the example is reported "verified", and the quota shown follows the answer', async () => {
     const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 1, period: 'month' as const, limit: null }, failedAttempts: 0, exhausted: false }));
