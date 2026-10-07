@@ -137,6 +137,13 @@ export const limits = {
     perIpPerWindow: 5,
     /** Durable limit, on a keyed hash of the IP (never the IP itself): form submissions that were stored, per UTC day. */
     perIpPerDay: 20,
+    /**
+     * API audit (2026-10-07): a GLOBAL cap on the submissions stored in one UTC day - leads, waitlist and feedback together - whatever IP
+     * they come from. The per-IP caps hold one address; a client that invents its address (`X-Forwarded-For` behind `TRUST_PROXY`) could
+     * otherwise fill the database (the Atlas plan's storage). Past it every form answers 429 `rateLimited` until the next UTC day.
+     * DECISION: 200 a day - far above what the forms see, and at most about 1.5 MB a day of the largest documents (a 4,000-character message).
+     */
+    globalPerDay: 200,
   },
   /** SPEC 9.5 "Cache": saved rules for a structure the same owner already learned. */
   cache: {
