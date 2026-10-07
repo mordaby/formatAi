@@ -48,7 +48,16 @@ export const webConfig = {
    * this browser's IndexedDB - never sent anywhere - while the browser goes to the provider and back, and dropped
    * after an hour (or once it is restored).
    */
-  pendingLearn: { maxAgeMs: 60 * 60 * 1000, dbName: 'formatai', storeName: 'pending', key: 'learn', /** A browser whose IndexedDB never answers must not hold the Result screen back. */ loadTimeoutMs: 3000 },
+  pendingLearn: {
+    maxAgeMs: 60 * 60 * 1000,
+    dbName: 'formatai',
+    storeName: 'pending',
+    key: 'learn',
+    /** A browser whose IndexedDB never answers must not hold the Result screen back. */
+    loadTimeoutMs: 3000,
+    /** While a tab is open it looks this often for a kept copy another tab made, so that one is dropped on its hour too (`keepPendingWithinTheHour`). */
+    sweepEveryMs: 5 * 60 * 1000,
+  },
   /** The fallback under the paid-waitlist form (the "Upgrade" panel): write to us. A placeholder address until the owner has one. */
   contactHref: `mailto:${contactEmail}`,
   /**

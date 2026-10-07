@@ -4,7 +4,7 @@ import { useLearnFlow, type UseLearnFlow } from '../flow/useLearnFlow';
 import { peekResultSession, seedResultSession } from '../pages/Result/session';
 import { webConfig } from '../config';
 import { useMe } from './Me';
-import { fileOf, getPendingStore, storeFile, type PendingLearn, type PendingResult } from './pendingLearn';
+import { fileOf, getPendingStore, keepPendingWithinTheHour, storeFile, type PendingLearn, type PendingResult } from './pendingLearn';
 import { useSignIn } from './SignIn';
 
 /**
@@ -140,6 +140,16 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   }, [reset, resetCompletion]);
 
   // ---- keeping what has been learned across the trip to the provider (SPEC 5 E) ----
+  // ... for an hour at most, as the privacy page says: dropped on its hour while a tab is open, and at once on a page load past it.
+  const withinTheHour = useRef<ReturnType<typeof keepPendingWithinTheHour> | null>(null);
+  useEffect(() => {
+    const hour = keepPendingWithinTheHour();
+    withinTheHour.current = hour;
+    return () => {
+      hour.stop();
+      withinTheHour.current = null;
+    };
+  }, []);
   useEffect(() => {
     signIn.setBeforeRedirect(async ({ reason }) => {
       const { input: i, output: o, masking: m, state } = latest.current;
@@ -167,6 +177,8 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
         result,
       };
       await getPendingStore().save(record);
+      // (a sign-in that does not leave after all - a blocked redirect - must not keep it past its hour either)
+      withinTheHour.current?.check();
     });
     return () => signIn.setBeforeRedirect(null);
   }, [signIn]);
