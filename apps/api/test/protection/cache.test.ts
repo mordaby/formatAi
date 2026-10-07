@@ -1,11 +1,17 @@
-import type { LearnPayload, LearnResult } from '@formatai/shared';
+import { promptVersion, type LearnPayload, type LearnResult } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { canonicalJson, isCacheable, learnCacheKey, rulesHaveTextConstants } from '../../src/protection/cache.js';
 import { basicPayload, correctRules } from '../learn/fixtures.js';
 
-const key = (p: LearnPayload): string => learnCacheKey(p);
+const key = (p: LearnPayload): string => learnCacheKey(p, promptVersion);
 
 describe('learnCacheKey (SPEC 9.5: the structure only)', () => {
+  it('API audit: changes with the prompt version the learn is sent (learn-v9 is not learn-v7)', () => {
+    expect(learnCacheKey(basicPayload(), 'learn-v9')).not.toBe(key(basicPayload()));
+    expect(learnCacheKey(basicPayload(), 'learn-v7')).toBe(key(basicPayload()));
+    expect(promptVersion).toBe('learn-v7');
+  });
+
   it('is a sha256 hex digest and stable across calls', () => {
     expect(key(basicPayload())).toMatch(/^[0-9a-f]{64}$/);
     expect(key(basicPayload())).toBe(key(basicPayload()));

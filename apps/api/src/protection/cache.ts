@@ -19,7 +19,7 @@
 // only saves an LLM call, so it isn't worth holding real data for. (An entry written under the old rule is never served: the
 // read re-checks `isCacheable`; it expires with the TTL.)
 import { createHash } from 'node:crypto';
-import { promptVersion, type LearnPayload, type LearnResult } from '@formatai/shared';
+import type { LearnPayload, LearnResult, PromptVersion } from '@formatai/shared';
 
 /** Bump when the set of fields hashed below changes, so old entries can never match. */
 const KEY_VERSION = 1;
@@ -40,15 +40,21 @@ export function canonicalJson(value: unknown): string {
 /**
  * sha256 (hex) of the payload's STRUCTURE only: input headers + types (+ the input layout, which
  * shapes the rules' header/footer handling), output headers + types + formats, the output layout,
- * `output.file`, the masking flag, `promptVersion`, `skipColumns` and - when adding a source to an
+ * `output.file`, the masking flag, the prompt version the learn is SENT (`version`), `skipColumns` and - when adding a source to an
  * existing format - the `target`. Samples, dropped rows, hints, profile stats and shapes are data
  * derived and are deliberately NOT part of it. The input sheet name is left out too: it often
  * carries a date or period ("Report 2026-09") and does not change how the rules are built.
+ *
+ * API audit (2026-10-07): `version` is the prompt version the learn actually goes out with - learn-v9 for the learns `LEARN_CHECKS` gives it
+ * to, the default (`promptVersion`) otherwise. It used to be the constant default whatever was sent, so an admin's learn-v9 answer and a
+ * learn-v7 one shared an entry, and the ledger and the saved format said learn-v7 for both. (The field hashed is the same as before, so the
+ * default's entries keep their keys: no `KEY_VERSION` bump.) The example pair's group (`groupOf`) is a prefix of this key, so a learnId is
+ * bound to the version too.
  */
-export function learnCacheKey(payload: LearnPayload): string {
+export function learnCacheKey(payload: LearnPayload, version: PromptVersion): string {
   const structure = {
     v: KEY_VERSION,
-    promptVersion,
+    promptVersion: version,
     masking: payload.masking,
     input: {
       layout: payload.input.layout,

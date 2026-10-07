@@ -3,7 +3,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { AppDb } from '../db.js';
 import type { Env } from '../env.js';
-import type { LearnCacheDoc } from '../models.js';
 import { loadAdminConfig } from './admin.js';
 import { registerDevSessionRoute } from './dev.js';
 import { createOpenIdClient, type OidcClient } from './oidc.js';
@@ -34,9 +33,28 @@ export interface RegisterAuthOptions extends AuthOptions {
   env: Env;
   db: AppDb | null;
   now?: () => Date;
-  /** The protection store's in-memory cache (no database): sign-in re-owns its `anon:` entries like `learn_cache`. */
-  learnCache?: Map<string, LearnCacheDoc>;
   warn?: (message: string) => void;
+}
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** A URL on this machine: a loopback name, or a `*.localhost` one. */
+function isLocalUrl(raw: string): boolean {
+  try {
+    const host = new URL(raw).hostname;
+    return LOCAL_HOSTS.has(host) || host.endsWith('.localhost');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether `POST /api/dev/session` may exist in this (non-production) process: the web app and the API both on this machine (`WEB_ORIGIN`, the
+ * API's public URL - the development defaults), or the developer's explicit `DEV_SIGN_IN=true` (a phone on the LAN, a tunnel).
+ */
+export function devSignInAllowed(env: Pick<Env, 'WEB_ORIGIN' | 'DEV_SIGN_IN'>, apiBase: string): boolean {
+  if (/^(true|1|yes)$/i.test((env.DEV_SIGN_IN ?? '').trim())) return true;
+  return isLocalUrl(env.WEB_ORIGIN) && isLocalUrl(apiBase);
 }
 
 /**
@@ -77,7 +95,7 @@ export function registerAuth(app: FastifyInstance, opts: RegisterAuthOptions): v
       // Production without a database never gets here: `createProtection` refuses to start first (it is
       // built before this), unless a test injects its own protection store.
       if (!production) opts.warn?.('MongoDB not configured: users and sessions are kept in memory (development only)');
-      store = createMemoryAuthStore({ learnCache: opts.learnCache });
+      store = createMemoryAuthStore();
     }
   }
 
@@ -99,8 +117,9 @@ export function registerAuth(app: FastifyInstance, opts: RegisterAuthOptions): v
   });
 
   // DEVELOPMENT ONLY: a throw-away signed-in session, so the signed-in screens can be tried without a real provider.
-  // The route does not exist in a production process.
-  if (!production) {
+  // The route does not exist in a production process - nor (API audit 2026-10-07) in any process the browser reaches at a public origin,
+  // unless the developer asks for it (`DEV_SIGN_IN=true`): a deploy that forgot NODE_ENV=production must not let anyone sign in.
+  if (!production && devSignInAllowed(env, apiBase)) {
     registerDevSessionRoute(app, {
       store,
       sessions,

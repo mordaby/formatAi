@@ -275,7 +275,8 @@ export function buildExprSchema(child: z.ZodType<Expr>): z.ZodType<Expr> {
       z.strictObject({ op: z.literal('mod'), args: z.tuple([child, child]) }),
       z.strictObject({ op: z.literal('min'), args: z.array(child).min(1) }),
       z.strictObject({ op: z.literal('max'), args: z.array(child).min(1) }),
-      z.strictObject({ op: z.literal('round'), arg: child, digits: z.number().int() }),
+      // (API audit 2026-10-07: the parameters the engine uses as sizes are bounded - `limits.rules.maxRoundDigits` / `maxPadLength` ...)
+      z.strictObject({ op: z.literal('round'), arg: child, digits: z.number().int().min(-limits.rules.maxRoundDigits).max(limits.rules.maxRoundDigits) }),
       z.strictObject({ op: z.literal('concat'), args: z.array(child).min(1) }),
       z.strictObject({
         op: z.literal('substr'),
@@ -296,7 +297,7 @@ export function buildExprSchema(child: z.ZodType<Expr>): z.ZodType<Expr> {
       z.strictObject({
         op: z.literal('padLeft'),
         arg: child,
-        length: z.number().int().positive(),
+        length: z.number().int().positive().max(limits.rules.maxPadLength),
         char: z.string().min(1).max(1),
       }),
       z.strictObject({
@@ -441,7 +442,7 @@ export const InputColumnSchema = z.strictObject({
   aliases: z.array(z.string()).optional(),
   type: ColumnTypeSchema,
   required: z.boolean().optional(),
-  padLeft: z.number().int().positive().optional(),
+  padLeft: z.number().int().positive().max(limits.rules.maxPadLength).optional(),
   inputFormats: z.array(z.string().min(1)).optional(),
   readAs: ReadAsSchema.optional(),
 });
@@ -725,7 +726,7 @@ export function buildGroupSchema(summaryRowSchema: z.ZodType<SummaryRow>) {
   return z.strictObject({
     by: z.string(),
     showDetailRows: z.boolean(),
-    blankRowsAfter: z.number().int().min(0).optional(),
+    blankRowsAfter: z.number().int().min(0).max(limits.rules.maxBlankRowsAfter).optional(),
     summaryRows: z.array(summaryRowSchema).optional(),
   });
 }
@@ -1112,7 +1113,7 @@ export const AI_VALIDATION_SCHEMAS = [
     on: ValidationOnSchema,
     column: z.string(),
     rule: z.literal('lengthEquals'),
-    length: z.number().int().positive(),
+    length: z.number().int().positive().max(limits.rules.maxLengthEquals),
     severity: SeveritySchema,
   }),
   z.strictObject({

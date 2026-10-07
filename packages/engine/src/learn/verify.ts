@@ -136,8 +136,8 @@ export interface WrongRow {
 }
 
 // ---------------------------------------------------------------------------
-// Typed cell comparison (mirrors apps/api/src/learn/sampleRun.ts's cellsEqual /
-// actualCellValue, generalized to real - not payload-truncated - RawCell input).
+// Typed cell comparison: `cellsMatch`, the one the API's sample run (apps/api/src/learn/sampleRun.ts) calls too
+// (API audit P1) - here on real RawCell input, there on the payload's cells.
 // ---------------------------------------------------------------------------
 
 /** RawCell -> PayloadCell (SPEC 7.3): numbers as numbers, real dates as ISO text.
@@ -159,7 +159,7 @@ function actualCellValue(cell: OutCell | undefined): PayloadCell {
 }
 
 /** A cell as the user would see it: its value, and whether it is a real date (not text that reads as one). */
-interface Seen {
+export interface Seen {
   v: PayloadCell;
   date: boolean;
   /** A date the rules made: the text a csv / txt file writes for it (its column's date format), when known. */
@@ -170,7 +170,8 @@ function expectedSeen(cell: RawCell | null | undefined, date1904 = false): Seen 
   return { v: toExpectedCell(cell, date1904), date: cell?.isDate === true && typeof cell.v === 'number' };
 }
 
-function actualSeen(cell: OutCell | undefined): Seen {
+/** A cell the rules made, as the user would see it (`cellsMatch`): a real date as ISO text with `date` set, and the text a delimited writer writes for it. */
+export function actualSeen(cell: OutCell | undefined): Seen {
   const date = cell?.isDate === true && typeof cell.v === 'number';
   return { v: actualCellValue(cell), date, ...(date && cell?.text !== undefined ? { text: cell.text } : {}) };
 }
@@ -199,8 +200,12 @@ const PLAIN_NUMBER_TEXT = /^-?\d+(\.\d+)?$/;
  * digits. Only such a plain digit string qualifies - never one with a currency sign, grouping or a percent sign,
  * which the writer would not reproduce. A date the rules make is compared the same way, by the text the writer
  * writes for it (its column's date format): "2024-09-28" in the example is not the date written "28/09/2024".
+ *
+ * API audit P1 (2026-10-07): the ONE typed cell compare - the browser's full verification (here) and the API's sample run
+ * (`apps/api/src/learn/sampleRun.ts`) both call it, so a cell the browser accepts is never a `diff` on the server (a csv
+ * example's "12.50" against the rules' 12.5 used to be).
  */
-function cellsMatch(expected: Seen, actual: Seen, delimited: boolean): boolean {
+export function cellsMatch(expected: Seen, actual: Seen, delimited: boolean): boolean {
   if (delimited && actual.date && !expected.date && actual.text !== undefined) return typeof expected.v === 'string' && expected.v === actual.text;
   if (expected.date !== actual.date && !(delimited && !expected.date)) return false;
   if (valuesEqual(expected.v, actual.v)) return true;

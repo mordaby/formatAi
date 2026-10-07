@@ -288,9 +288,12 @@ function roundDiffs(chosen: readonly { row: WrongRow; group: string }[], stillWr
   return out;
 }
 
-/** Today's order of a repair's problems: the fixed lock's first, then the rows, then the rest (row count, layout, a column given up on). */
+/**
+ * Today's order of a repair's problems: the fixed lock's first, then the rows, then the rest (row count, layout, a column given up on) - at
+ * most `limits.learn.loop.maxProblems` of them, the server's cap on a round (API audit C9): past it the last ones are left out.
+ */
 function orderProblems(diffs: readonly RepairProblem[], other: readonly RepairProblem[]): RepairProblem[] {
-  return [...other.filter((p) => p.kind === 'fixedMismatch'), ...diffs, ...other.filter((p) => p.kind !== 'fixedMismatch')];
+  return [...other.filter((p) => p.kind === 'fixedMismatch'), ...diffs, ...other.filter((p) => p.kind !== 'fixedMismatch')].slice(0, limits.learn.loop.maxProblems);
 }
 
 /**

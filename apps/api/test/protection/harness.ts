@@ -15,6 +15,7 @@ import type { Identity } from '../../src/protection/identity.js';
 import { createMemoryStore, createMongoStore, type ProtectionStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
 import { basicPayload, correctRules, correctRulesWireJson } from '../learn/fixtures.js';
+import { dropTestDb } from '../setup/testDbs.js';
 
 // ---------- stores ----------
 
@@ -68,10 +69,9 @@ export function mongoKit(): StoreKit {
       await ensureIndexes(appDb);
     },
     async teardown() {
-      if (!appDb) return;
-      await appDb.db.dropDatabase();
-      await appDb.client.close();
+      const db = appDb;
       appDb = null;
+      await dropTestDb(db);
     },
     async make() {
       const db = appDb!;

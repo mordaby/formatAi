@@ -284,7 +284,7 @@ describe('applyFormat (SPEC 8.12 "Editing a format")', () => {
       r.output.columns[1]!.width = 14;
       r.output.sheetName = 'Catalog';
     });
-    const result = applyFormat(s2(), formatOf(edit), headerRenames(s1(), edit));
+    const result = applyFormat(s2(), formatOf(edit), headerRenames(s1(), edit), 'paid');
     expect(result.needsReview).toBe(false);
     expect(result.problems).toEqual([]);
     expect(result.rules.output.columns).toEqual([
@@ -304,20 +304,20 @@ describe('applyFormat (SPEC 8.12 "Editing a format")', () => {
     const edit = edited(s1(), (r) => {
       r.output.columns.reverse();
     });
-    applyFormat(target, formatOf(edit), new Map());
+    applyFormat(target, formatOf(edit), new Map(), 'paid');
     expect(target).toEqual(snapshot);
   });
 
   it('follows a reorder', () => {
     const edit = edited(s1(), (r) => r.output.columns.reverse());
-    const result = applyFormat(s2(), formatOf(edit), new Map());
+    const result = applyFormat(s2(), formatOf(edit), new Map(), 'paid');
     expect(result.rules.output.columns.map((c) => [c.header, c.from])).toEqual([['Total', 'cost'], ['ID', 'code']]);
     expect(result.needsReview).toBe(false);
   });
 
   it('turns a dropped column into nothing and a gained one into an unsupported column that needs review', () => {
     const dropped = edited(s1(), (r) => r.output.columns.pop());
-    const a = applyFormat(s2(), formatOf(dropped), new Map());
+    const a = applyFormat(s2(), formatOf(dropped), new Map(), 'paid');
     expect(a.rules.output.columns).toEqual([{ header: 'ID', from: 'code' }]);
     expect(a.needsReview).toBe(false);
 
@@ -325,7 +325,7 @@ describe('applyFormat (SPEC 8.12 "Editing a format")', () => {
       r.output.columns.push({ header: 'Note', from: null });
       r.unsupported.push({ outputColumn: 'Note', reasonCode: 'other' });
     });
-    const b = applyFormat(s2(), formatOf(gained), new Map());
+    const b = applyFormat(s2(), formatOf(gained), new Map(), 'paid');
     expect(b.needsReview).toBe(true);
     expect(b.newColumns).toEqual(['Note']);
     expect(b.rules.output.columns[2]).toEqual({ header: 'Note', from: null });
@@ -346,7 +346,7 @@ describe('applyFormat (SPEC 8.12 "Editing a format")', () => {
       r.output.columns[1]!.header = 'Grand total';
       r.output.columns[2]!.header = 'Area';
     });
-    const result = applyFormat(target, formatOf(edit), headerRenames(source, edit));
+    const result = applyFormat(target, formatOf(edit), headerRenames(source, edit), 'paid');
     expect(result.rules.unsupported).toEqual([{ outputColumn: 'Area', reasonCode: 'externalData' }]);
     expect(result.rules.assumptions).toEqual([{ outputColumn: 'Grand total', reasonCode: 'roundingGuessed' }, { reasonCode: 'other' }]);
     expect(result.needsReview).toBe(false);
@@ -360,7 +360,7 @@ describe('applyFormat (SPEC 8.12 "Editing a format")', () => {
     const edit = edited(s1(), (r) => {
       r.output.summaryRows = [{ label: 'All', labelColumn: 'ID', cells: { Total: 'sum' } }];
     });
-    const result = applyFormat(target, formatOf(edit), new Map());
+    const result = applyFormat(target, formatOf(edit), new Map(), 'paid');
     expect((result.rules.output as { grandTotal?: unknown }).grandTotal).toBeUndefined();
     expect(result.rules.output.summaryRows).toEqual([{ label: 'All', labelColumn: 'ID', cells: { Total: 'sum' } }]);
     expect(result.rules.transform.group).toBeUndefined();
@@ -371,7 +371,7 @@ describe('applyFormat (SPEC 8.12 "Editing a format")', () => {
     const edit = edited(s1(), (r) => {
       r.output.titleRows = [{ parts: [{ agg: 'min', column: 'amount', format: '0' }] }];
     });
-    const result = applyFormat(s2(), formatOf(edit), new Map());
+    const result = applyFormat(s2(), formatOf(edit), new Map(), 'paid');
     expect(result.needsReview).toBe(true);
     expect(result.problems.some((p) => p.kind === 'reference')).toBe(true);
   });
@@ -386,7 +386,7 @@ describe('applyFormat (SPEC 8.12 "Editing a format")', () => {
     const edit = edited(s1(), (r) => {
       r.validations = [{ on: 'output', column: 'ID', rule: 'unique', severity: 'block' }];
     });
-    const result = applyFormat(target, formatOf(edit), new Map());
+    const result = applyFormat(target, formatOf(edit), new Map(), 'paid');
     expect(result.rules.validations).toEqual([
       { column: 'code', rule: 'required', severity: 'flag' },
       { on: 'output', column: 'ID', rule: 'unique', severity: 'block' },

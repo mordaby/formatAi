@@ -675,7 +675,7 @@ function defineAuthSuite(kit: AuthKit): void {
   // ---------- anonymous visitor -> user ----------
 
   describe('attaching the anonymous visitor at sign-in (SPEC 12)', () => {
-    it('gives the anonId its past events, re-owns its cache, and keeps the anonId on the user', async () => {
+    it('gives the anonId its past events and keeps the anonId on the user (and moves no learn cache: an anonymous visitor never has one)', async () => {
       const t = await setup();
       const b = t.browser();
       await b.get('/api/session');
@@ -707,15 +707,12 @@ function defineAuthSuite(kit: AuthKit): void {
       expect(byType('signed_up')[0]).toMatchObject({ anonId, props: { provider: 'google' } });
       expect(byType('signed_up')[0]!.userId?.equals(userId)).toBe(true);
 
-      // The learn cache follows the person, and only their own entries.
-      expect(await t.hasCache(`user:${userId.toHexString()}`, 'structure-1')).toBe(true);
-      expect(await t.hasCache(`user:${userId.toHexString()}`, 'structure-2')).toBe(true);
-      expect(await t.hasCache(`anon:${anonId}`, 'structure-1')).toBe(false);
-      expect(await t.hasCache(`anon:${anonId}`, 'structure-2')).toBe(false);
-      expect(await t.hasCache('anon:another-anon-0123456789', 'structure-1')).toBe(true);
+      // API audit (2026-10-07): the AI step is for signed-in users only (SPEC 21 v5), so no anonymous learn cache is moved at sign-in.
+      expect(await t.hasCache(`user:${userId.toHexString()}`, 'structure-1')).toBe(false);
+      expect(await t.hasCache(`anon:${anonId}`, 'structure-1')).toBe(true);
     });
 
-    it('on a later sign-in from another browser, attaches that browser too (the user\'s own cache entry wins)', async () => {
+    it('on a later sign-in from another browser, attaches that browser too', async () => {
       const t = await setup();
       const claims = googleClaims();
       const first = t.browser();
@@ -735,9 +732,7 @@ function defineAuthSuite(kit: AuthKit): void {
       expect(user.anonIds).toContain(anon2);
       expect(user.anonIds).toHaveLength(2);
       expect((await t.events()).find((e) => e.type === 'file_uploaded')!.userId?.toHexString()).toBe(userId);
-      expect(await t.hasCache(`user:${userId}`, 'new-structure')).toBe(true);
-      expect(await t.hasCache(`anon:${anon2}`, 'shared-structure')).toBe(false);
-      expect(await t.hasCache(`anon:${anon2}`, 'new-structure')).toBe(false);
+      expect(await t.hasCache(`user:${userId}`, 'new-structure')).toBe(false); // (no cache moves: see above)
       expect((await t.events()).filter((e) => e.type === 'signed_in')).toHaveLength(1);
     });
 

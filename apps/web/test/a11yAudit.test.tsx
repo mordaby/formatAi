@@ -45,7 +45,7 @@ describe.each(['en', 'he'] as const)('structural accessibility (%s)', (lang) => 
 
   it('Home with no AI formats left: the notice, the out-of-AI-formats dialog, and its waitlist step', async () => {
     const en = lang === 'en';
-    renderApp({ lang, engine: fakeEngine().engine, api: fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' as const })) } }) });
+    renderApp({ lang, engine: fakeEngine().engine, api: fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' as const, limit: null })) } }) });
     fireEvent.change(screen.getByLabelText(en ? 'Example input' : 'דוגמת קלט'), { target: { files: [csv('orders.csv')] } });
     fireEvent.change(screen.getByLabelText(en ? 'Example output' : 'דוגמת פלט'), { target: { files: [csv('Orders report.csv')] } });
     const button = (): HTMLButtonElement => screen.getByRole('button', { name: en ? 'Learn with AI' : 'ללמוד עם AI' }) as HTMLButtonElement;

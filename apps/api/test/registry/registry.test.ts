@@ -14,6 +14,7 @@ import { createMemoryStore, type MemoryStore } from '../../src/protection/store.
 import { buildServer } from '../../src/server.js';
 import { makeEnv, mongoUri, stubIdentify, testUserId } from '../protection/harness.js';
 import { edited, makeCaller, saveBody, sourceOne, sourceTwo, TEST_USER } from './helpers.js';
+import { dropTestDb } from '../setup/testDbs.js';
 
 const OTHER_USER = testUserId(2);
 
@@ -44,9 +45,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
   });
 
   afterAll(async () => {
-    await app?.close();
-    await appDb.db.dropDatabase();
-    await appDb.client.close();
+    await dropTestDb(appDb, app);
   });
 
   beforeEach(async () => {
@@ -104,7 +103,6 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
         ['GET', `/api/conversions/${id}/versions`],
         ['POST', `/api/conversions/${id}/restore/1`, {}],
         ['POST', `/api/conversions/${id}/runs`, { rows: 1, flagged: 0 }],
-        ['POST', `/api/conversions/${id}/aliases`, { header: 'ID', alias: 'x' }],
         ['GET', '/api/signatures'],
       ];
       for (const [method, url, body] of routes) {
@@ -141,7 +139,6 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
         ['GET', `/api/conversions/${s1}/versions`],
         ['POST', `/api/conversions/${s1}/restore/1`, {}],
         ['POST', `/api/conversions/${s1}/runs`, { rows: 1, flagged: 0 }],
-        ['POST', `/api/conversions/${s1}/aliases`, { header: 'ID', alias: 'Code' }],
       ];
       for (const [method, url, body] of routes) {
         const res = await call(method, url, body, { user: OTHER_USER });
@@ -380,6 +377,20 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect((await create(sourceOne(), { name: 'F4' })).status).toBe(201);
       // Another user's formats do not count against this user.
       expect((await create(sourceOne(), {}, OTHER_USER)).status).toBe(201);
+    });
+
+    it('API audit: saves at once never get past the saved-formats limit (the count is taken again with the format in)', async () => {
+      // (each with a source of its own name: the saves race for the format slots, not for a source's name)
+      const results = await Promise.all(Array.from({ length: 6 }, (_, i) => create(sourceOne(), { name: `R${i}`, newSource: { name: `S${i}` } })));
+      const saved = results.filter((r) => r.status === 201).length;
+      expect(saved).toBeLessThanOrEqual(tiers.registered.savedFormats as number);
+      for (const r of results.filter((x) => x.status !== 201)) expect(r.body).toEqual({ error: 'limitHit', limit: 'savedFormats' });
+      expect(await appDb.formats.countDocuments()).toBe(saved);
+      expect(await appDb.conversions.countDocuments()).toBe(saved); // nothing half-saved
+      expect(await appDb.sources.countDocuments()).toBe(saved); // a source made for a save taken back goes with it
+      // (Saves that raced for the last slots may all be taken back - DECISION in the route.) One after another, every free slot is used.
+      for (let i = saved; i < (tiers.registered.savedFormats as number); i++) expect((await create(sourceOne(), { name: `T${i}`, newSource: { name: `U${i}` } })).status).toBe(201);
+      expect((await create(sourceOne(), { name: 'Over', newSource: { name: 'Over' } })).status).toBe(403);
     });
 
     it('limits sources per format (registered: 3), and answers 403 limitHit sourcesPerFormat on the next one', async () => {
@@ -959,10 +970,11 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect((await detail(body.conversion.id)).runCount).toBe(0);
     });
 
-    it('saves a confirmed mapping as a new alias of the input column, visible in the signature (no new version)', async () => {
+    it('saves a confirmed mapping (on the source) as a new alias of the input column, visible in the signature (no new version)', async () => {
       const { body } = await create();
       const id = body.conversion.id as string;
-      const res = await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: ' Sum insured ' });
+      const aliases = `/api/sources/${body.source.id as string}/aliases`;
+      const res = await call('POST', aliases, { header: 'Amount', alias: ' Sum insured ' });
       expect(res.status).toBe(200);
       expect(res.body.inputSignature.columns[1]).toEqual({ header: 'Amount', aliases: ['Sum insured'], type: 'decimal', required: false });
 
@@ -973,32 +985,32 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect(sig.columns[1].aliases).toEqual(['Sum insured']);
 
       // Idempotent - also for the same alias in another case, or the column's own header.
-      await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'sum insured' });
-      await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'amount' });
+      await call('POST', aliases, { header: 'Amount', alias: 'sum insured' });
+      await call('POST', aliases, { header: 'Amount', alias: 'amount' });
       expect((await detail(id)).rules.input.columns[1].aliases).toEqual(['Sum insured']);
     });
 
     it('refuses an alias that already names another input column, an unknown column, and too many aliases', async () => {
       const { body } = await create();
-      const id = body.conversion.id as string;
-      const clash = await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'id' });
+      const aliases = `/api/sources/${body.source.id as string}/aliases`;
+      const clash = await call('POST', aliases, { header: 'Amount', alias: 'id' });
       expect(clash.status).toBe(409);
       expect(clash.body).toEqual({ error: 'aliasConflict' });
-      const unknown = await call('POST', `/api/conversions/${id}/aliases`, { header: 'Nope', alias: 'x' });
+      const unknown = await call('POST', aliases, { header: 'Nope', alias: 'x' });
       expect(unknown.status).toBe(400);
       expect(unknown.body).toEqual({ error: 'invalidRequest' });
-      expect((await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: '  ' })).status).toBe(400);
+      expect((await call('POST', aliases, { header: 'Amount', alias: '  ' })).status).toBe(400);
 
       for (let i = 0; i < limits.registry.maxAliasesPerColumn; i++) {
-        expect((await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: `A${i}` })).status).toBe(200);
+        expect((await call('POST', aliases, { header: 'Amount', alias: `A${i}` })).status).toBe(200);
       }
-      expect((await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'one too many' })).status).toBe(400);
+      expect((await call('POST', aliases, { header: 'Amount', alias: 'one too many' })).status).toBe(400);
     });
 
     it('keeps an alias through a later save that starts from the stored rules', async () => {
       const { body } = await create();
       const id = body.conversion.id as string;
-      await call('POST', `/api/conversions/${id}/aliases`, { header: 'Amount', alias: 'Value' });
+      await call('POST', `/api/sources/${body.source.id as string}/aliases`, { header: 'Amount', alias: 'Value' });
       await save(id, edited(await rulesOf(id), (r) => { r.transform.computed[0]!.expr = mul('amount', 5); }));
       const sig = (await call('GET', '/api/signatures')).body.signatures[0];
       expect(sig.columns[1].aliases).toEqual(['Value']);

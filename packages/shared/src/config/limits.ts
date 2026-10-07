@@ -14,6 +14,12 @@ export const limits = {
     maxDropped: 5,
     maxCellChars: 40,
     maxBytes: 49_152,
+    /**
+     * The largest column position (`columns[].i`, 0-based) a payload may name: Excel's last column (XFD, 16,384 columns). API audit C3
+     * (2026-10-07): an unbounded position let one request build a sample table billions of cells wide (i = 50,000,000 took 3.5 s; ~4.29e9
+     * ran for minutes or ran out of memory). The browser never sends more: a sheet has no column past it.
+     */
+    maxColumnIndex: 16_383,
     /** SPEC 7.3 §"Size rules": drop samples first, but never below this many pairs. */
     minPairs: 4,
   },
@@ -63,15 +69,20 @@ export const limits = {
        * DECISION: 1 - a blip is still retried once by the SDK, and a real outage reaches the fallback after two attempts, not three.
        */
       primaryMaxRetries: 1,
+      /**
+       * API audit C8 (2026-10-07): the FALLBACK provider's SDK client gets the same short leash (it had the SDKs' defaults: 10 minutes
+       * per attempt, 2 retries - half an hour for one call while the primary is down). DECISION: 2 minutes and 1 retry, as the primary's.
+       */
+      fallbackTimeoutMs: 120_000,
+      fallbackMaxRetries: 1,
     },
   },
   /**
-   * SPEC 9.5: a daily anonymous budget and a daily overall budget, in USD.
-   * DECISION: placeholder numbers (SPEC 20.4). Tune from real `llm_calls`/`budgets`
+   * SPEC 9.5: a daily overall budget, in USD - the kill switch. (The daily anonymous one went with the anonymous AI step: API audit,
+   * 2026-10-07.) DECISION: a placeholder number (SPEC 20.4). Tune from real `llm_calls`/`budgets`
    * spend data before launch; also set a matching monthly cap in the provider's console.
    */
   budgets: {
-    dailyAnonUsd: 5,
     dailyOverallUsd: 50,
   },
   /**
@@ -90,6 +101,22 @@ export const limits = {
     dailyCounterGraceHours: 24,
     /** Lifetime of the first-party `anonId` cookie (SPEC 12). */
     anonCookieMaxAgeDays: 365,
+    /**
+     * API audit C1 (2026-10-07): a hard cap on the REQUESTS one signed-in user makes that call the AI - POST /api/learn, /step and
+     * /repair, whatever they end in - per UTC day, by tier. Independent of the AI-learn quota, which counts successes only: a failed
+     * learn, a provider error and a `failed` outcome cost the user nothing there, so a script could spend the shared daily budget
+     * (`budgets.dailyOverallUsd`) for everyone. Over it: 429 `limitHit` `aiRequestsPerDay`. A cache hit calls no AI and is not counted.
+     * DECISION: registered 40, paid 400 - generous for real use (a learn is its first call plus up to `llm.browserRepairCalls` loop
+     * rounds and `learn.checks.maxRounds` steps, so 40 is about ten whole learns a day, three times the plan's monthly AI learns), low
+     * enough that one account cannot spend the shared daily budget alone. Placeholder numbers (SPEC 20.4): tune from the ledger.
+     */
+    aiRequestsPerDay: { registered: 40, paid: 400 },
+    /**
+     * API audit C1: the `failed` outcome reports one user may have refunded per UTC day (`POST /api/learn/:learnId/outcome`). Past it a
+     * report is still taken - the result is evicted from the cache - but the learn stays counted and no failure is recorded on the pair.
+     * DECISION: 10 - a real user reports a failed learn a few times a day at most; refunding without end made every learn free.
+     */
+    failedRefundsPerDay: 10,
   },
   /**
    * SPEC 16.1 screen 7, 13 (v13, M4): the public forms - the business lead form, the paid waitlist and feedback. Character caps are counted
@@ -109,6 +136,13 @@ export const limits = {
     perIpPerWindow: 5,
     /** Durable limit, on a keyed hash of the IP (never the IP itself): form submissions that were stored, per UTC day. */
     perIpPerDay: 20,
+    /**
+     * API audit (2026-10-07): a GLOBAL cap on the submissions stored in one UTC day - leads, waitlist and feedback together - whatever IP
+     * they come from. The per-IP caps hold one address; a client that invents its address (`X-Forwarded-For` behind `TRUST_PROXY`) could
+     * otherwise fill the database (the Atlas plan's storage). Past it every form answers 429 `rateLimited` until the next UTC day.
+     * DECISION: 200 a day - far above what the forms see, and at most about 1.5 MB a day of the largest documents (a 4,000-character message).
+     */
+    globalPerDay: 200,
   },
   /** SPEC 9.5 "Cache": saved rules for a structure the same owner already learned. */
   cache: {
@@ -202,6 +236,19 @@ export const limits = {
     maxValueChars: 300,
     maxTitleChars: 500,
     maxRulesBytes: 65_536,
+    /**
+     * API audit (2026-10-07): the number parameters a rule may give the engine, which it uses as sizes. Unbounded, one answer or one saved
+     * format could crash or hang the engine (`padLeft` to a length of 1e9 builds a gigabyte string; `round` to 1e9 digits, 1e9 blank rows
+     * after each group). The schema refuses more (an AI answer gets a repair; a save is refused). DECISION: far above any real use -
+     *   - `maxRoundDigits`: `round(x, digits)`, at most 15 places either side of the point (a double holds 15-17 significant digits);
+     *   - `maxPadLength`: `padLeft(x, length, char)` and an input column's `padLeft` - an ID, an account or an IBAN (34) is far shorter;
+     *   - `maxLengthEquals`: a `lengthEquals` check (its suggestion pads to that length);
+     *   - `maxBlankRowsAfter`: blank rows after each group (`group.blankRowsAfter`); a report has one or two.
+     */
+    maxRoundDigits: 15,
+    maxPadLength: 100,
+    maxLengthEquals: 100,
+    maxBlankRowsAfter: 20,
   },
   /**
    * SPEC 6.5: the local fast path.
@@ -305,6 +352,13 @@ export const limits = {
       maxRounds: 3,
       rowsPerRound: 8,
       maxRowsTotal: 40,
+      /**
+       * API audit C9 (2026-10-07): the problems one round may send (`RepairRequest.problems`; the server refuses more with 400
+       * `invalidProblems`, the browser's loop keeps the first ones). DECISION: 100 - above any round the browser builds (10 diff
+       * problems, 10 of the fixed lock, a row count, the layout's, and one per output column for a column given up on, copied or a list);
+       * the request's body cap (`api.maxBodyBytes`) bounds their size.
+       */
+      maxProblems: 100,
     },
     /**
      * Code fills the data parameters of an AI answer from every row of the example (docs/proposals/learning-loop.md 7.1, owner decision

@@ -208,7 +208,7 @@ describe('a signed-in user', () => {
   });
 
   it('is told what the AI step costs, next to the button', async () => {
-    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 1, period: 'month' as const })) } });
+    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 1, period: 'month' as const, limit: null })) } });
     const { engine } = fakeEngine(async () => partialOutput());
     await learn(engine, api);
     await screen.findByTestId('rules-map');

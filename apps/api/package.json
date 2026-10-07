@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
-    "llm-check": "tsx scripts/llmCheck.ts"
+    "llm-check": "tsx scripts/llmCheck.ts",
+    "db:drop-test": "node scripts/drop-test-dbs.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",

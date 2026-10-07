@@ -134,7 +134,7 @@
               "padLeft": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
+                "maximum": 100
               },
               "inputFormats": {
                 "type": "array",
@@ -830,7 +830,7 @@
             "blankRowsAfter": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 9007199254740991
+              "maximum": 20
             },
             "summaryRows": {
               "type": "array",
@@ -1268,7 +1268,7 @@
               "length": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
+                "maximum": 100
               },
               "severity": {
                 "type": "string",
@@ -2013,8 +2013,8 @@
                 },
                 "digits": {
                   "type": "integer",
-                  "minimum": -9007199254740991,
-                  "maximum": 9007199254740991
+                  "minimum": -15,
+                  "maximum": 15
                 }
               },
               "required": [
@@ -2180,7 +2180,7 @@
                 "length": {
                   "type": "integer",
                   "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
+                  "maximum": 100
                 },
                 "char": {
                   "type": "string",
@@ -2894,8 +2894,8 @@
                             },
                             "digits": {
                               "type": "integer",
-                              "minimum": -9007199254740991,
-                              "maximum": 9007199254740991
+                              "minimum": -15,
+                              "maximum": 15
                             }
                           },
                           "required": [
@@ -3061,7 +3061,7 @@
                             "length": {
                               "type": "integer",
                               "exclusiveMinimum": 0,
-                              "maximum": 9007199254740991
+                              "maximum": 100
                             },
                             "char": {
                               "type": "string",

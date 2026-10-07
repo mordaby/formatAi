@@ -170,6 +170,59 @@ function defineProtectionSuite(kit: StoreKit): void {
     });
   });
 
+  // ---------- the payload caps, on every AI route ----------
+
+  describe('the payload caps (SPEC 7.3; API audit C4: the first learn checked neither)', () => {
+    /** Past the payload byte cap: a hint carrying text (hints are not checked one by one). */
+    const tooBig = () => basicPayload({ hints: [{ rel: 'note', text: 'x'.repeat(limits.payload.maxBytes) } as never] });
+    /** A cell longer than the browser ever sends (it cuts each one at `maxCellChars`). */
+    const longCell = () => basicPayload({ samples: [{ in: ['A'.repeat(limits.payload.maxCellChars + 1), 10], out: ['A1', 20] }, { in: ['A2', 5], out: ['A2', 10] }] });
+
+    it('POST /api/learn: 400 invalidPayload past the byte cap or with a cell past its length - no call, nothing reserved', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      for (const payload of [tooBig(), longCell()]) {
+        const res = await h.learn({ payload, noCache: true });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: 'invalidPayload' });
+      }
+      expect(llm.calls).toHaveLength(0);
+      expect(await h.handle.counter(aiLearnsKey(TEST_USER, 'month', h.clock.current))).toBe(0);
+      // A cell exactly at the length is fine (the browser's cut).
+      const atCap = basicPayload({ samples: [{ in: ['A'.repeat(limits.payload.maxCellChars), 10], out: ['A'.repeat(limits.payload.maxCellChars), 20] }, { in: ['A2', 5], out: ['A2', 10] }] });
+      expect((await h.learn({ payload: atCap, noCache: true })).statusCode).toBe(200);
+    });
+
+    it('POST /api/learn: a long cell in the dropped rows is refused too', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const res = await h.learn({ payload: basicPayload({ dropped: [['x'.repeat(limits.payload.maxCellChars + 1), 1]] }), noCache: true });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: 'invalidPayload' });
+      expect(llm.calls).toHaveLength(0);
+    });
+
+    it('POST /api/learn/repair: the same caps on its payload (400 invalidPayload) and on its rows (400 invalidRows), using no round', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const learned = await h.learn({ noCache: true });
+      const { rules, learnId } = learned.json() as { rules: unknown; learnId: string };
+      const before = llm.calls.length;
+      const repair = (payload: unknown, rows?: unknown) =>
+        h.post('/api/learn/repair', { payload, previousRules: rules, problems: [], learnId, ...(rows !== undefined ? { rows } : {}) });
+      for (const payload of [tooBig(), longCell()]) {
+        const res = await repair(payload);
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: 'invalidPayload' });
+      }
+      const res = await repair(basicPayload(), [{ in: ['y'.repeat(limits.payload.maxCellChars + 1), 1], out: ['A9', 2] }]);
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: 'invalidRows' });
+      expect(llm.calls).toHaveLength(before);
+      expect(await h.handle.counter(`repair:${learnId.split('.')[0]}`)).toBe(0);
+    });
+  });
+
   // ---------- repair ----------
 
   describe('POST /api/learn/repair (SPEC 9.3: the learning loop\'s rounds, at most 3, and not a new learn)', () => {
@@ -301,6 +354,24 @@ function defineProtectionSuite(kit: StoreKit): void {
       expect(llm.calls).toHaveLength(before);
     });
 
+    it('API audit C2: the learnId belongs to its example pair - a payload of another structure is refused (400 invalidLearnId), using no round', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const cookie = anonCookie(await h.get('/api/session'));
+      const { rules, learnId } = await learned(h, cookie);
+      const before = llm.calls.length;
+      const base = basicPayload();
+      const otherPair = { ...base, output: { ...base.output, columns: [base.output.columns[0]!, { i: 1, header: 'Grand total', type: 'decimal' as const }] } };
+      const res = await h.post('/api/learn/repair', { ...repairBody(rules, learnId), payload: otherPair }, { cookie });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: 'invalidLearnId' });
+      expect(llm.calls).toHaveLength(before);
+      expect(await h.handle.counter(`repair:${learnId.split('.')[0]}`)).toBe(0);
+      // Its own payload - other rows of the same structure included - still goes through.
+      const sameStructure = { ...base, samples: [{ in: ['B7', 3], out: ['B7', 6] }] };
+      expect((await h.post('/api/learn/repair', { ...repairBody(rules, learnId), payload: sameStructure }, { cookie })).statusCode).toBe(200);
+    });
+
     it('rejects an expired learnId', async () => {
       const h = await setup({ complete: makeComplete().fn });
       const cookie = anonCookie(await h.get('/api/session'));
@@ -320,6 +391,44 @@ function defineProtectionSuite(kit: StoreKit): void {
       expect((await bad(ok)).json()).toEqual({ error: 'invalidPreviousRules' });
     });
 
+    it('API audit C9: problems that are not problems are 400 invalidProblems - never a 500, and no round is used', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const cookie = anonCookie(await h.get('/api/session'));
+      const { rules, learnId } = await learned(h, cookie);
+      const before = llm.calls.length;
+      const tooMany = Array.from({ length: limits.learn.loop.maxProblems + 1 }, () => ({ kind: 'layout', message: 'x' }));
+      for (const problems of [[null], [1], [{}], [{ kind: 'nope', message: 'x' }], [{ kind: 'diff', out: 'one', actual: 1 }], [{ kind: 'layout' }], 'x', tooMany]) {
+        const res = await h.post('/api/learn/repair', { ...repairBody(rules, learnId), problems }, { cookie });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: 'invalidProblems' });
+      }
+      expect(llm.calls).toHaveLength(before);
+      expect(await h.handle.counter(`repair:${learnId.split('.')[0]}`)).toBe(0);
+
+      // Every kind the browser sends passes, at the cap.
+      const each = [
+        { kind: 'formula', path: 'p', offset: 0, message: 'm' },
+        { kind: 'schema', path: '', message: 'm' },
+        { kind: 'reference', message: 'm' },
+        { kind: 'diff', out: 1, row: { in: ['A9', 1], out: ['A9', 2] }, expected: 2, actual: 1 },
+        { kind: 'diff', out: 0, made: ['x', 1], expected: null, actual: 'x' },
+        { kind: 'rowCount', expected: 2, actual: 3 },
+        { kind: 'layout', message: 'm' },
+        { kind: 'formatMismatch', path: 'p', message: 'm' },
+        { kind: 'fixedMismatch', path: 'p', message: 'm' },
+        { kind: 'type', path: 'p', message: 'm' },
+        { kind: 'limit', message: 'm' },
+        { kind: 'unsupportedDespiteEvidence', out: 1, message: 'm' },
+        { kind: 'overfit', out: 1, message: 'm' },
+        { kind: 'list', out: 1, message: 'm' },
+        { kind: 'truncated', message: 'm' },
+      ];
+      const atCap = Array.from({ length: limits.learn.loop.maxProblems }, (_, i) => each[i % each.length]);
+      const res = await h.post('/api/learn/repair', { ...repairBody(rules, learnId), problems: atCap }, { cookie });
+      expect(res.statusCode).toBe(200);
+    });
+
     it('lets only 3 of several concurrent rounds through', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
@@ -336,15 +445,14 @@ function defineProtectionSuite(kit: StoreKit): void {
   // ---------- budgets ----------
 
   describe('budgets (SPEC 9.5)', () => {
-    it('accumulates each call\'s cost into the day\'s overall budget (never the anonymous one: only signed-in users reach the AI)', async () => {
+    it('accumulates each call\'s cost into the day\'s overall budget', async () => {
       const llm = makeComplete({ costUsd: 0.5 });
       const h = await setup({ complete: llm.fn });
       await h.learn({ noCache: true });
       await h.learn({ noCache: true });
 
       const spend = await h.handle.store.getSpend(dayKey(h.clock.current));
-      expect(spend.spendUsd).toBeCloseTo(1);
-      expect(spend.anonSpendUsd).toBe(0);
+      expect(spend).toEqual({ spendUsd: expect.closeTo(1) });
       const ledger = await h.handle.ledger();
       expect(ledger.map((d) => d.costUsd)).toEqual([0.5, 0.5]);
     });
@@ -355,24 +463,15 @@ function defineProtectionSuite(kit: StoreKit): void {
       await h.learn({ noCache: true });
 
       const day = dayKey(h.clock.current);
-      expect(await h.handle.store.getSpend(day)).toEqual({ spendUsd: 0, anonSpendUsd: 0 });
+      expect(await h.handle.store.getSpend(day)).toEqual({ spendUsd: 0 });
       expect(await h.handle.counter(aiLearnsKey(TEST_USER, 'month', h.clock.current))).toBe(1);
-    });
-
-    it('does not apply the anonymous budget to a signed-in user (only the overall kill switch does)', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyAnonUsd, true);
-      const res = await h.learn({ noCache: true });
-      expect(res.statusCode).toBe(200);
-      expect(llm.calls).toHaveLength(1);
     });
 
     it('is the kill switch: 503 budgetExhausted once the overall budget is spent', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const day = dayKey(h.clock.current);
-      await h.handle.store.addSpend(day, limits.budgets.dailyOverallUsd, false);
+      await h.handle.store.addSpend(day, limits.budgets.dailyOverallUsd);
 
       const res = await h.learn({ noCache: true });
       expect(res.statusCode).toBe(503);
@@ -386,7 +485,7 @@ function defineProtectionSuite(kit: StoreKit): void {
       const cookie = anonCookie(await h.get('/api/session'));
       const learn = (await h.learn({ noCache: true }, { cookie })).json();
       const before = llm.calls.length;
-      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd, false);
+      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd);
 
       const res = await h.post(
         '/api/learn/repair',
@@ -400,7 +499,7 @@ function defineProtectionSuite(kit: StoreKit): void {
 
     it('starts a fresh budget on the next UTC day', async () => {
       const h = await setup({ complete: makeComplete().fn });
-      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd, false);
+      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd);
       expect((await h.learn({ noCache: true })).statusCode).toBe(503);
       h.clock.current = new Date(h.clock.current.getTime() + DAY_MS);
       expect((await h.learn({ noCache: true })).statusCode).toBe(200);
@@ -412,7 +511,7 @@ function defineProtectionSuite(kit: StoreKit): void {
       const cookie = anonCookie(await h.get('/api/session'));
       expect((await h.learn(masked(), { cookie })).statusCode).toBe(200);
 
-      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd, false);
+      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd);
       const hit = await h.learn(masked(), { cookie });
       expect(hit.statusCode).toBe(200);
       expect(hit.json().cached).toBe(true);

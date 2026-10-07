@@ -70,6 +70,8 @@ export interface AiInfo {
   exhausted?: boolean | undefined;
   /** The server returned saved rules for this exact structure without an LLM call (SPEC 9.5). */
   cached?: boolean | undefined;
+  /** The prompt version the answer was learned with, as the server says (API audit 2026-10-07): what a save stores, never a constant. */
+  promptVersion?: string | undefined;
 }
 
 export type LearnFlowState =
@@ -263,7 +265,7 @@ export class LearnFlow {
           const res = await this.deps.api.learn(payload, { turnstileToken: await token(), signal: abort.signal });
           learnId = res.learnId;
           lastProblems = res.problems;
-          ai = { learnId: res.learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, cached: res.cached };
+          ai = { learnId: res.learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, cached: res.cached, promptVersion: res.promptVersion };
           return asCallResult(res);
         } catch (e) {
           hostError = e;
@@ -309,6 +311,7 @@ export class LearnFlow {
           ai = {
             ...ai,
             ...(fresh ? { learnId: (res as LearnResponse).learnId } : {}),
+            ...(res.promptVersion ? { promptVersion: res.promptVersion } : {}),
             counted: res.counted,
             failedAttempts: res.failedAttempts,
             quota: res.quota ?? ai?.quota,
@@ -328,7 +331,7 @@ export class LearnFlow {
           await record({ kind: 'step', payload, rounds, round: { n: rounds.length, of: limits.learn.checks.maxRounds } });
           const res = await this.deps.api.step(learnId, payload, rounds, { signal: abort.signal });
           lastProblems = res.problems;
-          ai = { ...ai, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota ?? ai?.quota };
+          ai = { ...ai, ...(res.promptVersion ? { promptVersion: res.promptVersion } : {}), counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota ?? ai?.quota };
           return asCallResult(res);
         } catch (e) {
           hostError = e;

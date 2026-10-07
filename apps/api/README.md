@@ -30,7 +30,7 @@ The AI step is for signed-in users only. `POST /api/learn`, `POST /api/learn/rep
 `POST /api/learn/:learnId/outcome` exist in every environment; an anonymous caller gets
 `403 signInForAi` before anything else costs anything (free users get everything that runs locally, and
 the web shows the local result first). For a signed-in user `POST /api/learn` is guarded by, in order:
-a per-IP request rate limit (`limits.protection`), the body shape, the owner's structure cache (a hit costs
+a per-IP request rate limit (`limits.protection`), the body shape and the payload caps (`limits.payload.maxBytes` and every cell within `maxCellChars` - one `admit()` in `routes/learn.ts` for learn, step and repair), the owner's structure cache (a hit costs
 nothing and is served even when the quota is spent), the failed-attempt cap of the example pair, the daily
 budgets (`limits.budgets`), and the user's AI-learn quota (`tiers.*.aiLearns: { count, period }`, period
 `lifetime | month | day | unlimited`). Refusals are `{ error, limit?, period?, counted? }` with a stable code
@@ -41,11 +41,12 @@ budgets (`limits.budgets`), and the user's AI-learn quota (`tiers.*.aiLearns: { 
 | 429 | `rateLimited` | too many requests from one IP this minute (`Retry-After` set) |
 | 403 | `signInForAi` | not signed in (learn, repair and outcome) |
 | 429 | `limitHit` + `limit: 'aiLearns'` + `period` | the AI-learn quota of the period is used up |
+| 429 | `limitHit` + `limit: 'aiRequestsPerDay'` | the user's requests that call the AI today (learn, step, repair - whatever they ended in) reached `limits.protection.aiRequestsPerDay` (registered 40, paid 400); a `failed` outcome gives a learn back at most `failedRefundsPerDay` (10) times a day |
 | 429 | `limitHit` + `limit: 'repairsPerLearn'` | the learn's rounds of the learning loop are used (`limits.llm.browserRepairCalls`, 3) |
 | 409 | `aiAttemptsExhausted` + `counted` | 3 failed attempts on the same example pair (`limits.learn.maxFailedAiAttempts`); `counted: true` when this very answer counted the pair as one AI learn |
 | 503 | `budgetExhausted` | the daily overall budget is spent (kill switch) |
-| 400 | `invalidPayload`, `invalidPreviousRules`, `invalidProblems`, `invalidLearnId`, `invalidRequest` | malformed body / follow-up without a valid `learnId` |
-| 400 | `invalidRows` | a loop round's `rows` are malformed or larger than the loop allows: more than `limits.learn.loop.rowsPerRound` per round so far, more than `maxRowsTotal` masked rows in the learn (the payload's samples and dropped rows included), or the payload with them added past `limits.payload.maxBytes` |
+| 400 | `invalidPayload`, `invalidPreviousRules`, `invalidProblems`, `invalidLearnId`, `invalidRequest` | malformed body (a payload past `limits.payload.maxBytes`, or a cell past `maxCellChars`, included) / follow-up without a valid `learnId` |
+| 400 | `invalidRows` | a loop round's `rows` are malformed or larger than the loop allows: more than `limits.learn.loop.rowsPerRound` per round so far, more than `maxRowsTotal` masked rows in the learn (the payload's samples and dropped rows included), a cell past `limits.payload.maxCellChars`, or the payload with them added past `limits.payload.maxBytes` |
 
 **The learning loop** (SPEC 9.3, `docs/proposals/learning-loop.md` 3.2): `POST /api/learn/repair` is one round. Its body carries,
 besides the previous rules and the problems, `rows`: every row of the example the browser sent since the learn (masked like the
@@ -139,7 +140,6 @@ checks ownership (someone else's id is a `404 notFound`); ids are 24-hex ObjectI
 | `PATCH /api/conversions/:id` | rename the conversion's **source** (`sourceName`), and/or save edited rules as a new version (`{ rules, status, acceptedDifferences, exampleExceptions?, baseVersion? }`); if the output side changed it is a **format edit**: the format gets a new version and every other conversion of the format is rebuilt around it (`needsReview` when its references no longer resolve); if the input side changed it is a **source edit** (SPEC 8.15): the source gets a new version and every other conversion of it, whatever format it feeds, is rebuilt (`sourceChanged`, `affectedConversions`); the response says how many were affected |
 | `GET /api/conversions/:id/versions`, `POST /api/conversions/:id/restore/:version` | history (newest first) / restore an older version as a new one (send `{}`); refused with `formatMismatch` / `sourceMismatch` when the format / source changed since (the source's aliases are brought over, the rest must match) |
 | `POST /api/conversions/:id/runs` | `{ rows, flagged }` - counts only - bumps `runCount` / `lastRunAt` |
-| `POST /api/conversions/:id/aliases` | kept for the web app; forwarded to the conversion's source (below) |
 | `GET /api/signatures` | **one entry per source**: `{ sourceId, name, columns, conversions: [{ conversionId, formatId, formatName, status }] }`, for matching a dropped file in the browser (a source with no conversion yet has `conversions: []`) |
 | `GET /api/sources`, `GET /api/sources/:id` | the caller's sources with the formats each feeds / one with its structure (headers, aliases, types, reading options, input checks - never a value) |
 | `PATCH /api/sources/:id` | `{ name?, inputSignature?, inputReading?, inputValidations?, baseVersion? }`: a rename (names are unique per owner, any case: `409 nameTaken`) and/or an edit of the structure - a new source version **written into the `input` of every conversion of it** (`needsReview` when a conversion's rules no longer resolve; the response lists them); a column's `was` says which header a renamed one had; `required` is derived (required by at least one conversion) |
@@ -171,8 +171,8 @@ code in `src/auth/`. A provider is offered when its `<PREFIX>_CLIENT_ID` and `_C
 | `GET /api/me` | `{ user: { id, name, avatarUrl, email?, tier, providers, isAdmin, uiLanguage } \| null }` |
 | `PATCH /api/me` | `{ uiLanguage: 'he' \| 'en' }` and nothing else |
 | `POST /api/me/link/:provider/start` | `{ url }` to navigate to; links a second provider to the signed-in user |
-| `GET /api/learn/quota` | `{ quota: { remaining, period } }` - what is left of the signed-in user's AI learns (403 `signInForAi` otherwise); the account menu shows it |
-| `POST /api/dev/session` | **development only** (the route does not exist when `NODE_ENV=production`): creates a throw-away signed-in test user (`{ name?, tier?: "registered" or "paid" }`, email under `@example.test`) and sets the session cookie, so the signed-in screens can be tried without a real provider; the Origin must be the web app's (any loopback name) |
+| `GET /api/learn/quota` | `{ quota: { remaining, period, limit } }` - what is left of the signed-in user's AI learns, and their own limit (the plan's or an admin's override; null when unlimited) (403 `signInForAi` otherwise); the account menu shows it. Every answer that carries `quota` carries the same, and so does a 429 `limitHit` `aiLearns` |
+| `POST /api/dev/session` | **development only** (the route does not exist when `NODE_ENV=production`, nor when the web app or the API is not on this machine - `WEB_ORIGIN` / `API_PUBLIC_URL` on localhost - unless `DEV_SIGN_IN=true`): creates a throw-away signed-in test user (`{ name?, tier?: "registered" or "paid" }`, email under `@example.test`) and sets the session cookie, so the signed-in screens can be tried without a real provider; the Origin must be the web app's (any loopback name) |
 
 Identity is provider + subject (Microsoft: `tid` + `oid`) - never the email; the same email at another provider is another
 user. Sessions are stateful (`sessions` collection, TTL, only SHA-256 of the id stored; the cookie is `<id>.<HMAC>`), rotated at

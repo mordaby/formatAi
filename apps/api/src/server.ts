@@ -11,7 +11,7 @@ import type { Env } from './env.js';
 import type { CompleteFn } from './learn/index.js';
 import { registerAnonId, type Identity } from './protection/identity.js';
 import { createProtection, parseTrustProxy } from './protection/index.js';
-import type { MemoryStore, ProtectionStore } from './protection/store.js';
+import type { ProtectionStore } from './protection/store.js';
 import { registerRegistryRoutes } from './registry/index.js';
 import { registerLearnRoutes } from './routes/learn.js';
 import { registerSessionRoute } from './routes/session.js';
@@ -105,7 +105,6 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
     env,
     db,
     now: opts.now,
-    learnCache: 'cacheEntries' in protection.store ? (protection.store as MemoryStore).cacheEntries : undefined,
     warn: (message) => app.log.warn(message),
   });
 

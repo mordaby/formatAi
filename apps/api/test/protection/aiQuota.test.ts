@@ -6,7 +6,7 @@ import { limits, tiers, type AiLearnQuota } from '@formatai/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CompleteFn } from '../../src/learn/index.js';
 import type { CompleteRequest } from '../../src/llm/index.js';
-import { aiFailKey, aiLearnsKey } from '../../src/protection/keys.js';
+import { aiFailKey, aiLearnsKey, aiRequestsKey, failedRefundsKey } from '../../src/protection/keys.js';
 import { basicPayload, correctRules, correctRulesWireJson, wrongRoundingWireJson } from '../learn/fixtures.js';
 import {
   createHarness,
@@ -89,7 +89,8 @@ function defineQuotaSuite(kit: StoreKit): void {
       }
       const fourth = await h.learn({ noCache: true });
       expect(fourth.statusCode).toBe(429);
-      expect(fourth.json()).toEqual({ error: 'limitHit', limit: 'aiLearns', period: 'month' });
+      // (API audit P2: the quota as it stands comes with it - none left, of the user's own limit)
+      expect(fourth.json()).toEqual({ error: 'limitHit', limit: 'aiLearns', period: 'month', quota: { remaining: 0, period: 'month', limit: 3 } });
       expect(llm.calls).toHaveLength(3);
       // The refused attempt left nothing behind.
       expect(await used(h)).toBe(3);
@@ -109,7 +110,7 @@ function defineQuotaSuite(kit: StoreKit): void {
     it('gives a paid user its own, larger quota', async () => {
       const h = await setup(makeComplete().fn);
       const res = await h.learn({ noCache: true }, { tier: 'paid' });
-      expect(res.json().quota).toEqual({ remaining: tiers.paid.aiLearns.count - 1, period: 'month' });
+      expect(res.json().quota).toEqual({ remaining: tiers.paid.aiLearns.count - 1, period: 'month', limit: tiers.paid.aiLearns.count });
     });
 
     it('counts per user: another user has a quota of their own', async () => {
@@ -128,7 +129,7 @@ function defineQuotaSuite(kit: StoreKit): void {
       await h.learn({ noCache: true });
       const third = await h.learn({ noCache: true });
       expect(third.statusCode).toBe(429);
-      expect(third.json()).toEqual({ error: 'limitHit', limit: 'aiLearns', period: 'lifetime' });
+      expect(third.json()).toEqual({ error: 'limitHit', limit: 'aiLearns', period: 'lifetime', quota: { remaining: 0, period: 'lifetime', limit: 2 } });
       expect(await used(h, TEST_USER, 'lifetime')).toBe(2);
 
       h.clock.current = new Date(h.clock.current.getTime() + 400 * DAY_MS);
@@ -141,12 +142,12 @@ function defineQuotaSuite(kit: StoreKit): void {
       await h.learn({ noCache: true });
       await h.learn({ noCache: true });
       const third = await h.learn({ noCache: true });
-      expect(third.json()).toEqual({ error: 'limitHit', limit: 'aiLearns', period: 'day' });
+      expect(third.json()).toEqual({ error: 'limitHit', limit: 'aiLearns', period: 'day', quota: { remaining: 0, period: 'day', limit: 2 } });
 
       h.clock.current = new Date(h.clock.current.getTime() + DAY_MS);
       const next = await h.learn({ noCache: true });
       expect(next.statusCode).toBe(200);
-      expect(next.json().quota).toEqual({ remaining: 1, period: 'day' });
+      expect(next.json().quota).toEqual({ remaining: 1, period: 'day', limit: 2 });
     });
 
     it('unlimited: no cap, nothing to count, and the quota says so', async () => {
@@ -156,7 +157,7 @@ function defineQuotaSuite(kit: StoreKit): void {
       for (let i = 0; i < 6; i++) {
         const res = await h.learn({ noCache: true });
         expect(res.statusCode).toBe(200);
-        expect(res.json().quota).toEqual({ remaining: null, period: 'unlimited' });
+        expect(res.json().quota).toEqual({ remaining: null, period: 'unlimited', limit: null });
       }
       expect(llm.calls).toHaveLength(6);
     });
@@ -220,7 +221,7 @@ function defineQuotaSuite(kit: StoreKit): void {
 
       const accepted = await outcome(h, learnId, 'accepted');
       expect(accepted.statusCode).toBe(200);
-      expect(accepted.json()).toEqual({ counted: true, quota: { remaining: 2, period: 'month' }, failedAttempts: 0, exhausted: false });
+      expect(accepted.json()).toEqual({ counted: true, quota: { remaining: 2, period: 'month', limit: 3 }, failedAttempts: 0, exhausted: false });
       expect(await used(h)).toBe(1);
 
       // Idempotent: repeating it, or reporting the other success kind, changes nothing.
@@ -259,7 +260,7 @@ function defineQuotaSuite(kit: StoreKit): void {
       expect(await used(h)).toBe(1);
 
       const failed = await outcome(h, learnId, 'failed');
-      expect(failed.json()).toEqual({ counted: false, quota: { remaining: 3, period: 'month' }, failedAttempts: 1, exhausted: false });
+      expect(failed.json()).toEqual({ counted: false, quota: { remaining: 3, period: 'month', limit: 3 }, failedAttempts: 1, exhausted: false });
       expect(await used(h)).toBe(0);
       // Idempotent.
       expect((await outcome(h, learnId, 'failed')).json()).toMatchObject({ counted: false, failedAttempts: 1 });
@@ -371,6 +372,69 @@ function defineQuotaSuite(kit: StoreKit): void {
   });
 
   // ---------------------------------------------------------------- the outcome route
+
+  // ---------------------------------------------------------------- API audit C1: requests, not successes
+
+  describe('the daily cap on requests that call the AI (API audit C1)', () => {
+    const cap = limits.protection.aiRequestsPerDay.registered;
+    /** The same pair under another input layout: another structure hash, so its own failed-attempt counter. */
+    const pairNo = (n: number) => basicPayload({ input: { ...basicPayload().input, layout: { headerRow: 0, rowsAbove: 0, footerFirstCell: [`end ${n}`] } } });
+
+    it(`counts every learn and loop round, counted or not, and answers the ${cap + 1}th 429 limitHit aiRequestsPerDay before calling the AI`, async () => {
+      expect(limits.protection.aiRequestsPerDay).toEqual({ registered: 40, paid: 400 });
+      tiers.registered.aiLearns = { count: 0, period: 'unlimited' }; // the success quota never refuses here: only the request cap can
+      const llm = makeComplete();
+      const h = await setup(llm.fn);
+      let learnId = '';
+      let rules: unknown = null;
+      for (let i = 0; i < cap - 1; i++) {
+        const res = await h.learn({ noCache: true });
+        expect(res.statusCode).toBe(200);
+        ({ learnId, rules } = res.json());
+      }
+      // a loop round is a request too: the 40th
+      const round = await h.post('/api/learn/repair', { payload: basicPayload(), previousRules: rules, problems: [], learnId });
+      expect(round.statusCode).toBe(200);
+      const calls = llm.calls.length;
+      for (const refused of [await h.learn({ noCache: true }), await h.post('/api/learn/repair', { payload: basicPayload(), previousRules: rules, problems: [], learnId })]) {
+        expect(refused.statusCode).toBe(429);
+        expect(refused.json()).toEqual({ error: 'limitHit', limit: 'aiRequestsPerDay' });
+      }
+      expect(llm.calls).toHaveLength(calls);
+      expect(await h.handle.counter(aiRequestsKey(TEST_USER, h.clock.current))).toBe(cap);
+      // Another user has a cap of their own; the next UTC day starts again.
+      expect((await h.learn({ noCache: true }, { user: testUserId(2) })).statusCode).toBe(200);
+      h.clock.current = new Date(h.clock.current.getTime() + DAY_MS);
+      expect((await h.learn({ noCache: true })).statusCode).toBe(200);
+    });
+
+    it('a request it refuses takes no unit of the AI-learn quota, and one the quota refuses counts no request', async () => {
+      const h = await setup(makeComplete().fn);
+      for (let i = 0; i < 3; i++) await h.learn({ noCache: true });
+      expect((await h.learn({ noCache: true })).json()).toMatchObject({ error: 'limitHit', limit: 'aiLearns', period: 'month' });
+      expect(await h.handle.counter(aiRequestsKey(TEST_USER, h.clock.current))).toBe(3);
+    });
+
+    it(`gives at most ${limits.protection.failedRefundsPerDay} learns back a day for a failed outcome: past it the report is taken, the learn stays counted`, async () => {
+      const refunds = limits.protection.failedRefundsPerDay;
+      expect(refunds).toBe(10);
+      tiers.registered.aiLearns = { count: 100, period: 'month' };
+      const h = await setup(makeComplete().fn);
+      for (let n = 0; n <= refunds; n++) {
+        const { learnId } = (await h.learn({ payload: pairNo(n), noCache: true })).json();
+        expect(await used(h)).toBe(1);
+        const res = (await outcome(h, learnId, 'failed')).json();
+        if (n < refunds) {
+          expect(res).toMatchObject({ counted: false, failedAttempts: 1 });
+          expect(await used(h)).toBe(0);
+        } else {
+          expect(res).toMatchObject({ counted: true, failedAttempts: 0 });
+          expect(await used(h)).toBe(1);
+        }
+      }
+      expect(await h.handle.counter(failedRefundsKey(TEST_USER, h.clock.current))).toBe(refunds);
+    });
+  });
 
   describe('POST /api/learn/:learnId/outcome', () => {
     it('needs a learnId issued to the same user, and a known outcome', async () => {

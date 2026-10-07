@@ -122,7 +122,7 @@ export function AiLimitDialog({ open, period, learnFree, onLearnFree, onClose }:
       ) : (
         <>
           <div className="ai-out__text" data-testid="ai-out-dialog">
-            <p>{aiPlanLine(i18n, me.tier, period, now)}</p>
+            <p>{aiPlanLine(i18n, me.tier, period, now, me.quota?.limit ?? null)}</p>
             <p>{t('aiOut.free')}</p>
           </div>
           <div className="dialog__actions">

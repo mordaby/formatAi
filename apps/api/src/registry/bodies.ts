@@ -10,6 +10,7 @@ import {
   type RulesMetaSource,
   type UpdateSourceRequest,
 } from '@formatai/shared';
+import { isRecord } from '../http.js';
 import type { ObjectId } from 'mongodb';
 import { objectIdOf } from './ids.js';
 
@@ -19,10 +20,6 @@ export type SavableStatus = (typeof SAVABLE_STATUSES)[number];
 
 const MAX_COUNT = 10_000_000;
 const MAX_SHORT_TEXT = 100;
-
-export function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
 
 /** A name a user typed (format, source): trimmed, 1..`maxNameChars`, no control characters. */
 export function parseName(v: unknown): string | null {

@@ -182,15 +182,20 @@ export function resetCircuitBreakers(): void {
 
 /**
  * The fallback wiring for `env`, or null when `LLM_FALLBACK_PROVIDER` is unset. The primary of a call that has a fallback gets the shorter
- * SDK timeout and fewer retries of `limits.llm.fallback` (see there): the fallback is what follows a failure, not a ten-minute wait.
+ * SDK timeout and fewer retries of `limits.llm.fallback` (see there): the fallback is what follows a failure, not a ten-minute wait. The
+ * fallback's own client is held to the same (API audit C8): a call the primary could not serve does not wait half an hour on it either.
  */
 export function fallbackDepsOf(env: Env): FallbackDeps {
   const name = env.LLM_FALLBACK_PROVIDER;
   if (!name) return { primary: createProvider(env), fallback: null, breaker: breakerFor(env.LLM_PROVIDER) };
-  const { primaryTimeoutMs, primaryMaxRetries } = limits.llm.fallback;
+  const { primaryTimeoutMs, primaryMaxRetries, fallbackTimeoutMs, fallbackMaxRetries } = limits.llm.fallback;
   return {
     primary: createProvider(env, env.LLM_PROVIDER, { timeoutMs: primaryTimeoutMs, maxRetries: primaryMaxRetries }),
-    fallback: { name, create: () => createProvider(env, name), model: (slot) => resolveFallbackModel(env, slot)! },
+    fallback: {
+      name,
+      create: () => createProvider(env, name, { timeoutMs: fallbackTimeoutMs, maxRetries: fallbackMaxRetries }),
+      model: (slot) => resolveFallbackModel(env, slot)!,
+    },
     breaker: breakerFor(env.LLM_PROVIDER),
   };
 }

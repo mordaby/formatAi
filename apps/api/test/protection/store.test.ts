@@ -5,6 +5,7 @@ import { limits } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { connectDb, ensureIndexes } from '../../src/db.js';
 import { loadEnv } from '../../src/env.js';
+import { dropTestDb } from '../setup/testDbs.js';
 import { memoryKit, mongoKit, mongoUri, useKit, type StoreHandle, type StoreKit } from './harness.js';
 
 function defineStoreContract(kit: StoreKit): void {
@@ -64,18 +65,14 @@ function defineStoreContract(kit: StoreKit): void {
     expect(await store.getCounter(race)).toBe(1);
   });
 
-  it('accumulates spend per day atomically, with the anonymous part tracked separately', async () => {
+  it('accumulates spend per day atomically', async () => {
     const { store } = await fresh();
-    expect(await store.getSpend('2026-01-01')).toEqual({ spendUsd: 0, anonSpendUsd: 0 });
+    expect(await store.getSpend('2026-01-01')).toEqual({ spendUsd: 0 });
 
-    await Promise.all([
-      ...Array.from({ length: 10 }, () => store.addSpend('2026-01-01', 0.25, true)),
-      ...Array.from({ length: 10 }, () => store.addSpend('2026-01-01', 0.25, false)),
-    ]);
+    await Promise.all(Array.from({ length: 20 }, () => store.addSpend('2026-01-01', 0.25)));
     const spend = await store.getSpend('2026-01-01');
     expect(spend.spendUsd).toBeCloseTo(5);
-    expect(spend.anonSpendUsd).toBeCloseTo(2.5);
-    expect(await store.getSpend('2026-01-02')).toEqual({ spendUsd: 0, anonSpendUsd: 0 });
+    expect(await store.getSpend('2026-01-02')).toEqual({ spendUsd: 0 });
   });
 
   it('saves and returns rules per (owner, key), replacing on a second save', async () => {
@@ -156,8 +153,7 @@ describe.skipIf(!mongoUri)('MongoDB indexes for the protections (SPEC 13)', () =
       await appDb.learnCache.insertOne({ ...doc });
       await expect(appDb.learnCache.insertOne({ ...doc })).rejects.toThrow(/duplicate key/);
     } finally {
-      await appDb.db.dropDatabase();
-      await appDb.client.close();
+      await dropTestDb(appDb);
     }
   });
 });

@@ -1,13 +1,15 @@
 // What every registry route needs and would otherwise repeat: who is calling, ownership-checked reads, the way a refusal is
 // sent. Shared by `routes.ts` (formats and conversions) and `sourceRoutes.ts` (sources, SPEC 8.15).
-import type { ApiErrorBody, Tier } from '@formatai/shared';
+import type { Tier } from '@formatai/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { ObjectId } from 'mongodb';
 import type { AppDb } from '../db.js';
 import type { ConversionDoc, FormatDoc, SourceDoc } from '../models.js';
 import { identityOf, type Identity } from '../protection/identity.js';
 import type { Protection } from '../protection/index.js';
+import { fail } from '../http.js';
 import { objectIdOf } from './ids.js';
+import type { RulesCheck } from './rules.js';
 
 export interface Caller {
   ownerId: ObjectId;
@@ -32,8 +34,19 @@ export interface RegistryContextOptions {
   identify?: (req: FastifyRequest) => Identity;
 }
 
-export function fail(reply: FastifyReply, status: number, body: ApiErrorBody): FastifyReply {
-  return reply.code(status).send(body);
+/** (The shared refusal: `../http.ts`.) */
+export { fail };
+
+/**
+ * How a rules file that failed `checkRulesFile` (or `overCap`) is answered. Over a cap of what one saved format may keep
+ * (docs/proposals/saved-format-contents.md section 7): 400 `rulesTooLarge`, on every route that stores rules - a new format, a source
+ * attached, a new version (the editor's save, the Run screen's "Do this every time?"), a version restored, and (API audit 2026-10-07) an
+ * edit of a format or a source whose change the other conversions would take past a cap.
+ */
+export function rulesRefusal(reply: FastifyReply, checked: Extract<RulesCheck, { ok: false }>): FastifyReply {
+  if (checked.tooLarge) return fail(reply, 400, { error: 'rulesTooLarge' });
+  if (checked.onlyRuleLimit) return fail(reply, 403, { error: 'limitHit', limit: 'rulesPerFormat' });
+  return fail(reply, 422, { error: 'invalidRules', problems: checked.problems });
 }
 
 export function createRegistryContext(opts: RegistryContextOptions): RegistryContext {

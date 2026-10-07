@@ -39,6 +39,37 @@ export function aiLearnsKey(userId: string, period: Exclude<AiLearnPeriod, 'unli
   return `${base}:${period === 'month' ? monthKey(now) : dayKey(now)}`;
 }
 
+/** API audit C1: a signed-in user's requests that called the AI this UTC day (learn, step, repair - whatever they ended in). */
+export const aiRequestsKey = (userId: string, now: Date): string => `user:${userId}:aiRequests:${dayKey(now)}`;
+
+/** API audit C1: the `failed` outcome reports that gave a user's learn back this UTC day. */
+export const failedRefundsKey = (userId: string, now: Date): string => `user:${userId}:failedRefunds:${dayKey(now)}`;
+
+/**
+ * API audit C1: the counter every request that calls the AI must fit under, by tier (`limits.protection.aiRequestsPerDay`) - reserved
+ * with the AI-learn quota, so a refused request counts on neither.
+ */
+export function aiRequestsSpec(identity: Extract<Identity, { kind: 'user' }>, now: Date): LearnCounterSpec {
+  return {
+    key: aiRequestsKey(identity.userId, now),
+    limit: limits.protection.aiRequestsPerDay[identity.tier],
+    expiresAt: dailyCounterExpiry(now),
+    limitCode: 'aiRequestsPerDay',
+  };
+}
+
+/** A daily counter with a cap that refuses nothing by itself: what is over it is decided where it is read (the refunds below). */
+export interface DailyCap {
+  key: string;
+  limit: number;
+  expiresAt: Date;
+}
+
+/** API audit C1: the day's cap on refunds by a `failed` outcome (`limits.protection.failedRefundsPerDay`). */
+export function failedRefundsCap(userId: string, now: Date): DailyCap {
+  return { key: failedRefundsKey(userId, now), limit: limits.protection.failedRefundsPerDay, expiresAt: dailyCounterExpiry(now) };
+}
+
 /** Failed AI attempts on one example pair: the owner plus the structure tag (`AiLearnCtx.group`). */
 export const aiFailKey = (owner: string, group: string): string => `aiFail:${owner}:${group}`;
 
@@ -66,16 +97,13 @@ export interface AiQuota {
 }
 
 /**
- * The AI-learn quota of `identity` (SPEC 11, 21 v5) from `tiers[tier].aiLearns`, with an admin's
- * per-user override (`users.limitOverrides`) of the count. An anonymous caller has none (count 0) - it
- * never reaches the AI, this is only the safe answer if a route asks.
+ * The AI-learn quota of a signed-in user (SPEC 11, 21 v5) from `tiers[tier].aiLearns`, with an admin's per-user override
+ * (`users.limitOverrides.aiLearns`) of the count. (Only signed-in users reach the AI - SPEC 21 v5 - so there is no anonymous quota: API audit
+ * 2026-10-07.)
  */
-export function aiQuotaOf(identity: Identity, now: Date): AiQuota {
-  const { count, period } = tiers[tierOf(identity)].aiLearns;
+export function aiQuotaOf(identity: Extract<Identity, { kind: 'user' }>, now: Date): AiQuota {
+  const { count, period } = tiers[identity.tier].aiLearns;
   if (period === 'unlimited') return { period, spec: null };
-  if (identity.kind === 'anon') {
-    return { period, spec: { key: `anon:${identity.anonId}:aiLearns`, limit: 0, limitCode: 'aiLearns' } };
-  }
   return {
     period,
     spec: {

@@ -51,6 +51,18 @@ describe('POST /api/dev/session (development only)', () => {
     expect(res.status).toBe(200);
   });
 
+  it('API audit: does not exist when the web app is reached at a public origin (a deploy without NODE_ENV=production) - unless DEV_SIGN_IN=true', async () => {
+    h = await createAuthHarness(memoryKit, issuer, { env: { WEB_ORIGIN: 'https://formatai.example.com' } });
+    expect((await h.browser().post('/api/dev/session', {})).status).toBe(404);
+    await h.close();
+    h = await createAuthHarness(memoryKit, issuer, { env: { WEB_ORIGIN: 'http://localhost:5173', API_PUBLIC_URL: 'https://formatai.example.com' } });
+    expect((await h.browser().post('/api/dev/session', {})).status).toBe(404);
+    await h.close();
+    h = await createAuthHarness(memoryKit, issuer, { env: { WEB_ORIGIN: 'https://formatai.example.com', DEV_SIGN_IN: 'true' } });
+    expect((await h.browser().post('/api/dev/session', {}, { origin: 'https://formatai.example.com' })).status).toBe(200);
+    expect(await h.sessionCount()).toBe(1);
+  });
+
   it('does not exist in a production process', async () => {
     h = await createAuthHarness(memoryKit, issuer, { production: true });
     const res = await h.browser().post('/api/dev/session', {});

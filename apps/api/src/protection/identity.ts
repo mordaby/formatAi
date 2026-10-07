@@ -20,10 +20,8 @@ export type Identity =
       anonId?: string;
       /** Verified Google email in ADMIN_EMAILS, or Microsoft oid in MICROSOFT_ADMIN_OIDS (SPEC 12). Always set by `identityOf`. */
       isAdmin?: boolean;
-      /** `users.limitOverrides` for the monthly learn count (SPEC 13), when an admin set one. */
+      /** `users.limitOverrides.aiLearns` (SPEC 13): the admin's override of the AI-learn count, when one is set. */
       learnLimitOverride?: number;
-      /** All of `users.limitOverrides` (SPEC 13). */
-      limitOverrides?: Record<string, number>;
     };
 
 /** The cache/ownership scope: `anon:<id>` when not signed in, `user:<id>` when signed in. */
@@ -107,7 +105,8 @@ declare module 'fastify' {
 export function identityOf(req: FastifyRequest): Identity {
   const user = req.authUser ?? null;
   if (!user) return { kind: 'anon', anonId: req.anonId };
-  const learnLimitOverride = user.limitOverrides?.aiLearns ?? user.limitOverrides?.learnsToLlm;
+  // (API audit P2, 2026-10-07: the legacy `learnsToLlm` key is gone - `limits.admin.overrideKeys` is `aiLearns` only.)
+  const learnLimitOverride = user.limitOverrides?.aiLearns;
   return {
     kind: 'user',
     userId: user.userId,
@@ -115,6 +114,5 @@ export function identityOf(req: FastifyRequest): Identity {
     anonId: req.anonId,
     isAdmin: user.isAdmin,
     ...(learnLimitOverride !== undefined ? { learnLimitOverride } : {}),
-    ...(user.limitOverrides ? { limitOverrides: user.limitOverrides } : {}),
   };
 }

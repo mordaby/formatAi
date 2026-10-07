@@ -1,5 +1,5 @@
-// Cloudflare Turnstile server-side verification (SPEC 9.5: "Turnstile is required" for anonymous
-// learns). Uses `fetch` (injectable for tests) - no SDK. The token and the secret are never logged.
+// Cloudflare Turnstile server-side verification (SPEC 9.5: "Turnstile is required" for what a visitor sends - today the public forms;
+// the AI step is for signed-in users only, SPEC 21 v5, and asks no token). Uses `fetch` (injectable for tests) - no SDK. The token and the secret are never logged.
 import { limits } from '@formatai/shared';
 
 export const TURNSTILE_SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';

@@ -44,7 +44,7 @@ describe('the header', () => {
   });
 
   it('the account menu says the plan, how many AI formats are left (from the API), and offers linking the other provider and signing out', async () => {
-    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 2, period: 'month' as const })) } });
+    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 2, period: 'month' as const, limit: null })) } });
     renderApp({ api });
     fireEvent.click(await within(header()).findByRole('button', { name: 'Account menu for Dana Levi' }));
     const panel = await screen.findByRole('group', { name: 'Account' });
@@ -60,7 +60,7 @@ describe('the header', () => {
 
   it('says "no limit" for an unlimited quota, and per day / in total for the other periods', async () => {
     const quota = vi.fn();
-    quota.mockResolvedValueOnce({ remaining: null, period: 'unlimited' });
+    quota.mockResolvedValueOnce({ remaining: null, period: 'unlimited', limit: null });
     renderApp({ api: fakeApi({ user: USER, auth: { quota } }) });
     fireEvent.click(await within(header()).findByRole('button', { name: 'Account menu for Dana Levi' }));
     await waitFor(() => expect(screen.getByRole('group', { name: 'Account' }).textContent).toContain('AI formats: no limit'));
