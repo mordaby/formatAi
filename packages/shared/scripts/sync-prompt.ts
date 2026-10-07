@@ -1,16 +1,11 @@
 // Extracts the verbatim system prompt of the NEWEST version (LEARN_PROMPT.md section 2, the ````text fenced block - learn-v9) and writes
 // it to prompts/learn-v9.txt and to src/prompts/learnV9.ts. Never retype the prompt by hand - LEARN_PROMPT.md is the single source of
-// truth (see LEARN_PROMPT.md's own header). The older versions are frozen: they are kept for the eval's `--prompt` comparison and never
-// written again - prompts/learn-v7.txt (src/prompts/learnV7.ts); learn-v8.txt and learn-v8-noE1.txt (src/prompts/learnV8.ts);
-// learn-v8.1.txt and learn-v8.1-noE1.txt (src/prompts/learnV81.ts, written by this script until learn-v9 became the newest). Which
-// version every learn sends is `promptVersion` (config/prompts.ts).
+// truth (see LEARN_PROMPT.md's own header). learn-v7 is frozen: it is kept for the eval's `--prompt` comparison and never written again -
+// prompts/learn-v7.txt (src/prompts/learnV7.ts). Which version every learn sends is `promptVersion` (config/prompts.ts).
 //
 // learn-v9 (docs/proposals/ai-code-checks.md, owner decision 2026-10-05) is learn-v7 plus ONE section, "# Checking with code": the AI
 // step may ask code to check ideas on every row before it answers. The script refuses to write a learn-v9 that is anything else - the
 // block with that one section taken out must be the frozen learn-v7 byte for byte (`withoutChecksSection`), so the two can never drift.
-//
-// The E1 helpers below stay for the frozen noE1 variants (the prompt audit's arm B, docs/proposals/prompt-audit-learn-v7.md section 5):
-// learn-v8-noE1 / learn-v8.1-noE1 are learn-v8 / learn-v8.1 without their one "E1" line; the tests check the frozen files against them.
 //
 // Run after any change to that fenced block:
 //   pnpm --filter @formatai/api exec tsx ../../packages/shared/scripts/sync-prompt.ts
@@ -31,20 +26,6 @@ export function extractLearnPrompt(markdown: string): string {
     throw new Error('Could not find the ````text fenced system prompt in LEARN_PROMPT.md');
   }
   return `${match[1]}\n`;
-}
-
-/** How the E1 line starts (LEARN_PROMPT.md "How to work", step 2; the same since learn-v8): the whole line is what the noE1 variant leaves out. */
-export const E1_LINE_START = '   - Code completes the data parts of your rules from every row of the example';
-
-/** The prompt without its E1 line. Throws unless the prompt has exactly one such line (a reworded line must be renamed here too). */
-export function withoutE1(prompt: string): string {
-  const lines = prompt.split('\n');
-  const at = lines.flatMap((line, i) => (line.startsWith(E1_LINE_START) ? [i] : []));
-  if (at.length !== 1) {
-    throw new Error(`Expected exactly one E1 line ("${E1_LINE_START.trim()} ...") in the prompt, found ${at.length}`);
-  }
-  lines.splice(at[0]!, 1);
-  return lines.join('\n');
 }
 
 /** The heading of learn-v9's one new section. */

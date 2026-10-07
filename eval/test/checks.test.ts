@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { CompleteFn } from '@formatai/api/learn';
 import { formulaRulesToWire } from '@formatai/engine';
-import { LEARN_SYSTEM_PROMPT_V9, learnStepWireJsonSchema, toWire, type DependsOnAnswer, type LearnResult, type RangesAnswer } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT_V7, LEARN_SYSTEM_PROMPT_V9, learnResultWireJsonSchema, learnStepWireJsonSchema, toWire, type DependsOnAnswer, type LearnResult, type RangesAnswer } from '@formatai/shared';
 import { parseArgs } from '../lib/args';
 import { loadCase, type CaseDef } from '../lib/caseLoader';
 import { buildCsvReport, buildMarkdownReport } from '../lib/report';
@@ -109,4 +109,17 @@ describe('--no-pattern-hints', () => {
     expect(without!.patternHints).toBe(false);
     expect(buildMarkdownReport([without!], 'x')).toContain('Pattern hints: off');
   }, 60_000);
+});
+
+describe('--prompt: the prompt version sent, with the wire schema it was written for', () => {
+  it('no --prompt sends the default (learn-v7) with the rules schema, as --prompt learn-v7 does; the record says the version', async () => {
+    const c = load('orders-priority');
+    for (const prompt of [undefined, 'learn-v7' as const]) {
+      const { complete, requests } = scripted([rulesOf(c)]);
+      const [record] = await runMatrix({ cases: [c], models: ['fake'], maskingModes: [false], runs: 1, provider: 'fake', noEscalation: true, complete, ...(prompt ? { prompt } : {}) });
+      expect(record).toMatchObject({ prompt: 'learn-v7', checkRounds: 0, checksAsked: 0 });
+      expect(requests[0]!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
+      expect(requests[0]!.schema).toEqual(learnResultWireJsonSchema());
+    }
+  });
 });
