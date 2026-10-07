@@ -419,6 +419,7 @@ describe('Add a source', () => {
   async function openAdd(result: LearnOutput) {
     const attachSource = vi.fn(async () => ({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'CRM B' }), source: { id: 'S2', name: 'CRM B', formats: 1 } }));
     const api = fakeApi({
+      features: { formatSources: true },
       user: USER,
       registry: { getFormat: vi.fn(async () => format), attachSource },
       learn: vi.fn(async () => ({ rules: result.rules, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const, limit: null } })),

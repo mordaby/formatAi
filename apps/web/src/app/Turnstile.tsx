@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../i18n';
 import { useServices } from '../services';
+import { readSession } from './Features';
 import { TurnstileController } from './turnstileController';
 
 export interface TurnstileApi {
@@ -45,8 +46,8 @@ export function TurnstileProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let alive = true;
-    sessionRef.current = api
-      .session()
+    // (the same answer the feature switches are read from: asked once)
+    sessionRef.current = readSession(api)
       .then((session) => {
         if (!alive) return;
         const key = session.turnstileSiteKey;

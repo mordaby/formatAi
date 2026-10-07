@@ -41,7 +41,7 @@ describe('My formats', () => {
   });
 
   it('lists each format with "← N sources", its statuses, its runs and its actions', async () => {
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER, CONTACTS]) } });
+    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER, CONTACTS]) }, features: { formatSources: true } });
     renderApp({ api, route: '/formats' });
     await screen.findByTestId('format-list');
     expect(cards()).toHaveLength(2);
@@ -232,7 +232,7 @@ describe('one format', () => {
   });
 
   it('lists the sources with status and last run, and the two things a format is for', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => two) } }), route: '/formats/F1' });
+    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => two) }, features: { formatSources: true } }), route: '/formats/F1' });
     expect(await screen.findByRole('heading', { name: 'Supplier price list' })).toBeTruthy();
     const rows = screen.getAllByTestId('source-row');
     expect(rows).toHaveLength(2);
@@ -328,6 +328,31 @@ describe('Home for a signed-in user (SPEC 16.1 screen 5)', () => {
     await act(async () => {});
     expect(screen.getByLabelText('Example input')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Run a format' })).toBeNull();
+  });
+
+  it('"Formats with several sources" switched off (the MVP): no "Add a source" on a card or on the format, in either language', async () => {
+    const { unmount } = renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [CONTACTS]) } }), route: '/formats' });
+    await screen.findByTestId('format-list');
+    await act(async () => {});
+    expect(within(cards()[0]!).getByRole('link', { name: 'Run this format' })).toBeTruthy();
+    expect(within(cards()[0]!).queryByRole('link', { name: 'Add a source' })).toBeNull();
+    unmount();
+
+    const one = getFormatResponse({ id: 'F2', name: 'Contacts export', sources: [conversionSummary({ id: 'C9', formatId: 'F2', sourceName: 'CRM' })] });
+    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => one) } }), route: '/formats/F2', lang: 'he' });
+    expect(await screen.findByRole('heading', { name: 'Contacts export' })).toBeTruthy();
+    await act(async () => {});
+    expect(screen.queryByRole('link', { name: 'הוספת מקור' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'הרצת הפורמט' })).toBeTruthy();
+  });
+
+  it('switched off, an old "Add a source" link lands on the format itself (nothing can be attached)', async () => {
+    const one = getFormatResponse({ id: 'F2', name: 'Contacts export', sources: [conversionSummary({ id: 'C9', formatId: 'F2', sourceName: 'CRM' })] });
+    const api = fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => one) } });
+    renderApp({ api, route: '/formats/F2/add-source' });
+    expect(await screen.findByRole('heading', { name: 'Contacts export' })).toBeTruthy();
+    expect(screen.queryByText(/Add a source to/)).toBeNull();
+    expect(api.registry.attachSource).not.toHaveBeenCalled();
   });
 
   it('"Teach a new format" from My formats opens the two zones', async () => {

@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Badge, Button, Dialog, Icon, InlineMessage, Spinner } from '../../ui';
 import { TextField } from '../Result/fields';
+import { AddSourceEntry } from './AddSourceEntry';
 import { shortDate, statusCounts, statusLabel, statusTone } from './statusText';
 
 export interface FormatCardProps {
@@ -155,9 +156,7 @@ export function FormatCard({ format, onRenamed, onDeleted }: FormatCardProps) {
         <LinkButton variant="secondary" size="sm" to={`/convert?format=${encodeURIComponent(format.id)}`}>
           {t('formats.convert')}
         </LinkButton>
-        <LinkButton variant="secondary" size="sm" to={`/formats/${format.id}/add-source`}>
-          {t('formats.addSource')}
-        </LinkButton>
+        <AddSourceEntry formatId={format.id} variant="secondary" size="sm" />
         <LinkButton variant="secondary" size="sm" to={`/formats/${format.id}`} state={{ edit: true }}>
           {t('formats.editRules')}
         </LinkButton>

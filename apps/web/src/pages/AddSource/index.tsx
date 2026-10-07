@@ -8,9 +8,10 @@
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
 import { defaultSourceName } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { isAiQuotaHit, useAiLimit, useQuotaRefusal } from '../../app/AiLimit';
 import { useOnAi } from '../../app/aiReport';
+import { useFeatures } from '../../app/Features';
 import { useLearnSession } from '../../app/LearnSession';
 import { LinkButton } from '../../app/LinkButton';
 import { useMe } from '../../app/Me';
@@ -49,6 +50,20 @@ import type { LearnOutput } from '../../worker/engineApi';
 
 export default function AddSourcePage() {
   const { t } = useI18n();
+  const { id = '' } = useParams();
+  // Part of "Formats with several sources" (the feature switch, app/Features.tsx): while it is off this screen does not exist - an old link
+  // lands on the format itself (and the API refuses the attach anyway).
+  const features = useFeatures();
+  if (!features.known) {
+    return (
+      <main id="main" className="page" tabIndex={-1}>
+        <p className="muted">
+          <Spinner size={14} /> {t('formats.loading')}
+        </p>
+      </main>
+    );
+  }
+  if (!features.formatSources) return <Navigate to={`/formats/${encodeURIComponent(id)}`} replace />;
   return (
     <RequireSignIn title={t('formats.title')}>
       <AddSourceLoader />

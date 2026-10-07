@@ -8,6 +8,7 @@ import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { Button, InlineMessage, Spinner } from '../../ui';
+import { AddSourceEntry } from '../Formats/AddSourceEntry';
 import { SourceRow } from './SourceRow';
 
 export default function FormatPage() {
@@ -87,9 +88,7 @@ function FormatDetail() {
               <LinkButton variant="secondary" to={`/convert?format=${encodeURIComponent(format.id)}`}>
                 {t('formats.convert')}
               </LinkButton>
-              <LinkButton variant="primary" to={`/formats/${format.id}/add-source`}>
-                {t('formats.addSource')}
-              </LinkButton>
+              <AddSourceEntry formatId={format.id} variant="primary" />
             </div>
           </header>
 

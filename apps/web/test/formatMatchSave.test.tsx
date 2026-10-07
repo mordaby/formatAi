@@ -104,6 +104,8 @@ interface Setup {
   lang?: 'en' | 'he';
   /** The free engine's own result with fields missing (`path: 'partial'`). */
   partial?: boolean;
+  /** The feature switch "Formats with several sources" (default on here: this file is about what it shows). */
+  formatSources?: boolean;
 }
 
 /** Learns (a fake worker) and opens the Result screen of a signed-in user who has `formats`. */
@@ -127,7 +129,7 @@ async function openResult(setup: Setup = {}) {
     updateConversion: vi.fn(async (id: string, body: { baseVersion?: number }) => ({ conversion: conversionSummary({ id, formatId: 'F1', version: (body.baseVersion ?? 0) + 1 }), formatChanged: true, affectedSources: 0, needsReview: [] })),
     attachSource: vi.fn(async (formatId: string) => ({ conversion: conversionSummary({ id: 'C2', formatId, sourceId: 'S2', sourceName: 'accounts', version: 1 }), source: { id: 'S2', name: 'accounts', formats: 1 } })),
   };
-  const api = fakeApi({ user: USER, registry });
+  const api = fakeApi({ user: USER, registry, features: { formatSources: setup.formatSources ?? true } });
   const view = renderApp({ engine: fake.engine, api, lang: setup.lang ?? 'en', dataRouter: true });
   const en = (setup.lang ?? 'en') === 'en';
   fireEvent.change(screen.getByLabelText(en ? 'Example input' : 'דוגמת קלט'), { target: { files: [csv('accounts.csv')] } });
@@ -138,7 +140,7 @@ async function openResult(setup: Setup = {}) {
   await act(async () => void fireEvent.click(learnButton));
   await screen.findByTestId('rules-map');
   await waitFor(() => expect(liveCheck).toHaveBeenCalled());
-  await waitFor(() => expect(registry.listFormats).toHaveBeenCalled());
+  if (setup.formatSources !== false) await waitFor(() => expect(registry.listFormats).toHaveBeenCalled());
   return { ...fake, api, registry, router: view.router! };
 }
 
@@ -183,7 +185,7 @@ describe('no saved format with this output: Save works as before', () => {
   it('a visitor is asked to sign in, and nothing is read', async () => {
     const listFormats = vi.fn(async () => [MONTHLY().summary]);
     const fake = fakeEngine(async () => learnResult({ rules: learned(), exampleId: 'ex1' }));
-    renderApp({ engine: fake.engine, api: fakeApi({ registry: { listFormats } }), dataRouter: true });
+    renderApp({ engine: fake.engine, api: fakeApi({ registry: { listFormats }, features: { formatSources: true } }), dataRouter: true });
     fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('accounts.csv')] } });
     fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('Monthly accounts.csv')] } });
     await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
@@ -399,5 +401,38 @@ describe('in Hebrew', () => {
     await screen.findByRole('dialog');
     expect(question()).toBe('זה הפורמט שלכם Monthly accounts, מהמקור CRM A. לעדכן את הכללים שלו, או לשמור כפורמט חדש?');
     expect(answers()).toEqual(['עדכון הכללים שלו', 'שמירה כפורמט חדש', 'ביטול']);
+  });
+});
+
+describe('"Formats with several sources" switched off (the MVP): Save never asks', () => {
+  it('the same output as a saved format: no question, one click, a new format - and no format or source is read', async () => {
+    const { registry } = await openResult({ formats: [MONTHLY()], formatSources: false });
+    await press('Save format');
+    await waitFor(() => expect(registry.createFormat).toHaveBeenCalledTimes(1));
+    expect(dialog()).toBeNull();
+    expect(registry.getFormat).not.toHaveBeenCalled();
+    expect(registry.signatures).not.toHaveBeenCalled();
+    expect(registry.updateConversion).not.toHaveBeenCalled();
+    expect(registry.attachSource).not.toHaveBeenCalled();
+    expect(await screen.findByText('Saved. "Monthly accounts" is in My formats.')).toBeTruthy();
+  });
+
+  it('from another input too (never "Add as a source"), and in Hebrew', async () => {
+    const { registry } = await openResult({ rules: learned({ inputHeaders: ['Acct no', 'Firm'] }), formats: [MONTHLY()], formatSources: false, lang: 'he' });
+    await press('שמירת הפורמט');
+    await waitFor(() => expect(registry.createFormat).toHaveBeenCalledTimes(1));
+    expect(dialog()).toBeNull();
+    expect(registry.attachSource).not.toHaveBeenCalled();
+  });
+
+  it('a list to ask about is still asked, in the Save popup as before (with no format question)', async () => {
+    const { registry } = await openResult({ rules: learned({ target: true }), formats: [saved('F1', 'Monthly accounts', learned({ target: true }))], formatSources: false });
+    await press('Save format');
+    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(within(box).queryByTestId('format-match-question')).toBeNull();
+    expect(within(box).getByTestId('copied-list-dialog')).toBeTruthy();
+    await answer('Keep it');
+    await waitFor(() => expect(registry.createFormat).toHaveBeenCalledTimes(1));
+    expect(registry.attachSource).not.toHaveBeenCalled();
   });
 });

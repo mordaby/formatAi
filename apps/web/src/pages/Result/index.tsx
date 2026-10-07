@@ -1,7 +1,8 @@
 // The Result screen (SPEC 16.1 screen 4, 8.11) for a fresh learn: the working part (`Workbench`) plus what is specific to a learn -
 // the local result before the AI step (SPEC 21 v5), the AI quota, and saving - where "Save format" first asks, in the Save popup, whether
 // the learned output is one of the user's saved formats (owner decision 2026-10-07: update its rules, add the file as a new source of it, or
-// save a new format; `useFormatMatch`, `FormatMatchDialog`). Nothing matches: Save goes at once, as before.
+// save a new format; `useFormatMatch`, `FormatMatchDialog`). Nothing matches: Save goes at once, as before. That question is part of
+// "Formats with several sources" (the feature switch, app/Features.tsx): while it is off, Save saves a new format at once, as before #75.
 // Once the learn is saved (a format and its first source, a new source of a saved format, or a new version of one of its sources) the SAME
 // screen becomes the editor of that source: its address is the source's own, the example files stay in the worker for the live check, and
 // every further save is a new version of the source.
@@ -21,6 +22,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useOnAi } from '../../app/aiReport';
 import { LeaveDialog } from '../../app/LeaveGuard';
+import { useFeatures } from '../../app/Features';
 import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
 import { copiedListsOf, findingsToConfirm, lineIds } from '../../editor';
@@ -188,8 +190,10 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
 
   const save = useSave<FirstSave>();
   // "Is this one of your formats?" (owner decision 2026-10-07): asked at the first Save of a learn, for a signed-in user (the list of their
-  // formats is read in the background as soon as the result is shown, so a Save that matches nothing waits for nothing).
-  const formatMatch = useFormatMatch(me.user !== null && !source);
+  // formats is read in the background as soon as the result is shown, so a Save that matches nothing waits for nothing) - only while the
+  // feature switch "Formats with several sources" is on: off, nothing is read and Save saves a new format, one click.
+  const { formatSources } = useFeatures();
+  const formatMatch = useFormatMatch(formatSources && me.user !== null && !source);
   const [matching, setMatching] = useState(false);
   const matchingNow = useRef(false);
 
@@ -336,8 +340,8 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
    */
   const startSave = async (info: WorkbenchInfo): Promise<void> => {
     const findings = findingsToConfirm(info.rules, copied);
-    // (no saved format has these headers: nothing to read or wait for - the save goes at once, exactly as before)
-    if (formatMatch.surelyNone(info.rules)) {
+    // (no saved format has these headers, or the question is switched off: nothing to read or wait for - the save goes at once, as before)
+    if (!formatSources || formatMatch.surelyNone(info.rules)) {
       gate.save(info, findings, doSave);
       return;
     }

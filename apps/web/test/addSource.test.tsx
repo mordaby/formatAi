@@ -60,6 +60,7 @@ const converted = (): unknown => ({
 
 function setup(over: { registry?: Record<string, unknown>; learn?: Parameters<typeof fakeEngine>[0]; engine?: Record<string, unknown>; apiLearn?: () => Promise<never>; auth?: Record<string, unknown>; lang?: 'en' | 'he' } = {}) {
   const api = fakeApi({
+    features: { formatSources: true },
     user: USER,
     ...(over.auth ? { auth: over.auth } : {}),
     registry: { getFormat: vi.fn(async () => format), attachSource: vi.fn(async () => ({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' }), source: { id: 'S2', name: 'Supplier B', formats: 1 } })), ...over.registry },
@@ -186,7 +187,7 @@ describe('the Add a source screen', () => {
   });
 
   it('says it in Hebrew', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => format) } }), route: ROUTE, lang: 'he', engine: fakeEngine(undefined, undefined, { readHeaders: vi.fn(async () => ({ ok: true, headers: ['Item Code', 'Product', 'Unit Price', 'Category'], sheetName: 'S', direction: 'ltr', rows: 3 })) }).engine });
+    renderApp({ api: fakeApi({ features: { formatSources: true }, user: USER, registry: { getFormat: vi.fn(async () => format) } }), route: ROUTE, lang: 'he', engine: fakeEngine(undefined, undefined, { readHeaders: vi.fn(async () => ({ ok: true, headers: ['Item Code', 'Product', 'Unit Price', 'Category'], sheetName: 'S', direction: 'ltr', rows: 3 })) }).engine });
     await screen.findByTestId('add-format-columns');
     fireEvent.change(await screen.findByLabelText('דוגמת פלט'), { target: { files: [xlsx('renamed.xlsx')] } });
     const list = await screen.findByTestId('output-mismatch');
@@ -406,12 +407,12 @@ describe('the Add a source screen', () => {
   });
 
   it('a format that is not there says so', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => Promise.reject(new ApiError('notFound', 404))) } }), route: ROUTE });
+    renderApp({ api: fakeApi({ features: { formatSources: true }, user: USER, registry: { getFormat: vi.fn(async () => Promise.reject(new ApiError('notFound', 404))) } }), route: ROUTE });
     expect(await screen.findByText("We couldn't find this format. It may have been deleted.")).toBeTruthy();
   });
 
   it('a visitor is asked to sign in', async () => {
-    renderApp({ api: fakeApi(), route: ROUTE });
+    renderApp({ api: fakeApi({ features: { formatSources: true } }), route: ROUTE });
     expect(await screen.findByText('Sign in to see your saved formats.')).toBeTruthy();
   });
 
@@ -425,6 +426,7 @@ describe('the Add a source screen', () => {
       .mockRejectedValueOnce(new ApiError('signInRequired', 401))
       .mockResolvedValue({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' }), source: { id: 'S2', name: 'Supplier B', formats: 1 } });
     const api = fakeApi({
+    features: { formatSources: true },
       user: USER,
       auth: { me },
       registry: { getFormat: vi.fn(async () => format), attachSource },
@@ -654,7 +656,7 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
   });
 
   it('says the name field in Hebrew, with no chooser', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => format), listSources: vi.fn(async () => [SUPPLIER_A, MASTER]) } }), route: ROUTE, lang: 'he' });
+    renderApp({ api: fakeApi({ features: { formatSources: true }, user: USER, registry: { getFormat: vi.fn(async () => format), listSources: vi.fn(async () => [SUPPLIER_A, MASTER]) } }), route: ROUTE, lang: 'he' });
     expect(await screen.findByLabelText('שם המקור')).toBeTruthy();
     expect(screen.getByText('לא חובה. למשל הספק או הלקוח שממנו הקובץ מגיע. השאירו ריק ונבחר שם בשבילכם.')).toBeTruthy();
     expect(screen.queryByLabelText('לאיזה מקור שייך הקובץ הזה?')).toBeNull();
@@ -768,7 +770,7 @@ describe('Add a source: the free engine first, the AI step only on the click', (
 describe('from the Result screen\'s Save ("Add as a source" of a result with fields left)', () => {
   it('the Result screen shows no "looks like your format" banner: the question is asked at Save', async () => {
     const NAMES = formatSummary({ id: 'F7', name: 'Names list', outputHeaders: ['Name'], fileType: 'xlsx', outputColumns: 1 });
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [NAMES]) } });
+    const api = fakeApi({ features: { formatSources: true }, user: USER, registry: { listFormats: vi.fn(async () => [NAMES]) } });
     const { engine } = fakeEngine(async () => learnResult({ path: 'local' }));
     renderApp({ engine, api });
     fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });
@@ -783,7 +785,7 @@ describe('from the Result screen\'s Save ("Add as a source" of a result with fie
 
   it('opens Add a source with the same files, and the free learn starts by itself', async () => {
     const NAMES = formatSummary({ id: 'F1', name: 'Supplier price list', outputHeaders: HEADERS, fileType: 'xlsx', outputColumns: 4 });
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [NAMES]), getFormat: vi.fn(async () => format), signatures: vi.fn(async () => []) } });
+    const api = fakeApi({ features: { formatSources: true }, user: USER, registry: { listFormats: vi.fn(async () => [NAMES]), getFormat: vi.fn(async () => format), signatures: vi.fn(async () => []) } });
     const { engine, learn } = fakeEngine(async () => partialAttach(), undefined, {
       readHeaders: vi.fn(async ({ file }: { file: { name: string } }) => ({ ok: true, headers: file.name === 'load.xlsx' ? HEADERS : ['Code', 'Name', 'Price'], sheetName: 'S', direction: 'ltr', rows: 3 })),
     });

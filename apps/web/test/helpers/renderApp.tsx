@@ -1,5 +1,5 @@
 import { findFormatMatches } from '@formatai/engine';
-import { tiers, type LearnPayload, type LearnResult, type MeUser } from '@formatai/shared';
+import { features as defaultFeatures, tiers, type Features, type LearnPayload, type LearnResult, type MeUser } from '@formatai/shared';
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
@@ -106,12 +106,15 @@ export type FakeApi = Api & {
 
 /**
  * A fake API: an anonymous visitor on a server with both providers, and an empty registry. Override any call
- * (`auth` and `registry` are merged one level deep); `user` makes GET /api/me answer with that user.
+ * (`auth` and `registry` are merged one level deep); `user` makes GET /api/me answer with that user; `features` are the switches
+ * GET /api/session reports (default: the config's - "Formats with several sources" off).
  */
-export function fakeApi(over: Partial<Omit<Api, 'auth' | 'registry' | 'contact'>> & { auth?: Partial<AuthApi>; registry?: Partial<RegistryApi>; contact?: Partial<ContactApi>; user?: MeUser | null } = {}): FakeApi {
-  const { auth, registry, contact, user, ...rest } = over;
+export function fakeApi(
+  over: Partial<Omit<Api, 'auth' | 'registry' | 'contact'>> & { auth?: Partial<AuthApi>; registry?: Partial<RegistryApi>; contact?: Partial<ContactApi>; user?: MeUser | null; features?: Partial<Features> } = {},
+): FakeApi {
+  const { auth, registry, contact, user, features, ...rest } = over;
   return {
-    session: vi.fn(async () => ({ anonId: true, tier: 'free', limits: tiers.anonymous })),
+    session: vi.fn(async () => ({ anonId: true, tier: 'free', limits: tiers.anonymous, features: { ...defaultFeatures, ...features } })),
     learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false })),
     repair: vi.fn(),
     step: vi.fn(),
