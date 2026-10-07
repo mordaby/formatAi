@@ -48,7 +48,7 @@ export function renderInline(text: string): ReactNode[] {
 export function LegalPage({ id }: { id: LegalPageId }) {
   const { t, lang } = useI18n();
   const doc = legalDocs[id][lang];
-  const params = legalParams(lang);
+  const params = legalParams(lang, id);
   const fill = (text: string): ReactNode[] => renderInline(fillLegal(text, params));
 
   const block = (b: LegalBlock, i: number): ReactNode => {

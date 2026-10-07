@@ -97,8 +97,12 @@ export const limits = {
     turnstileTimeoutMs: 5_000,
     /** SPEC 9.3: how long after its learn a browser-triggered repair (a loop round, at most `llm.browserRepairCalls`) is accepted. */
     learnIdTtlMinutes: 60,
-    /** Daily `anon:` / `ip:` usage counters are kept this long after their UTC day ends, then TTL-expired. */
-    dailyCounterGraceHours: 24,
+    /**
+     * Every usage counter (`usage_counters`) is TTL-expired this long after the end of the period it counts: a daily one after its UTC
+     * day, a monthly one after its UTC month (owner decision 2026-10-07: "the end of its period plus about 2 days"). The privacy page
+     * says the same number (`counterGraceDays` in apps/web/src/pages/Legal/params.ts).
+     */
+    counterGraceHours: 48,
     /** Lifetime of the first-party `anonId` cookie (SPEC 12). */
     anonCookieMaxAgeDays: 365,
     /**
@@ -147,6 +151,21 @@ export const limits = {
   /** SPEC 9.5 "Cache": saved rules for a structure the same owner already learned. */
   cache: {
     ttlDays: 30,
+  },
+  /**
+   * How long records are kept (owner decision 2026-10-07: the privacy page's promise is what the code does). The privacy page reads these
+   * numbers (apps/web/src/pages/Legal/params.ts) and the API's TTL indexes are built from them (`ensureIndexes`, apps/api/src/db.ts), so
+   * the two can never say different things. A month is counted as `daysPerMonth` days: a record goes a little before the page's "up to N
+   * months", never after. DECISION: the numbers are the owner's proposals (12 and 24 months); change them here only.
+   */
+  retention: {
+    /** `llm_calls`: the AI call records (when, which model, tokens, cost, outcome - never content). */
+    aiCallRecordsMonths: 12,
+    /** `leads` (the business contact form and the paid waitlist) and `feedback`. */
+    formsMonths: 24,
+    /** `events` (sign-in and sign-up records: when, which provider). DECISION: the AI-record period, as the owner decided. */
+    eventsMonths: 12,
+    daysPerMonth: 30,
   },
   /** SPEC 12: sign-in. DECISION: placeholder numbers (SPEC 20.4). */
   auth: {
@@ -325,12 +344,6 @@ export const limits = {
       /** A request is rejected (counted, not stored) when its name, purpose or argument names contain a payload value: only tokens of at least this many characters are compared (numbers are compared whatever their length). */
       minTokenChars: 3,
     },
-    /**
-     * learn-v8 (owner decision 2026-10-04; SPEC 9.2, 21 v12 item 17): an answer may give, for an output column, a second rule that also fits
-     * every row it was shown (`alternatives`). At most one per column and at most this many per answer; the API drops the rest (counted in
-     * the call's `problemCounts.invalidAlternative`, never a repair). Each one costs the browser one more run of the rules on the example.
-     */
-    maxAlternatives: 3,
     /** The API's `function_requests` collection (SPEC 13): how many distinct (hashed) owners one request remembers; past it `distinctOwners` stops growing. */
     functionRequests: {
       maxOwnerHashes: 1000,
@@ -370,10 +383,10 @@ export const limits = {
     },
     /**
      * The time the browser spends on ONE AI answer (engine audit, 2026-10-07; `learn/flow.ts` `judge`): code's fill from every row, the
-     * overfitting guards, the full verification and the alternatives each run the rules on every row of the example - up to 100,000 rows on
+     * overfitting guards and the full verification each run the rules on every row of the example - up to 100,000 rows on
      * the paid tier, where one answer took 17 s (fill 15 s, verification 1 s; a 20,000-row example 2.5 s). Measured between steps (a run of
      * the rules cannot be stopped inside). Past it: the fill settles no further condition (the rest stay as the AI wrote them, like past
-     * `fill.maxConditions`), the alternatives are not tried, and the learn makes no further round and no list round - it ends with the best
+     * `fill.maxConditions`), and the learn makes no further round and no list round - it ends with the best
      * answer so far (`LearnFromExamplesResult.timeBudget`, loop end `timeBudget`): verified only when every row matches, otherwise its
      * differences are "needs your input". The questions at the end (one-time edits, lists) are still asked.
      */
@@ -460,7 +473,8 @@ export const limits = {
       /**
        * Who gets learn-v9 in the app: `off` - nobody (learn-v7, as before); `admin` - the admin accounts only (`ADMIN_EMAILS` /
        * `MICROSOFT_ADMIN_OIDS`); `all` - every AI learn. The API's `LEARN_CHECKS` env var overrides it (`off|admin|all`). The eval turns it
-       * on with `--prompt learn-v9`. DECISION (owner, 2026-10-05): off until the eval passes, then admin first.
+       * on with `--prompt learn-v9`. DECISION (owner, 2026-10-05): off until the eval passes, then admin first. Owner decision
+       * (2026-10-07): the code stays, switched off; re-evaluated by 2026-11-15, after the beta with real testers' files.
        */
       mode: 'off',
     },
@@ -520,3 +534,8 @@ export const limits = {
 } as const;
 
 export type Limits = typeof limits;
+
+/** A retention period of `months` (`limits.retention`), in seconds: the `expireAfterSeconds` of a TTL index. */
+export function retentionSeconds(months: number): number {
+  return months * limits.retention.daysPerMonth * 24 * 60 * 60;
+}

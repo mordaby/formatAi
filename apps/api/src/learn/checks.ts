@@ -18,12 +18,8 @@ import { checkFixedLock, checkFormatLock, checkLimits, completionProduced, formu
 import {
   checkRules,
   fromWire,
-  LearnAlternativeSchema,
   LearnResultSchema,
-  limits,
-  splitAlternatives,
   type CompletePayload,
-  type LearnAlternative,
   type Expr,
   type Format,
   type LearnResult,
@@ -84,8 +80,6 @@ function quoteExprInMessage(rules: LearnResult, path: string, message: string): 
 
 export interface ChecksOptions {
   tier: Tier;
-  /** Whether the answer may give `alternatives` (learn-v8 and later; default true). With false (learn-v7) any it gives is dropped. */
-  alternatives?: boolean;
   /**
    * What a rule that copies particular rows of the example becomes (layer 6, the overfitting guards): `repair` (the default) - an `overfit`
    * problem for the column, so a repair call is asked for a rule that holds for any row; `fallBack` - the learn already had its one repair
@@ -100,10 +94,6 @@ export interface ChecksResult {
    * `assumptions` (SPEC 9.2 layer 6) - or `null` when layer 1 (structure) itself
    * failed, since there is then no valid object to return at all. */
   rules: LearnResult | null;
-  /** learn-v8: the answer's alternatives that passed their own checks (Expr trees, in the answer's own vocabulary). Never part of `rules`. */
-  alternatives: LearnAlternative[];
-  /** How many alternatives the answer gave that were dropped (see `checkAlternatives`) - for the call record's `problemCounts`. */
-  invalidAlternatives: number;
   /** `overfit: 'fallBack'`: how many output columns code reported as unsupported because their rule copied rows - for `problemCounts`. */
   overfitFallbacks: number;
 }
@@ -183,24 +173,8 @@ function toProfileType(t: ProfileType): string {
   return t;
 }
 
-/**
- * Runs every SPEC 9.2 layer, in order, on one raw (wire-shaped) LLM response. learn-v8: the answer's `alternatives` are taken off first,
- * so the answer is checked exactly as before (and an alternative can never cause a repair of it); each is then checked on its own against
- * the checked answer (`checkAlternatives`).
- */
+/** Runs every SPEC 9.2 layer, in order, on one raw (wire-shaped) LLM response. */
 export function runChecks(rawJson: unknown, payload: LearnPayload, opts: ChecksOptions): ChecksResult {
-  const { answer, alternatives } = splitAlternatives(rawJson);
-  const checked = checkAnswer(answer, payload, opts);
-  if (alternatives === undefined || alternatives.length === 0) return { ...checked, alternatives: [], invalidAlternatives: 0 };
-  // DECISION: an answer that did not even parse has nothing to swap an alternative into: they are not checked and not counted (the repair
-  // round's answer gives its own).
-  if (checked.rules === null) return { ...checked, alternatives: [], invalidAlternatives: 0 };
-  return { ...checked, ...checkAlternatives(alternatives, checked.rules, payload, opts) };
-}
-
-type Checked = Pick<ChecksResult, 'problems' | 'rules' | 'overfitFallbacks'>;
-
-function checkAnswer(rawJson: unknown, payload: LearnPayload, opts: ChecksOptions): Checked {
   // ----- Layer 0: formula text -> Expr trees (learn-v5) -----
   // `fromWire` (shared) turns the `{key,value}[]` pairs back into records; the four Expr
   // positions inside are still formula TEXT at that point (the wire schema never had an
@@ -249,8 +223,9 @@ function checkAnswer(rawJson: unknown, payload: LearnPayload, opts: ChecksOption
   return first;
 }
 
-/** SPEC 9.2 layers 2-4 (references, types, limits): what an answer, or an answer with one alternative swapped in, must pass. */
-function staticProblems(rules: LearnResult, payload: LearnPayload, opts: ChecksOptions): RepairProblem[] {
+/** SPEC 9.2 layers 2-7 on an answer that passed layers 0-1 (formula text, structure). */
+function checkParsed(answer: LearnResult, payload: LearnPayload, opts: ChecksOptions): ChecksResult {
+  let rules = answer;
   const problems: RepairProblem[] = [];
 
   // ----- Layer 2: references -----
@@ -277,13 +252,6 @@ function staticProblems(rules: LearnResult, payload: LearnPayload, opts: ChecksO
       }),
     ),
   );
-  return problems;
-}
-
-/** SPEC 9.2 layers 2-7 on an answer that passed layers 0-1 (formula text, structure). */
-function checkParsed(answer: LearnResult, payload: LearnPayload, opts: ChecksOptions): Checked {
-  let rules = answer;
-  const problems: RepairProblem[] = staticProblems(rules, payload, opts);
 
   // ----- Layer 5: format lock (attach mode only; completion mode has its own, 5b below) -----
   if (payload.target) {
@@ -375,85 +343,4 @@ function checkParsed(answer: LearnResult, payload: LearnPayload, opts: ChecksOpt
   }
 
   return { problems, rules: rulesWithLint, overfitFallbacks };
-}
-
-// ---------- learn-v8: the answer's alternatives (owner decision 2026-10-04; SPEC 9.2, 21 v12 item 17) ----------
-
-const problemKey = (p: RepairProblem): string => JSON.stringify(p);
-
-/** What a column's rule does, with every computed column it reads written out (and the value map on what it reads): two ways of writing
- * the same rule compare equal. */
-function ruleOf(rules: LearnResult, id: string, seen: ReadonlySet<string> = new Set()): unknown {
-  const map = rules.transform.valueMaps.find((vm) => vm.column === id)?.map;
-  const computed = rules.transform.computed.find((c) => c.id === id);
-  if (!computed || seen.has(id)) return { col: id, map };
-  const next = new Set(seen).add(id);
-  const walk = (v: unknown): unknown => {
-    if (Array.isArray(v)) return v.map(walk);
-    if (!isRecord(v)) return v;
-    if (typeof v.col === 'string' && Object.keys(v).length === 1) return ruleOf(rules, v.col, next);
-    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
-  };
-  return { type: computed.type, expr: walk(computed.expr), map };
-}
-
-/**
- * Each alternative passes the same layers as the answer - formula text, structure, references, types, limits - as the answer with only
- * that column's rule swapped in (`from` replaced, its new computed columns run after the answer's own). It is dropped (counted, never
- * repaired, never a reason to repair the answer) when it: adds a problem the answer does not have (a formula that does not parse, an id
- * that clashes with one of the answer's, a type that does not fit the column, a limit), is not of the right shape, names a column the
- * answer does not have or gives no rule for, repeats the answer's own rule, is a second one for its column, is past
- * `limits.learn.maxAlternatives`, is for a column completion mode did not ask for (`complete.columns`), or the prompt offers none (learn-v7).
- */
-function checkAlternatives(raw: readonly unknown[], rules: LearnResult, payload: LearnPayload, opts: ChecksOptions): Pick<ChecksResult, 'alternatives' | 'invalidAlternatives'> {
-  const alternatives: LearnAlternative[] = [];
-  if (opts.alternatives === false) return { alternatives, invalidAlternatives: raw.length };
-  let invalid = 0;
-  const asked = payload.complete ? new Set(payload.complete.columns.map((i) => payload.output.columns.find((c) => c.i === i)?.header)) : null;
-  const known = new Set(staticProblems(rules, payload, opts).map(problemKey));
-  for (const candidate of raw) {
-    const accepted = alternatives.length < limits.learn.maxAlternatives ? acceptAlternative(candidate, rules, payload, opts, known, asked, alternatives) : null;
-    if (accepted) alternatives.push(accepted);
-    else invalid++;
-  }
-  return { alternatives, invalidAlternatives: invalid };
-}
-
-function acceptAlternative(
-  candidate: unknown,
-  rules: LearnResult,
-  payload: LearnPayload,
-  opts: ChecksOptions,
-  known: ReadonlySet<string>,
-  asked: ReadonlySet<string | undefined> | null,
-  accepted: readonly LearnAlternative[],
-): LearnAlternative | null {
-  // Layers 0-1: its formula text, then its shape.
-  if (!isRecord(candidate)) return null;
-  const decoded = formulaRulesFromWire({ transform: { computed: candidate.computed } }, { promptOpsOnly: payload.complete === undefined });
-  if (decoded.problems.length > 0) return null;
-  const computed = (decoded.rules as { transform: { computed: unknown } }).transform.computed;
-  const parsed = LearnAlternativeSchema.safeParse({ ...candidate, computed });
-  if (!parsed.success) return null;
-  const alternative = parsed.data;
-
-  // Its column: one the answer gives a rule for (one completion mode asked for), and only one alternative per column.
-  const at = rules.output.columns.findIndex((c) => c.header === alternative.outputColumn);
-  const column = rules.output.columns[at];
-  if (!column || column.from === null) return null;
-  if (asked && !asked.has(column.header)) return null;
-  if (accepted.some((a) => a.outputColumn === alternative.outputColumn)) return null;
-
-  // Layers 2-4 on the answer with only this column's rule swapped in: nothing the answer did not already have.
-  const variant: LearnResult = {
-    ...rules,
-    transform: { ...rules.transform, computed: [...rules.transform.computed, ...alternative.computed] },
-    output: { ...rules.output, columns: rules.output.columns.map((c, i) => (i === at ? { ...c, from: alternative.from } : c)) },
-  };
-  if (!LearnResultSchema.safeParse(variant).success) return null;
-  if (staticProblems(variant, payload, opts).some((p) => !known.has(problemKey(p)))) return null;
-
-  // A different rule, not the answer's own written another way.
-  if (JSON.stringify(ruleOf(variant, alternative.from)) === JSON.stringify(ruleOf(rules, column.from))) return null;
-  return alternative;
 }

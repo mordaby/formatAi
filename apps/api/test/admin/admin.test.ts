@@ -342,14 +342,14 @@ describe.skipIf(!mongoUri)('admin API (MongoDB)', () => {
       expect(body.functionRequests).toEqual({ groups: 0, requests: 0, atThreshold: 0, issueOpened: 0, newInPeriod: 0 });
     });
 
-    it('knows the local learns only from learn_completed events (and says null until there are some)', async () => {
+    it('says the local learns are not tracked (null), whatever the events hold: no code writes learn_completed yet (audit 2026-10-07)', async () => {
       await db.events.insertMany([
         { ts: at('2026-10-04T00:00:00Z'), type: 'learn_completed', props: { path: 'local' } },
         { ts: at('2026-10-04T00:00:00Z'), type: 'learn_completed', props: { path: 'local' } },
         { ts: at('2026-10-04T00:00:00Z'), type: 'learn_completed', props: { path: 'llm' } },
       ]);
       const { body } = await call<AdminOverview>('GET', '/api/admin/overview?days=7');
-      expect(body.learns.local).toBe(2);
+      expect(body.learns.local).toBeNull();
     });
 
     it('counts function requests: groups, times, the ones at the threshold, opened issues, new ones', async () => {

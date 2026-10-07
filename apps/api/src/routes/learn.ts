@@ -460,8 +460,6 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     const res: StepResponse = {
       rules: outcome.rules,
-      // learn-v8: the answer's checked alternatives go to the browser beside it (never into the cache: `saveToCache` keeps the rules only).
-      ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
       verified: outcome.verified,
       problems: outcome.problems,
       ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
@@ -632,7 +630,6 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     const res: RepairResponse = {
       rules: outcome.rules,
-      ...(outcome.alternatives ? { alternatives: outcome.alternatives } : {}),
       // (a list's round, learn-v9: checks instead of rules - the browser answers them and sends the round again with `rounds`)
       ...(outcome.checks ? { checks: outcome.checks, ...(outcome.droppedChecks ? { droppedChecks: outcome.droppedChecks } : {}) } : {}),
       verified: outcome.verified,

@@ -215,7 +215,9 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
 
   const begin = (): void => {
     if (!ready || !input || !output) return;
-    void flow.start({ input, output, masking, ai: 'allowed', target });
+    // The session's own files ("Add to this format" from the Result screen): the user's choices of what is sent go with them.
+    const sameFiles = input === session.input && output === session.output;
+    void flow.start({ input, output, masking, ai: 'allowed', target, ...(sameFiles ? { columnChoices: session.columnChoices } : {}) });
   };
 
   // The AI step was refused for the quota: the out-of-AI-formats dialog says so (and when they come back) over the form, the files kept -
@@ -397,6 +399,7 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
   const signIn = useSignIn();
   const onAi = useOnAi();
   const navigate = useNavigate();
+  const session = useLearnSession();
   const rules = result.rules!;
   // The session ended (a save refused for it): read who is signed in, and sign in again in a new tab - this page, the learn and the edits
   // stay as they are (RequireSignIn keeps the screen while the wall is up).
@@ -437,6 +440,8 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
       persist: () => api.registry.attachSource(format.id, body),
       afterSaved: () => {
         info.editor.markSaved();
+        // The session's own files, saved into this format: the learn page starts empty the next time it shows (owner, 2026-10-07).
+        if (input !== null && input === session.input) session.markSaved();
         if (info.metaStatus === 'differencesAccepted' && ai?.learnId) {
           api.registry
             .learnOutcome(ai.learnId, 'accepted')

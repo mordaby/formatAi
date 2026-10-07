@@ -87,6 +87,8 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     conversionId: source?.conversionId ?? '',
     version: source?.version ?? 0,
     onSaved: (res) => {
+      // (the learn page starts empty the next time it shows: these files are saved)
+      session.markSaved();
       const next = { ...kept.source!, version: res.conversion.version };
       kept.source = next;
       setSource(next);
@@ -212,6 +214,8 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
       afterSaved: (res) => {
         // What is on screen is what was saved: "Unsaved changes" goes, and leaving no longer asks.
         info.editor.markSaved();
+        // ... and the learn page starts empty the next time it shows (owner, 2026-10-07): the files did their job.
+        session.markSaved();
         // From here on the screen edits that source: an edit of the output side is an edit of the format, and the next save is a new version.
         info.editor.store.setFormat({ sourceCount: 1 });
         // ... and of its source: an edit of the input side changes every format that source feeds (said only when that is more than one).

@@ -187,6 +187,10 @@ export interface ConversionDoc {
   updatedAt: Date;
 }
 
+/**
+ * SPEC 13 `events`. Only `signed_up` / `signed_in` are written today (auth/routes.ts). TTL-expired `limits.retention.eventsMonths` after
+ * `ts` (owner decision 2026-10-07; the privacy page says so).
+ */
 export interface EventDoc {
   _id?: ObjectId;
   ts: Date;
@@ -202,6 +206,7 @@ export type LlmCallPurpose = 'learn' | 'repair' | 'escalation' | 'check';
 
 export interface LlmCallDoc {
   _id?: ObjectId;
+  /** When the call was made. TTL-expired `limits.retention.aiCallRecordsMonths` later (the privacy page's promise). */
   ts: Date;
   userId?: ObjectId;
   anonId?: string;
@@ -228,16 +233,17 @@ export interface LlmCallDoc {
   cacheHit: boolean;
   /** SPEC 9.2: counts only, never formula text or any other payload/response content -
    * so the product can track things like "how often models write invalid formulas"
-   * straight from the ledger. learn-v8: `invalidAlternative`, the alternatives an answer gave that the checks dropped (absent on documents
-   * written before it existed). */
-  problemCounts: Record<RepairProblem['kind'], number> & { invalidAlternative?: number };
+   * straight from the ledger. */
+  problemCounts: Record<RepairProblem['kind'], number>;
   /** A `check` call (AI code checks): how many checks it asked that the API kept, and how many it dropped. Counts only; absent on every other call. */
   checks?: { asked: number; dropped: number };
 }
 
 /**
- * Keys look like `user:<id>:<yyyy-mm>`, `anon:<id>:<yyyy-mm-dd>` or `ip:<hash>:<yyyy-mm-dd>`.
- * `expiresAt` is set for anon/ip keys (TTL-expired) and left unset for user keys.
+ * Keys look like `user:<id>:aiLearns:<yyyy-mm>`, `ip:<hash>:contact:<yyyy-mm-dd>` or `aiFail:<owner>:<group>` (protection/keys.ts).
+ * Every counter is written with `expiresAt` (owner decision 2026-10-07) and TTL-expired at it: the end of its period plus
+ * `limits.protection.counterGraceHours`, or the end of its own window. Optional in the type only because a counter written before then may
+ * lack it until `backfillCounterExpiry` (db.ts) has run.
  */
 export interface UsageCounterDoc {
   _id?: ObjectId;
@@ -325,6 +331,7 @@ export interface FunctionRequestDoc {
  * name, email, company, message) and `waitlist` (the paid waitlist: email, message, and `trigger` - the limit or the hint it was opened from).
  * Only what was typed into the form, the path of the page it was sent from, and who sent it (`anonId` always when there is a cookie; `userId`
  * on the waitlist when signed in). NEVER an IP (the per-IP limits keep a keyed hash in `usage_counters`, not here), a file name, a rule or a value.
+ * TTL-expired `limits.retention.formsMonths` after `createdAt` (as `feedback` is; the privacy page's promise).
  */
 export interface LeadDoc {
   _id?: ObjectId;

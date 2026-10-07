@@ -26,21 +26,36 @@ function defineStoreContract(kit: StoreKit): void {
     expect(Math.max(...totals)).toBe(27);
   });
 
-  it('keeps user-style counters (no expiry) and TTL counters independent', async () => {
-    const { store } = await fresh();
+  it('writes every counter with an expiry: set on each write, or kept by a take-back (owner decision 2026-10-07)', async () => {
+    const handle = await fresh();
+    const { store } = handle;
+    const first = new Date(Date.now() + 60_000);
+    const later = new Date(Date.now() + 120_000);
     const a = key();
+    await store.incrementCounter(a, 1, first);
+    expect(await handle.counterExpiry(a)).toEqual(first);
+    expect(await store.incrementCounter(a, 1, later)).toBe(2);
+    expect(await handle.counterExpiry(a)).toEqual(later); // a write moves it
+
+    // keepExpiry (a take-back inside a window) leaves the expiry the counter has...
+    expect(await store.incrementCounter(a, -1, first, { keepExpiry: true })).toBe(1);
+    expect(await handle.counterExpiry(a)).toEqual(later);
+    // ...and gives one to a counter that has none
     const b = key();
-    await store.incrementCounter(a, 1);
-    await store.incrementCounter(b, 5, new Date(Date.now() + 60_000));
-    expect(await store.incrementCounter(a, 1)).toBe(2);
-    expect(await store.incrementCounter(b, 0)).toBe(5);
+    expect(await store.incrementCounter(b, -1, first, { keepExpiry: true })).toBe(-1);
+    expect(await handle.counterExpiry(b)).toEqual(first);
+
+    const c = key();
+    expect(await store.transitionCounter(c, 0, 1, first)).toBe(true);
+    expect(await handle.counterExpiry(c)).toEqual(first);
+    expect(await handle.countersWithoutExpiry()).toEqual([]);
   });
 
   it('reads a counter (0 when absent) without creating it', async () => {
     const { store } = await fresh();
     const k = key();
     expect(await store.getCounter(k)).toBe(0);
-    await store.incrementCounter(k, 3);
+    await store.incrementCounter(k, 3, new Date(Date.now() + 60_000));
     expect(await store.getCounter(k)).toBe(3);
     expect(await store.getCounter(key())).toBe(0);
   });
@@ -48,19 +63,20 @@ function defineStoreContract(kit: StoreKit): void {
   it('moves a state counter by compare-and-set, at most once per transition (SPEC 21 v5)', async () => {
     const { store } = await fresh();
     const k = key();
+    const exp = new Date(Date.now() + 60_000);
     // An absent counter is state 0.
-    expect(await store.transitionCounter(k, 1, 2)).toBe(false);
+    expect(await store.transitionCounter(k, 1, 2, exp)).toBe(false);
     expect(await store.getCounter(k)).toBe(0);
-    expect(await store.transitionCounter(k, 0, 1)).toBe(true);
+    expect(await store.transitionCounter(k, 0, 1, exp)).toBe(true);
     expect(await store.getCounter(k)).toBe(1);
-    expect(await store.transitionCounter(k, 0, 1)).toBe(false); // already moved
-    expect(await store.transitionCounter(k, 1, 2, new Date(Date.now() + 60_000))).toBe(true);
-    expect(await store.transitionCounter(k, 1, 2)).toBe(false);
+    expect(await store.transitionCounter(k, 0, 1, exp)).toBe(false); // already moved
+    expect(await store.transitionCounter(k, 1, 2, new Date(Date.now() + 120_000))).toBe(true);
+    expect(await store.transitionCounter(k, 1, 2, exp)).toBe(false);
     expect(await store.getCounter(k)).toBe(2);
 
     // Only one of many racing callers wins the same transition.
     const race = key();
-    const wins = await Promise.all(Array.from({ length: 12 }, () => store.transitionCounter(race, 0, 1)));
+    const wins = await Promise.all(Array.from({ length: 12 }, () => store.transitionCounter(race, 0, 1, exp)));
     expect(wins.filter(Boolean)).toHaveLength(1);
     expect(await store.getCounter(race)).toBe(1);
   });

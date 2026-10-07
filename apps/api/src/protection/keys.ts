@@ -1,7 +1,18 @@
 // SPEC 13 `usage_counters` keys and the per-tier AI-learn quota (SPEC 11, 9.5, 21 v5). Pure functions: the
 // clock and the identity come in as arguments, so all of it is unit-testable.
 import { limits, tiers, type AiLearnPeriod, type LimitCode, type Tier } from '@formatai/shared';
+import { dailyCounterExpiry, lifetimeCounterExpiry, monthlyCounterExpiry } from './expiry.js';
 import type { Identity } from './identity.js';
+
+// When each counter expires lives in expiry.ts (no request types); re-exported here, next to the keys.
+export {
+  counterExpiryOfKey,
+  dailyCounterExpiry,
+  endOfUtcDay,
+  endOfUtcMonth,
+  lifetimeCounterExpiry,
+  monthlyCounterExpiry,
+} from './expiry.js';
 
 /** UTC day, `yyyy-mm-dd`. Counters and budgets both roll over at UTC midnight. */
 export function dayKey(now: Date): string {
@@ -13,16 +24,6 @@ export function monthKey(now: Date): string {
   return now.toISOString().slice(0, 7);
 }
 
-/** The first instant of the UTC day after `now`. */
-export function endOfUtcDay(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-}
-
-/** When a daily counter can be TTL-expired: its day is over, plus a grace period. */
-export function dailyCounterExpiry(now: Date): Date {
-  return new Date(endOfUtcDay(now).getTime() + limits.protection.dailyCounterGraceHours * 60 * 60 * 1000);
-}
-
 /** The rounds of the learning loop (browser-triggered repairs) one learn has used (SPEC 9.3, `limits.llm.browserRepairCalls`). */
 export const repairKey = (learnUuid: string): string => `repair:${learnUuid}`;
 
@@ -31,7 +32,7 @@ export const stepKey = (learnUuid: string): string => `step:${learnUuid}`;
 
 /**
  * A signed-in user's AI-learn counter for the period `now` falls in (SPEC 13, 21 v5): `lifetime` has no date
- * part (and never expires), `month` is `yyyy-mm`, `day` is `yyyy-mm-dd`.
+ * part (see `lifetimeCounterExpiry`), `month` is `yyyy-mm`, `day` is `yyyy-mm-dd`.
  */
 export function aiLearnsKey(userId: string, period: Exclude<AiLearnPeriod, 'unlimited'>, now: Date): string {
   const base = `user:${userId}:aiLearns`;
@@ -84,10 +85,17 @@ export interface LearnCounterSpec {
   key: string;
   /** The most this counter may reach; the reservation that would exceed it is refused. */
   limit: number;
-  /** TTL for counters that expire (a daily one); lifetime and monthly user counters never do (SPEC 13). */
-  expiresAt?: Date;
+  /** When the counter is TTL-expired: the end of its period plus the grace (owner decision 2026-10-07: every counter has one). */
+  expiresAt: Date;
   /** What the client is told when this counter is the one that refuses. */
   limitCode: LimitCode;
+}
+
+/** When the AI-learn counter of `period` can be TTL-expired. */
+export function aiLearnsExpiry(period: Exclude<AiLearnPeriod, 'unlimited'>, now: Date): Date {
+  if (period === 'day') return dailyCounterExpiry(now);
+  if (period === 'month') return monthlyCounterExpiry(now);
+  return lifetimeCounterExpiry(now);
 }
 
 export interface AiQuota {
@@ -109,7 +117,7 @@ export function aiQuotaOf(identity: Extract<Identity, { kind: 'user' }>, now: Da
     spec: {
       key: aiLearnsKey(identity.userId, period, now),
       limit: identity.learnLimitOverride ?? count,
-      ...(period === 'day' ? { expiresAt: dailyCounterExpiry(now) } : {}),
+      expiresAt: aiLearnsExpiry(period, now),
       limitCode: 'aiLearns',
     },
   };

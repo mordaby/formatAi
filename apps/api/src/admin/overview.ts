@@ -33,7 +33,7 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
   const threshold = limits.learn.functionRequests.issueThreshold;
   const realCalls = { ts: { $gte: since }, cacheHit: false };
 
-  const [tiers, newUsers, activeUsers, learnRows, cacheLearns, byDayModel, problemRows, formats, formatsNew, ranInPeriod, runs, requestRows, eventRows, localEvents, fallbackCalls] =
+  const [tiers, newUsers, activeUsers, learnRows, cacheLearns, byDayModel, problemRows, formats, formatsNew, ranInPeriod, runs, requestRows, eventRows, fallbackCalls] =
     await Promise.all([
       db.users.aggregate<{ _id: string; n: number }>([{ $group: { _id: '$tier', n: { $sum: 1 } } }]).toArray(),
       db.users.countDocuments({ createdAt: { $gte: since } }),
@@ -104,7 +104,6 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
       db.events
         .aggregate<{ _id: string; n: number }>([{ $match: { ts: { $gte: since } } }, { $group: { _id: '$type', n: { $sum: 1 } } }, { $sort: { n: -1, _id: 1 } }, { $limit: 50 }])
         .toArray(),
-      db.events.countDocuments({ ts: { $gte: since }, type: 'learn_completed', 'props.path': 'local' }),
       // SPEC 9.6: the calls the fallback provider made (they are in the per-model rows under the fallback's own model too).
       db.llmCalls.countDocuments({ ...realCalls, fallback: true }),
     ]);
@@ -114,9 +113,6 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
   const paid = tierCount('paid');
 
   const learn = learnRows[0] ?? { ai: 0, verified: 0, answered: 0 };
-  // "Free" learns done in the browser leave no ledger row: they are only known from `learn_completed` events, and while none exist the
-  // honest answer is "not recorded", not zero.
-  const learnEvents = eventRows.find((e) => e._id === 'learn_completed')?.n ?? 0;
 
   // ---- the model calls: by day and by model ----
   const dayAcc = new Map<string, { calls: number; cost: number; priced: number }>(dayList.map((d) => [d, { calls: 0, cost: 0, priced: 0 }]));
@@ -168,7 +164,9 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
       aiFailed: learn.answered - learn.verified,
       aiErrored: learn.ai - learn.answered,
       cache: cacheLearns,
-      local: learnEvents > 0 ? localEvents : null,
+      // Learns solved in the browser leave no ledger row, and no code writes the `learn_completed` event SPEC 13 describes (audit
+      // 2026-10-07): not tracked yet, which the page says - never a count that is always 0.
+      local: null,
     },
     conversions: { formats, formatsNew, ranInPeriod, runsAllTime: runs[0]?.runs ?? 0 },
     llm: {

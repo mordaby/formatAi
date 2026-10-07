@@ -1,6 +1,6 @@
 # Proposal: the AI checks its ideas with code before it answers
 
-Status: **approved, being built** (2026-10-05). The owner took every recommendation of section 9 (the bold options), all five checks from the start, an end-to-end test on adversarial cases with Claude via the CLI, and only a small one with gpt-5-mini. It is the after-MVP item "the AI asks code for rows" of
+Status: **built, switched off** (learn-v9; `limits.learn.checks.mode` is `off`, `LEARN_CHECKS` overrides it). Owner decision 2026-10-07: the code stays, off, and is **re-evaluated by 2026-11-15**, after the beta with real testers' files. Approved 2026-10-05: the owner took every recommendation of section 9 (the bold options), all five checks from the start, an end-to-end test on adversarial cases with Claude via the CLI, and only a small one with gpt-5-mini. It is the after-MVP item "the AI asks code for rows" of
 `learning-loop.md` (7.4), made concrete. Decisions to take are in section 9, my recommendation in bold.
 
 **In one paragraph.** Today the AI gets one fixed picture of the example - about 12 masked rows plus the hints code chose for it -

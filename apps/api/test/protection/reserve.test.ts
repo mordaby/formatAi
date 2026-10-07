@@ -3,9 +3,10 @@ import type { LearnCounterSpec } from '../../src/protection/keys.js';
 import { reserveLearn } from '../../src/protection/reserve.js';
 import { createMemoryStore, type ProtectionStore } from '../../src/protection/store.js';
 
+const expiresAt = new Date(Date.now() + 24 * 3_600_000);
 const specs = (limitA: number, limitB: number): LearnCounterSpec[] => [
-  { key: 'anon:A:d', limit: limitA, limitCode: 'learnsPerDay' },
-  { key: 'ip:B:d', limit: limitB, limitCode: 'learnsPerDay' },
+  { key: 'anon:A:d', limit: limitA, expiresAt, limitCode: 'learnsPerDay' },
+  { key: 'ip:B:d', limit: limitB, expiresAt, limitCode: 'learnsPerDay' },
 ];
 
 describe('reserveLearn (SPEC 9.5: check before the LLM, count atomically)', () => {

@@ -8,8 +8,6 @@
 //   - who "we" are (`webConfig.legal.operator`), the contact address, the court / jurisdiction (`webConfig.legal.jurisdiction`), the hosting
 //     and database providers (`webConfig.legal.hosting`), and the accessibility coordinator's details (`webConfig.legal.accessibility`) -
 //     each is a visible [placeholder] until filled in;
-//   - the retention periods (`webConfig.legal.retentionMonths`): they are PROPOSALS, and no job deletes old `llm_calls`, `leads` or `feedback`
-//     documents yet - build the deletion or change the numbers;
 //   - what Israeli privacy law requires of a service like this (database registration, an information-security duty, the handling of
 //     requests, whether the cookie notice SPEC 15 asks for is needed beyond this page - the cookies used are strictly necessary ones only,
 //     so this build has NO cookie banner: DECISION for the owner / the lawyer);
@@ -19,7 +17,8 @@
 //     and no screen-reader pass has been made. Say more only when it is true.
 //
 // Tokens in a string: `{name}` is filled from `LegalParams` (config and limits - never typed twice); `[text](/path)` is an internal link; a bare
-// email address becomes a mailto link.
+// email address becomes a mailto link. The retention numbers (`limits.retention`, `limits.protection.counterGraceHours`, ...) are the ones the
+// API's TTL indexes are built from (apps/api/src/db.ts `ensureIndexes`), so the page says what the database does.
 import type { Lang } from './core';
 
 export type LegalPageId = 'privacy' | 'terms' | 'accessibility';
@@ -82,16 +81,17 @@ const privacyEn: LegalDoc = {
         },
         {
           ul: [
-            'the column names, and a profile of each column: its type, its shape, how many cells are empty, and its smallest and largest value;',
+            'the column names and the sheet names, and a profile of each column: its type, its shape, how many cells are empty, and its smallest and largest value;',
             'a sample of rows: up to {pairs} pairs of an input row and the output row made from it, and up to {dropped} rows the example left out. If the first answer does not match every row of your example, up to {rounds} more requests carry some of the rows it got wrong. In one learn, at most {rows} rows leave your computer in all;',
             'what your computer has already worked out, for example which columns are copied or calculated;',
             'if the AI asks to check an idea, your computer answers with counts and ranges from your example, and at most a few more rows, masked like the sample rows, within the same limit of {rows} rows.',
           ],
         },
         {
-          p: 'Masking is on by default. With masking on, names, ID numbers and other text in the sample rows are replaced with look-alike values of the same shape before anything leaves your computer. Numbers, dates, column names and "no value" placeholders (such as N/A or a dash) are sent as they are, because the rules cannot be learned without them. The key that maps the look-alike values back stays in your browser. If you turn masking off, the sample rows are sent as they are.',
+          p: 'Masking is on by default. With masking on, names and other text in the sample rows are replaced with look-alike values of the same shape before anything leaves your computer, and so are identifier numbers: ID, phone, customer, account, policy and order numbers, and card and bank account numbers, recognized by the shape of the value or by the name of the column. Other numbers (such as amounts, quantities and rates), dates, column and sheet names, and "no value" placeholders (such as N/A or a dash) are sent as they are, because the rules cannot be learned without them. The key that maps the look-alike values back stays in your browser. If you turn masking off, the sample rows are sent as they are.',
         },
         { p: 'The "See what we send" panel on the home page shows the exact data, before and after it is sent.' },
+        { p: 'There you can see the exact rows before learning, and choose for each column whether its values are hidden (replaced with look-alike values, as above) or sent as they are.' },
         { p: 'Our server passes the request to the AI provider and returns the answer. It does not keep the sample rows. Who the providers are and what they do with the data is under "Service providers".' },
       ],
     },
@@ -104,10 +104,11 @@ const privacyEn: LegalDoc = {
             "Your account: the name, email address and picture your Google or Microsoft account gives us, that provider's identifier for you, your language and your plan.",
             "Your saved formats and sources, with your edits and earlier versions. Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Never rows from your files.",
             'Usage counts, for example how many AI formats you used this month and how many formats you saved.',
+            'A record of each sign-in: when it happened, with which provider (Google or Microsoft), and the anonymous id of the browser it came from.',
             'AI call records: when a call was made, which model, how many tokens it used, what it cost and whether it worked. Counts only, never the content of a request or an answer.',
             'A short-lived copy of the rules the AI wrote for a given structure of files, for you only, for up to {cacheDays} days, so the same structure is not learned twice. Only when masking was on and the rules hold no text values; with masking off nothing is kept.',
             'What you send us in a form on this site (the business contact form, the paid waitlist, feedback): your name, email, company and message as you typed them, and the path of the page you were on, for example /formats. A form never carries file contents or rules.',
-            'Abuse protection: counters kept under a scrambled (hashed) version of your IP address, which cannot be turned back into the address, for about two days. We do not store your IP address in a form or in your account.',
+            'Abuse protection: counters kept under a scrambled (hashed) version of your IP address, which cannot be turned back into the address, until about {counterGraceDays} days after the day they count. We do not store your IP address in a form or in your account.',
           ],
         },
         { p: 'We do not store your files, the rows in them, file names or cell values. Our logs do not contain them either.' },
@@ -162,10 +163,12 @@ const privacyEn: LegalDoc = {
           ul: [
             'Your account and saved formats: until you ask us to delete them or close your account. You can also delete a saved format yourself on the My formats page at any time.',
             'AI call records: up to {llmMonths} months.',
+            'Sign-in records: up to {eventsMonths} months.',
             'What you sent in a form (contact, waitlist, feedback): up to {formsMonths} months, or until you ask us to delete it.',
-            'The rules cache: {cacheDays} days. Limit counters: about two days. Sessions: {sessionDays} days after last use.',
+            'The rules cache: {cacheDays} days. Usage and limit counters: until about {counterGraceDays} days after the end of the day or month they count. Sessions: {sessionDays} days after last use.',
           ],
         },
+        { p: 'A record with a period above is deleted by the database itself when its period is over.' },
       ],
     },
     {
@@ -237,16 +240,17 @@ const privacyHe: LegalDoc = {
         },
         {
           ul: [
-            'שמות העמודות ופרופיל של כל עמודה: הסוג, הצורה, כמה תאים ריקים, והערך הקטן והגדול ביותר;',
+            'שמות העמודות ושמות הגיליונות, ופרופיל של כל עמודה: הסוג, הצורה, כמה תאים ריקים, והערך הקטן והגדול ביותר;',
             'דוגמה של שורות: עד {pairs} זוגות של שורת קלט ושורת הפלט שנוצרה ממנה, ועד {dropped} שורות שהדוגמה השמיטה. אם התשובה הראשונה לא תואמת כל שורה בדוגמה שלכם, עד {rounds} בקשות נוספות נושאות חלק מהשורות שהיא טעתה בהן. בלמידה אחת יוצאות מהמחשב שלכם לכל היותר {rows} שורות בסך הכול;',
             'מה שהמחשב שלכם כבר הבין, למשל אילו עמודות מועתקות או מחושבות;',
             'אם ה-AI מבקש לבדוק רעיון, המחשב שלכם עונה בספירות ובטווחים מתוך הדוגמה שלכם, ולכל היותר בעוד כמה שורות, מוסתרות כמו שורות הדוגמה, בתוך אותה מגבלה של {rows} שורות.',
           ],
         },
         {
-          p: 'הסתרת הנתונים פועלת כברירת מחדל. כשהיא פועלת, שמות, מספרי זהות וטקסט אחר בשורות הדוגמה מוחלפים בערכים מדומים באותה צורה לפני שמשהו יוצא מהמחשב שלכם. מספרים, תאריכים, שמות עמודות ומילים שמסמנות ״אין ערך״ (כמו N/A או מקף) נשלחים כפי שהם, כי אי אפשר ללמוד את הכללים בלעדיהם. המפתח שמחזיר את הערכים המדומים למקור נשאר בדפדפן שלכם. אם מכבים את ההסתרה, שורות הדוגמה נשלחות כפי שהן.',
+          p: 'הסתרת הנתונים פועלת כברירת מחדל. כשהיא פועלת, שמות וטקסט אחר בשורות הדוגמה מוחלפים בערכים מדומים באותה צורה לפני שמשהו יוצא מהמחשב שלכם, וכך גם מספרים מזהים: מספרי זהות, טלפון, לקוח, חשבון, פוליסה והזמנה, ומספרי כרטיס וחשבון בנק, שמזוהים לפי צורת הערך או לפי שם העמודה. מספרים אחרים (כמו סכומים, כמויות ושיעורים), תאריכים, שמות העמודות והגיליונות ומילים שמסמנות ״אין ערך״ (כמו N/A או מקף) נשלחים כפי שהם, כי אי אפשר ללמוד את הכללים בלעדיהם. המפתח שמחזיר את הערכים המדומים למקור נשאר בדפדפן שלכם. אם מכבים את ההסתרה, שורות הדוגמה נשלחות כפי שהן.',
         },
         { p: 'החלונית ״מה אנחנו שולחים״ בדף הבית מציגה את הנתונים המדויקים, לפני השליחה ואחריה.' },
+        { p: 'שם אפשר לראות את השורות המדויקות לפני הלמידה, ולבחור לכל עמודה אם הערכים שלה מוסתרים (מוחלפים בערכים מדומים, כמו למעלה) או נשלחים כפי שהם.' },
         { p: 'השרת שלנו מעביר את הבקשה לספק ה-AI ומחזיר את התשובה. הוא לא שומר את שורות הדוגמה. מי הספקים ומה הם עושים עם הנתונים כתוב תחת ״ספקי שירות״.' },
       ],
     },
@@ -259,10 +263,11 @@ const privacyHe: LegalDoc = {
             'החשבון שלכם: השם, כתובת האימייל והתמונה שחשבון Google או Microsoft שלכם נותן לנו, המזהה שלכם אצל הספק הזה, השפה והתוכנית שלכם.',
             'הפורמטים והמקורות ששמרתם, עם העריכות שלכם וגרסאות קודמות. פורמטים שמורים כוללים את שמות העמודות ואת הכללים שאישרתם, כולל הערכים הקבועים שהכללים האלה משתמשים בהם - כמו תוויות, קודים ורשימות המרה, וערכים שהקלדתם בפלט הדוגמה שלכם. לפני השמירה אנחנו שואלים אתכם על רשימות שהועתקו מהדוגמה שלכם ועל מספרי זהות, מספרי טלפון, כתובות אימייל ומספרי כרטיס או חשבון בנק שאנחנו מזהים בהם. אנא אל תשתמשו בפרטים אישיים אחרים, כמו שם של אדם, כתווית בכלל שאתם שומרים. לעולם לא שורות מהקבצים שלכם.',
             'ספירות שימוש, למשל כמה פורמטים עם AI השתמשתם החודש וכמה פורמטים שמרתם.',
+            'רישום של כל התחברות: מתי היא הייתה, דרך איזה ספק (Google או Microsoft), והמזהה האנונימי של הדפדפן שממנו היא הגיעה.',
             'רישומי קריאות AI: מתי בוצעה קריאה, באיזה מודל, כמה אסימונים היא השתמשה, כמה עלתה והאם הצליחה. ספירות בלבד, לעולם לא תוכן של בקשה או של תשובה.',
             'עותק קצר מועד של הכללים שה-AI כתב למבנה קבצים מסוים, רק עבורכם, עד {cacheDays} ימים, כדי שאותו מבנה לא ילמד פעמיים. רק כשהסתרת הנתונים פעלה והכללים לא מכילים ערכי טקסט; כשהיא כבויה לא נשמר דבר.',
             'מה ששלחתם בטופס באתר (טופס יצירת הקשר לעסקים, רשימת ההמתנה לתוכנית בתשלום, משוב): השם, האימייל, החברה וההודעה כפי שהקלדתם, והנתיב של הדף שהייתם בו, למשל /formats. טופס אף פעם לא נושא תוכן של קבצים או כללים.',
-            'הגנה מפני שימוש לרעה: מונים ששמורים תחת גרסה מעורבלת (גיבוב) של כתובת ה-IP שלכם, שאי אפשר להחזיר לכתובת, כיומיים. אנחנו לא שומרים את כתובת ה-IP בטופס או בחשבון שלכם.',
+            'הגנה מפני שימוש לרעה: מונים ששמורים תחת גרסה מעורבלת (גיבוב) של כתובת ה-IP שלכם, שאי אפשר להחזיר לכתובת, עד כ-{counterGraceDays} ימים אחרי היום שהם סופרים. אנחנו לא שומרים את כתובת ה-IP בטופס או בחשבון שלכם.',
           ],
         },
         { p: 'אנחנו לא שומרים את הקבצים שלכם, את השורות שבהם, שמות קבצים או ערכי תאים. גם יומני המערכת שלנו לא כוללים אותם.' },
@@ -317,10 +322,12 @@ const privacyHe: LegalDoc = {
           ul: [
             'החשבון והפורמטים השמורים: עד שתבקשו למחוק אותם או לסגור את החשבון. אפשר גם למחוק פורמט שמור בעצמכם בדף ״הפורמטים שלי״ בכל עת.',
             'רישומי קריאות AI: עד {llmMonths} חודשים.',
+            'רישומי התחברות: עד {eventsMonths} חודשים.',
             'מה ששלחתם בטופס (יצירת קשר, רשימת המתנה, משוב): עד {formsMonths} חודשים, או עד שתבקשו למחוק.',
-            'מטמון הכללים: {cacheDays} ימים. מוני מגבלות: כיומיים. התחברויות: {sessionDays} ימים אחרי השימוש האחרון.',
+            'מטמון הכללים: {cacheDays} ימים. מוני שימוש ומגבלות: עד כ-{counterGraceDays} ימים אחרי סוף היום או החודש שהם סופרים. התחברויות: {sessionDays} ימים אחרי השימוש האחרון.',
           ],
         },
+        { p: 'רישום שיש לו תקופה ברשימה למעלה נמחק על ידי מסד הנתונים עצמו כשהתקופה שלו מסתיימת.' },
       ],
     },
     {

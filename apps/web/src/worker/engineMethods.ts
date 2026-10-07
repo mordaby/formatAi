@@ -12,13 +12,14 @@ import {
   learnFromExamples,
   nonEmptySheets,
   readWorkbook,
+  sendPreview as sendPreviewOf,
   sentColumns,
   sniffDelimitedText,
   type LearnCallResult,
 } from '@formatai/engine';
 import { limits } from '@formatai/shared';
 import type { AnalysisProgress, PairAnalysis } from '@formatai/engine';
-import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress } from './engineApi';
+import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress, SendPreviewArgs, SendPreviewOutput, SendPreviewProgress } from './engineApi';
 import type { LiveCheckArgs, LiveCheckResult, LoadExampleArgs, LoadExampleOutput, StaticChecksArgs, StaticProblem } from './editorApi';
 import { checkExample, exampleInputOf, getExample, rememberExample, runStaticChecks } from './liveCheck';
 import { convertMethods } from './convertMethods';
@@ -71,6 +72,8 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     ...(args.tryAnyway ? { tryAnyway: true } : {}),
     ...(args.ai ? { ai: args.ai } : {}),
     ...(args.complete ? { complete: args.complete } : {}),
+    // "See what we send": the user's choices reach every request of the learn through the analysis (engine `classifyColumns`).
+    ...(args.columnChoices ? { userColumnChoices: args.columnChoices } : {}),
     onProgress: (p: AnalysisProgress) => emit({ phase: 'checking', stage: p.stage, fraction: p.fraction }),
     onAnalysis: (a) => {
       analysis = a;
@@ -108,11 +111,9 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
   // Its input's columns come with it: the editor offers the ones no rule uses yet (headers only; the file stays here).
   if (!analysis || !result.rules) return result;
   // The columns the example fits more than one rule for are a question for the user, whatever path built the rules (the free engine's, or the AI step's):
-  // a constant the input could write too, and - after an AI answer - a second rule the AI step gave that also fits every row (learn-v8, SPEC 21 v12
-  // item 17; its check is already in the rules) and the day/month order of a text date that no value settles (SPEC 21 v12 item 16).
-  // A column asks one question: the first one stands (the engine adds no alternative question on a column the free engine asks about).
-  const alternatives = (result.alternatives ?? []).flatMap((a) => (a.question ? [a.question] : []));
-  const ambiguous = [...ambiguousColumns(analysis), ...alternatives, ...dayMonthQuestions(result.rules, result.ambiguities ?? [])].filter((q, i, all) => all.findIndex((x) => x.header === q.header) === i);
+  // a constant the input could write too, and the day/month order of a text date that no value settles (SPEC 21 v12 item 16).
+  // A column asks one question: the first one stands.
+  const ambiguous = [...ambiguousColumns(analysis), ...dayMonthQuestions(result.rules, result.ambiguities ?? [])].filter((q, i, all) => all.findIndex((x) => x.header === q.header) === i);
   return {
     ...result,
     exampleId: rememberExample(analysis, args.keepExampleId),
@@ -120,6 +121,36 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     exampleOutputColumns: analysis.output.columnCount,
     ...(ambiguous.length > 0 ? { ambiguous } : {}),
   };
+}
+
+// ---------- "See what we send" before the learn (owner, 2026-10-07) ----------
+
+/** The example the preview was built from (only the last one): flipping a switch builds the request again from it, without the files. */
+let previewExample: { id: string; analysis: PairAnalysis } | undefined;
+
+/**
+ * The request the AI step would get for these files: the engine's `sendPreview` - the learn's own payload builder and masker, with the
+ * session's key (`maskingKey`), so the fakes shown are the fakes sent. The files are read and analyzed like a Home learn's (no target).
+ */
+async function sendPreview(args: SendPreviewArgs, ctx: MethodContext): Promise<SendPreviewOutput> {
+  let held = args.previewId !== undefined && previewExample?.id === args.previewId ? previewExample : undefined;
+  if (!held) {
+    if (!args.input || !args.output) return { ok: false, reason: 'gone' };
+    const emit = (p: SendPreviewProgress): void => ctx.progress(p);
+    const inputWb = await readWorkbook(new Uint8Array(args.input.bytes), args.input.name);
+    const outputWb = await readWorkbook(new Uint8Array(args.output.bytes), args.output.name);
+    const outputSniff = outputWb.fileType === 'csv' || outputWb.fileType === 'txt' ? sniffDelimitedText(new Uint8Array(args.output.bytes)) : undefined;
+    const analysis = analyzePair(inputWb, outputWb, { ...(outputSniff ? { outputSniff } : {}), onProgress: (p: AnalysisProgress) => emit({ stage: p.stage, fraction: p.fraction }) });
+    if (!analysis.ok) return { ok: false, reason: 'analysisFailed' };
+    held = previewExample = { id: crypto.randomUUID(), analysis };
+  }
+  const preview = sendPreviewOf(held.analysis, {
+    tier: args.tier,
+    masking: args.masking,
+    ...(args.masking ? { key: maskingKey() } : {}),
+    ...(args.choices ? { userColumnChoices: args.choices } : {}),
+  });
+  return { ok: true, previewId: held.id, ...preview };
 }
 
 /** The AI step asked checks instead of answering (AI code checks, `LearnResponse.checks`): there are no rules yet. */
@@ -210,4 +241,4 @@ function staticChecks(args: StaticChecksArgs): StaticProblem[] {
   return runStaticChecks(args.rules, { tier: args.tier, ...(args.format ? { format: args.format } : {}) });
 }
 
-export const engineMethods = { learn, convert, inspect, loadExample, liveCheck, fullCheck, staticChecks, ...convertMethods } satisfies MethodMap;
+export const engineMethods = { learn, sendPreview, convert, inspect, loadExample, liveCheck, fullCheck, staticChecks, ...convertMethods } satisfies MethodMap;

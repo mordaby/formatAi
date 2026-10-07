@@ -240,7 +240,7 @@ describe('learn() without learn-v9 is unchanged', () => {
     const outcome = await learn(basicPayload(), { tier: 'paid', env, complete: completeOf(fake), rounds: [round(1)] });
     expect(outcome.verified).toBe(true);
     expect(fake.calls[0]!.system).toBe(LEARN_SYSTEM_PROMPT_V7);
-    expect(fake.calls[0]!.schema).toEqual(learnResultWireJsonSchema({ alternatives: false }));
+    expect(fake.calls[0]!.schema).toEqual(learnResultWireJsonSchema());
     expect(fake.calls[0]!.content).toEqual([{ text: JSON.stringify(basicPayload()), cache: true }]);
   });
 });

@@ -43,7 +43,6 @@ import { z } from 'zod';
 import type { SummaryAgg } from '../payload';
 import {
   AssumptionSchema,
-  buildAlternativeSchema,
   buildComputedSchema,
   buildExpandSchema,
   buildGroupSchema,
@@ -179,18 +178,6 @@ const wireLearnResultShape = {
 };
 const WireLearnResultSchema = z.strictObject(wireLearnResultShape);
 
-// learn-v8: an optional top-level `alternatives` list - a second rule for an output column, in the same terms as an output column's
-// `from` and computed columns (formula text). No `maxItems` (not every structured-output provider takes it): the cap is
-// `limits.learn.maxAlternatives`, said in the prompt and enforced by the API, which drops the rest. Optional, so an answer without it
-// (every learn-v7 answer) is as valid as before.
-const WireAlternativeSchema = buildAlternativeSchema(WireExprSchema);
-const WireLearnResultWithAlternativesSchema = z.strictObject({ ...wireLearnResultShape, alternatives: z.array(WireAlternativeSchema).optional() });
-
-export interface WireSchemaOptions {
-  /** Whether the answer may carry `alternatives` (learn-v8 and later; default true). learn-v7 is sent the schema it was written for. */
-  alternatives?: boolean;
-}
-
 /**
  * The JSON Schema sent to the LLM as the structured-output constraint for a learn or
  * repair call (SPEC 9.1, LEARN_PROMPT §5): no open dictionaries, and every Expr position
@@ -198,13 +185,13 @@ export interface WireSchemaOptions {
  * the file doc comment). Use this - never `./jsonSchema.ts`'s `learnResultJsonSchema()` -
  * as the `schema` passed to `apps/api/src/llm`'s `complete()`.
  */
-export function learnResultWireJsonSchema(opts: WireSchemaOptions = {}): Record<string, unknown> {
-  return z.toJSONSchema(wireAnswerSchema(opts)) as Record<string, unknown>;
+export function learnResultWireJsonSchema(): Record<string, unknown> {
+  return z.toJSONSchema(WireLearnResultSchema) as Record<string, unknown>;
 }
 
 /** The zod schema behind `learnResultWireJsonSchema` (tests read what it accepts; the API's gate is `LearnResultSchema` after `fromWire`). */
-export function wireAnswerSchema(opts: WireSchemaOptions = {}): z.ZodType {
-  return opts.alternatives === false ? WireLearnResultSchema : WireLearnResultWithAlternativesSchema;
+export function wireAnswerSchema(): z.ZodType {
+  return WireLearnResultSchema;
 }
 
 // ---------- learn-v9: the AI code checks (docs/proposals/ai-code-checks.md; SPEC 21 v14) ----------
@@ -228,7 +215,7 @@ const WireCheckSchema = z.discriminatedUnion('check', [
 ]);
 const WireStepSchema = z.strictObject({ checks: z.array(WireCheckSchema).nullable(), rules: WireLearnResultSchema.nullable() });
 
-/** The zod schema behind `learnStepWireJsonSchema` (tests read what it accepts). learn-v9 is learn-v7 plus checks: its rules carry no `alternatives`. */
+/** The zod schema behind `learnStepWireJsonSchema` (tests read what it accepts). learn-v9 is learn-v7 plus checks: its rules are learn-v7's. */
 export function wireStepSchema(): z.ZodType {
   return WireStepSchema;
 }
@@ -254,17 +241,6 @@ export function splitStepAnswer(json: unknown): StepAnswer {
   if (isRecord(json.rules)) return { kind: 'rules', rules: json.rules };
   if (Array.isArray(json.checks) && json.checks.length > 0) return { kind: 'checks', checks: json.checks };
   return { kind: 'invalid', message: 'answer with "rules" (the rules file, "checks": null) or with "checks" (at least one check, "rules": null)' };
-}
-
-/**
- * Takes the learn-v8 `alternatives` off a raw (untrusted, not yet validated) answer, so the answer itself is checked exactly as before
- * (`LearnResultSchema` is strict and knows nothing of them) and each alternative on its own. `alternatives` is the raw list (or undefined
- * when the answer has none, or it is not a list).
- */
-export function splitAlternatives(json: unknown): { answer: unknown; alternatives: unknown[] | undefined } {
-  if (!isRecord(json) || !('alternatives' in json)) return { answer: json, alternatives: undefined };
-  const { alternatives, ...answer } = json;
-  return { answer, alternatives: Array.isArray(alternatives) ? alternatives : undefined };
 }
 
 // ---------- Wire-shaped TypeScript types (derived from the real interfaces) ----------

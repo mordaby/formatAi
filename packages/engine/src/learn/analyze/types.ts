@@ -115,6 +115,20 @@ export interface AnalyzeOptions {
   minCoverage?: number;
   /** An external classification of the columns, by header (the AI step's, later): kept on the analysis for `classifyColumns`. */
   columnHints?: ColumnClassHints;
+  /** The user's choices in "See what we send" (owner, 2026-10-07): kept on the analysis for `classifyColumns`, which applies them last. */
+  userColumnChoices?: UserColumnChoices;
+}
+
+/**
+ * "See what we send" (owner, 2026-10-07): the user's choice for one column of the example - its values hidden by masking, or sent as they
+ * are. It wins over everything code decided (`classifyColumns` applies it last); a column copied between input and output goes with its copy.
+ */
+export type ColumnChoice = 'hidden' | 'sent';
+
+/** The user's choices for this example, by column position: input columns and output columns. A column with no entry is as code decided. */
+export interface UserColumnChoices {
+  input?: Readonly<Record<number, ColumnChoice>>;
+  output?: Readonly<Record<number, ColumnChoice>>;
 }
 
 // ---------- Tables ----------
@@ -540,6 +554,8 @@ export interface PairAnalysis {
   sample: { size: number; seed: number };
   /** `AnalyzeOptions.columnHints`: what `classifyColumns` reads, so every path that masks reads the same classes. */
   columnHints?: ColumnClassHints;
+  /** `AnalyzeOptions.userColumnChoices`: read by `classifyColumns` too, last (`withColumnChoices` puts others on an analysis already made). */
+  userColumnChoices?: UserColumnChoices;
 }
 
 export interface PairAnalysisFailure {

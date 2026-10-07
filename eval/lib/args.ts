@@ -1,7 +1,7 @@
 // CLI argument parsing for `pnpm eval` (SPEC 10): "pnpm eval --models <a>,<b>
 // --masking on,off --runs 3 [--provider anthropic|openai|claude-cli|fake]
 // [--cases <substring>[,<substring>...]] [--out <dir>] [--no-escalation] [--mode full|complete|both]
-// [--prompt learn-v7|learn-v8|learn-v8-noE1|learn-v8.1|learn-v8.1-noE1|learn-v9] [--no-pattern-hints]".
+// [--prompt learn-v7|learn-v9] [--no-pattern-hints]".
 //
 // Kept dependency-free (no argv-parsing package) since the surface is tiny and fixed.
 import { isPromptVersion, LLM_PROVIDERS, PROMPT_VERSIONS, type LlmProviderName, type PromptVersion } from '@formatai/shared';

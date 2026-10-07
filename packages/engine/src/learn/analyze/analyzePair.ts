@@ -409,6 +409,7 @@ function analyzeSides(
     layout,
     sample: { size: sample.length, seed },
     ...(opts.columnHints ? { columnHints: opts.columnHints } : {}),
+    ...(opts.userColumnChoices ? { userColumnChoices: opts.userColumnChoices } : {}),
   };
   return result;
 }

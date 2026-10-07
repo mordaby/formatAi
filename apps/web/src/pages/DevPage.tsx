@@ -3,7 +3,7 @@
 // labels except where it shows real product text (messages, codes), and it is left out
 // of production builds (see App.tsx).
 import { printFormula } from '@formatai/engine/formula';
-import type { LearnResult } from '@formatai/shared';
+import { limits, type LearnResult } from '@formatai/shared';
 import { useCallback, useRef, useState } from 'react';
 import { Cell } from '../components/Cell';
 import { SheetDirection } from '../components/SheetDirection';
@@ -99,7 +99,7 @@ export default function DevPage() {
             <input type="checkbox" checked={masking} onChange={(e) => setMasking(e.target.checked)} data-testid="masking" /> {t('masking.label')}
           </label>
           <br />
-          {masking ? t('masking.on') : t('masking.off')} {t('masking.always')}
+          {masking ? t('masking.on') : t('masking.off', { rows: limits.learn.loop.maxRowsTotal })} {t('masking.always')}
         </p>
         <p>
           <label>

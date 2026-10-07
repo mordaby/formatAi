@@ -37,7 +37,7 @@ import type { AppDb } from '../db.js';
 import type { ConversionDoc, FormatDoc, SourceDoc } from '../models.js';
 import type { Identity } from '../protection/identity.js';
 import type { Protection } from '../protection/index.js';
-import { newFormatsKey } from '../protection/keys.js';
+import { monthlyCounterExpiry, newFormatsKey } from '../protection/keys.js';
 import { reserveLearn } from '../protection/reserve.js';
 import { isRecord } from '../http.js';
 import { nameKey, parseName, parseRun, parseSaveFields, parseSourceChoice, parseUpdateFields } from './bodies.js';
@@ -155,17 +155,17 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     if (!final.ok) return rulesRefusal(reply, final);
     const rules = final.rules;
 
-    let monthly: { key: string } | null = null;
+    let monthly: { key: string; expiresAt: Date } | null = null;
     if (tier.newSavedFormatsPerMonth !== undefined) {
-      const key = newFormatsKey(caller.ownerId.toHexString(), now);
+      const counter = { key: newFormatsKey(caller.ownerId.toHexString(), now), expiresAt: monthlyCounterExpiry(now) };
       const reservation = await reserveLearn(protection.store, [
-        { key, limit: tier.newSavedFormatsPerMonth, limitCode: 'newFormatsPerMonth' },
+        { ...counter, limit: tier.newSavedFormatsPerMonth, limitCode: 'newFormatsPerMonth' },
       ]);
       if (!reservation.ok) return fail(reply, 429, { error: 'limitHit', limit: 'newFormatsPerMonth' });
-      monthly = { key };
+      monthly = counter;
     }
     const refund = async (): Promise<void> => {
-      if (monthly) await protection.store.incrementCounter(monthly.key, -1).catch(() => undefined);
+      if (monthly) await protection.store.incrementCounter(monthly.key, -1, monthly.expiresAt).catch(() => undefined);
     };
 
     const committed = await commitSource(d, caller.ownerId, planned.plan, rules, now);

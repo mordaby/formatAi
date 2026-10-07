@@ -114,11 +114,9 @@ describe('the wire JSON Schema carries the two notes', () => {
 describe('the code-only unsupported reason `overfit`', () => {
   it('rules may hold it; the wire schema the AI step is sent never offers it', () => {
     expect(LearnResultSchema.safeParse(withUnsupported([{ outputColumn: 'שם יום', reasonCode: 'overfit' }])).success).toBe(true);
-    for (const alternatives of [true, false]) {
-      const reasons = JSON.stringify((learnResultWireJsonSchema({ alternatives }) as { properties: { unsupported: unknown } }).properties.unsupported);
-      expect(reasons).toContain('"externalData"');
-      expect(reasons).not.toContain('"overfit"');
-    }
+    const reasons = JSON.stringify((learnResultWireJsonSchema() as { properties: { unsupported: unknown } }).properties.unsupported);
+    expect(reasons).toContain('"externalData"');
+    expect(reasons).not.toContain('"overfit"');
     expect(JSON.stringify(learnResultJsonSchema())).toContain('"overfit"');
   });
 });

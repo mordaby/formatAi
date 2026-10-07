@@ -8,6 +8,8 @@ export interface DialogProps {
   onClose(): void;
   title: string;
   children: ReactNode;
+  /** `large`: a wide dialog for a table ("See what we send"); on phones a full-screen sheet. Default: a small dialog. */
+  size?: 'large';
 }
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -17,7 +19,7 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), selec
  * on the backdrop close it, and focus returns to what opened it. On phones it is a full-width
  * sheet from the bottom edge.
  */
-export function Dialog({ open, onClose, title, children }: DialogProps) {
+export function Dialog({ open, onClose, title, children, size }: DialogProps) {
   const { t } = useI18n();
   const titleId = useId();
   const box = useRef<HTMLDivElement>(null);
@@ -72,7 +74,7 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={box}>
+      <div className={size === 'large' ? 'dialog dialog--large' : 'dialog'} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={box}>
         <header className="dialog__head">
           <h2 id={titleId}>{title}</h2>
           <Button variant="ghost" size="sm" icon="close" onClick={onClose} aria-label={t('common.close')} />

@@ -8,6 +8,7 @@
 // not it was - the privacy page promises it: every page load drops a copy past its hour at once, and an open tab
 // drops one when its hour is up (`keepPendingWithinTheHour`). Every browser storage call is wrapped: private windows,
 // blocked site data and quota errors just mean "nothing was kept", and the app carries on without it.
+import type { UserColumnChoices } from '@formatai/engine';
 import type { LearnResult, Rules } from '@formatai/shared';
 import { webConfig } from '../config';
 
@@ -35,6 +36,8 @@ export interface PendingLearn {
   input: StoredFile | null;
   output: StoredFile | null;
   masking: boolean;
+  /** "See what we send": the user's choice per column of these files (hidden / sent as is); the learn after the sign-in keeps them. */
+  columnChoices?: UserColumnChoices;
   /** The learn was continued past "rows couldn't be aligned" (SPEC 6.4); the local analysis is re-run the same way. */
   tryAnyway?: boolean;
   /** A visitor chose "Learn with AI" on Home and signed in from its wall: once they are signed in, the learn starts by itself (no `result` is kept with it) and the AI step follows. */

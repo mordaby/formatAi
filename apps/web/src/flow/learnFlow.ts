@@ -14,7 +14,7 @@
 // simply never visited (the local fast path goes checking -> done, with no learning or
 // verifying). The HTTP calls are made HERE, on the main thread, on the worker's behalf.
 import { limits, payloadBytes, stepBytes, withRows, type AiLearnQuotaState, type CheckRound, type Format, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type RepairResponse, type Sample, type Tier } from '@formatai/shared';
-import type { AnalysisStage, CompleteOptions, LearnCallResult, PreflightIssue } from '@formatai/engine';
+import type { AnalysisStage, CompleteOptions, LearnCallResult, PreflightIssue, UserColumnChoices } from '@formatai/engine';
 import type { Api } from '../api';
 import { learnRequest, repairRequest, stepRequest, type LearnRequestOptions, type RepairRequestOptions } from '../api/learnRequests';
 import { webConfig } from '../config';
@@ -138,6 +138,11 @@ export interface StartParams {
    * and so the caller reports how it ended (`/outcome`), once it has decided: an answer it does not use is never reported as verified.
    */
   complete?: CompleteOptions & { exampleId?: string | undefined };
+  /**
+   * "See what we send" (owner, 2026-10-07): the user's choice per column of these files, hidden or sent as it is. The worker applies it to
+   * every request of the learn (the first call, the checks' answers, the loop's rows, a completion's fixed rules).
+   */
+  columnChoices?: UserColumnChoices;
 }
 
 export interface LearnFlowDeps {
@@ -427,16 +432,15 @@ export function sentBody(rec: SentRecord): object {
 }
 
 /**
- * What the engine's learn needs of an answer: the rules, the problems, (learn-v8) the alternatives, which it tests on every row, and (learn-v9)
- * the checks the AI step asked instead of answering - present, even empty with `droppedChecks`, it is a checks answer the engine answers.
+ * What the engine's learn needs of an answer: the rules, the problems, and (learn-v9) the checks the AI step asked instead of answering -
+ * present, even empty with `droppedChecks`, it is a checks answer the engine answers.
  */
 function asCallResult(res: RepairResponse): LearnCallResult {
-  const { rules, problems, alternatives, overfitRepaired, checks, droppedChecks } = res;
+  const { rules, problems, overfitRepaired, checks, droppedChecks } = res;
   return {
     rules,
     problems,
     calls: [],
-    ...(alternatives && alternatives.length > 0 ? { alternatives } : {}),
     ...(overfitRepaired ? { overfitRepaired: true } : {}),
     ...(checks ? { checks } : {}),
     ...(checks && droppedChecks && droppedChecks.length > 0 ? { droppedChecks } : {}),
@@ -463,6 +467,11 @@ function stateForProgress(p: LearnProgress, sent: readonly SentRecord[]): LearnF
   }
 }
 
+/** Whether the user chose anything for any column (no choice: the learn is as code decides, and says nothing about it). */
+export function hasChoices(choices: UserColumnChoices | undefined): boolean {
+  return choices !== undefined && (Object.keys(choices.input ?? {}).length > 0 || Object.keys(choices.output ?? {}).length > 0);
+}
+
 async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai: 'allowed' | 'notAllowed'): Promise<LearnArgs> {
   const [input, output] = await Promise.all([params.input.arrayBuffer(), params.output.arrayBuffer()]);
   return {
@@ -473,6 +482,7 @@ async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai:
     ...(tryAnyway ? { tryAnyway: true } : {}),
     ai,
     ...(params.target ? { target: params.target } : {}),
+    ...(params.columnChoices && hasChoices(params.columnChoices) ? { columnChoices: params.columnChoices } : {}),
     ...(params.complete ? { complete: { fixedRules: params.complete.fixedRules, columns: params.complete.columns, parts: params.complete.parts }, ...(params.complete.exampleId ? { keepExampleId: params.complete.exampleId } : {}) } : {}),
   };
 }

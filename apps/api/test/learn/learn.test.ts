@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEARN_SYSTEM_PROMPT, learnPromptOf, limits, models, promptVersion, REPAIR_INSTRUCTION, REPAIR_INSTRUCTION_E1, REPAIR_INSTRUCTION_V8 } from '@formatai/shared';
+import { LEARN_SYSTEM_PROMPT, learnPromptOf, limits, models, promptVersion, REPAIR_INSTRUCTION, REPAIR_INSTRUCTION_V9 } from '@formatai/shared';
 import { loadEnv } from '../../src/env.js';
 import { createFakeProvider, LlmError, type CompleteRequest, type FakeLlmProvider } from '../../src/llm/index.js';
 import { learn, repairFromBrowser, type CompleteFn } from '../../src/learn/index.js';
@@ -208,22 +208,21 @@ describe('learn()', () => {
   });
 
   // Prompt audit F11: each version sends its own repair instruction, so `--prompt learn-v7` repairs exactly as learn-v7 did.
-  it('appends the repair instruction of the prompt version sent: learn-v8 and learn-v8.1 (with its E1 sentence), their noE1 variants, learn-v7', async () => {
+  it('appends the repair instruction of the prompt version sent: learn-v7, and learn-v9 (learn-v7\'s plus "answer with the rules")', async () => {
     const sent: Record<string, string> = {};
-    for (const version of ['learn-v8', 'learn-v8-noE1', 'learn-v8.1', 'learn-v8.1-noE1', 'learn-v7'] as const) {
+    for (const version of ['learn-v7', 'learn-v9'] as const) {
       const fake = createFakeProvider();
-      fake.enqueue({ json: schemaBrokenRulesJson() });
-      fake.enqueue({ json: correctRulesWireJson() });
+      // (learn-v9 answers with the step schema: the rules under "rules")
+      const answer = (rules: unknown): unknown => (version === 'learn-v9' ? { checks: null, rules } : rules);
+      fake.enqueue({ json: answer(schemaBrokenRulesJson()) });
+      fake.enqueue({ json: answer(correctRulesWireJson()) });
       const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake), prompt: version });
       expect(outcome.calls.map((c) => [c.purpose, c.promptVersion])).toEqual([['learn', version], ['repair', version]]);
       sent[version] = fake.calls[1]!.content[1]!.text;
       expect(sent[version]!.endsWith(`\n${learnPromptOf(version).repair}`)).toBe(true);
     }
-    expect(sent['learn-v8']!.endsWith(`${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}`)).toBe(true);
-    expect(sent['learn-v8-noE1']!.endsWith(`\n${REPAIR_INSTRUCTION_V8}`)).toBe(true);
-    expect(sent['learn-v8.1']!.endsWith(`${REPAIR_INSTRUCTION_V8} ${REPAIR_INSTRUCTION_E1}`)).toBe(true);
-    expect(sent['learn-v8.1-noE1']!.endsWith(`\n${REPAIR_INSTRUCTION_V8}`)).toBe(true);
     expect(sent['learn-v7']!.endsWith('\nFix only what the problems require. Keep everything else identical.')).toBe(true);
+    expect(sent['learn-v9']!.endsWith(`\n${REPAIR_INSTRUCTION_V9}`)).toBe(true);
   });
 });
 
