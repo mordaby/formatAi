@@ -11,20 +11,12 @@ export interface OpenFinding {
   matches: (f: Failure, r: CaseResult) => boolean;
 }
 
-const seedOf = (r: CaseResult): string => `${r.profile}:${r.seed}`;
-
 export const OPEN_FINDINGS: OpenFinding[] = [
   {
     id: 'O2',
     title: 'CSV/TXT: a plain negative number held as TEXT in a text column gets the formula guard\'s apostrophe; the verification compares values and passes',
     seeds: ['small:231'],
     matches: (f) => ['verifiedButDiffers', 'solvedColumnWrong', 'holdoutSilent'].includes(f.kind) && /expected (-[\d.]+), got "\1"/.test(f.detail),
-  },
-  {
-    id: 'O3',
-    title: 'Wide files: the window search tries 10 numeric columns; a group total of another column is "explained" by a value map of last month\'s totals',
-    seeds: ['mixed:69'],
-    matches: (f, r) => f.kind === 'holdoutSilent' && ['mixed:69'].includes(seedOf(r)),
   },
   {
     id: 'O4',

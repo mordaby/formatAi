@@ -28,6 +28,7 @@ const REGRESSIONS: [SizeProfile, number][] = [
   ['small', 500],
   ['mixed', 5],
   ['mixed', 68],
+  ['mixed', 69],
   ['mixed', 153],
 ];
 

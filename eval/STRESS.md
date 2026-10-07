@@ -107,10 +107,6 @@ Design questions the run reproduces, not fixed in passing (`open.ts`; the summar
   starts with `-` with an apostrophe unless the column is numeric (SPEC 15), so rules that build "-1192964702.4" as a text constant
   write "'-1192964702.4" where the example shows the number; the verification compares values and passes. Question: exempt a plain
   number from the guard in every column (it cannot be a formula), or type such a constant as a number.
-- **O3 - the window search in wide files** (mixed 69). The across-row search tries the first 10 numeric columns (`MAX_X`); a group
-  total of a later column is not found, and a value map from the group column to last month's totals explains the example (each
-  group repeats). Next month every total is wrong, unflagged. Question: the caps of the window search, or no value map onto
-  numbers when the search was capped.
 - **O4 - time on 20,000 x 20 with an xlsx input** (timing 4, 7, 8, 9). Over 10 s on 2 of 10 runs: reading a 20,000-row workbook
   is about 4 s (SheetJS about 2.5 s, then the ExcelJS overlay for bold, direction and hidden rows about 2 s), and the learn reads
   two. Question: a lighter overlay (only the parts it reads), or a larger budget for xlsx.
@@ -139,6 +135,7 @@ Design questions the run reproduces, not fixed in passing (`open.ts`; the summar
 | Value map, duplicates | an exact duplicate row confirms nothing | mixed 153 |
 | Every script masked (O1; column classification) | Arabic and Cyrillic get same-script fakes; a letter of any other script is never sent real | small 10, 23, 73; mixed 5, 68 |
 | Script-agnostic shape (engine audit) | a column's `shape` holds shape letters, `D` and separators only; the mask check reads every field that can hold cell text | small 23, 128 |
+| No value map onto numbers in csv / txt (O3; engine audit) | a delimited output's column of numbers is judged by its profile type or a plain-number cell, as a workbook's cells say it: a value map from a group to last month's totals is thin evidence, left to the AI step | mixed 69 |
 
 Harness fixes on the way (no engine change): a column the engine asks about is reported; digits as text in a column masked as a
 number are the `idNumberSentReal` finding; a fake that equals another real value is `fakeEqualsReal`; and the fair hold-out rules
