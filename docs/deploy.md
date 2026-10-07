@@ -140,7 +140,7 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 2. **The page**: `https://<host>/` loads (Hebrew or English by your browser) and a deep link such as `https://<host>/formats` loads too. The browser console has no red errors.
 3. **Sign in**: Google, then Microsoft if configured. You come back to the site signed in, your name shows in the account menu, and `https://<host>/api/me` says `"isAdmin":true` for the admin.
 4. **A free learn**: sign out or stay in. Drop `orders-dedupe/input.xlsx` and `output.csv` > Learn the format: verified, "solved on your computer", no AI call (no `/api/learn` request in the Render log).
-5. **An AI learn**: signed in, drop `branch-lookup-50/input.xlsx` and `output.xlsx` > Learn with AI. The Turnstile check passes by itself and the answer verifies. Check that a row appeared in Atlas `llm_calls` (`provider: "anthropic"`, no `fallback`) and the spend in `budgets`, and the usage in the Anthropic console.
+5. **An AI learn**: signed in, drop `branch-lookup-50/input.xlsx` and `output.xlsx` > Learn with AI. There is no Turnstile check here: the AI learn is gated by the sign-in (with the per-user quota and daily request cap), and the answer verifies. Check that a row appeared in Atlas `llm_calls` (`provider: "anthropic"`, no `fallback`) and the spend in `budgets`, and the usage in the Anthropic console.
    The fallback itself is checked from your computer (`llm-check`, 2b.3); a row with `fallback: true` in `llm_calls` later means Anthropic could not serve that call.
 6. **The Run screen**: save that format, open **Convert** (`/convert`), drop `next.input.xlsx` of the same case, create the file, and check it against `next.output.xlsx`.
 
@@ -176,16 +176,22 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 | `RENDER_EXTERNAL_URL` | Render | Your `https://<host>`; the public origin when `PUBLIC_ORIGIN` is not set |
 | `PUBLIC_ORIGIN` | optional | Overrides the origin (a custom domain later). Defaults `WEB_ORIGIN` and `API_PUBLIC_URL`, which can still be set on their own |
 | `PORT` | Render | Render sets 10000; the API listens on it |
+| `WEB_ORIGIN`, `API_PUBLIC_URL` | optional | The web origin (CORS, redirects after sign-in) and the API's public URL (the OIDC redirect URIs). Both default to the public origin above; set only to split them |
 | `WEB_DIST` | optional | Folder of the built web app; default `apps/web/dist` |
+| `TURNSTILE_DISABLED` | you, first deploy only (3.2) | `true` turns Turnstile off on purpose until the widget exists (the start log warns). Delete it in step 5 |
+| `LEARN_CHECKS` | optional, not set | AI code checks (SPEC 21 v14): `off`, `admin` (admin accounts only) or `all`. Unset = `off`. Any other value stops the start. Listed, commented, in `render.yaml` |
 | `LLM_MODEL_FIRST_TRY`, `LLM_MODEL_ESCALATION` | optional | Override the models in `packages/shared/src/config/models.ts` without a code change. The model must have a price in `packages/shared/src/config/prices.ts` (the same for `LLM_FALLBACK_MODEL_*`): a production start stops on one that has none, and an unpriced model is counted at the highest configured price |
 | `LLM_FALLBACK_MODEL_FIRST_TRY`, `LLM_FALLBACK_MODEL_ESCALATION` | optional | The same for the fallback provider's two slots (default `gpt-5-mini`, `gpt-5`) |
+| `VITE_TURNSTILE_SITE_KEY` | development only | The older name of `TURNSTILE_SITE_KEY` (read when that one is not set); not needed on Render |
+| `DEV_SIGN_IN` | development only | `true` offers the throw-away dev sign-in from another address (a phone on the LAN, a tunnel). Never available in production, whatever it says |
+| `CLAUDE_CLI_PATH` | development only | The Claude Code CLI for `LLM_PROVIDER=claude-cli`, which the production start refuses |
 
 ## Known limits
 
 - **`TRUST_PROXY=true` and spoofed IPs.** It trusts the whole `X-Forwarded-For` chain, taking its first address as the client. Render's proxy
   appends to what the client sent rather than replacing it (the community reports disagree on the details), so a determined client can invent
-  its IP and slip the per-IP request limit. That limit is one of several guards: the AI step is for signed-in users only, with a per-user
-  quota, Turnstile, and the daily budgets. To tighten: count the hops (e.g. `TRUST_PROXY=2`) once you can see the real addresses in a test request, and change the variable.
+  its IP and slip the per-IP request limit. That limit is one of several guards: the AI step is for signed-in users only (no Turnstile there: the sign-in is
+  the gate), with a per-user quota, a per-user daily request cap, and the daily budget. To tighten: count the hops (e.g. `TRUST_PROXY=2`) once you can see the real addresses in a test request, and change the variable.
   **Owner action (API audit, 2026-10-07): set `TRUST_PROXY` to the measured hop count** in the Render dashboard (Environment), not `true`:
   send one request with a made-up `X-Forwarded-For: 203.0.113.9` header and see which address the API takes for you - the hop count is the
   number of proxies between you and the service (Render's own, usually 1). With `true`, a client that rotates the header gets a fresh
@@ -194,7 +200,7 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
   database or spend the budget, but the per-IP limits only mean something with the right count. (`render.yaml` keeps `true` until you
   have measured it.)
 - **Turnstile must be turned back on (owner action).** `TURNSTILE_DISABLED=true` was for the first deploy only (section 3): while it is
-  set the public forms and the anonymous paths are protected by the rate limits alone. Do section 5 - set `TURNSTILE_SITE_KEY` and
+  set the public forms (the only place Turnstile checks: a visitor who is not signed in) are protected by the rate limits alone. Do section 5 - set `TURNSTILE_SITE_KEY` and
   `TURNSTILE_SECRET_KEY`, delete `TURNSTILE_DISABLED` - and check that the start log no longer says "Turnstile is OFF".
 - **The public forms' global cap.** Past `limits.contact.globalPerDay` stored submissions in a UTC day (leads, waitlist and feedback
   together), every form answers "too many requests" until the next UTC day - a flood from invented addresses stops the forms for a
