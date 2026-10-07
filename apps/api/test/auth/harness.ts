@@ -64,7 +64,7 @@ export const memoryKit: AuthKit = {
   name: 'memory',
   async make(now) {
     const protectionStore = createMemoryStore(now);
-    const authStore = createMemoryAuthStore({ learnCache: protectionStore.cacheEntries });
+    const authStore = createMemoryAuthStore();
     return {
       db: null,
       protectionStore,

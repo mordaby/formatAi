@@ -31,7 +31,6 @@ describe('API error codes and messages', () => {
   it('includes the codes the M2 protections and the M3 AI quota / registry return', () => {
     for (const code of [
       'limitHit',
-      'anonBudgetExhausted',
       'budgetExhausted',
       'rateLimited',
       'turnstileFailed',

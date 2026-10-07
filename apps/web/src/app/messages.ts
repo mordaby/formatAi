@@ -90,7 +90,6 @@ export function errorView(i18n: I18n, error: FlowError): ErrorView {
           // API audit C1: the day's cap on requests to the AI - a signed-in user's, so no sign-in to offer; it resets tomorrow.
           if (error.limit === 'aiRequestsPerDay') return { tone: 'block', text, todo: i18n.t('aiLimit.local'), action: 'none' };
           return { tone: 'info', text, action: 'signIn' };
-        case 'anonBudgetExhausted':
         // The session ended (or the AI step was called signed out): the local result stays, sign in to finish.
         case 'signInForAi':
           return { tone: 'info', text, action: 'signIn' };

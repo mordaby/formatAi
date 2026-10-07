@@ -173,13 +173,12 @@ function fail(reply: FastifyReply, status: number, body: ApiErrorBody): FastifyR
 
 /** SPEC 13 `llm_calls`: one document per call this learn made. `cacheHit` is the structure cache
  * (SPEC 9.5) - false for a real call, whatever the provider's own prompt cache did (`tokensCached`). */
-function whoOf(identity: Identity): Pick<LlmCallDoc, 'anonId' | 'userId'> {
-  if (identity.kind === 'anon') return { anonId: identity.anonId };
+function whoOf(identity: UserIdentity): Pick<LlmCallDoc, 'anonId' | 'userId'> {
   const userId = objectIdOf(identity.userId);
   return { ...(identity.anonId ? { anonId: identity.anonId } : {}), ...(userId ? { userId } : {}) };
 }
 
-function ledgerDocs(learnId: string, identity: Identity, calls: readonly LlmCallRecord[], now: Date): LlmCallDoc[] {
+function ledgerDocs(learnId: string, identity: UserIdentity, calls: readonly LlmCallRecord[], now: Date): LlmCallDoc[] {
   const who = whoOf(identity);
   return calls.map((c) => ({
     ts: now,
@@ -206,7 +205,7 @@ function ledgerDocs(learnId: string, identity: Identity, calls: readonly LlmCall
 }
 
 /** The ledger entry for a structure-cache hit: no model, no tokens, no cost, outcome `cacheHit`. */
-function cacheHitLedgerDoc(learnId: string, identity: Identity, payload: LearnPayload, now: Date, latencyMs: number, version: PromptVersion): LlmCallDoc {
+function cacheHitLedgerDoc(learnId: string, identity: UserIdentity, payload: LearnPayload, now: Date, latencyMs: number, version: PromptVersion): LlmCallDoc {
   return {
     ts: now,
     ...whoOf(identity),
@@ -246,12 +245,9 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     return fail(reply, 429, { error: 'rateLimited' });
   };
 
-  /** SPEC 9.5 budgets. Returns the refusal to send, or null when the day still has budget. */
-  const budgetRefusal = async (
-    identity: Identity,
-    now: Date,
-  ): Promise<{ status: number; body: ApiErrorBody } | null> => {
-    const verdict = checkBudgets(await store.getSpend(dayKey(now)), identity.kind === 'anon');
+  /** SPEC 9.5 the daily budget (the kill switch). Returns the refusal to send, or null when the day still has budget. */
+  const budgetRefusal = async (now: Date): Promise<Refusal | null> => {
+    const verdict = checkBudgets(await store.getSpend(dayKey(now)));
     if (verdict === 'ok') return null;
     return { status: BUDGET_STATUS[verdict], body: { error: verdict } };
   };
@@ -260,7 +256,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
    * result the user already paid a learn for, so failures are logged and swallowed. */
   const recordCalls = async (
     learnId: string,
-    identity: Identity,
+    identity: UserIdentity,
     calls: readonly LlmCallRecord[],
     now: Date,
   ): Promise<void> => {
@@ -271,7 +267,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     }
     try {
       const spent = totalCostUsd(calls);
-      if (spent > 0) await store.addSpend(dayKey(now), spent, identity.kind === 'anon');
+      if (spent > 0) await store.addSpend(dayKey(now), spent);
     } catch (err) {
       logFailure('failed to record spend', err);
     }
@@ -397,7 +393,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     if (await pairExhausted(store, owner, group)) return refuse({ status: 409, body: { error: 'aiAttemptsExhausted', counted: false } });
 
     // SPEC 9.5 budgets, then the user's AI-learn quota - both BEFORE any LLM call.
-    const budget = await budgetRefusal(identity, now);
+    const budget = await budgetRefusal(now);
     if (budget) return refuse(budget);
 
     if (followUp?.ok) {

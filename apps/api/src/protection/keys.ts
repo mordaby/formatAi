@@ -97,16 +97,13 @@ export interface AiQuota {
 }
 
 /**
- * The AI-learn quota of `identity` (SPEC 11, 21 v5) from `tiers[tier].aiLearns`, with an admin's
- * per-user override (`users.limitOverrides`) of the count. An anonymous caller has none (count 0) - it
- * never reaches the AI, this is only the safe answer if a route asks.
+ * The AI-learn quota of a signed-in user (SPEC 11, 21 v5) from `tiers[tier].aiLearns`, with an admin's per-user override
+ * (`users.limitOverrides.aiLearns`) of the count. (Only signed-in users reach the AI - SPEC 21 v5 - so there is no anonymous quota: API audit
+ * 2026-10-07.)
  */
-export function aiQuotaOf(identity: Identity, now: Date): AiQuota {
-  const { count, period } = tiers[tierOf(identity)].aiLearns;
+export function aiQuotaOf(identity: Extract<Identity, { kind: 'user' }>, now: Date): AiQuota {
+  const { count, period } = tiers[identity.tier].aiLearns;
   if (period === 'unlimited') return { period, spec: null };
-  if (identity.kind === 'anon') {
-    return { period, spec: { key: `anon:${identity.anonId}:aiLearns`, limit: 0, limitCode: 'aiLearns' } };
-  }
   return {
     period,
     spec: {

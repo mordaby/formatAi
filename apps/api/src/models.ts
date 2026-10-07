@@ -246,13 +246,12 @@ export interface UsageCounterDoc {
   expiresAt?: Date;
 }
 
-/** Spend totals per UTC day; one document per day. `anonSpendUsd` is the part spent on
- * anonymous (not signed in) learns - what the daily anonymous budget (SPEC 9.5) is checked against. */
+/** Spend totals per UTC day; one document per day. (A document written before 2026-10-07 may also hold `anonSpendUsd`, the anonymous
+ * AI step's part: nothing reads it any more.) */
 export interface BudgetDoc {
   _id?: ObjectId;
   day: string;
   spendUsd: number;
-  anonSpendUsd?: number;
 }
 
 /**

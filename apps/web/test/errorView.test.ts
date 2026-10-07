@@ -36,7 +36,7 @@ describe.each(['en', 'he'] as const)('error code -> message (%s)', (lang) => {
   });
 
   it('the anonymous limits nudge towards signing in; the budget and the anti-bot check do not', () => {
-    expect(errorView(i18n, api('anonBudgetExhausted'))).toMatchObject({ tone: 'info', action: 'signIn', text: apiErrorMessages.anonBudgetExhausted[lang] });
+    expect(errorView(i18n, api('signInForAi'))).toMatchObject({ tone: 'info', action: 'signIn', text: apiErrorMessages.signInForAi[lang] });
     expect(errorView(i18n, api('limitHit', { limit: 'learnsPerDay' }))).toMatchObject({ tone: 'info', action: 'signIn' });
     expect(errorView(i18n, api('budgetExhausted'))).toMatchObject({ tone: 'block', action: 'none' });
     expect(errorView(i18n, api('turnstileFailed'))).toMatchObject({ tone: 'block', action: 'reload' });

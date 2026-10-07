@@ -78,12 +78,11 @@ export const limits = {
     },
   },
   /**
-   * SPEC 9.5: a daily anonymous budget and a daily overall budget, in USD.
-   * DECISION: placeholder numbers (SPEC 20.4). Tune from real `llm_calls`/`budgets`
+   * SPEC 9.5: a daily overall budget, in USD - the kill switch. (The daily anonymous one went with the anonymous AI step: API audit,
+   * 2026-10-07.) DECISION: a placeholder number (SPEC 20.4). Tune from real `llm_calls`/`budgets`
    * spend data before launch; also set a matching monthly cap in the provider's console.
    */
   budgets: {
-    dailyAnonUsd: 5,
     dailyOverallUsd: 50,
   },
   /**

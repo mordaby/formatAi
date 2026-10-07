@@ -3,7 +3,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { AppDb } from '../db.js';
 import type { Env } from '../env.js';
-import type { LearnCacheDoc } from '../models.js';
 import { loadAdminConfig } from './admin.js';
 import { registerDevSessionRoute } from './dev.js';
 import { createOpenIdClient, type OidcClient } from './oidc.js';
@@ -34,8 +33,6 @@ export interface RegisterAuthOptions extends AuthOptions {
   env: Env;
   db: AppDb | null;
   now?: () => Date;
-  /** The protection store's in-memory cache (no database): sign-in re-owns its `anon:` entries like `learn_cache`. */
-  learnCache?: Map<string, LearnCacheDoc>;
   warn?: (message: string) => void;
 }
 
@@ -98,7 +95,7 @@ export function registerAuth(app: FastifyInstance, opts: RegisterAuthOptions): v
       // Production without a database never gets here: `createProtection` refuses to start first (it is
       // built before this), unless a test injects its own protection store.
       if (!production) opts.warn?.('MongoDB not configured: users and sessions are kept in memory (development only)');
-      store = createMemoryAuthStore({ learnCache: opts.learnCache });
+      store = createMemoryAuthStore();
     }
   }
 

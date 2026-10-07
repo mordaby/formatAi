@@ -17,7 +17,7 @@ import {
 } from '../../src/protection/keys.js';
 
 const noon = new Date('2026-09-30T12:00:00.000Z');
-const registered = (extra: Partial<Extract<Identity, { kind: 'user' }>> = {}): Identity => ({
+const registered = (extra: Partial<Extract<Identity, { kind: 'user' }>> = {}): Extract<Identity, { kind: 'user' }> => ({
   kind: 'user',
   userId: 'u1',
   tier: 'registered',
@@ -95,12 +95,6 @@ describe('aiQuotaOf (SPEC 11, 21 v5: AI learns per tier, config only)', () => {
     expect(identityOf(req({ aiLearns: 7 }))).toMatchObject({ learnLimitOverride: 7 });
     expect(identityOf(req({ learnsToLlm: 9 }))).not.toHaveProperty('learnLimitOverride');
     expect(identityOf(req({ aiLearns: 7 }))).not.toHaveProperty('limitOverrides');
-  });
-
-  it('gives an anonymous visitor none: a limit of 0 (it never reaches the AI)', () => {
-    const q = aiQuotaOf({ kind: 'anon', anonId: 'AAA' }, noon);
-    expect(q.spec!.limit).toBe(0);
-    expect(tiers.anonymous.aiLearns.count).toBe(0);
   });
 
   it('maps identities to their tier config', () => {

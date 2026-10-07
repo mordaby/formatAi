@@ -255,10 +255,6 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
     en: "You've reached a limit. Sign in or come back later to keep going.",
     he: 'הגעתם למגבלה. התחברו או חזרו מאוחר יותר כדי להמשיך.',
   },
-  anonBudgetExhausted: {
-    en: 'Sign in to keep going.',
-    he: 'התחברו כדי להמשיך.',
-  },
   budgetExhausted: {
     en: "We've reached our limit for today. Please try again tomorrow.",
     he: 'הגענו למגבלה להיום. אנא נסו שוב מחר.',

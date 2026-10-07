@@ -445,15 +445,14 @@ function defineProtectionSuite(kit: StoreKit): void {
   // ---------- budgets ----------
 
   describe('budgets (SPEC 9.5)', () => {
-    it('accumulates each call\'s cost into the day\'s overall budget (never the anonymous one: only signed-in users reach the AI)', async () => {
+    it('accumulates each call\'s cost into the day\'s overall budget', async () => {
       const llm = makeComplete({ costUsd: 0.5 });
       const h = await setup({ complete: llm.fn });
       await h.learn({ noCache: true });
       await h.learn({ noCache: true });
 
       const spend = await h.handle.store.getSpend(dayKey(h.clock.current));
-      expect(spend.spendUsd).toBeCloseTo(1);
-      expect(spend.anonSpendUsd).toBe(0);
+      expect(spend).toEqual({ spendUsd: expect.closeTo(1) });
       const ledger = await h.handle.ledger();
       expect(ledger.map((d) => d.costUsd)).toEqual([0.5, 0.5]);
     });
@@ -464,24 +463,15 @@ function defineProtectionSuite(kit: StoreKit): void {
       await h.learn({ noCache: true });
 
       const day = dayKey(h.clock.current);
-      expect(await h.handle.store.getSpend(day)).toEqual({ spendUsd: 0, anonSpendUsd: 0 });
+      expect(await h.handle.store.getSpend(day)).toEqual({ spendUsd: 0 });
       expect(await h.handle.counter(aiLearnsKey(TEST_USER, 'month', h.clock.current))).toBe(1);
-    });
-
-    it('does not apply the anonymous budget to a signed-in user (only the overall kill switch does)', async () => {
-      const llm = makeComplete();
-      const h = await setup({ complete: llm.fn });
-      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyAnonUsd, true);
-      const res = await h.learn({ noCache: true });
-      expect(res.statusCode).toBe(200);
-      expect(llm.calls).toHaveLength(1);
     });
 
     it('is the kill switch: 503 budgetExhausted once the overall budget is spent', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });
       const day = dayKey(h.clock.current);
-      await h.handle.store.addSpend(day, limits.budgets.dailyOverallUsd, false);
+      await h.handle.store.addSpend(day, limits.budgets.dailyOverallUsd);
 
       const res = await h.learn({ noCache: true });
       expect(res.statusCode).toBe(503);
@@ -495,7 +485,7 @@ function defineProtectionSuite(kit: StoreKit): void {
       const cookie = anonCookie(await h.get('/api/session'));
       const learn = (await h.learn({ noCache: true }, { cookie })).json();
       const before = llm.calls.length;
-      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd, false);
+      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd);
 
       const res = await h.post(
         '/api/learn/repair',
@@ -509,7 +499,7 @@ function defineProtectionSuite(kit: StoreKit): void {
 
     it('starts a fresh budget on the next UTC day', async () => {
       const h = await setup({ complete: makeComplete().fn });
-      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd, false);
+      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd);
       expect((await h.learn({ noCache: true })).statusCode).toBe(503);
       h.clock.current = new Date(h.clock.current.getTime() + DAY_MS);
       expect((await h.learn({ noCache: true })).statusCode).toBe(200);
@@ -521,7 +511,7 @@ function defineProtectionSuite(kit: StoreKit): void {
       const cookie = anonCookie(await h.get('/api/session'));
       expect((await h.learn(masked(), { cookie })).statusCode).toBe(200);
 
-      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd, false);
+      await h.handle.store.addSpend(dayKey(h.clock.current), limits.budgets.dailyOverallUsd);
       const hit = await h.learn(masked(), { cookie });
       expect(hit.statusCode).toBe(200);
       expect(hit.json().cached).toBe(true);

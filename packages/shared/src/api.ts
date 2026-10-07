@@ -34,11 +34,11 @@ export interface SessionResponse {
   tier: 'free';
   /** The tier's limits: the client-enforced ones (rows, columns, preview) and the rest, for display. */
   limits: TierLimits;
-  /** Present when Turnstile is configured; absent in dev without it (learns then skip the check). */
+  /** Present when Turnstile is configured; absent in dev without it (the public forms then skip the check). */
   turnstileSiteKey?: string;
 }
 
-/** POST /api/learn body. `turnstileToken` is required for anonymous visitors when Turnstile is configured. */
+/** POST /api/learn body. (`turnstileToken` is not read: the AI step is for signed-in users only, who are never asked - SPEC 21 v5.) */
 export interface LearnRequest {
   payload: LearnPayload;
   turnstileToken?: string;

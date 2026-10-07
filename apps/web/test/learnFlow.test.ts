@@ -501,7 +501,6 @@ describe('LearnFlow', () => {
         { kind: 'api', code: 'payloadTooLarge' },
         { kind: 'api', code: 'unknown' },
         { kind: 'api', code: 'limitHit', limit: 'learnsPerDay' },
-        { kind: 'api', code: 'anonBudgetExhausted' },
         { kind: 'api', code: 'budgetExhausted' },
         { kind: 'api', code: 'rateLimited' },
         { kind: 'api', code: 'turnstileFailed' },
