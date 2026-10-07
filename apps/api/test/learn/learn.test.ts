@@ -444,3 +444,33 @@ describe('repairFromBrowser(): one round of the learning loop', () => {
     expect(outcome.rules).toEqual(correctRules());
   });
 });
+
+describe('API audit (2026-10-07): an answer can never make the repair a 500', () => {
+  it("a constant past toString's plain digits (1e21) is printed back into the repair call, not thrown", async () => {
+    const fake = createFakeProvider();
+    const wrong = structuredClone(correctRulesWireJson()) as { transform: { computed: { expr: string }[] } };
+    wrong.transform.computed[0]!.expr = 'amount * 1000000000000000000000';
+    fake.enqueue({ json: wrong });
+    fake.enqueue({ json: correctRulesWireJson() });
+    const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: fakeCompleteFn(fake), noEscalation: true });
+    expect(outcome.verified).toBe(true);
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls[1]!.content.at(-1)!.text).toContain('amount * 1000000000000000000000');
+  });
+
+  it('rules that cannot be printed back are a failed call of the learn (error:requestNotBuilt, nothing sent), never an exception', async () => {
+    const fake = createFakeProvider();
+    const base = wrongRoundingRules();
+    const unprintable = {
+      ...base,
+      transform: { ...base.transform, computed: [{ id: 'total', type: 'decimal' as const, expr: { op: 'mul' as const, args: [{ col: 'amount' }, { const: Number.POSITIVE_INFINITY }] } }] },
+    };
+    const outcome = await withServerRepairRounds(0, () =>
+      repairFromBrowser(basicPayload(), unprintable, [{ kind: 'layout', message: 'x' }], { tier: 'registered', env, complete: fakeCompleteFn(fake) }),
+    );
+    expect(fake.calls).toHaveLength(0);
+    expect(outcome.verified).toBe(false);
+    expect(outcome.calls.map((c) => c.outcome)).toEqual(['error:requestNotBuilt']);
+    expect(outcome.problems[0]).toMatchObject({ kind: 'schema', message: expect.stringContaining('could not be built') });
+  });
+});

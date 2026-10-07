@@ -88,7 +88,8 @@ export interface LlmCallRecord {
   latencyMs: number;
   /** 'verified' (zero problems), 'needsRepair' (some problems, rules still returned),
    * 'truncated' (the answer was cut off at the output-token limit: prompt audit X2; usage and cost are the call's own),
-   * or 'error:<LlmErrorKind>' (the call itself failed - SPEC 15: never the payload). */
+   * 'error:<LlmErrorKind>' (the call itself failed - SPEC 15: never the payload), or 'error:requestNotBuilt' (its content could not be
+   * built - a repair block that could not print the answer back: nothing was sent). */
   outcome: string;
   /** How many of each `RepairProblem` kind this one call's attempt produced - COUNTS
    * ONLY, never formula text or any other payload/response content (SPEC 15), so the
@@ -268,7 +269,8 @@ async function callAndCheck(
   env: Env,
   purpose: CallPurpose,
   model: string,
-  content: ContentBlock[],
+  /** What the call is sent - or how to build it (a repair's block prints the answer back: built inside the try, so it can never throw past it). */
+  content: ContentBlock[] | (() => ContentBlock[]),
   payload: LearnPayload,
   tier: Tier,
   prefixCache: PrefixCache,
@@ -282,8 +284,12 @@ async function callAndCheck(
   const schema = prompt.checks ? learnStepWireJsonSchema() : learnResultWireJsonSchema({ alternatives: prompt.alternatives });
   const promptVersion = prompt.version;
 
+  // API audit (2026-10-07): the request is built inside the try - a rules file that cannot be printed back into a repair block is a failed
+  // call of this learn (`error:requestNotBuilt`, nothing sent), never an exception past it (a 500).
+  let blocks: ContentBlock[] | null = null;
   try {
-    const result = await completeFn({ system: prompt.system, content, schema, model, purpose }, env);
+    blocks = typeof content === 'function' ? content() : content;
+    const result = await completeFn({ system: prompt.system, content: blocks, schema, model, purpose }, env);
     // learn-v9: the answer unwrapped - its rules are checked as any answer; checks asked where they may be are validated and kept (no rules,
     // no problem); checks where the rules were due, or neither, are a schema problem for the repair round.
     const step = prompt.checks && !result.truncated ? splitStepAnswer(result.json) : null;
@@ -307,7 +313,7 @@ async function callAndCheck(
     const prefixKey = result.fallback ? `${result.provider}:${result.model}` : model;
     const estimate = estimateCall(
       result.model,
-      { prefix: [prompt.system, JSON.stringify(schema)], blocks: content.map((b) => b.text), answer: result.raw },
+      { prefix: [prompt.system, JSON.stringify(schema)], blocks: blocks.map((b) => b.text), answer: result.raw },
       prefixCache.has(prefixKey),
     );
     prefixCache.add(prefixKey);
@@ -335,12 +341,12 @@ async function callAndCheck(
     const attempt: Attempt = { raw, problems, rules, alternatives, ...(asked ? { checks: asked.checks, droppedChecks: asked.dropped } : {}) };
     return { record, attempt };
   } catch (err) {
-    const kind = err instanceof LlmError ? err.kind : 'providerError';
+    const kind = blocks === null ? 'requestNotBuilt' : err instanceof LlmError ? err.kind : 'providerError';
     const message = err instanceof Error ? err.message : 'unknown LLM error';
     const attempt: Attempt = {
       raw: null,
       rules: null,
-      problems: [{ kind: 'schema', path: '', message: `LLM call failed: ${message}` }],
+      problems: [{ kind: 'schema', path: '', message: blocks === null ? `the request could not be built: ${message}` : `LLM call failed: ${message}` }],
       alternatives: [],
     };
     // A call that failed on the fallback too is recorded as the fallback's (the last provider tried), with why it was tried.
@@ -466,12 +472,14 @@ async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt>
     if (ctx.opts.signal?.aborted) break;
     // A repair that carries an `overfit` problem is the learn's one repair for it.
     if (current.problems.some((p) => p.kind === 'overfit')) ctx.overfitRepaired = true;
+    const attempt = current;
     const repair = await callAndCheck(
       ctx.completeFn,
       ctx.env,
       'repair',
       ctx.model,
-      [...ctx.head, repairContentBlock(current, current.problems, ctx.prompt)],
+      // (built by callAndCheck, inside its try: see there)
+      () => [...ctx.head, repairContentBlock(attempt, attempt.problems, ctx.prompt)],
       ctx.payload,
       ctx.tier,
       ctx.prefixCache,
@@ -618,7 +626,8 @@ export async function repairFromBrowser(
   const list = prompt.checks === true && problems.some((p) => p.kind === 'list');
   const rounds = list ? (opts.rounds ?? []) : [];
   const checksLeft = list && opts.mayCheck === true && rounds.length < limits.learn.checks.maxRounds;
-  const content = [
+  // (Built by callAndCheck, inside its try: the browser's rules are printed back to formula text there.)
+  const content = (): ContentBlock[] => [
     block,
     repairContentBlock(previous, problems, checksLeft ? { ...prompt, repair: REPAIR_INSTRUCTION_V7 } : prompt),
     ...rounds.map((round, i) => roundBlock(round, i + 1, i === rounds.length - 1)),

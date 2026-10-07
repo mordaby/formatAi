@@ -381,6 +381,27 @@ describe('parseFormula <-> printFormula: round trip for every op', () => {
     expect(printFormula(parsed)).toBe('-5');
   });
 
+  it('API audit: prints ANY finite number in plain digits (toString writes 1e21 and 1e-7 with an exponent) and reads it back the same', () => {
+    const cases: [number, string][] = [
+      [1e21, '1000000000000000000000'],
+      [1.2345e21, '1234500000000000000000'],
+      [1.5e-7, '0.00000015'],
+      [-2.5e-10, '-0.00000000025'],
+      [1e-6, '0.000001'],
+      [123.456, '123.456'],
+      [0, '0'],
+    ];
+    for (const [v, text] of cases) {
+      const printed = printFormula({ const: v });
+      expect(printed).toBe(text);
+      expect(ok(printed)).toEqual({ const: v }); // (a minus on a number literal folds into it)
+    }
+    for (const v of [Number.MAX_VALUE, Number.MIN_VALUE, 9.87654321e300, 3.3e-200]) {
+      const back = ok(printFormula({ op: 'mul', args: [{ col: 'a' }, { const: v }] }));
+      expect(back).toEqual({ op: 'mul', args: [{ col: 'a' }, { const: v }] });
+    }
+  });
+
   it('round-trips a function body using params', () => {
     const ctx = { params: ['base', 'rate'] };
     const parsed = ok('round(base * rate, 2)', ctx);

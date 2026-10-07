@@ -224,6 +224,19 @@ export const limits = {
     maxValueChars: 300,
     maxTitleChars: 500,
     maxRulesBytes: 65_536,
+    /**
+     * API audit (2026-10-07): the number parameters a rule may give the engine, which it uses as sizes. Unbounded, one answer or one saved
+     * format could crash or hang the engine (`padLeft` to a length of 1e9 builds a gigabyte string; `round` to 1e9 digits, 1e9 blank rows
+     * after each group). The schema refuses more (an AI answer gets a repair; a save is refused). DECISION: far above any real use -
+     *   - `maxRoundDigits`: `round(x, digits)`, at most 15 places either side of the point (a double holds 15-17 significant digits);
+     *   - `maxPadLength`: `padLeft(x, length, char)` and an input column's `padLeft` - an ID, an account or an IBAN (34) is far shorter;
+     *   - `maxLengthEquals`: a `lengthEquals` check (its suggestion pads to that length);
+     *   - `maxBlankRowsAfter`: blank rows after each group (`group.blankRowsAfter`); a report has one or two.
+     */
+    maxRoundDigits: 15,
+    maxPadLength: 100,
+    maxLengthEquals: 100,
+    maxBlankRowsAfter: 20,
   },
   /**
    * SPEC 6.5: the local fast path.
