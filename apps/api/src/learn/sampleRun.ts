@@ -3,7 +3,7 @@
 // browser's job, SPEC 5 A step 6, the hold-out test since the LLM only saw up to 12
 // rows), run the candidate rules through the deterministic engine, and diff the result
 // against what the payload says each sample should produce.
-import { columnsReportedUnsupported, formatYmd, runRules, serialToYmd, ymdToSerial } from '@formatai/engine';
+import { actualSeen, cellsMatch, columnsReportedUnsupported, formatYmd, runRules, serialToYmd, ymdToSerial } from '@formatai/engine';
 import type { InputTable, OutCell, OutRow } from '@formatai/engine';
 import type {
   LearnPayload,
@@ -95,20 +95,20 @@ export function buildSampleInputTable(payload: LearnPayload): InputTable {
 
 // ---------- Typed comparison (SPEC 9.2 layer 7: "compare typed") ----------
 
-/** Numbers compare numerically with a small epsilon (a `decimal.js` value that
- * round-trips through `Number` for the engine's `OutCell.v` can drift in the last
- * bit), dates compare as ISO text, everything else compares exactly. */
-function cellsEqual(expected: PayloadCell, actual: OutCell | undefined): boolean {
-  // Empty text and an empty cell look the same in Excel (a formula's "", an export that writes every cell): equal, like the browser's check.
-  if (actual === undefined || actual.v === null || actual.v === '') return expected === null || expected === '';
-  if (expected === null || expected === '') return false;
-  if (actual.isDate === true && typeof actual.v === 'number') {
-    return typeof expected === 'string' && serialToIso(actual.v) === expected;
-  }
-  if (typeof expected === 'number') {
-    return typeof actual.v === 'number' && Math.abs(actual.v - expected) < 1e-9;
-  }
-  return actual.v === expected;
+/**
+ * API audit P1 (2026-10-07): the browser's own typed compare (engine `cellsMatch`, the full verification's), so the sample run never calls a
+ * cell wrong that the browser calls right. It used to compare strictly (`actual.v === expected`): a csv / txt example's "12.50" - text, as
+ * every delimited cell is - against the 12.5 the rules make was a `diff`, and a correct price rule failed on the server.
+ *
+ * The payload's cells are what the example holds: numbers as numbers, text as text, and a real Excel date as ISO "YYYY-MM-DD" text. So an
+ * expected cell is compared as text first; in a workbook, ISO-shaped text is compared as a date too (the payload cannot say which it was -
+ * the old compare accepted both as well). In a delimited output every cell is text, and a date the rules make is compared by the text the
+ * writer writes for it.
+ */
+function cellsEqual(expected: PayloadCell, actual: OutCell | undefined, delimited: boolean): boolean {
+  const made = actualSeen(actual);
+  if (cellsMatch({ v: expected, date: false }, made, delimited)) return true;
+  return !delimited && typeof expected === 'string' && ISO_DATE_RE.test(expected) && cellsMatch({ v: expected, date: true }, made, delimited);
 }
 
 function actualCellValue(actual: OutCell | undefined): PayloadCell {
@@ -135,6 +135,8 @@ function isFamilySample(sample: Sample): boolean {
 interface DiffCtx {
   problems: RepairProblem[];
   diffCount: number;
+  /** The example output is a csv / txt file (its cells are text): see `cellsEqual`. */
+  delimited: boolean;
 }
 
 /** Returns false once the cap (`MAX_DIFF_PROBLEMS`) is reached, so callers can stop
@@ -158,7 +160,7 @@ function compareRow(
     if (ignore.has(out)) continue;
     const expected = expectedRow[out] ?? null;
     const actualCell = actualRow?.cells[out];
-    if (cellsEqual(expected, actualCell)) continue;
+    if (cellsEqual(expected, actualCell, ctx.delimited)) continue;
     const problem: Extract<RepairProblem, { kind: 'diff' }> = {
       kind: 'diff',
       out,
@@ -252,7 +254,7 @@ export function runOnSamples(rules: LearnResult | Rules, payload: LearnPayload):
   const ignore = columnsNotCompared(rules, payload);
   const table = buildSampleInputTable(payload);
   const result = runRules(rules, table, {});
-  const ctx: DiffCtx = { problems: [], diffCount: 0 };
+  const ctx: DiffCtx = { problems: [], diffCount: 0, delimited: payload.output.file.type !== 'xlsx' };
 
   if (!result.ok) {
     if (result.error.code === 'missingRequiredColumns') {

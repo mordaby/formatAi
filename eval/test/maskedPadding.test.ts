@@ -50,9 +50,9 @@ describe('masked samples show the zero padding of an ID stored as a number', () 
         }
       }
 
-      // The server's sample run with the case's reference rules: masking adds no problem, and none names a padded column. (With
-      // masking off supplier-pricelist-erp-load's price cells - text in its txt output - differ from the number the rules make, the
-      // same with masking on: not a masking matter.)
+      // The server's sample run with the case's reference rules: masking adds no problem, and none names a padded column. (The price
+      // cells of supplier-pricelist-erp-load - text in its txt output - used to differ from the number the rules make; since the sample
+      // run compares like the browser, API audit P1, they do not: sampleRunTyped.test.ts.)
       const plain = runOnSamples(c.referenceRules!, buildPayload(a, pf).payload);
       const problems = runOnSamples(c.referenceRules!, masked);
       expect(problems.length).toBe(plain.length);

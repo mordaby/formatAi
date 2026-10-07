@@ -273,6 +273,28 @@ describe('buildSampleInputTable', () => {
   });
 });
 
+describe('runOnSamples compares like the browser (API audit P1: engine cellsMatch)', () => {
+  const csvPayload = (outs: [string, string][]): LearnPayload =>
+    basicPayload({
+      output: { ...basicPayload().output, file: { type: 'csv' } },
+      samples: outs.map(([id, total], i) => ({ in: [id, (i + 1) * 5], out: [id, total] })),
+    });
+
+  it('a csv / txt example: plain-number text equals the number the rules make ("10.00" is 10)', () => {
+    expect(runOnSamples(correctRules(), csvPayload([['A1', '10'], ['A2', '20.00']]))).toEqual([]);
+  });
+
+  it('...but never text a delimited writer would not write for it: a currency sign, grouping', () => {
+    const problems = runOnSamples(correctRules(), csvPayload([['A1', '₪10'], ['A2', '2,0']]));
+    expect(problems.filter((p) => p.kind === 'diff').map((p) => (p as { out: number }).out)).toEqual([1, 1]);
+  });
+
+  it('a workbook: text that reads like a number is still not one (typed, as before)', () => {
+    const problems = runOnSamples(correctRules(), basicPayload({ samples: [{ in: ['A1', 10], out: ['A1', '20'] }] }));
+    expect(problems).toContainEqual({ kind: 'diff', out: 1, sample: 0, expected: '20', actual: 20 });
+  });
+});
+
 describe('runOnSamples: a column reported as unsupported', () => {
   it('is not compared with the samples (it would differ on every row): from null + an unsupported entry, any reason code', () => {
     expect(runOnSamples(externalColumnRules(), externalColumnPayload())).toEqual([]);
