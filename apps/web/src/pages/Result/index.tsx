@@ -1,9 +1,22 @@
 // The Result screen (SPEC 16.1 screen 4, 8.11) for a fresh learn: the working part (`Workbench`) plus what is specific to a learn -
-// the local result before the AI step (SPEC 21 v5), the AI quota, "this looks like your format X" (SPEC 5 A2), and saving.
-// Once the learn is saved (a format and its first source) the SAME screen becomes the editor of that source: its address is the
-// source's own, the example files stay in the worker for the live check, and every further save is a new version of the source.
-import { defaultSourceName, limits, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
-import { completionPlan, fixedColumnShare, isCompletable } from '@formatai/shared';
+// the local result before the AI step (SPEC 21 v5), the AI quota, and saving - where "Save format" first asks, in the Save popup, whether
+// the learned output is one of the user's saved formats (owner decision 2026-10-07: update its rules, add the file as a new source of it, or
+// save a new format; `useFormatMatch`, `FormatMatchDialog`). Nothing matches: Save goes at once, as before.
+// Once the learn is saved (a format and its first source, a new source of a saved format, or a new version of one of its sources) the SAME
+// screen becomes the editor of that source: its address is the source's own, the example files stay in the worker for the live check, and
+// every further save is a new version of the source.
+import {
+  defaultSourceName,
+  withUnwrittenOutputOf,
+  tiers,
+  type AttachSourceRequest,
+  type AttachSourceResponse,
+  type CreateFormatRequest,
+  type CreateFormatResponse,
+  type UpdateConversionRequest,
+  type UpdateConversionResponse,
+} from '@formatai/shared';
+import { missingFields } from './missingFields';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useOnAi } from '../../app/aiReport';
@@ -23,8 +36,8 @@ import type { LearnOutput } from '../../worker/engineApi';
 import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
 import { Versions } from '../Format/Versions';
 import { AiNote } from './AiNote';
-import { useCopiedListGate } from './CopiedListSave';
-import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
+import { useCopiedListGate, type SaveChoice } from './CopiedListSave';
+import { columnKey, DeepAnalysisPanel, partKey } from './DeepAnalysisPanel';
 import { filledNote } from './filledNote';
 import { oneTimeQuestionsOf, questionsOf } from './helpers';
 import { PartialSignInDialog } from './PartialResult';
@@ -33,13 +46,19 @@ import { UnfinishedRows } from './UnfinishedRows';
 import { applyCompletionNotes, defaultFormatName, getResultSession, sourcePath, type SavedSource } from './session';
 import { TryAnotherFile } from './TryAnotherFile';
 import { useCompletion } from './useCompletion';
-import { useFormatMatch } from './useFormatMatch';
+import { useFormatMatch, type FormatOffer } from './useFormatMatch';
 import { useDownload } from './useDownload';
 import { useSave } from './useSave';
 import { Workbench, type WorkbenchInfo } from './Workbench';
 
 /** The props are exactly what `useLearnFlow` returns: `state` (status 'done' here), and the flow's actions. */
 export type ResultPageProps = UseLearnFlow;
+
+/** What the first save of a learn did: a new format, a new source of a saved one, or a new version of one of its sources. */
+type FirstSave =
+  | { kind: 'new'; res: CreateFormatResponse }
+  | { kind: 'attach'; res: AttachSourceResponse; formatName: string }
+  | { kind: 'update'; res: UpdateConversionResponse };
 
 export function ResultPage({ state }: ResultPageProps) {
   if (state.status !== 'done' || !state.result.rules) return null;
@@ -142,21 +161,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
   const liveRules = useSyncExternalStore(kept.store.subscribe, () => kept.store.getState().rules);
   // What the AI step noted about the columns it could not build (its guess, a recorded function request), by header. Memory only; read each render.
   const aiNotes = new Map((kept.aiNotes ?? []).map((n) => [n.header, n] as const));
-  const missing = useMemo(() => {
-    const plan = completionPlan(liveRules, { parts: partial?.needsAiParts ?? [] });
-    const external = new Set(partial?.external ?? []);
-    const columns: MissingColumn[] = plan.columns.map((index) => {
-      const header = liveRules.output.columns[index]!.header;
-      return { index, header, external: external.has(header) };
-    });
-    // Completion mode needs something to ask for, rules that still line up with the example (no column added or removed), and enough already
-    // solved (under limits.learn.completionMinFixedShare of the columns a 'complete the rest' request is just a worse-shaped full learn: first
-    // Haiku eval). Otherwise the deep analysis is the whole learn again, which replaces the rules.
-    const aligned = result.exampleOutputColumns === undefined || liveRules.output.columns.length === result.exampleOutputColumns;
-    const enoughFixed = fixedColumnShare(liveRules) >= limits.learn.completionMinFixedShare;
-    const any = columns.length > 0 || plan.parts.length > 0;
-    return { columns, parts: plan.parts, any, completable: any && aligned && enoughFixed && isCompletable(liveRules) };
-  }, [liveRules, partial, result.exampleOutputColumns]);
+  const missing = useMemo(() => missingFields(liveRules, partial, result.exampleOutputColumns), [liveRules, partial, result.exampleOutputColumns]);
   // The free result with fields missing and nothing from the AI step yet. A visitor cannot save it (sign in first); a signed-in user still can deliver
   // it - download it, or save it with those fields as "needs your input" - while the panel offers the deep analysis.
   const incomplete = aiPending && (!me.user || missing.any);
@@ -181,10 +186,114 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     }
   }, [aiPending, me.status, me.user]);
 
-  const save = useSave<CreateFormatResponse>();
-  const match = useFormatMatch(me.user !== null && !incomplete && !source, rules);
+  const save = useSave<FirstSave>();
+  // "Is this one of your formats?" (owner decision 2026-10-07): asked at the first Save of a learn, for a signed-in user (the list of their
+  // formats is read in the background as soon as the result is shown, so a Save that matches nothing waits for nothing).
+  const formatMatch = useFormatMatch(me.user !== null && !source);
+  const [matching, setMatching] = useState(false);
+  const matchingNow = useRef(false);
 
-  const doSave = (info: WorkbenchInfo): void => {
+  /** After the first save, whatever it was: the screen becomes the editor of the source it saved (`next`). */
+  const becomeSource = (info: WorkbenchInfo, next: SavedSource, counts: { sourceCount: number; sourceFormats: number }): void => {
+    // What is on screen is what was saved: "Unsaved changes" goes, and leaving no longer asks.
+    info.editor.markSaved();
+    // ... and the learn page starts empty the next time it shows (owner, 2026-10-07): the files did their job.
+    session.markSaved();
+    // From here on the screen edits that source: an edit of the output side is an edit of the format (for all its sources), and the next
+    // save is a new version.
+    info.editor.store.setFormat({ sourceCount: counts.sourceCount });
+    // ... and of its source: an edit of the input side changes every format that source feeds (said only when that is more than one).
+    info.editor.store.setSource({ formats: counts.sourceFormats });
+    saver.setVersion(next.version);
+    kept.source = next;
+    setSource(next);
+    // SPEC 21 v5 item 3: saving with accepted differences is what makes an AI learn that did not verify count.
+    if (info.metaStatus === 'differencesAccepted' && aiInfo?.learnId) {
+      api.registry
+        .learnOutcome(aiInfo.learnId, 'accepted')
+        .then((r) => onAi({ quota: r.quota }))
+        .catch(() => undefined);
+    }
+  };
+
+  /** The rules as one of the user's saved formats was learned into: a new source of it, or a new version of its source. */
+  const saveInto = (info: WorkbenchInfo, choice: { kind: 'update' | 'attach'; offer: FormatOffer }): void => {
+    const file = session.input;
+    if (!info.metaStatus || !file) return;
+    const { offer } = choice;
+    // (a csv's or txt's sheet name, widths, header style and direction are not in the file: the format's are taken, so a new file name is
+    // not a change of the format - the file written is the same)
+    const rules = withUnwrittenOutputOf(info.rules, offer.format);
+    const rename = (): void => {
+      setName(offer.formatName);
+      kept.name = offer.formatName;
+      // What is on screen is what was saved (the next save from this editor is compared with it).
+      if (rules !== info.rules) {
+        const s = info.editor.store.getState();
+        info.editor.store.reset(rules, { exceptions: s.exceptions, oneTime: s.oneTime, edited: [...s.edited] });
+      }
+    };
+    if (choice.kind === 'update' && offer.conversion) {
+      const conversion = offer.conversion;
+      // The editor's own route (SPEC 8.11 "Saving"): a NEW version of that source's rules, based on the version just read - a conversion
+      // changed meanwhile is refused, never overwritten. Earlier versions are kept (and can be restored from the history).
+      const body: UpdateConversionRequest = {
+        rules,
+        status: info.metaStatus,
+        acceptedDifferences: info.differences ?? 0,
+        exampleExceptions: info.exceptions,
+        baseVersion: conversion.version,
+      };
+      void save.run({
+        persist: async () => ({ kind: 'update', res: await api.registry.updateConversion(conversion.id, body) }),
+        afterSaved: (out) => {
+          if (out.kind !== 'update') return;
+          rename();
+          becomeSource(info, { formatId: offer.formatId, conversionId: conversion.id, version: out.res.conversion.version }, { sourceCount: offer.sources, sourceFormats: conversion.sourceFormats });
+          // (said the way the editor says a save: the version, and what it changed in the format for its other sources)
+          setNotice(out.res);
+        },
+      });
+      return;
+    }
+    // A new source of the format (SPEC 5 A2): the rules are already learned and hold the format lock (checked before it was offered; the
+    // server checks it again), so they are saved as they are - the server reuses the source the example input matches, or makes one.
+    const learnPath = completed ? 'llm' : result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
+    const inputHeaders = result.exampleInput?.map((c) => c.header);
+    const suggestedSourceName = defaultSourceName(file.name);
+    const body: AttachSourceRequest = {
+      rules,
+      status: info.metaStatus,
+      acceptedDifferences: info.differences ?? 0,
+      exampleExceptions: info.exceptions,
+      learnPath,
+      masking: session.masking,
+      ...(suggestedSourceName !== '' ? { suggestedSourceName } : {}),
+      ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
+      ...(learnPath !== 'local' && aiInfo?.promptVersion ? { promptVersion: aiInfo.promptVersion } : {}),
+    };
+    void save.run({
+      persist: async () => ({ kind: 'attach', res: await api.registry.attachSource(offer.formatId, body), formatName: offer.formatName }),
+      afterSaved: (out) => {
+        if (out.kind !== 'attach') return;
+        rename();
+        becomeSource(info, { formatId: offer.formatId, conversionId: out.res.conversion.id, version: out.res.conversion.version }, { sourceCount: offer.sources + 1, sourceFormats: out.res.source.formats });
+        void me.refreshFormats();
+      },
+    });
+  };
+
+  const doSave = (info: WorkbenchInfo, choice: SaveChoice): void => {
+    if (choice.kind !== 'new') {
+      // A free result with fields still missing is not added as it is: the Add a source screen learns the file against the format, the free
+      // engine first, and offers "Finish with AI" for what is left (owner decision 2026-10-07). The files go with it.
+      if (choice.kind === 'attach' && incompleteNow()) {
+        navigate(`/formats/${choice.offer.formatId}/add-source`, { state: { fromSession: true } });
+        return;
+      }
+      saveInto(info, choice);
+      return;
+    }
     const file = session.input;
     if (!info.metaStatus || !file) return;
     const learnPath = completed ? 'llm' : result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
@@ -209,29 +318,45 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
       ...(learnPath !== 'local' && aiInfo?.promptVersion ? { promptVersion: aiInfo.promptVersion } : {}),
     };
     void save.run({
-      persist: () => api.registry.createFormat(body),
-      // SPEC 21 v5 item 3: saving with accepted differences is what makes an AI learn that did not verify count.
-      afterSaved: (res) => {
-        // What is on screen is what was saved: "Unsaved changes" goes, and leaving no longer asks.
-        info.editor.markSaved();
-        // ... and the learn page starts empty the next time it shows (owner, 2026-10-07): the files did their job.
-        session.markSaved();
-        // From here on the screen edits that source: an edit of the output side is an edit of the format, and the next save is a new version.
-        info.editor.store.setFormat({ sourceCount: 1 });
-        // ... and of its source: an edit of the input side changes every format that source feeds (said only when that is more than one).
-        info.editor.store.setSource({ formats: res.source.formats });
-        const next: SavedSource = { formatId: res.format.id, conversionId: res.conversion.id, version: res.conversion.version };
-        saver.setVersion(next.version);
-        kept.source = next;
-        setSource(next);
-        if (info.metaStatus === 'differencesAccepted' && aiInfo?.learnId) {
-          api.registry
-            .learnOutcome(aiInfo.learnId, 'accepted')
-            .then((r) => onAi({ quota: r.quota }))
-            .catch(() => undefined);
-        }
+      persist: async () => ({ kind: 'new', res: await api.registry.createFormat(body) }),
+      afterSaved: (out) => {
+        if (out.kind !== 'new') return;
+        const res = out.res;
+        becomeSource(info, { formatId: res.format.id, conversionId: res.conversion.id, version: res.conversion.version }, { sourceCount: 1, sourceFormats: res.source.formats });
       },
     });
+  };
+
+  /** The free result still has fields the AI step was not asked for, and nobody filled them: it is not a finished result yet. */
+  const incompleteNow = (): boolean => aiPending && missing.any;
+
+  /**
+   * "Save format": ask first whether the learned output is one of the user's saved formats (nothing matches: no question, and the save goes on
+   * exactly as before); together with the Save popup's question about lists and identifier values, in ONE dialog.
+   */
+  const startSave = async (info: WorkbenchInfo): Promise<void> => {
+    const findings = findingsToConfirm(info.rules, copied);
+    // (no saved format has these headers: nothing to read or wait for - the save goes at once, exactly as before)
+    if (formatMatch.surelyNone(info.rules)) {
+      gate.save(info, findings, doSave);
+      return;
+    }
+    if (matchingNow.current) return;
+    matchingNow.current = true;
+    setMatching(true);
+    let offers: FormatOffer[];
+    try {
+      offers = await formatMatch.find(info.rules, result.exampleInput?.map((c) => c.header));
+    } finally {
+      matchingNow.current = false;
+      setMatching(false);
+    }
+    // (rules changed while the formats were read: nothing is saved - Save is there to press again)
+    if (kept.store.getState().rules !== info.rules) return;
+    // A free result with fields missing is not attached as it is (`doSave`): the format lock of THESE rules says nothing about the rules the
+    // Add a source screen will learn, so the file is offered as a source whatever it says.
+    const offered = incompleteNow() ? offers.map((o) => (o.kind === 'locked' ? { ...o, kind: 'attach' as const, reasons: [] } : o)) : offers;
+    gate.save(info, findings, doSave, offered);
   };
 
   // A save after the first one (or an attempt at it) has been made: the first save's message has done its job.
@@ -315,7 +440,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     }
     const label =
       info.differences && info.differences > 0 ? t(info.differences === 1 ? 'save.differences.one' : 'save.differences.other', { n: info.differences }) : t('result.save');
-    const saving = save.state.status === 'saving' || gate.waiting;
+    const saving = save.state.status === 'saving' || gate.waiting || matching;
     const file = session.input;
     return (
       <>
@@ -326,8 +451,9 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
             loading={saving}
             // A visitor is asked to sign in (SPEC 5 E); a signed-in user needs rules that can be saved right now - and the AI step not at work on them.
             disabled={completion.running || (me.user ? info.metaStatus === null : info.status.kind === 'blocked')}
-            // (a list or an identifier-shaped value the rules about to be stored hold is asked about first, in a dialog: none, and the save goes at once)
-            onClick={() => (me.user ? gate.save(info, findingsToConfirm(info.rules, copied), doSave) : signIn.open('save'))}
+            // (one of the user's formats, a list or an identifier-shaped value the rules about to be stored hold is asked about first, in ONE
+            // dialog: none, and the save goes at once)
+            onClick={() => (me.user ? void startSave(info) : signIn.open('save'))}
           >
             {label}
           </Button>
@@ -404,32 +530,25 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
           onLeave={(index) => void info.editor.apply({ type: 'setColumnMethod', index, method: { kind: 'empty' } })}
         />
       )}
-      {match.format && !match.dismissed && (
-        <InlineMessage
-          tone="info"
-          title={t('match.title', { name: match.format.name })}
-          actions={
-            <>
-              <Button variant="primary" size="sm" onClick={() => navigate(`/formats/${match.format!.id}/add-source`, { state: { fromSession: true } })}>
-                {t('match.add')}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={match.dismiss}>
-                {t('match.dismiss')}
-              </Button>
-            </>
-          }
-        >
-          {t('match.text')}
-        </InlineMessage>
-      )}
       {aiInfo && <AiNote ai={aiInfo} verified={(completed ? completed.verification : result.verification)?.verified === true} />}
-      {/* What the first save said, until a later save has something to say. */}
-      {!laterSave && save.state.status === 'saved' && (
+      {/* What the first save said, until a later save has something to say. (A new version of a saved source is said by the editor's notice.) */}
+      {!laterSave && save.state.status === 'saved' && save.state.value.kind !== 'update' && (
         <InlineMessage tone="info" actions={<Link to="/formats">{t('save.viewFormats')}</Link>}>
-          <p>{t('save.done', { name })}</p>
+          <p>
+            {save.state.value.kind === 'attach'
+              ? t('add.saved', { source: save.state.value.res.source.name, format: save.state.value.formatName })
+              : t('save.done', { name })}
+          </p>
         </InlineMessage>
       )}
-      {!laterSave && save.state.status === 'error' && <SaveFailureMessage failure={save.state.error} onSignIn={() => signIn.open('save')} />}
+      {!laterSave && save.state.status === 'error' && (
+        <SaveFailureMessage
+          failure={save.state.error}
+          onSignIn={() => signIn.open('save')}
+          // (a new source of a saved format the server refused for the format or source lock: said like Add a source says it)
+          {...(save.state.error.code === 'formatMismatch' ? { problemsTitle: t('add.saveMismatch.title') } : {})}
+        />
+      )}
       {source && (
         <SourceMessages info={info} saver={saver} notice={notice} formatId={source.formatId} onReload={() => void reload(source)} onSignIn={() => signIn.open('save')} />
       )}

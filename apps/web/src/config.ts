@@ -26,6 +26,8 @@ export const webConfig = {
     /** Convert a file (SPEC 5 C/D): the headers, matching, one run, and packing a batch's zip. */
     readHeaders: 30_000,
     matchFile: 30_000,
+    /** "Is this one of your formats?" at Save: rules and headers only. */
+    formatMatches: 10_000,
     columnGaps: 10_000,
     convertWithDecisions: 60_000,
     batch: 120_000,

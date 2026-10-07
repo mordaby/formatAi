@@ -4,6 +4,7 @@
 // as an argument, and rules are fetched by the main thread.
 import {
   extractTable,
+  findFormatMatches,
   formatYmd,
   mapHeaders,
   matchConversions,
@@ -19,7 +20,7 @@ import {
 } from '@formatai/engine';
 import type { InputTable, OutputSheet, OutRow, RawCell, RawWorkbook } from '@formatai/engine';
 import type { LearnResult, Rules } from '@formatai/shared';
-import type { BatchArgs, BatchOutput, ColumnGapsArgs, ColumnGapsOutput, ConvertRunArgs, ConvertRunOutput, HeadersArgs, HeadersOutput, MatchFileArgs, MatchFileOutput, RowInputCell, SummaryTable } from './convertApi';
+import type { BatchArgs, BatchOutput, ColumnGapsArgs, ColumnGapsOutput, ConvertRunArgs, ConvertRunOutput, FormatMatchesArgs, FormatMatchesOutput, HeadersArgs, HeadersOutput, MatchFileArgs, MatchFileOutput, RowInputCell, SummaryTable } from './convertApi';
 import { Transfer } from './runtime';
 
 /** A detached-safe ArrayBuffer holding exactly `bytes`. */
@@ -66,6 +67,14 @@ async function matchFile(args: MatchFileArgs): Promise<MatchFileOutput> {
   if (!read.ok) return read;
   const ranked = matchConversions(read.table.headers, args.signatures);
   return { ok: true, headers: read.table.headers, ranked, pick: pickConversion(ranked) };
+}
+
+/**
+ * A learned example that matches a saved format (owner decision 2026-10-07, SPEC 5 A step 8): the formats whose output has the same structure,
+ * whether the example input is one of their sources, and the format lock. Headers and rules only: no file is read.
+ */
+async function formatMatches(args: FormatMatchesArgs): Promise<FormatMatchesOutput> {
+  return findFormatMatches({ rules: args.rules, inputHeaders: args.inputHeaders, candidates: args.candidates, sources: args.sources });
 }
 
 /**
@@ -212,4 +221,4 @@ async function batch(args: BatchArgs): Promise<Transfer<BatchOutput>> {
   return new Transfer({ zip, summary: alone }, [zip, alone]);
 }
 
-export const convertMethods = { readHeaders, matchFile, columnGaps, convertWithDecisions, batch };
+export const convertMethods = { readHeaders, matchFile, formatMatches, columnGaps, convertWithDecisions, batch };

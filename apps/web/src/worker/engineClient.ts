@@ -14,6 +14,8 @@ import type {
   HeadersOutput,
   MatchFileArgs,
   MatchFileOutput,
+  FormatMatchesArgs,
+  FormatMatchesOutput,
   ConvertArgs,
   ConvertOutput,
   EngineMethodMap,
@@ -74,6 +76,8 @@ export interface EngineClient {
   readHeaders(args: HeadersArgs, opts?: EngineCallOptions): Promise<HeadersOutput>;
   /** Matches a file to the saved conversions (headers against signatures) and says whether one clearly wins. */
   matchFile(args: MatchFileArgs, opts?: EngineCallOptions): Promise<MatchFileOutput>;
+  /** A learned example that matches a saved format (owner decision 2026-10-07): which of the user's formats, which source, the format lock. */
+  formatMatches(args: FormatMatchesArgs, opts?: EngineCallOptions): Promise<FormatMatchesOutput>;
   /** Which columns each conversion needs that a file (its headers, from matching) does not have: required ones, and used ones that are optional. Parses nothing. */
   columnGaps(args: ColumnGapsArgs, opts?: EngineCallOptions): Promise<ColumnGapsOutput>;
   /** Runs a conversion with per-run row decisions; in `review` mode stops before writing when rows need a look. */
@@ -168,6 +172,7 @@ export function createEngineClient(options: CreateEngineClientOptions = {}): Eng
     staticChecks: (rules, options, opts) => call('staticChecks', { rules, ...options }, [], opts),
     readHeaders: (args, opts) => call('readHeaders', args, transfersOf(args.file), opts),
     matchFile: (args, opts) => call('matchFile', args, transfersOf(args.file), opts),
+    formatMatches: (args, opts) => call('formatMatches', args, [], opts),
     columnGaps: (args, opts) => call('columnGaps', args, [], opts),
     convertWithDecisions: (args, opts) => call('convertWithDecisions', args, transfersOf(args.file), opts),
     batch: (args, opts) => call('batch', args, args.outputs.map((o) => o.bytes), opts),

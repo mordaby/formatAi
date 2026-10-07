@@ -32,6 +32,7 @@ import { readWorkbook } from '../io/read';
 import type { AnalysisProgress, AnalyzeOptions, PairAnalysis, UserColumnChoices } from './analyze';
 import { analyzePair } from './analyze';
 import { checkFixedLock, type FixedProblem } from '../registry/checkFixedLock';
+import { conformToFormat } from '../registry/conformToFormat';
 import { restoreFixed } from '../registry/restoreFixed';
 import { columnsWithRule, completionProduced, isCompletable, learnResultOf, type CompleteOptions } from './complete';
 import { fastPath } from './fastPath';
@@ -394,37 +395,41 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
 
   const stages = emptyStages(pf.status);
 
-  // ---- SPEC 5 A step 3 / 6.5: the local fast path. Skipped in attach mode: fastPath
-  // has no format-lock awareness (SPEC 8.12 - output/sort/group must equal the
-  // target's exactly), so an attached source always goes through the LLM, which is
-  // told to copy `target` verbatim (LEARN_PROMPT "Adding a source to an existing
-  // format"). ----
-  if (!opts.target && !complete) {
+  const ai = opts.ai ?? 'allowed';
+
+  // ---- SPEC 5 A step 3 / 6.5: the local fast path. In attach mode (SPEC 5 A2, `target`) only while the AI step is not allowed - Add a source
+  // starts with the free engine (owner decision 2026-10-07): the format's output side is TAKEN from the format (`conformToFormat`, the format
+  // lock holds it exactly), and the result is local only when it then matches the example. With the AI step allowed an attached source goes
+  // through the LLM, which is told to copy `target` verbatim (LEARN_PROMPT "Adding a source to an existing format"). ----
+  if (!complete && (!opts.target || ai === 'notAllowed')) {
     stages.fastPathTried = true;
     const fp = fastPath(analysis, pf);
     if ('rules' in fp) {
-      stages.fastPathSucceeded = true;
-      const verification = verifyAgainstExample(fp.rules, analysis);
-      stages.verifiedFirstCall = verification.verified;
-      stages.verifiedAfterRepair = verification.verified;
-      return {
-        path: 'local',
-        preflight: pf,
-        rules: fp.rules,
-        verification,
-        assumptions: fp.rules.assumptions,
-        unsupported: fp.rules.unsupported,
-        calls: [],
-        stages,
-      };
+      const conformed = opts.target ? conformToFormat(fp.rules, opts.target) : null;
+      const rules = conformed ? conformed.rules : fp.rules;
+      const verification = verifyAgainstExample(rules, analysis);
+      if (!conformed || (conformed.unresolved.length === 0 && verification.verified)) {
+        stages.fastPathSucceeded = true;
+        stages.verifiedFirstCall = verification.verified;
+        stages.verifiedAfterRepair = verification.verified;
+        return {
+          path: 'local',
+          preflight: pf,
+          rules,
+          verification,
+          assumptions: rules.assumptions,
+          unsupported: rules.unsupported,
+          calls: [],
+          stages,
+        };
+      }
     }
   }
 
   // ---- SPEC 21 v5 item 4: the AI readiness gate, before any payload or LLM call. It also builds the
   // (optionally masked, SPEC 7.2) payload, which the learn call below then uses as it is. ----
-  const ai = opts.ai ?? 'allowed';
-  // (The local partial result is only for a caller that may not use the AI step.)
-  const partial = complete || ai !== 'notAllowed' ? null : localPartial(analysis, pf);
+  // (The local partial result is only for a caller that may not use the AI step; in attach mode, conformed to the format.)
+  const partial = complete || ai !== 'notAllowed' ? null : conformedPartial(localPartial(analysis, pf), opts.target);
   // The masker and the payload: the same function "See what we send" previews them with (`sendPreview.ts`).
   const { masker, readiness } = aiRequestOf(analysis, pf, { masking: opts.masking, key: opts.key, target: opts.target, complete, patternHints: opts.patternHints });
   stages.readinessChecked = true;
@@ -863,6 +868,20 @@ function localPartial(analysis: PairAnalysis, pf: PreflightResult): PartialRules
   } catch {
     return null;
   }
+}
+
+/**
+ * Attach mode (SPEC 5 A2, owner decision 2026-10-07): the local partial result with the format's output side taken from the format
+ * (`conformToFormat`). The layout parts the format supplied need nothing more; the ones it could not (a sort, a group or a title that reads a
+ * column no rule fills yet) are left to the AI step. Without a target: as it is.
+ */
+function conformedPartial(partial: PartialRulesResult | null, target: Format | undefined): PartialRulesResult | null {
+  if (!partial || !target) return partial;
+  const c = conformToFormat(partial.rules, target);
+  const parts = new Set(partial.needsAiParts.filter((p) => !c.supplied.includes(p)));
+  for (const p of c.unresolved) parts.add(p);
+  // (a question about a column is not asked in attach mode: its marker is an output check the format does not have)
+  return { ...partial, rules: c.rules, needsAiParts: [...parts], ambiguous: [] };
 }
 
 /** The local partial result (SPEC 21 v5 item 1): built rules for what code explained, checked against the

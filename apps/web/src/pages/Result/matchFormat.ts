@@ -1,5 +1,6 @@
-// Does an output look like a saved format (SPEC 5 A2)? "Same headers in the same order and the same file type" - the two things a
-// person can see. Pure, so both the "this looks like your format X" offer (flow A) and the Add a source screen use it.
+// Does an example output fit the format a source is being added to (SPEC 5 A2 step 1)? "Same headers in the same order and the same file
+// type" - the two things a person can see - and, when not, which columns differ. Pure; the Add a source screen uses it. (Whether a learned
+// output IS one of the user's saved formats, at Save, is the structure comparison of shared `sameOutputStructure`: SPEC 8.12 "Same format".)
 
 export type OutputFileType = 'xlsx' | 'csv' | 'txt';
 
