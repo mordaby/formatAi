@@ -24,7 +24,7 @@ import type {
 } from '@formatai/shared';
 import { limits } from '@formatai/shared';
 import type { RawCell } from '../types';
-import { toPayloadColumn } from './analyze';
+import { isSafeShape, toPayloadColumn } from './analyze';
 import type { ColumnProfile, Family, PairAnalysis, SummaryRowAnalysis, TitleRowAnalysis } from './analyze';
 import { isoOfSerial } from './analyze/cells';
 import { completePayloadOf, fixedLabelTexts, type CompleteOptions } from './complete';
@@ -644,12 +644,14 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
     });
 
     // With masking on, an identifier column (amendment 2026-10-06) does not carry its real smallest and largest values (`stats.range`):
-    // they are two of the IDs the samples mask.
+    // they are two of the IDs the samples mask. A masked column's `shape` (amendment 2026-10-07: script-agnostic, `shapeOf`) is sent only
+    // when it holds nothing but shape letters, `D` and separators - never a letter or digit of a value.
     const types = masker ? classifyColumns(analysis) : null;
     const columnOf = (p: ColumnProfile, cls: ColumnClass | undefined): PayloadColumn => {
       const col = toPayloadColumn(p);
       if (!includeStats) delete col.stats;
       else if (cls === 'identifier') delete col.stats?.range;
+      if (cls !== undefined && isMasked(cls) && col.shape !== undefined && !isSafeShape(col.shape)) delete col.shape;
       return col;
     };
     const inputColumns = analysis.input.profile.map((p, i) => columnOf(p, types?.input[i]));

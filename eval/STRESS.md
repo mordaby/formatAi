@@ -56,9 +56,9 @@ that removes nothing) are taken out of the reference rules. No row is blank in e
    example fits two rules: `ambiguousColumns`) and a result whose rules state an assumption are findings, not failures.
 3. **Unsolved columns are reported, never guessed.** A partial result's unsolved column is empty (`from: null`) and listed as
    needing the AI step.
-4. **Masking.** With masking on, the AI payload (samples, dropped rows, hints, layout, column stats), the learning loop's next rows
-   and a repair round's problems hold no checkable real word (4+ letters or digits) of a sensitive column, and no ID number of a
-   column masked as an ID.
+4. **Masking.** With masking on, the AI payload (samples, dropped rows, hints, layout, column stats and shapes - every field that can
+   hold cell text, only enum words skipped), the learning loop's next rows and a repair round's problems hold no checkable real word
+   (4+ letters or digits) of a sensitive column, and no ID number of a column masked as an ID.
 5. **No live formula in an output file.** No `<f>` in an xlsx; no csv / txt field that starts with `= + - @` unless it is a plain
    number. Checked on the reference outputs and on the learned outputs (example and hold-out).
 6. **Time.** Learn and convert within 10 s on a file of 15,000 rows and 15 columns or more.
@@ -138,6 +138,7 @@ Design questions the run reproduces, not fixed in passing (`open.ts`; the summar
 | Lazy repair problems | only the 10 kept repair problems are built and masked (32 s -> 0.8 s) | mixed 134 |
 | Value map, duplicates | an exact duplicate row confirms nothing | mixed 153 |
 | Every script masked (O1; column classification) | Arabic and Cyrillic get same-script fakes; a letter of any other script is never sent real | small 10, 23, 73; mixed 5, 68 |
+| Script-agnostic shape (engine audit) | a column's `shape` holds shape letters, `D` and separators only; the mask check reads every field that can hold cell text | small 23, 128 |
 
 Harness fixes on the way (no engine change): a column the engine asks about is reported; digits as text in a column masked as a
 number are the `idNumberSentReal` finding; a fake that equals another real value is `fakeEqualsReal`; and the fair hold-out rules
