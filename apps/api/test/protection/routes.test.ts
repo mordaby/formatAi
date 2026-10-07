@@ -391,6 +391,44 @@ function defineProtectionSuite(kit: StoreKit): void {
       expect((await bad(ok)).json()).toEqual({ error: 'invalidPreviousRules' });
     });
 
+    it('API audit C9: problems that are not problems are 400 invalidProblems - never a 500, and no round is used', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const cookie = anonCookie(await h.get('/api/session'));
+      const { rules, learnId } = await learned(h, cookie);
+      const before = llm.calls.length;
+      const tooMany = Array.from({ length: limits.learn.loop.maxProblems + 1 }, () => ({ kind: 'layout', message: 'x' }));
+      for (const problems of [[null], [1], [{}], [{ kind: 'nope', message: 'x' }], [{ kind: 'diff', out: 'one', actual: 1 }], [{ kind: 'layout' }], 'x', tooMany]) {
+        const res = await h.post('/api/learn/repair', { ...repairBody(rules, learnId), problems }, { cookie });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: 'invalidProblems' });
+      }
+      expect(llm.calls).toHaveLength(before);
+      expect(await h.handle.counter(`repair:${learnId.split('.')[0]}`)).toBe(0);
+
+      // Every kind the browser sends passes, at the cap.
+      const each = [
+        { kind: 'formula', path: 'p', offset: 0, message: 'm' },
+        { kind: 'schema', path: '', message: 'm' },
+        { kind: 'reference', message: 'm' },
+        { kind: 'diff', out: 1, row: { in: ['A9', 1], out: ['A9', 2] }, expected: 2, actual: 1 },
+        { kind: 'diff', out: 0, made: ['x', 1], expected: null, actual: 'x' },
+        { kind: 'rowCount', expected: 2, actual: 3 },
+        { kind: 'layout', message: 'm' },
+        { kind: 'formatMismatch', path: 'p', message: 'm' },
+        { kind: 'fixedMismatch', path: 'p', message: 'm' },
+        { kind: 'type', path: 'p', message: 'm' },
+        { kind: 'limit', message: 'm' },
+        { kind: 'unsupportedDespiteEvidence', out: 1, message: 'm' },
+        { kind: 'overfit', out: 1, message: 'm' },
+        { kind: 'list', out: 1, message: 'm' },
+        { kind: 'truncated', message: 'm' },
+      ];
+      const atCap = Array.from({ length: limits.learn.loop.maxProblems }, (_, i) => each[i % each.length]);
+      const res = await h.post('/api/learn/repair', { ...repairBody(rules, learnId), problems: atCap }, { cookie });
+      expect(res.statusCode).toBe(200);
+    });
+
     it('lets only 3 of several concurrent rounds through', async () => {
       const llm = makeComplete();
       const h = await setup({ complete: llm.fn });

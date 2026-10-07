@@ -696,7 +696,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   let retryCalls = 0;
   const lists = opts.callRepair && loop.rounds < caps.maxRounds ? copiedLists(kept.rules, analysis, listOpts) : [];
   if (opts.callRepair && lists.length > 0) {
-    const problems = listRetryProblems(lists, kept.masked);
+    // (one per list column - within the server's cap on a round's problems, `limits.learn.loop.maxProblems`, kept here all the same)
+    const problems = listRetryProblems(lists, kept.masked).slice(0, limits.learn.loop.maxProblems);
     const rows = loop.sent.map((r) => r.sample);
     const base: LoopRound = { round: loop.rounds + 1, maxRounds: caps.maxRounds, rows, newRows: 0, overfitRepaired, list: true };
     stages.browserRepairUsed = true;

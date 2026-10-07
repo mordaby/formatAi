@@ -43,6 +43,7 @@ import {
   LoopRowsSchema,
   payloadFits,
   promptVersion,
+  RepairProblemsSchema,
   stepFits,
   stripAiNotes,
   sumEstimates,
@@ -166,10 +167,6 @@ interface Admitted {
 
 function fail(reply: FastifyReply, status: number, body: ApiErrorBody): FastifyReply {
   return reply.code(status).send(body);
-}
-
-function isRepairProblemArray(value: unknown): value is RepairProblem[] {
-  return Array.isArray(value);
 }
 
 /** SPEC 13 `llm_calls`: one document per call this learn made. `cacheHit` is the structure cache
@@ -565,8 +562,10 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
         const parsedRules = LearnResultSchema.safeParse(body?.previousRules);
         if (!parsedRules.success) return { status: 400, body: { error: 'invalidPreviousRules' } };
         previousRules = parsedRules.data;
-        if (!isRepairProblemArray(body?.problems)) return { status: 400, body: { error: 'invalidProblems' } };
-        problems = body.problems;
+        // API audit C9: each problem of a known kind with its fields' types, and no more than a round sends (`[null]` was a 500).
+        const parsedProblems = RepairProblemsSchema.safeParse(body?.problems);
+        if (!parsedProblems.success) return { status: 400, body: { error: 'invalidProblems' } };
+        problems = parsedProblems.data as RepairProblem[];
         // The learning loop's rows (SPEC 9.3): sample-shaped, and never more than one learn may send - its samples and dropped rows
         // included, each cell within the payload's cell length, and the payload with all of them added under the payload byte cap.
         // (Absent: a round with no rows.)

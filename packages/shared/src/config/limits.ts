@@ -327,6 +327,13 @@ export const limits = {
       maxRounds: 3,
       rowsPerRound: 8,
       maxRowsTotal: 40,
+      /**
+       * API audit C9 (2026-10-07): the problems one round may send (`RepairRequest.problems`; the server refuses more with 400
+       * `invalidProblems`, the browser's loop keeps the first ones). DECISION: 100 - above any round the browser builds (10 diff
+       * problems, 10 of the fixed lock, a row count, the layout's, and one per output column for a column given up on, copied or a list);
+       * the request's body cap (`api.maxBodyBytes`) bounds their size.
+       */
+      maxProblems: 100,
     },
     /**
      * Code fills the data parameters of an AI answer from every row of the example (docs/proposals/learning-loop.md 7.1, owner decision

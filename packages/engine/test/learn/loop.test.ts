@@ -1,6 +1,6 @@
 // The learning loop's driver (`learn/loop.ts`): which rows a round sends (grouped by what went wrong, biggest groups first, never a row
 // twice), and when the loop ends - done, no progress, the round cap, the row cap, the payload cap, nothing to send - keeping the best answer.
-import { payloadBytes, withRows, type LearnPayload, type LearnResult, type RepairProblem } from '@formatai/shared';
+import { limits, payloadBytes, withRows, type LearnPayload, type LearnResult, type RepairProblem } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { buildPayload, counterexampleSample } from '../../src/learn/payload';
 import { createMasker } from '../../src/learn/mask';
@@ -222,6 +222,17 @@ describe('loopStep: what a round sends', () => {
       nameOf.set(real, fake);
     }
     expect(nameOf.size).toBeLessThan(r1.step.rows.length + r2.step.rows.length); // (some customer came up twice)
+  });
+
+  it("never more problems than the server takes in a round (API audit C9): the fixed lock's and the rows' first, the rest cut", () => {
+    const { ctx, answer, start } = setup();
+    const fixed: RepairProblem = { kind: 'fixedMismatch', path: 'output.columns[0].from', message: 'x' };
+    const layouts: RepairProblem[] = Array.from({ length: limits.learn.loop.maxProblems + 20 }, (_, i) => ({ kind: 'layout', message: `y${i}` }));
+    const r = loopStep(start(), answer(9400, [fixed, ...layouts]), ctx);
+    if (r.step.kind !== 'next') throw new Error('expected a round');
+    expect(r.step.problems).toHaveLength(limits.learn.loop.maxProblems);
+    expect(r.step.problems[0]).toEqual(fixed);
+    expect(r.step.problems.filter((p) => p.kind === 'diff').length).toBeGreaterThanOrEqual(8);
   });
 
   it('is deterministic: the same state and answer give the same step', () => {

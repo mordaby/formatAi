@@ -497,3 +497,39 @@ export const LearnPayloadSchema = z.looseObject({
 
 /** A loop round's `rows` (`RepairRequest.rows`): sample-shaped rows, never more than a learn may send in total. */
 export const LoopRowsSchema = z.array(SampleSchema).max(limits.learn.loop.maxRowsTotal);
+
+/**
+ * A loop round's `problems` (`RepairRequest.problems`, API audit C9 2026-10-07): each one a `RepairProblem` of a known kind with its fields
+ * of the right types, at most `limits.learn.loop.maxProblems` of them. Before, any array passed: `[null]` threw a TypeError (500) after the
+ * round was counted. The fields the server never reads stay open (`looseObject`), like the payload's; `actual` may be absent (JSON drops an
+ * undefined cell).
+ */
+const ProblemMessageSchema = z.string();
+const ProblemColumnSchema = z.number().int().min(0);
+const RepairProblemSchema = z.discriminatedUnion('kind', [
+  z.looseObject({ kind: z.literal('formula'), path: z.string(), offset: z.number().int(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('schema'), path: z.string(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('reference'), message: ProblemMessageSchema }),
+  z.looseObject({
+    kind: z.literal('diff'),
+    out: ProblemColumnSchema,
+    sample: z.number().int().min(0).optional(),
+    familyRow: z.number().int().min(0).optional(),
+    row: z.looseObject({ in: z.array(PayloadCellSchema), out: z.array(PayloadCellSchema) }).optional(),
+    made: z.array(PayloadCellSchema).optional(),
+    expected: PayloadCellSchema.optional(),
+    actual: PayloadCellSchema.optional(),
+  }),
+  z.looseObject({ kind: z.literal('rowCount'), expected: z.number().int().min(0), actual: z.number().int().min(0) }),
+  z.looseObject({ kind: z.literal('layout'), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('formatMismatch'), path: z.string(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('fixedMismatch'), path: z.string(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('type'), path: z.string(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('limit'), path: z.string().optional(), message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('unsupportedDespiteEvidence'), out: ProblemColumnSchema, message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('overfit'), out: ProblemColumnSchema, message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('list'), out: ProblemColumnSchema, message: ProblemMessageSchema }),
+  z.looseObject({ kind: z.literal('truncated'), message: ProblemMessageSchema }),
+]);
+
+export const RepairProblemsSchema = z.array(RepairProblemSchema).max(limits.learn.loop.maxProblems);
