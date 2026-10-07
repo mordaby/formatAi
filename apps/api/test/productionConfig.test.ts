@@ -36,6 +36,22 @@ describe('checkProductionConfig', () => {
     expect(check()).toEqual({ problems: [], warnings: [] });
   });
 
+  it('API audit C6: stops the start for a model with no price - an override of either provider, the fallback included', () => {
+    expect(check({ LLM_FALLBACK_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-made-up' }).problems).toEqual([]);
+    const { problems } = check({
+      LLM_MODEL_FIRST_TRY: 'claude-unpriced-1',
+      LLM_MODEL_ESCALATION: 'claude-sonnet-5',
+      LLM_FALLBACK_PROVIDER: 'openai',
+      OPENAI_API_KEY: 'sk-made-up',
+      LLM_FALLBACK_MODEL_ESCALATION: 'gpt-unpriced-2',
+    });
+    expect(problems).toEqual([
+      expect.stringContaining('"claude-unpriced-1" (an override)'),
+      expect.stringContaining('"gpt-unpriced-2" (an override)'),
+    ]);
+    expect(problems[0]).toContain('prices.ts');
+  });
+
   it('TURNSTILE_DISABLED=true (first deploy): missing Turnstile keys are a warning, not a problem; without it they stop the start', () => {
     const off = check({ TURNSTILE_SECRET_KEY: undefined, TURNSTILE_SITE_KEY: undefined, TURNSTILE_DISABLED: 'true' });
     expect(off.problems).toEqual([]);

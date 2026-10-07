@@ -177,7 +177,7 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 | `PUBLIC_ORIGIN` | optional | Overrides the origin (a custom domain later). Defaults `WEB_ORIGIN` and `API_PUBLIC_URL`, which can still be set on their own |
 | `PORT` | Render | Render sets 10000; the API listens on it |
 | `WEB_DIST` | optional | Folder of the built web app; default `apps/web/dist` |
-| `LLM_MODEL_FIRST_TRY`, `LLM_MODEL_ESCALATION` | optional | Override the models in `packages/shared/src/config/models.ts` without a code change |
+| `LLM_MODEL_FIRST_TRY`, `LLM_MODEL_ESCALATION` | optional | Override the models in `packages/shared/src/config/models.ts` without a code change. The model must have a price in `packages/shared/src/config/prices.ts` (the same for `LLM_FALLBACK_MODEL_*`): a production start stops on one that has none, and an unpriced model is counted at the highest configured price |
 | `LLM_FALLBACK_MODEL_FIRST_TRY`, `LLM_FALLBACK_MODEL_ESCALATION` | optional | The same for the fallback provider's two slots (default `gpt-5-mini`, `gpt-5`) |
 
 ## Known limits
