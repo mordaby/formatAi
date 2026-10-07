@@ -30,11 +30,13 @@ describe('identifier words', () => {
     'חשבון', 'מספר חשבון', 'טלפון', 'הטלפון', 'נייד', 'מייל', 'אימייל', 'דוא"ל', 'דוא״ל', 'פוליסה', 'מספר פוליסה', 'דרכון',
     'ID', 'Customer ID', 'customerId', 'ID Number', 'Customer No', 'Customer No.', 'CUSTOMER NUMBER', 'customer_no', 'Customer #', 'Account',
     'Account No', 'Phone', 'Mobile Phone', 'Email', 'E-mail', 'eMail', 'Policy', 'Passport', 'IBAN',
+    // owner, 2026-10-07: order numbers
+    'Order No', 'Order No.', 'Order Number', 'order_id', 'Order #', 'מספר הזמנה', "מס' הזמנה", 'מס׳ הזמנה',
   ])('%s is an identifier name', (name) => {
     expect(nameHolds(name, columnNames.identifier)).toBe(true);
   });
 
-  it.each(['Valid', 'Paid', 'Idea', 'Accounting', 'Customer', 'Customers', 'Number', 'מספר', 'מספר פריטים', 'שם לקוח', 'Order No', 'Notes'])(
+  it.each(['Valid', 'Paid', 'Idea', 'Accounting', 'Customer', 'Customers', 'Number', 'מספר', 'מספר פריטים', 'שם לקוח', 'Order', 'Orders', 'הזמנה', 'Notes'])(
     '%s is not',
     (name) => {
       expect(nameHolds(name, columnNames.identifier)).toBe(false);
