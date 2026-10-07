@@ -132,7 +132,8 @@ function shownText(c: OutCell | undefined): string {
   if (c === undefined || c.v === null) return '';
   if (typeof c.v === 'number' && c.text === undefined) return plainNumber(c.v);
   const text = c.text ?? (typeof c.v === 'boolean' ? (c.v ? 'TRUE' : 'FALSE') : String(c.v));
-  return typeof c.v !== 'number' && /^[=+\-@]/.test(text) ? `'${text}` : text;
+  // (The writer's formula guard: a plain number is exempt in every column - engine audit 2026-10-07, O2.)
+  return typeof c.v !== 'number' && /^[=+\-@]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text) ? `'${text}` : text;
 }
 
 /**

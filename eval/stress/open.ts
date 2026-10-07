@@ -13,12 +13,6 @@ export interface OpenFinding {
 
 export const OPEN_FINDINGS: OpenFinding[] = [
   {
-    id: 'O2',
-    title: 'CSV/TXT: a plain negative number held as TEXT in a text column gets the formula guard\'s apostrophe; the verification compares values and passes',
-    seeds: ['small:231'],
-    matches: (f) => ['verifiedButDiffers', 'solvedColumnWrong', 'holdoutSilent'].includes(f.kind) && /expected (-[\d.]+), got "\1"/.test(f.detail),
-  },
-  {
     id: 'O4',
     title: 'Time: 20,000 x 20 with an xlsx input: learn 7-14 s, convert 5-13 s with an xlsx output (reading a 20,000-row workbook is about 4 s: SheetJS, then the ExcelJS overlay)',
     seeds: ['timing:4', 'timing:7', 'timing:8', 'timing:9'],
