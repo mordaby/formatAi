@@ -84,6 +84,17 @@ describe('the header', () => {
     expect(api.auth.logout).toHaveBeenCalledTimes(1);
   });
 
+  it('signing out on a screen of the account goes home - it is not taken for a session that ended (no sign-in wall left open)', async () => {
+    const api = fakeApi({ user: USER });
+    renderApp({ api, route: '/formats' });
+    fireEvent.click(await within(header()).findByRole('button', { name: 'Account menu for Dana Levi' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(within(header()).getByRole('button', { name: 'Sign in' })).toBeTruthy());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByTestId('session-expired')).toBeNull();
+  });
+
   it('a sign-out that fails says so and keeps the user signed in', async () => {
     const api = fakeApi({ user: USER, auth: { logout: vi.fn(async () => Promise.reject(new Error('offline'))) } });
     renderApp({ api });

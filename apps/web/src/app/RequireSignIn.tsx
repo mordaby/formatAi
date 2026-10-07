@@ -20,10 +20,13 @@ export function RequireSignIn({ title, children }: { title: string; children: Re
   // Who the screen was opened for (the last signed-in user); null until someone was.
   const owner = useRef<string | null>(null);
   if (me.user) owner.current = me.user.id;
+  // (signing out here is no session that ended: the screen is a visitor's from then on)
+  else if (me.signedOut) owner.current = null;
   const expired = me.user === null && owner.current !== null;
   const { refresh } = me;
 
-  // The wall, once, when the session ends; and coming back to this tab (from the sign-in tab) reads who is signed in at once.
+  // The wall, once, when the session ends; and coming back to this tab (from the sign-in tab) reads who is signed in at once. The screen
+  // going away (signing out goes home) takes its wall with it.
   useEffect(() => {
     if (!expired) return;
     signIn.open('expired', { newTab: true });
@@ -35,6 +38,7 @@ export function RequireSignIn({ title, children }: { title: string; children: Re
     return () => {
       window.removeEventListener('focus', look);
       document.removeEventListener('visibilitychange', look);
+      signIn.close();
     };
   }, [expired, signIn, refresh]);
 
