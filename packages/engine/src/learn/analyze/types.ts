@@ -107,11 +107,11 @@ export interface AnalyzeOptions {
   /** sniffDelimitedText() of the output file's bytes (csv/txt), so detectFileSpec can see `quote: 'all'`. */
   outputSniff?: DelimitedSniffResult;
   onProgress?: (p: AnalysisProgress) => void;
-  /** Aligned rows used for the first pass over candidate relations (SPEC 6.2). Default 2000. */
+  /** Aligned rows used for the first pass over candidate relations (SPEC 6.2). Default `limits.analysis.sampleRows` (2000). */
   sampleSize?: number;
   /** Seed of the sample's PRNG. Default 1. */
   seed?: number;
-  /** Relations below this coverage are not reported. Default 0.9 (SPEC 6.2: partial hints). */
+  /** Relations below this coverage are not reported. Default `limits.analysis.minCoverage` (0.9; SPEC 6.2: partial hints). */
   minCoverage?: number;
   /** An external classification of the columns, by header (the AI step's, later): kept on the analysis for `classifyColumns`. */
   columnHints?: ColumnClassHints;

@@ -3,6 +3,7 @@
 // Runs in the browser worker; pure, synchronous and deterministic (the random
 // sample uses a seeded PRNG; no clock, no locale).
 
+import { limits } from '@formatai/shared';
 import type { RawWorkbook } from '../../types';
 import { gather, isoOfSerial, normFast, norms, type ColumnData } from './cells';
 import { alignRows } from './align';
@@ -30,9 +31,10 @@ import type {
   WindowFinding,
 } from './types';
 
-export const DEFAULT_SAMPLE_SIZE = 2000;
+// The sample size and the coverage are config (`limits.analysis`, SPEC 6.2); the seed only fixes the random sample.
+export const DEFAULT_SAMPLE_SIZE = limits.analysis.sampleRows;
 export const DEFAULT_SEED = 1;
-export const DEFAULT_MIN_COVERAGE = 0.9;
+export const DEFAULT_MIN_COVERAGE = limits.analysis.minCoverage;
 
 /** >= 3 output headers (that aren't input headers) equal values of one input column (SPEC 6.2 step 3). */
 function detectPivot(
@@ -46,7 +48,7 @@ function detectPivot(
   const cands = outHeaders
     .map((h, o) => ({ o, n: normFast(h).toLowerCase() }))
     .filter((x) => x.n !== '' && !inHeaderSet.has(x.n));
-  if (cands.length < 3) return null;
+  if (cands.length < limits.analysis.pivot.minColumns) return null;
   let best: { in: number; outColumns: number[] } | null = null;
   inCols.forEach((col, i) => {
     const nm = norms(col);
@@ -54,10 +56,10 @@ function detectPivot(
     for (let k = 0; k < col.n; k++) {
       if (nm[k] === '') continue;
       values.add(nm[k]!);
-      if (values.size > 1000) return;
+      if (values.size > limits.analysis.pivot.maxDistinctValues) return;
     }
     const hits = cands.filter((x) => values.has(x.n)).map((x) => x.o);
-    if (hits.length >= 3 && (best === null || hits.length > best.outColumns.length)) best = { in: i, outColumns: hits };
+    if (hits.length >= limits.analysis.pivot.minColumns && (best === null || hits.length > best.outColumns.length)) best = { in: i, outColumns: hits };
   });
   return best;
 }

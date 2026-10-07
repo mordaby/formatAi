@@ -20,13 +20,13 @@ import { MAX_FAILING } from './relations';
 import type { Relation, WindowFinding, WindowOrder } from './types';
 
 /** Numeric input columns tried as the column a window reads. */
-const MAX_X = 10;
+const MAX_X = limits.analysis.windows.maxValueColumns;
 /** Group columns tried for the order-independent patterns (a group total, a count per group). */
-const MAX_BY = 24;
+const MAX_BY = limits.analysis.windows.maxGroupColumns;
 /** Group columns tried for the order-dependent patterns, whose test is a pass over all rows each. */
-const MAX_BY_ORDERED = 4;
+const MAX_BY_ORDERED = limits.analysis.windows.maxOrderedGroupColumns;
 /** Other readings kept in a finding's `alt`, and as relations (enough to see an ambiguity). */
-const MAX_ALT = 3;
+const MAX_ALT = limits.analysis.windows.maxAlternatives;
 
 const NUMERIC_TYPES: ReadonlySet<ProfileType> = new Set<ProfileType>(['integer', 'decimal', 'currency', 'percent']);
 const GROUP_TYPES: ReadonlySet<ProfileType> = new Set<ProfileType>(['text', 'idLike', 'integer']);
@@ -483,7 +483,7 @@ export class WindowDetector {
     const none = { findings: [], relations: [] };
     if (this.K < this.minRows || nonEmptyCount(out) < this.minRows) return none;
     const raw: WindowFinding[] = [];
-    if (numericShare(out) >= 0.9) raw.push(...this.groupFindings(out, o), ...this.orderedFindings(out, o), ...this.rankFindings(out, o));
+    if (numericShare(out) >= limits.analysis.numericColumnShare) raw.push(...this.groupFindings(out, o), ...this.orderedFindings(out, o), ...this.rankFindings(out, o));
     raw.push(...this.neighbourFindings(out, o));
     if (raw.length === 0) return none;
 

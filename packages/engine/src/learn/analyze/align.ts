@@ -3,9 +3,13 @@
 // output data row to its input row, or recognize a summary output (one row per
 // distinct value of an input column).
 
+import { limits } from '@formatai/shared';
 import { EMPTY, keys, nonEmptyCount, type ColumnData } from './cells';
 import { sampleIndices } from './prng';
 import type { AlignedRow, Alignment, KeyMatch } from './types';
+
+// The thresholds are config (`limits.analysis.align`, SPEC 6.2 step 2).
+const ALIGN = limits.analysis.align;
 
 /** Map from a key to the input rows holding it. */
 export class KeyIndex {
@@ -127,11 +131,11 @@ function evalKey(
 /**
  * DECISION: a key may point to a few rows (duplicates the example removed),
  * but not to groups: accepted when >= 80% of keys are unique, or when keys
- * point to 1.5 input rows or fewer on average. When a summary reading also
+ * point to 1.5 input rows or fewer on average (`limits.analysis.align`). When a summary reading also
  * exists, the one that explains more output columns wins (see alignRows).
  */
 function keyOk(m: { matchRate: number; uniqueness: number; spread: number }): boolean {
-  return m.matchRate >= KEY_MIN_MATCH && (m.uniqueness >= KEY_MIN_UNIQUE || m.spread <= 1.5);
+  return m.matchRate >= ALIGN.keyMinMatchShare && (m.uniqueness >= ALIGN.keyMinUniqueShare || m.spread <= ALIGN.keyMaxSpread);
 }
 
 /**
@@ -165,9 +169,6 @@ function betterKey(a: KeyCand, b: KeyCand | null, ctx: KeyContext): boolean {
   return false; // earlier (lower out, then lower in) wins ties
 }
 
-const KEY_MIN_MATCH = 0.5;
-const KEY_MIN_UNIQUE = 0.8;
-
 /**
  * Aligns output data rows to input rows. Chooses between a key alignment and a
  * summary reading by how many output columns each one explains (a summary's
@@ -186,7 +187,7 @@ export function alignRows(inCols: ColumnData[], outCols: ColumnData[], nIn: numb
     }
     return ix;
   };
-  const sample = sampleIndices(nOut, 1000, (seed ^ 0x9e3779b9) >>> 0);
+  const sample = sampleIndices(nOut, ALIGN.keySampleRows, (seed ^ 0x9e3779b9) >>> 0);
   const ctx: KeyContext = { nIn, nOut, valuePairs: [], inKeys, outKeys };
   const valuePairs = ctx.valuePairs;
 
@@ -203,7 +204,7 @@ export function alignRows(inCols: ColumnData[], outCols: ColumnData[], nIn: numb
         ne++;
         if (ix.has(k)) found++;
       }
-      if (ne > 0 && found / ne >= 0.8) valuePairs.push({ in: i, out: o, containment: found / ne });
+      if (ne > 0 && found / ne >= ALIGN.valueMinContainment) valuePairs.push({ in: i, out: o, containment: found / ne });
     }
   }
 
@@ -212,7 +213,7 @@ export function alignRows(inCols: ColumnData[], outCols: ColumnData[], nIn: numb
   for (let o = 0; o < outCols.length; o++) {
     for (let i = 0; i < inCols.length; i++) {
       const ix = indexOf(i);
-      if (ix.nonEmpty === 0 || ix.distinct / ix.nonEmpty < 0.5) continue;
+      if (ix.nonEmpty === 0 || ix.distinct / ix.nonEmpty < ALIGN.keyMinDistinctShare) continue;
       const { spread: _s, ...m } = evalKey(ix, outKeys[o]!, sample);
       if (!keyOk({ ...m, spread: _s })) continue;
       const cand: KeyCand = { in: [i], out: [o], ...m, index: ix, outKeys: outKeys[o]!, inDistinct: ix.distinct / ix.nonEmpty };
@@ -222,8 +223,8 @@ export function alignRows(inCols: ColumnData[], outCols: ColumnData[], nIn: numb
 
   // Two-column key, from the pairs whose values match (also when the best single
   // key is weak: a numeric column can match a few output values by chance).
-  if (best === null || best.matchRate < 0.9) {
-    const top = [...valuePairs].sort((a, b) => b.containment - a.containment || a.out - b.out || a.in - b.in).slice(0, 10);
+  if (best === null || best.matchRate < ALIGN.strongKeyMatchShare) {
+    const top = [...valuePairs].sort((a, b) => b.containment - a.containment || a.out - b.out || a.in - b.in).slice(0, ALIGN.maxValuePairs);
     for (let x = 0; x < top.length; x++) {
       for (let y = x + 1; y < top.length; y++) {
         const p = top[x]!;
@@ -354,12 +355,12 @@ function findSummary(
   for (let o = 0; o < outCols.length; o++) {
     const ok = outKeys[o]!;
     const ne = nonEmptyCount(outCols[o]!);
-    if (ne < 0.95 * nOut) continue;
+    if (ne < ALIGN.summaryMinNonEmptyShare * nOut) continue;
     if (new Set(ok.filter((k) => k !== null)).size !== ne) continue;
     for (let i = 0; i < inCols.length; i++) {
       const ix = indexOf(i);
       if (ix.distinct === 0 || ix.distinct >= ix.nonEmpty) continue; // needs repeats
-      if (ix.distinct > nOut / 0.8) continue; // most groups must be present
+      if (ix.distinct > nOut / ALIGN.summaryMinGroupShare) continue; // most groups must be present
       const groups: number[][] = [];
       let covered = 0;
       let missing = 0;
@@ -383,14 +384,14 @@ function findSummary(
 
 /** Output columns that equal some input column on >= 90% of (sampled) aligned rows. */
 function explainKey(inKeys: (string | null)[][], outKeys: (string | null)[][], rows: AlignedRow[]): number {
-  const sample = rows.length <= 300 ? rows : sampleIndices(rows.length, 300, 7).map((k) => rows[k]!);
+  const sample = rows.length <= ALIGN.explainSampleRows ? rows : sampleIndices(rows.length, ALIGN.explainSampleRows, 7).map((k) => rows[k]!);
   if (sample.length === 0) return 0;
   let n = 0;
   for (const ok of outKeys) {
     for (const ik of inKeys) {
       let eq = 0;
       for (const a of sample) if (ok[a.out] === ik[a.in]) eq++;
-      if (eq / sample.length >= 0.9) {
+      if (eq / sample.length >= ALIGN.explainMinShare) {
         n++;
         break;
       }
@@ -448,7 +449,7 @@ function explainSummary(inCols: ColumnData[], outCols: ColumnData[], s: SummaryC
         }
       });
       const best = Math.max(hitFirst, hitSum, hitCount, hitMin, hitMax, hitAvg);
-      if (best / groups.length >= 0.9) {
+      if (best / groups.length >= ALIGN.explainMinShare) {
         n++;
         return;
       }

@@ -2,6 +2,7 @@
 // pattern is tested on EVERY family: columns to rows, split cell, fixed
 // fan-out; anything else is row expansion (unsupported, SPEC 6.3).
 
+import { limits } from '@formatai/shared';
 import type { RawCell } from '../../types';
 import { EMPTY, TEXT, columnFromCells, norms, normFast, type ColumnData } from './cells';
 import { eqTyped } from './relations';
@@ -136,7 +137,7 @@ export function detectFamilies(rows: AlignedRow[], inCols: ColumnData[], inHeade
         valueOut = o;
       }
     }
-    if (bestRate < 0.9) continue;
+    if (bestRate < limits.analysis.families.minValueShare) continue;
     for (const skipEmpty of [true, false]) {
       const pass = families.every((f) => {
         const labels = f.rows.map((k) => srcCol[k]!).sort((a, b) => a - b);
@@ -209,8 +210,8 @@ export function detectFamilies(rows: AlignedRow[], inCols: ColumnData[], inHeade
     }
   }
 
-  // ---- fixed fan-out: every family has the same size (2-5) ----
-  if (min === max && max >= 2 && max <= 5) {
+  // ---- fixed fan-out: every family has the same size (2 up to `fixedFanOutMaxSize`, 5) ----
+  if (min === max && max >= 2 && max <= limits.analysis.families.fixedFanOutMaxSize) {
     const index: number[] = [];
     for (let k = 0; k < K; k++) index.push(position[k]! + 1);
     return { kind: 'fixedFanOut', families, size: max, created: [{ kind: 'position', col: cellsOf(index) }] };

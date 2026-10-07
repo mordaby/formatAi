@@ -202,7 +202,7 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRoutesOptions): 
       }
     }
 
-    // SPEC 12: this browser's anonymous history becomes the user's (events; cache entries; the anonId itself).
+    // SPEC 12: this browser's anonymous history becomes the user's (its events and the anonId itself; no learn cache: there is none anonymous).
     // Best effort: a hiccup here must not turn a successful sign-in into an error page.
     const anonId = isValidAnonId(req.anonId) ? req.anonId : undefined;
     try {

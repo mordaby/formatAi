@@ -1,3 +1,4 @@
+import { limits } from '@formatai/shared';
 import type { RawCell, RawSheet, TableDetection, TableIssue, TableIssueCode, RawWorkbook } from '../types';
 import { colLetter, hasHebrew, isFooterLabel, normalizeCellText } from './text';
 
@@ -18,7 +19,8 @@ export interface DetectTableOptions {
 type Cell = RawCell | null;
 type CellType = 'empty' | 'text' | 'number' | 'boolean' | 'date';
 
-const MAX_HEADER_SCAN = 15;
+// The thresholds are config (`limits.analysis.table`, SPEC 6.1).
+const TABLE = limits.analysis.table;
 
 function cellType(cell: Cell): CellType {
   if (!cell || cell.v === null) return 'empty';
@@ -56,11 +58,11 @@ function looksLikeHeaderRow(row: Cell[] | undefined, colCount: number): boolean 
   if (!row) return false;
   const cells = row.slice(0, colCount);
   const nonEmpty = cells.filter((c) => cellType(c) !== 'empty');
-  const minNonEmpty = Math.max(2, Math.ceil(colCount * 0.5));
+  const minNonEmpty = Math.max(2, Math.ceil(colCount * TABLE.headerMinNonEmptyShare));
   if (nonEmpty.length < minNonEmpty) return false;
 
   const textCount = nonEmpty.filter((c) => cellType(c) === 'text').length;
-  if (textCount / nonEmpty.length < 0.7) return false;
+  if (textCount / nonEmpty.length < TABLE.headerMinTextShare) return false;
 
   const texts = nonEmpty.map((c) => normalizeCellText(String(c!.v)).toLowerCase());
   return new Set(texts).size === texts.length;
@@ -88,15 +90,15 @@ function isDataLikeBlock(rows: Cell[][], start: number, count: number, colCount:
     if (types.size === 1) consistentCols++;
   }
   if (consideredCols === 0) return false;
-  return consistentCols / consideredCols >= 0.6;
+  return consistentCols / consideredCols >= TABLE.dataBlockConsistentShare;
 }
 
 type HeaderSearchResult = { kind: 'ok'; row: number } | { kind: 'split'; row: number } | { kind: 'none' };
 
 function findHeaderInput(rows: Cell[][], colCount: number): HeaderSearchResult {
-  const limit = Math.min(MAX_HEADER_SCAN, rows.length);
-  // DECISION: a header normally needs >=3 consistently-typed rows after it, but we
-  // also remember the first candidate that only has >=2, so that a header is still
+  const limit = Math.min(TABLE.headerScanRows, rows.length);
+  // DECISION: a header normally needs >=3 (`headerDataRows`) consistently-typed rows after it, but we
+  // also remember the first candidate that only has >=2 (`minDataRows`), so that a header is still
   // found and the "fewer than 2 data rows" rejection can fire later (after footer
   // rows are trimmed off) instead of a less specific "no header row" rejection.
   let fallback: number | null = null;
@@ -116,16 +118,16 @@ function findHeaderInput(rows: Cell[][], colCount: number): HeaderSearchResult {
     // split check below, because a block starting on its own second header
     // row is never internally consistent (the header row's column doesn't
     // match the data rows' types).
-    if (isDataLikeBlock(rows, r + 1, 3, colCount)) {
+    if (isDataLikeBlock(rows, r + 1, TABLE.headerDataRows, colCount)) {
       return { kind: 'ok', row: r };
     }
 
     const secondLineAlsoHeaderish = looksLikeHeaderRow(rows[r + 1], colCount);
-    if (secondLineAlsoHeaderish && isDataLikeBlock(rows, r + 2, 2, colCount)) {
+    if (secondLineAlsoHeaderish && isDataLikeBlock(rows, r + 2, TABLE.minDataRows, colCount)) {
       return { kind: 'split', row: r };
     }
 
-    if (fallback === null && isDataLikeBlock(rows, r + 1, 2, colCount)) {
+    if (fallback === null && isDataLikeBlock(rows, r + 1, TABLE.minDataRows, colCount)) {
       fallback = r;
     }
   }
@@ -135,7 +137,7 @@ function findHeaderInput(rows: Cell[][], colCount: number): HeaderSearchResult {
 }
 
 function findHeaderOutput(rows: Cell[][], colCount: number): number {
-  const limit = Math.min(MAX_HEADER_SCAN, rows.length);
+  const limit = Math.min(TABLE.headerScanRows, rows.length);
   for (let r = 0; r < limit; r++) {
     if (looksLikeHeaderRow(rows[r], colCount)) return r;
   }
@@ -381,7 +383,7 @@ export function detectTable(sheet: RawSheet, opts?: DetectTableOptions): TableDe
   const issues: TableIssue[] = [];
   if (hiddenNotice) issues.push(hiddenIssue());
 
-  if (dataRowCount < 2) {
+  if (dataRowCount < TABLE.minDataRows) {
     issues.push({ code: 'tooFewDataRows', severity: 'reject' });
     return { ok: false, headerRow, dataStart, dataEnd, titleRows, footerRows, direction, issues };
   }

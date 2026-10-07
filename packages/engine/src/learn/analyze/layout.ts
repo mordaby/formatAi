@@ -2,6 +2,7 @@
 // rules, the group-by column, summary rows with per-column aggregates verified
 // on every group, sort order, header style, formats, direction and language.
 
+import { limits } from '@formatai/shared';
 import type { RawSheet } from '../../types';
 import { formatYmd } from '../../values/dates';
 import {
@@ -470,7 +471,7 @@ function detectLanguage(x: LayoutInput, titleTexts: string[]): 'he' | 'en' {
   if (share !== null) return share > 0.5 ? 'he' : 'en';
   const sample: string[] = [];
   for (const col of x.data) {
-    for (let k = 0; k < col.n && k < 200; k++) if (col.kind[k] === TEXT) sample.push(col.text[k]!);
+    for (let k = 0; k < col.n && k < limits.analysis.layout.languageSampleRows; k++) if (col.kind[k] === TEXT) sample.push(col.text[k]!);
   }
   const s = hebrewShare(sample);
   if (s !== null) return s > 0.5 ? 'he' : 'en';

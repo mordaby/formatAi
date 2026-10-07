@@ -46,7 +46,7 @@ export function createTurnstileVerifier(opts: CreateTurnstileVerifierOptions): T
 
   if (!secret) {
     if (production) {
-      throw new Error('TURNSTILE_SECRET_KEY is required when NODE_ENV=production (anonymous learns need Turnstile)');
+      throw new Error('TURNSTILE_SECRET_KEY is required when NODE_ENV=production (the public forms need Turnstile)');
     }
     let warned = false;
     return {
