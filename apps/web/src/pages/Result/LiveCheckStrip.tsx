@@ -12,6 +12,7 @@ const LAYOUT_TEXT: Record<LayoutProblemCode, MessageKey> = {
   runFailed: 'check.layout.runFailed',
   unalignedRows: 'check.layout.unalignedRows',
   rowCount: 'check.layout.rowCount',
+  rowOrder: 'check.layout.rowOrder',
   fileSettings: 'check.layout.fileSettings',
   titleRow: 'check.layout.titleRow',
   headerRow: 'check.layout.headerRow',

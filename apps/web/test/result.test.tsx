@@ -389,7 +389,7 @@ describe('every string the screen builds from a code exists in both languages', 
     'editor.summary.agg.': ['sum', 'count', 'min', 'max', 'average', 'first', 'last'],
     'editor.type.': ['text', 'integer', 'decimal', 'currency', 'percent', 'date', 'boolean', 'idLike'],
     'map.empty.': ['rows', 'columns', 'layout', 'checks', 'functions'],
-    'check.layout.': ['runFailed', 'unalignedRows', 'rowCount', 'fileSettings', 'titleRow', 'headerRow', 'blankRow', 'summaryRow'],
+    'check.layout.': ['runFailed', 'unalignedRows', 'rowCount', 'rowOrder', 'fileSettings', 'titleRow', 'headerRow', 'blankRow', 'summaryRow'],
     'problem.': ['unknownColumn', 'noSuchItem', 'emptyHeader', 'duplicateHeader', 'typeMismatch', 'tooManyTerms', 'tooFewTerms', 'badOperators', 'badValue', 'duplicateKey', 'noGroup', 'formula', 'json', 'schema', 'reference', 'rule'],
   };
   it('has them', () => {

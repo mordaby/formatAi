@@ -84,11 +84,11 @@ export interface Mismatch {
 
 /**
  * What a layout problem is about, as a code (SPEC 8.11 line status): the rules map reads these instead of the
- * English `message`. `rowCount` and `unalignedRows` are about the data rows; `fileSettings` is the output file's
+ * English `message`. `rowCount`, `rowOrder` and `unalignedRows` are about the data rows; `fileSettings` is the output file's
  * type and text options; `titleRow`, `headerRow`, `blankRow` and `summaryRow` name the kind of layout row that
  * differs (the row the example has, or the extra row the rules make); `runFailed` means the rules could not run.
  */
-export type LayoutProblemCode = 'runFailed' | 'unalignedRows' | 'rowCount' | 'fileSettings' | 'titleRow' | 'headerRow' | 'blankRow' | 'summaryRow';
+export type LayoutProblemCode = 'runFailed' | 'unalignedRows' | 'rowCount' | 'rowOrder' | 'fileSettings' | 'titleRow' | 'headerRow' | 'blankRow' | 'summaryRow';
 
 export interface LayoutProblem {
   code: LayoutProblemCode;
@@ -456,6 +456,38 @@ export function cellMatchesExample(analysis: PairAnalysis, k: number, c: number,
   return cellsMatch(exampleCellAt(analysis, k, c), actualSeen(actual), analysis.layout.file.type !== 'xlsx');
 }
 
+/**
+ * The row order (amendment 2026-10-07, engine audit): the first two example rows the rules write the other way round, as 1-based sheet rows
+ * of the example output, or null. `order` holds, per input row, the first of its example data rows and the first of the rules' data rows.
+ * Two rows count only where the example HAS an order between them:
+ *  - never between rows that look the same (equal in every compared column): swapping them changes nothing;
+ *  - when the example's order is the input's or a sort the analysis found (its ties in the input's order), every other pair counts - a
+ *    rules file must write that order, a sort's ties included;
+ *  - otherwise (an order no sort explains: the example's ties are in no order code can see), two rows the rules' own sort keys tie are no
+ *    error - a key the output does not show counts as a tie. Rules with no sort write the input's order, so every pair counts.
+ * Adjacent pairs of the example's order are compared: a row out of place breaks at least one of them.
+ */
+function firstMisordered(order: readonly { out: number; made: number }[], rules: LearnResult | Rules, analysis: PairAnalysis, compared: (c: number) => boolean): { before: number; after: number } | null {
+  if (order.length < 2) return null;
+  const sorted = [...order].sort((a, b) => a.out - b.out);
+  const sheetRowOf = (out: number): number => analysis.output.dataRows[out] ?? -1;
+  const cellOf = (out: number, c: number): Seen => expectedSeen(analysis.output.sheet.rows[sheetRowOf(out)]?.[c]);
+  const same = (a: Seen, b: Seen): boolean => a.date === b.date && valuesEqual(a.v, b.v);
+  const columns = Array.from({ length: analysis.output.columnCount }, (_, c) => c).filter(compared);
+  const lookAlike = (a: number, b: number): boolean => columns.every((c) => same(cellOf(a, c), cellOf(b, c)));
+  const explained = analysis.layout.orderMatchesInput || analysis.layout.sort !== null;
+  const keys = explained ? [] : rules.transform.sort.map((k) => rules.output.columns.findIndex((o) => o.from === k.column && o.agg === undefined));
+  const tiedByRules = (a: number, b: number): boolean => keys.length > 0 && keys.every((o) => o < 0 || same(cellOf(a, o), cellOf(b, o)));
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1]!;
+    const cur = sorted[i]!;
+    if (cur.made > prev.made) continue;
+    if (lookAlike(prev.out, cur.out) || tiedByRules(prev.out, cur.out)) continue;
+    return { before: sheetRowOf(prev.out) + 1, after: sheetRowOf(cur.out) + 1 };
+  }
+  return null;
+}
+
 export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairAnalysis, opts: VerifyOptions = {}): VerifyResult {
   const exceptions = new Set(opts.exceptions ?? []);
   const oneTimeCells = opts.oneTime ? new Set(opts.oneTime.map((c) => `${c.exampleRow}\u0000${c.column}`)) : null;
@@ -503,11 +535,16 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
     (r): r is OutRow & { sourceRow: number } => r.kind === 'data' && r.sourceRow !== undefined,
   );
   const byRowNumber = new Map<number, OutRow[]>();
-  for (const row of dataRowsActual) {
+  /** Each data row the rules made: its place among them (for the row order). */
+  const placeOf = new Map<OutRow, number>();
+  dataRowsActual.forEach((row, i) => {
+    placeOf.set(row, i);
     const list = byRowNumber.get(row.sourceRow);
     if (list) list.push(row);
     else byRowNumber.set(row.sourceRow, [row]);
-  }
+  });
+  /** Per input row with an example row the rules made: the first of its example rows (a data-row index) and the first of the rules' rows. */
+  const order: { out: number; made: number }[] = [];
 
   const inputCellsFor = (inRow: number): PayloadCell[] => rowToPayloadCells(analysis.input.rows[inRow], analysis.input.columnCount, analysis.input.date1904);
   // Each column's class in a repair problem: the same as in the payload's samples (`classify.ts`).
@@ -527,10 +564,21 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
     const actualGroup = rowNumber !== undefined ? (byRowNumber.get(rowNumber) ?? []) : [];
     const groupLen = Math.max(alignedIdx.length, actualGroup.length);
     let wrong: WrongRow | null = null;
+    let firstOut = Infinity;
+    let firstMade = Infinity;
 
     for (let r = 0; r < groupLen; r++) {
       const k = alignedIdx[r];
       const actualRow = actualGroup[r];
+      if (k !== undefined && actualRow !== undefined) {
+        const outIdx = analysis.alignment.rows[k]!.out;
+        const sheetRow = analysis.output.dataRows[outIdx];
+        if (sheetRow !== undefined && !exceptions.has(sheetRow + 1)) {
+          firstOut = Math.min(firstOut, outIdx);
+          firstMade = Math.min(firstMade, placeOf.get(actualRow) ?? Infinity);
+        }
+      }
+      if (r === groupLen - 1 && firstOut !== Infinity && firstMade !== Infinity) order.push({ out: firstOut, made: firstMade });
 
       if (k === undefined) {
         // The engine produced more rows for this input row than the example has. (`row.out` is the example's row - there is none - and
@@ -620,6 +668,14 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   if (only === null && expectedDataTotal !== actualDataTotal) {
     repairProblems.push({ kind: 'rowCount', expected: expectedDataTotal, actual: actualDataTotal });
     layoutIssues.push({ code: 'rowCount', message: `expected ${expectedDataTotal} data row(s) in the example output, the rules produce ${actualDataTotal}` });
+  }
+
+  // ---- the row order (amendment 2026-10-07, engine audit): rows are paired by input row, so the order was never compared ----
+  const misordered = only === null ? firstMisordered(order, rules, analysis, compared) : null;
+  if (misordered) {
+    const message = `the rules write the data rows in another order than the example output: row ${misordered.before} comes before row ${misordered.after} in the example, the rules write it after`;
+    layoutIssues.push({ code: 'rowOrder', message });
+    repairProblems.push({ kind: 'layout', message });
   }
 
   // ---- layout: file type ----
