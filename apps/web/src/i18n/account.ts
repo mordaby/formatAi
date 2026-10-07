@@ -142,18 +142,15 @@ export const accountEn = {
   'upgrade.contact': 'Contact us',
   'aiExhausted.title': 'We stopped after {n} tries',
   'aiExhausted.todo': 'Change something in the example files, then start again.',
-  'aiLeft.note': 'AI formats left: {n}',
   'ai.attempt': "The AI step got this far, but not every row matches your example (try {n} of {max}). Fix the rest in the map, or start again with corrected files.",
 
   // ----- saving (SPEC 5 A step 8, 8.11 "Saving") -----
   'save.differences.one': 'Save with 1 difference',
   'save.differences.other': 'Save with {n} differences',
-  'save.saving': 'Saving…',
   'save.done': 'Saved. "{name}" is in My formats.',
   'save.viewFormats': 'Open My formats',
   'save.failed': "We couldn't save the format. Try again in a moment.",
   'save.problems': 'What stopped the save:',
-  'save.signInToSave': 'Sign in to save',
 
   // ----- flow A: "this looks like your format X" (SPEC 5 A2) -----
   'match.title': 'This looks like your format "{name}"',
@@ -290,17 +287,14 @@ export const accountHe: Record<keyof typeof accountEn, string> = {
   'upgrade.contact': 'יצירת קשר',
   'aiExhausted.title': 'עצרנו אחרי {n} ניסיונות',
   'aiExhausted.todo': 'שנו משהו בקבצי הדוגמה והתחילו מחדש.',
-  'aiLeft.note': 'פורמטים עם AI שנותרו: {n}',
   'ai.attempt': 'שלב ה-AI התקדם עד כאן, אבל לא כל שורה תואמת לדוגמה שלכם (ניסיון {n} מתוך {max}). תקנו את השאר במפה, או התחילו מחדש עם קבצים מתוקנים.',
 
   'save.differences.one': 'שמירה עם הבדל אחד',
   'save.differences.other': 'שמירה עם {n} הבדלים',
-  'save.saving': 'שומרים…',
   'save.done': 'נשמר. "{name}" נמצא עכשיו ברשימת הפורמטים שלכם.',
   'save.viewFormats': 'פתיחת הפורמטים שלי',
   'save.failed': 'לא הצלחנו לשמור את הפורמט. נסו שוב בעוד רגע.',
   'save.problems': 'מה עצר את השמירה:',
-  'save.signInToSave': 'התחברו כדי לשמור',
 
   'match.title': 'זה נראה כמו הפורמט שלכם "{name}"',
   'match.text': 'להוסיף את הקובץ הזה כמקור חדש שלו?',
