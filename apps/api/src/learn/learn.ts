@@ -211,6 +211,8 @@ interface Attempt {
   /** learn-v9: the answer asked these checks (where it may) instead of answering with the rules; `rules` is null. */
   checks?: Check[];
   droppedChecks?: string[];
+  /** The call itself failed (the provider, or a request that could not be built): there is no answer, so nothing to repair. */
+  noAnswer?: true;
 }
 
 function payloadBlock(payload: LearnPayload): ContentBlock {
@@ -348,6 +350,7 @@ async function callAndCheck(
       rules: null,
       problems: [{ kind: 'schema', path: '', message: blocks === null ? `the request could not be built: ${message}` : `LLM call failed: ${message}` }],
       alternatives: [],
+      noAnswer: true,
     };
     // A call that failed on the fallback too is recorded as the fallback's (the last provider tried), with why it was tried.
     const failed = err instanceof LlmError ? err : null;
@@ -465,10 +468,14 @@ interface CallContext {
 /** How an answer's rule that copies rows is checked: one repair per learn (`repair`), then the honest fallback. */
 const overfitMode = (ctx: Pick<CallContext, 'overfitRepaired'>): 'repair' | 'fallBack' => (ctx.overfitRepaired ? 'fallBack' : 'repair');
 
-/** SPEC 9.3: while `current` has problems, up to `limits.llm.serverRepairRounds` repair calls on the same model, each repairing the one before. */
+/**
+ * SPEC 9.3: while `current` has problems, up to `limits.llm.serverRepairRounds` repair calls on the same model, each repairing the one before.
+ * API audit C8 (2026-10-07): never after a call that got no answer (`noAnswer`: the provider failed, or nothing was sent) - there is nothing to
+ * repair, and the same model would most likely fail again; the escalation (another model) still follows a learn's first call.
+ */
 async function serverRepairs(ctx: CallContext, start: Attempt): Promise<Attempt> {
   let current = start;
-  for (let round = 0; round < limits.llm.serverRepairRounds && current.problems.length > 0; round++) {
+  for (let round = 0; round < limits.llm.serverRepairRounds && current.problems.length > 0 && !current.noAnswer; round++) {
     if (ctx.opts.signal?.aborted) break;
     // A repair that carries an `overfit` problem is the learn's one repair for it.
     if (current.problems.some((p) => p.kind === 'overfit')) ctx.overfitRepaired = true;

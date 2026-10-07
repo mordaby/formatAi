@@ -69,6 +69,12 @@ export const limits = {
        * DECISION: 1 - a blip is still retried once by the SDK, and a real outage reaches the fallback after two attempts, not three.
        */
       primaryMaxRetries: 1,
+      /**
+       * API audit C8 (2026-10-07): the FALLBACK provider's SDK client gets the same short leash (it had the SDKs' defaults: 10 minutes
+       * per attempt, 2 retries - half an hour for one call while the primary is down). DECISION: 2 minutes and 1 retry, as the primary's.
+       */
+      fallbackTimeoutMs: 120_000,
+      fallbackMaxRetries: 1,
     },
   },
   /**

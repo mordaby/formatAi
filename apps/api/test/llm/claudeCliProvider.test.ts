@@ -293,15 +293,15 @@ describe('claude-cli provider - the per-call timeout (limits.llm.cliTimeoutMs)',
 
   it('a learn goes on after it: the call is recorded as failed (error:timeout, counted) and the next call is made', async () => {
     // (made when spawned: a fake child answers right away)
-    const answers = [slowChild, slowChild, () => fakeChild(successResult(correctRulesWireJson()))];
+    const answers = [slowChild, () => fakeChild(successResult(correctRulesWireJson()))];
     const spawn = vi.fn().mockImplementation(() => answers.shift()!());
     const provider = createClaudeCliProvider({ spawn: asSpawnFn(spawn), nodeEnv: 'development', cliPath: 'claude', timeoutMs: 20 });
     const env = loadEnv({ ...process.env, LLM_PROVIDER: 'fake' });
     const outcome = await learn(basicPayload(), { tier: 'registered', env, complete: (req: CompleteRequest) => provider.complete(req) });
 
+    // (API audit C8: a call with no answer gets no repair - there is nothing to repair; the escalation, another model, follows.)
     expect(outcome.calls.map((c) => [c.purpose, c.outcome])).toEqual([
       ['learn', 'error:timeout'],
-      ['repair', 'error:timeout'],
       ['escalation', 'verified'],
     ]);
     expect(outcome.calls[0]!.problemCounts.schema).toBe(1);
