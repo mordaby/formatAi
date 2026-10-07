@@ -147,6 +147,12 @@ export interface LearnFromExamplesOptions<Call = unknown> {
    * without reading the two files again. Purely an observer: it cannot change the flow.
    */
   onAnalysis?: (analysis: PairAnalysis) => void;
+  /**
+   * Engine audit (2026-10-07): the time budget for code's work on one AI answer (fill, guards, verification, alternatives), default
+   * `limits.learn.judge.timeBudgetMs`; see `LearnFromExamplesResult.timeBudget`. `now` is the clock it is read with (tests).
+   */
+  judgeBudgetMs?: number;
+  now?: () => number;
 }
 
 /**
@@ -289,6 +295,21 @@ export interface LearnFromExamplesResult<Call = unknown> {
    * saved format?"; no cell value). Real values: the browser's and the eval's only. Absent when there is neither.
    */
   oneTimers?: OneTimeResult;
+  /**
+   * Engine audit (2026-10-07; `limits.learn.judge`): present when code's work on an AI answer took longer than the budget - the learn
+   * stopped there (loop end `timeBudget`) with the best answer so far. `skipped` says what was not done: `fill` (conditions left as the AI
+   * wrote them), `alternatives` (not tried), `rounds` (no further repair round), `listRound` (the list's one round not made). The answer is
+   * verified only when every row matched; otherwise its differences are the user's ("needs your input"). Counts and names only.
+   */
+  timeBudget?: TimeBudgetSummary;
+}
+
+/** `LearnFromExamplesResult.timeBudget`. */
+export interface TimeBudgetSummary {
+  budgetMs: number;
+  /** The longest answer's time (ms). */
+  answerMs: number;
+  skipped: ('fill' | 'alternatives' | 'rounds' | 'listRound')[];
 }
 
 /** How the one round for the kept answer's lists went (`LearnFromExamplesResult.listRetry`). Headers and counts only. */
@@ -545,7 +566,12 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     overfit: RepairProblem[];
     /** What it was judged from, so the kept answer can be judged again with the fallback (`judge(answer, alternatives, true)`). */
     source: { answer: LearnResult; alternatives: readonly LearnAlternative[] };
+    /** Engine audit (2026-10-07): the time code took on it (ms), and what the time budget left undone (`limits.learn.judge`). */
+    ms: number;
+    overBudget: ('fill' | 'alternatives')[] | null;
   }
+  const now = opts.now ?? Date.now;
+  const judgeBudgetMs = opts.judgeBudgetMs ?? limits.learn.judge.timeBudgetMs;
   // The columns the free engine already asks about (a constant the input could write too): an alternative adds no second question there.
   let codeAsked: Set<string> | undefined;
   const askedByCode = (): Set<string> => (codeAsked ??= new Set(ambiguousColumns(analysis).map((q) => q.header)));
@@ -564,6 +590,9 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   /** How much a rule that copies rows weighs when answers are compared: every row of its column wrong (it holds for none but these). */
   const copyWeight = Math.max(1, analysis.alignment.rows.length);
   const judge = (answer: LearnResult, alternatives: readonly LearnAlternative[] = [], fallBack = false): Judged => {
+    // Engine audit (2026-10-07): code's work on one answer has a time budget (`limits.learn.judge`), read between its steps.
+    const started = now();
+    const deadline = started + judgeBudgetMs;
     let masked = answer;
     let rules: LearnResult = masker ? unmaskRules(masked, masker) : masked;
     let fixedProblems = fixedLock(rules);
@@ -581,7 +610,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     // cut-offs, the day/month order, the duplicate kept, the values a filter drops. `masked` - what a repair round sends back - stays the
     // answer as the AI wrote it, so nothing filled is ever sent. DECISION: a cut-off check is code's alone; one the answer wrote is dropped
     // (and so is a `sameAs` one, which the wire schema does not even offer).
-    const fillOf = (r: LearnResult): FillResult => fillParams(withoutCodeChecks(r), analysis, complete ? { fixed: learnResultOf(complete.fixedRules) } : {});
+    const fillOf = (r: LearnResult): FillResult => fillParams(withoutCodeChecks(r), analysis, { ...(complete ? { fixed: learnResultOf(complete.fixedRules) } : {}), deadline, now });
     let findings = overfitFindings(rules, { table: allRows }).filter((f) => askedHeaders === null || askedHeaders.has(f.outputColumn));
     // A one-time edit or a rule? (SPEC 21 v12 item 20, `oneTimers.ts`): a row-position condition that is a part the user will be asked about -
     // it explains one row of the example and nothing else - is the user's question, not a repair (the AI step cannot know whether that row was
@@ -606,13 +635,15 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     const filled = early && !fellBack ? early : fillOf(rules);
     rules = filled.rules;
     fixedProblems = fixedLock(rules);
-    const fill = { summary: { filled: filled.filled, checks: filled.checks }, ambiguities: filled.ambiguities };
+    const fill = { summary: { filled: filled.filled, checks: filled.checks, ...(filled.stopped ? { stopped: true as const } : {}) }, ambiguities: filled.ambiguities };
     let verification = verifyAnswer(rules);
     // learn-v8: each alternative the answer gave is tested on every row - one more run of the rules, only its column compared - and the
     // outcome applied (`learn/alternatives.ts`): a question when both fit, the alternative as the rule when only it fits. No alternative:
-    // nothing here runs.
+    // nothing here runs. (Past the time budget none is tried: the answer's own rule stands.)
     let results: AlternativeResult[] = [];
-    if (alternatives.length > 0) {
+    const overBudget: ('fill' | 'alternatives')[] = filled.stopped ? ['fill'] : [];
+    if (alternatives.length > 0 && now() > deadline) overBudget.push('alternatives');
+    else if (alternatives.length > 0) {
       const resolved = resolveAlternatives({ rules, masked, verification, alternatives, masker, verifyColumn, asked: askedByCode() });
       ({ rules, masked, verification, results } = resolved);
       fixedProblems = fixedLock(rules);
@@ -637,6 +668,9 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
       alternatives: results,
       overfit,
       source: { answer, alternatives },
+      ms: now() - started,
+      // (Over the budget also when every step ran but took longer: the next answer would too.)
+      overBudget: overBudget.length > 0 || now() > deadline ? overBudget : null,
     };
   };
   /**
@@ -667,7 +701,18 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     loopCtx,
   );
   loop = decided.state;
+  // Engine audit (2026-10-07): an answer past the time budget ends the learn there - the next one would take as long (`limits.learn.judge`).
+  const overBudget = (j: Judged | null): boolean => j !== null && j.overBudget !== null;
+  const budget = { hit: overBudget(first), skipped: new Set<TimeBudgetSummary['skipped'][number]>(first.overBudget ?? []), ms: first.ms };
+  /** The round the loop planned and the time budget stopped: not made, so neither it nor its rows are counted. */
+  const unmade = { rounds: 0, rows: 0 };
   while (decided.step.kind === 'next' && opts.callRepair) {
+    if (budget.hit) {
+      budget.skipped.add('rounds');
+      unmade.rounds = 1;
+      unmade.rows = decided.step.rows.length + decided.step.namedOnly.length;
+      break;
+    }
     const step = decided.step;
     stages.browserRepairUsed = true;
     const previous = answers[loop.best]!;
@@ -678,6 +723,13 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     if (repaired.overfitRepaired) overfitRepaired = true;
     const judged = repaired.rules ? judge(repaired.rules, repaired.alternatives) : null;
     answers.push(judged);
+    if (judged) {
+      budget.ms = Math.max(budget.ms, judged.ms);
+      if (overBudget(judged)) {
+        budget.hit = true;
+        for (const s of judged.overBudget ?? []) budget.skipped.add(s);
+      }
+    }
     decided = loopStep(
       loop,
       judged
@@ -699,7 +751,9 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   let listRetry: ListRetrySummary | undefined;
   let retryCalls = 0;
   const lists = opts.callRepair && loop.rounds < caps.maxRounds ? copiedLists(kept.rules, analysis, listOpts) : [];
-  if (opts.callRepair && lists.length > 0) {
+  // (Past the time budget the list's round is not made either: it is one more answer to judge. The list is still asked about at Save.)
+  if (budget.hit && lists.length > 0) budget.skipped.add('listRound');
+  if (opts.callRepair && lists.length > 0 && !budget.hit) {
     const problems = listRetryProblems(lists, kept.masked);
     const rows = loop.sent.map((r) => r.sample);
     const base: LoopRound = { round: loop.rounds + 1, maxRounds: caps.maxRounds, rows, newRows: 0, overfitRepaired, list: true };
@@ -750,7 +804,12 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // (The wrong rows were the loop's to choose from; they hold real values and stay here.)
   const { wrongRows: _wrongRows, ...verification } = kept.verification;
   stages.verifiedAfterRepair = kept.passes;
-  const loopSummary: LoopSummary = { rounds: loop.rounds + retryCalls, rowsSent: loop.sent.length + loop.named.length, end: decided.step.kind === 'stop' ? decided.step.reason : 'verified' };
+  const loopSummary: LoopSummary = {
+    rounds: loop.rounds - unmade.rounds + retryCalls,
+    rowsSent: loop.sent.length + loop.named.length - unmade.rows,
+    end: budget.skipped.has('rounds') ? 'timeBudget' : decided.step.kind === 'stop' ? decided.step.reason : 'verified',
+  };
+  const timeBudget: TimeBudgetSummary | undefined = budget.hit ? { budgetMs: judgeBudgetMs, answerMs: budget.ms, skipped: (['fill', 'alternatives', 'rounds', 'listRound'] as const).filter((s) => budget.skipped.has(s)) } : undefined;
 
   // A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of the kept answer that explain one row of the example only, for the user -
   // and (owner amendment, 2026-10-06; docs/proposals/saved-format-contents.md section 3) the lists of fixed values the kept answer still has,
@@ -782,6 +841,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     ...(kept.alternatives.length > 0 ? { alternatives: kept.alternatives } : {}),
     ...(oneTimers.questions.length > 0 || oneTimers.handedOff.length > 0 ? { oneTimers } : {}),
     ...(aiNotes.length > 0 ? { aiNotes } : {}),
+    ...(timeBudget ? { timeBudget } : {}),
     ...(complete ? { completion: { columns: [...complete.columns], parts: [...complete.parts], fixedProblems, matches: matchesExample(kept.verification, rules), produced: completionProduced(rules, complete.fixedRules, complete) } } : {}),
   };
 }

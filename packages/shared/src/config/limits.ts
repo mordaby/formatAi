@@ -315,6 +315,18 @@ export const limits = {
       maxConditions: 24,
     },
     /**
+     * The time the browser spends on ONE AI answer (engine audit, 2026-10-07; `learn/flow.ts` `judge`): code's fill from every row, the
+     * overfitting guards, the full verification and the alternatives each run the rules on every row of the example - up to 100,000 rows on
+     * the paid tier, where one answer took 17 s (fill 15 s, verification 1 s; a 20,000-row example 2.5 s). Measured between steps (a run of
+     * the rules cannot be stopped inside). Past it: the fill settles no further condition (the rest stay as the AI wrote them, like past
+     * `fill.maxConditions`), the alternatives are not tried, and the learn makes no further round and no list round - it ends with the best
+     * answer so far (`LearnFromExamplesResult.timeBudget`, loop end `timeBudget`): verified only when every row matches, otherwise its
+     * differences are "needs your input". The questions at the end (one-time edits, lists) are still asked.
+     */
+    judge: {
+      timeBudgetMs: 20_000,
+    },
+    /**
      * The overfitting guards (SPEC 9.2 layer 6, 21 v12 item 19; engine `learn/overfit.ts`): a computed column that is a chain of at least
      * `minCases` cases, each giving a constant to the rows an equality or range of input columns picks (two input columns or more in all),
      * and each the one taken for at most `maxRowsPerCase` of the rows code can see, copies the example's answers instead of stating a rule.

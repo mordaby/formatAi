@@ -30,8 +30,8 @@ import type { WrongCell, WrongRow } from './verify';
 /** LEARN_PROMPT §4: "At most 10 diff problems are sent." */
 const MAX_DIFF_PROBLEMS = 10;
 
-/** Why the loop ended without every row matching. */
-export const LOOP_STOP_REASONS = ['noProgress', 'roundCap', 'rowCap', 'payloadCap', 'nothingToSend'] as const;
+/** Why the loop ended without every row matching. `timeBudget` (engine audit, 2026-10-07): an answer took longer than `limits.learn.judge` (`flow.ts`). */
+export const LOOP_STOP_REASONS = ['noProgress', 'roundCap', 'rowCap', 'payloadCap', 'nothingToSend', 'timeBudget'] as const;
 export type LoopStopReason = (typeof LOOP_STOP_REASONS)[number];
 
 /** The loop's caps: `limits.learn.loop` and the payload byte cap. */
