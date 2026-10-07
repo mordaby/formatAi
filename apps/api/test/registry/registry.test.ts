@@ -381,6 +381,20 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect((await create(sourceOne(), {}, OTHER_USER)).status).toBe(201);
     });
 
+    it('API audit: saves at once never get past the saved-formats limit (the count is taken again with the format in)', async () => {
+      // (each with a source of its own name: the saves race for the format slots, not for a source's name)
+      const results = await Promise.all(Array.from({ length: 6 }, (_, i) => create(sourceOne(), { name: `R${i}`, newSource: { name: `S${i}` } })));
+      const saved = results.filter((r) => r.status === 201).length;
+      expect(saved).toBeLessThanOrEqual(tiers.registered.savedFormats as number);
+      for (const r of results.filter((x) => x.status !== 201)) expect(r.body).toEqual({ error: 'limitHit', limit: 'savedFormats' });
+      expect(await appDb.formats.countDocuments()).toBe(saved);
+      expect(await appDb.conversions.countDocuments()).toBe(saved); // nothing half-saved
+      expect(await appDb.sources.countDocuments()).toBe(saved); // a source made for a save taken back goes with it
+      // (Saves that raced for the last slots may all be taken back - DECISION in the route.) One after another, every free slot is used.
+      for (let i = saved; i < (tiers.registered.savedFormats as number); i++) expect((await create(sourceOne(), { name: `T${i}`, newSource: { name: `U${i}` } })).status).toBe(201);
+      expect((await create(sourceOne(), { name: 'Over', newSource: { name: 'Over' } })).status).toBe(403);
+    });
+
     it('limits sources per format (registered: 3), and answers 403 limitHit sourcesPerFormat on the next one', async () => {
       const { formatId } = await twoSources();
       const third = await call('POST', `/api/formats/${formatId}/conversions`, saveBody(sourceTwo()));

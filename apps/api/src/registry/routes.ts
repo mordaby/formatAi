@@ -213,15 +213,27 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       updatedAt: now,
     };
 
-    try {
-      await d.formats.insertOne(formatDoc);
-      await d.conversions.insertOne(conversionDoc);
-    } catch (err) {
-      // No half-saved format, and the month's count is given back: nothing was created.
+    // No half-saved format, and the month's count is given back: nothing was created.
+    const undo = async (): Promise<void> => {
       await d.formats.deleteOne({ _id: formatId }).catch(() => undefined);
       if (source.created) await d.sources.deleteOne({ _id: source.id, ownerId: caller.ownerId }).catch(() => undefined);
       await refund();
+    };
+    let overLimit = false;
+    try {
+      await d.formats.insertOne(formatDoc);
+      // API audit (2026-10-07): the saved-formats check above is a read, then a write - two saves at once could both pass it. The formats
+      // are counted again with this one in: over the plan's number, this save is taken back. DECISION: of two saves that raced for the last
+      // slot both may be taken back (the user saves again) - never one format too many.
+      overLimit = typeof tier.savedFormats === 'number' && (await d.formats.countDocuments({ ownerId: caller.ownerId })) > tier.savedFormats;
+      if (!overLimit) await d.conversions.insertOne(conversionDoc);
+    } catch (err) {
+      await undo();
       throw err;
+    }
+    if (overLimit) {
+      await undo();
+      return fail(reply, 403, { error: 'limitHit', limit: 'savedFormats' });
     }
     await settleSource(d, caller.ownerId, source.id, planned.plan, now, choice.inputHeaders);
 
