@@ -59,7 +59,7 @@ export interface LearnSession {
   /** Forget the files and the result: back to an empty Home. */
   startOver(): void;
   /**
-   * The learned result of these files has been saved (the Result screen's Save, Save changes; Add to a format from them). The next time the
+   * The learned result of these files has been saved (the Result screen's Save, Save changes; Add a source from them). The next time the
    * learn page shows, it starts empty (owner, 2026-10-07): `clearIfSaved`. Leaving without saving keeps the files.
    */
   saved: boolean;
