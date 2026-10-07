@@ -35,9 +35,9 @@ export const en = {
   // SPEC 7.2 UI copy
   'masking.label': 'Masking',
   'masking.on':
-    'Masking on: names, ID numbers and other text in the sample rows are replaced with look-alike values before anything leaves your computer. Numbers, dates and column names are sent as they are.',
+    'Masking on: names, other text and identifier numbers (such as ID, phone, customer and order numbers) in the sample rows are replaced with look-alike values before anything leaves your computer. Other numbers, dates, column names and sheet names are sent as they are.',
   'masking.off':
-    'Masking off: up to 12 sample rows are sent as they are. Learning is more accurate when a column is built from part of a text value, like the first digits of a policy number.',
+    'Masking off: up to {rows} rows of your example are sent as they are in one learn. Learning is more accurate when a column is built from part of a text value, like the first digits of a policy number.',
   'masking.always': 'Your full files never leave your computer.',
 
   // SPEC 16.1 "Learning progress"
@@ -147,8 +147,8 @@ export const en = {
   // SPEC 15: "See what we send"
   'sendPanel.lead.before': 'Only a small summary of your files is sent, never the files. When you press "Learn the format", this is what goes:',
   'sendPanel.item.columns': 'Column names, and a profile of each column: its type, its shape and how many cells are empty.',
-  'sendPanel.item.rows.on': 'Up to 12 sample rows. Names, ID numbers and other text are replaced with look-alike values first.',
-  'sendPanel.item.rows.off': 'Up to 12 sample rows, exactly as they are.',
+  'sendPanel.item.rows.on': 'Up to {pairs} sample rows. Names, identifier numbers and other text are replaced with look-alike values first.',
+  'sendPanel.item.rows.off': 'Up to {pairs} sample rows, exactly as they are.',
   'sendPanel.item.hints': 'What your computer already worked out: which columns are copied, reformatted or calculated.',
   // AI code checks (SPEC 21 v14): before it answers, the AI step may ask code to check ideas on every row.
   'sendPanel.item.checks': 'If the AI asks to check an idea first, your computer answers with counts and ranges from your example, and at most a few more rows, sent like the sample rows (within the same {rows} rows).',
@@ -234,9 +234,9 @@ export const he: Record<MessageKey, string> = {
 
   'masking.label': 'הסתרת נתונים',
   'masking.on':
-    'הסתרת נתונים פועלת: שמות, מספרי זהות וטקסט בשורות הדוגמה מוחלפים בערכים מדומים לפני שהם יוצאים מהמחשב שלך. מספרים, תאריכים ושמות העמודות נשלחים כפי שהם.',
+    'הסתרת נתונים פועלת: שמות, טקסט אחר ומספרים מזהים (כמו מספרי זהות, טלפון, לקוח והזמנה) בשורות הדוגמה מוחלפים בערכים מדומים לפני שהם יוצאים מהמחשב שלך. מספרים אחרים, תאריכים, שמות העמודות ושמות הגיליונות נשלחים כפי שהם.',
   'masking.off':
-    'הסתרת נתונים כבויה: עד 12 שורות דוגמה נשלחות כפי שהן. הלמידה מדויקת יותר כשעמודה נבנית מחלק של ערך טקסט, למשל הספרות הראשונות של מספר פוליסה.',
+    'הסתרת נתונים כבויה: בלמידה אחת נשלחות עד {rows} שורות מהדוגמה שלך כפי שהן. הלמידה מדויקת יותר כשעמודה נבנית מחלק של ערך טקסט, למשל הספרות הראשונות של מספר פוליסה.',
   'masking.always': 'הקבצים המלאים לעולם לא יוצאים מהמחשב שלך.',
 
   'flow.reading': 'קוראים את הקבצים',
@@ -341,8 +341,8 @@ export const he: Record<MessageKey, string> = {
 
   'sendPanel.lead.before': 'נשלח רק סיכום קטן של הקבצים, לעולם לא הקבצים עצמם. כשלוחצים על "ללמוד את הפורמט", זה מה שיוצא:',
   'sendPanel.item.columns': 'שמות העמודות ופרופיל של כל עמודה: הסוג, הצורה וכמה תאים ריקים.',
-  'sendPanel.item.rows.on': 'עד 12 שורות דוגמה. שמות, מספרי זהות וטקסט אחר מוחלפים קודם בערכים מדומים.',
-  'sendPanel.item.rows.off': 'עד 12 שורות דוגמה, בדיוק כפי שהן.',
+  'sendPanel.item.rows.on': 'עד {pairs} שורות דוגמה. שמות, מספרים מזהים וטקסט אחר מוחלפים קודם בערכים מדומים.',
+  'sendPanel.item.rows.off': 'עד {pairs} שורות דוגמה, בדיוק כפי שהן.',
   'sendPanel.item.hints': 'מה שהמחשב שלך כבר הבין: אילו עמודות מועתקות, מעוצבות מחדש או מחושבות.',
   'sendPanel.item.checks': 'אם ה-AI מבקש קודם לבדוק רעיון, המחשב שלכם עונה בספירות ובטווחים מתוך הדוגמה שלכם, ולכל היותר בעוד כמה שורות, שנשלחות כמו שורות הדוגמה (בתוך אותן {rows} שורות).',
   'sendPanel.item.loop': 'אם הכללים טועים בשורות מהדוגמה שלכם: עד {rounds} בקשות נוספות, בכל אחת חלק מהשורות האלה (עד {rows} שורות בסך הכול), שנשלחות כמו שורות הדוגמה.',

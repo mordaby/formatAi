@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import { limits } from '@formatai/shared';
 import { useI18n } from '../i18n';
 import { Button, Icon, Panel, Switch } from '../ui';
 
@@ -12,6 +13,9 @@ export interface HomeMaskingProps {
  * The masking switch (SPEC 7.2): on by default, its one-line explanation in the current state, and
  * a "What's the difference?" link that opens the copy for on, off and always.
  */
+/** The most rows one learn sends (the learning loop's cap): what masking off sends as they are. */
+const offParams = { rows: limits.learn.loop.maxRowsTotal };
+
 export function HomeMasking({ masking, onChange, disabled }: HomeMaskingProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -21,7 +25,7 @@ export function HomeMasking({ masking, onChange, disabled }: HomeMaskingProps) {
     <div className="masking">
       <Switch label={t('masking.label')} checked={masking} onChange={onChange} describedBy={explainerId} {...(disabled ? { disabled } : {})} />
       <p className="masking__text" id={explainerId}>
-        {t(masking ? 'masking.on' : 'masking.off')}{' '}
+        {masking ? t('masking.on') : t('masking.off', offParams)}{' '}
         <Button variant="link" aria-expanded={open} aria-controls={open ? panelId : undefined} onClick={() => setOpen((o) => !o)}>
           {t('masking.difference')}
         </Button>
@@ -35,7 +39,7 @@ export function HomeMasking({ masking, onChange, disabled }: HomeMaskingProps) {
             </div>
             <div>
               <dt>{t('masking.state.off')}</dt>
-              <dd>{t('masking.off')}</dd>
+              <dd>{t('masking.off', offParams)}</dd>
             </div>
             <div>
               <dt>{t('masking.state.always')}</dt>

@@ -50,7 +50,7 @@ export function SendPanel({ sent, masking, onClose, id }: SendPanelProps) {
           <p>{t('sendPanel.lead.before')}</p>
           <ul className="bullets">
             <li>{t('sendPanel.item.columns')}</li>
-            <li>{t(masking ? 'sendPanel.item.rows.on' : 'sendPanel.item.rows.off')}</li>
+            <li>{t(masking ? 'sendPanel.item.rows.on' : 'sendPanel.item.rows.off', { pairs: limits.payload.maxPairs })}</li>
             <li>{t('sendPanel.item.hints')}</li>
             <li>{t('sendPanel.item.checks', { rows: limits.learn.loop.maxRowsTotal })}</li>
             <li>{t('sendPanel.item.loop', { rounds: limits.learn.loop.maxRounds, rows: limits.learn.loop.maxRowsTotal })}</li>

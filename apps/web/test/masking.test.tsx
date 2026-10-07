@@ -1,3 +1,4 @@
+import { limits } from '@formatai/shared';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -6,17 +7,19 @@ import { HomeMasking } from '../src/pages/HomeMasking';
 
 afterEach(cleanup);
 
-// SPEC 7.2 UI copy, verbatim. The product promise lives in these sentences, so the test pins them.
+// SPEC 7.2 UI copy, verbatim. The product promise lives in these sentences, so the test pins them. The row count is the config's: what one
+// learn sends at most (`limits.learn.loop.maxRowsTotal`), never a number typed into the copy.
+const ROWS = limits.learn.loop.maxRowsTotal;
 const COPY = {
   en: {
-    on: 'Masking on: names, ID numbers and other text in the sample rows are replaced with look-alike values before anything leaves your computer. Numbers, dates and column names are sent as they are.',
-    off: 'Masking off: up to 12 sample rows are sent as they are. Learning is more accurate when a column is built from part of a text value, like the first digits of a policy number.',
+    on: 'Masking on: names, other text and identifier numbers (such as ID, phone, customer and order numbers) in the sample rows are replaced with look-alike values before anything leaves your computer. Other numbers, dates, column names and sheet names are sent as they are.',
+    off: `Masking off: up to ${ROWS} rows of your example are sent as they are in one learn. Learning is more accurate when a column is built from part of a text value, like the first digits of a policy number.`,
     always: 'Your full files never leave your computer.',
     label: 'Masking',
   },
   he: {
-    on: 'הסתרת נתונים פועלת: שמות, מספרי זהות וטקסט בשורות הדוגמה מוחלפים בערכים מדומים לפני שהם יוצאים מהמחשב שלך. מספרים, תאריכים ושמות העמודות נשלחים כפי שהם.',
-    off: 'הסתרת נתונים כבויה: עד 12 שורות דוגמה נשלחות כפי שהן. הלמידה מדויקת יותר כשעמודה נבנית מחלק של ערך טקסט, למשל הספרות הראשונות של מספר פוליסה.',
+    on: 'הסתרת נתונים פועלת: שמות, טקסט אחר ומספרים מזהים (כמו מספרי זהות, טלפון, לקוח והזמנה) בשורות הדוגמה מוחלפים בערכים מדומים לפני שהם יוצאים מהמחשב שלך. מספרים אחרים, תאריכים, שמות העמודות ושמות הגיליונות נשלחים כפי שהם.',
+    off: `הסתרת נתונים כבויה: בלמידה אחת נשלחות עד ${ROWS} שורות מהדוגמה שלך כפי שהן. הלמידה מדויקת יותר כשעמודה נבנית מחלק של ערך טקסט, למשל הספרות הראשונות של מספר פוליסה.`,
     always: 'הקבצים המלאים לעולם לא יוצאים מהמחשב שלך.',
     label: 'הסתרת נתונים',
   },

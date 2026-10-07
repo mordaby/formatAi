@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
 import { webConfig } from '../src/config';
 import { legalDocs, type LegalBlock } from '../src/i18n/legal';
+import { legalParams } from '../src/pages/Legal/params';
 import { fakeApi, renderApp, USER } from './helpers/renderApp';
 
 beforeEach(() => {
@@ -96,6 +97,41 @@ describe.each([
     // the contents list jumps to each section
     const toc = screen.getByRole('navigation', { name: lang === 'he' ? 'בדף הזה' : 'On this page' });
     expect(within(toc).getAllByRole('link').length).toBe(legalDocs.privacy[lang].sections.length);
+  });
+
+  it('privacy: the retention periods are the numbers the API deletes by (one shared config), and no font provider is named', () => {
+    // the page's tokens read the same config the API's TTL indexes are built from (apps/api/src/db.ts `ensureIndexes`)
+    expect(legalParams(lang, 'privacy')).toMatchObject({
+      llmMonths: limits.retention.aiCallRecordsMonths,
+      formsMonths: limits.retention.formsMonths,
+      eventsMonths: limits.retention.eventsMonths,
+      cacheDays: limits.cache.ttlDays,
+      sessionDays: limits.auth.sessionDays,
+      counterGraceDays: limits.protection.counterGraceHours / 24,
+    });
+    renderApp({ lang, route: '/privacy' });
+    const retention = document.getElementById('legal-retention')!.textContent ?? '';
+    const { aiCallRecordsMonths, formsMonths, eventsMonths } = limits.retention;
+    const grace = limits.protection.counterGraceHours / 24;
+    if (lang === 'en') {
+      expect(retention).toContain(`AI call records: up to ${aiCallRecordsMonths} months.`);
+      expect(retention).toContain(`Sign-in records: up to ${eventsMonths} months.`);
+      expect(retention).toContain(`up to ${formsMonths} months, or until you ask us to delete it.`);
+      expect(retention).toContain(`Usage and limit counters: until about ${grace} days after the end of the day or month they count.`);
+      expect(retention).toContain('deleted by the database itself');
+    } else {
+      expect(retention).toContain(`רישומי קריאות AI: עד ${aiCallRecordsMonths} חודשים.`);
+      expect(retention).toContain(`רישומי התחברות: עד ${eventsMonths} חודשים.`);
+      expect(retention).toContain(`עד ${formsMonths} חודשים, או עד שתבקשו למחוק.`);
+      expect(retention).toContain(`מוני שימוש ומגבלות: עד כ-${grace} ימים אחרי סוף היום או החודש שהם סופרים.`);
+    }
+    // the masking paragraph names identifier numbers as masked, and sheet names as sent (engine audit 2026-10-07)
+    const ai = document.getElementById('legal-ai')!.textContent ?? '';
+    expect(ai).toContain(lang === 'en' ? 'and so are identifier numbers: ID, phone, customer, account, policy and order numbers' : 'וכך גם מספרים מזהים: מספרי זהות, טלפון, לקוח, חשבון, פוליסה והזמנה');
+    expect(ai).toContain(lang === 'en' ? 'the column names and the sheet names' : 'שמות העמודות ושמות הגיליונות');
+    expect(ai).not.toContain(lang === 'en' ? 'Numbers, dates, column names' : 'מספרים, תאריכים, שמות עמודות');
+    // the font is our own file (index.html, styles/fonts.css): no font provider receives a visitor's address
+    expect(document.body.textContent).not.toMatch(/Google Fonts|fonts\.googleapis|gstatic/i);
   });
 
   it('terms: the basics, and Israeli law with a court to confirm', () => {
