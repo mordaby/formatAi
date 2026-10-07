@@ -152,4 +152,41 @@ describe.skipIf(!mongoUri)('every route that stores rules refuses rules over a c
     expect(res.body).toEqual({ error: 'rulesTooLarge' });
     expect('readAs' in (await rulesOf(first.body.conversion.id)).input.columns[1]!).toBe(false);
   });
+
+  // ---- API audit (2026-10-07): the edits the OTHER conversions take are held to the same caps ----
+
+  it('PATCH /api/sources/:id: more "read as" texts in one column than a saved format may keep (100)', async () => {
+    const first = await create(sourceOne());
+    const sourceId = (await call('GET', '/api/sources', undefined, paid)).body.sources[0].id as string;
+    const cols = (await call('GET', `/api/sources/${sourceId}`, undefined, paid)).body.source.inputSignature.columns;
+    const many = (n: number) => ({ ...cols[1], readAs: Object.fromEntries(Array.from({ length: n }, (_, i) => [`t${i}`, String(i)])) });
+    const res = await call('PATCH', `/api/sources/${sourceId}`, { inputSignature: { columns: [cols[0], many(limits.rules.maxReadAsPerColumn + 1)] } }, paid);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'rulesTooLarge' });
+    expect('readAs' in (await rulesOf(first.body.conversion.id)).input.columns[1]!).toBe(false);
+    expect((await call('PATCH', `/api/sources/${sourceId}`, { inputSignature: { columns: [cols[0], many(limits.rules.maxReadAsPerColumn)] } }, paid)).status).toBe(200);
+  });
+
+  it('PATCH /api/conversions/:id: a format edit another source\'s conversion would take past a cap is refused - nothing is written', async () => {
+    // The other source's conversion keeps a value map of about 40 KB (within the 64 KB cap)...
+    const sibling = edited(sourceTwo(), (r) => {
+      r.transform.valueMaps = [{ column: 'code', map: Object.fromEntries(Array.from({ length: 420 }, (_, i) => [`${'k'.repeat(80)}${i}`, `v${i}`])), onMissing: 'keep' }];
+    });
+    const first = await create(sourceOne());
+    expect(first.status).toBe(201);
+    const formatId = first.body.format.id as string;
+    const attached = await call('POST', `/api/formats/${formatId}/conversions`, saveBody(sibling), paid);
+    expect(attached.status).toBe(201);
+    // ...and the edit gives the FORMAT about 30 KB of title rows: the edited conversion stays within the cap, the other would not.
+    const id = first.body.conversion.id as string;
+    const titled = edited(await rulesOf(id), (r) => void (r.output.titleRows = Array.from({ length: 60 }, (_, i) => ({ text: `${i} ${'x'.repeat(limits.rules.maxTitleChars - 10)}` }))));
+    expect(checkRulesFile(titled, 'paid').ok).toBe(true);
+    const res = await call('PATCH', `/api/conversions/${id}`, { rules: titled, status: 'verified', acceptedDifferences: 0 }, paid);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'rulesTooLarge' });
+    // Nothing written: the edited conversion, the format and the other conversion are as they were.
+    expect((await appDb.conversions.findOne({ _id: new ObjectId(id) }))!.version).toBe(1);
+    expect((await appDb.formats.findOne({ _id: new ObjectId(formatId) }))!.version).toBe(1);
+    expect((await rulesOf(attached.body.conversion.id)).output.titleRows).toEqual([]);
+  });
 });

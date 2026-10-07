@@ -22,10 +22,10 @@ import type { ObjectId } from 'mongodb';
 import type { AppDb } from '../db.js';
 import type { SourceDoc } from '../models.js';
 import { isRecord, nameKey, parseAlias, parseIgnoredHeaders, parseSourceUpdate } from './bodies.js';
-import { fail, type RegistryContext } from './context.js';
+import { fail, rulesRefusal, type RegistryContext } from './context.js';
 import { sourceDetail, sourceSummary } from './present.js';
 import { structureOfDoc } from './sourceLogic.js';
-import { addIgnoredHeaders, isDuplicateKey, propagateSource, renameSource, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
+import { addIgnoredHeaders, isDuplicateKey, propagateSource, renameSource, sourceEditOverCap, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
 
 /** Format id (hex) -> name, for the formats of `conversions`. */
 export async function formatNamesOf(d: AppDb, ownerId: ObjectId, conversions: readonly { formatId: ObjectId }[]): Promise<Map<string, string>> {
@@ -139,11 +139,15 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RegistryContext)
       const built = buildStructure(before, update);
       if ('refusal' in built) return fail(reply, built.refusal.status, built.refusal.body);
       if (!deepEqual(built.structure, before)) {
+        // API audit (2026-10-07): every conversion of the source takes the change - each held to the caps of a save BEFORE anything is
+        // written; an edit one of them would take past a cap is refused as that save would be.
+        const over = await sourceEditOverCap(d, ownerId, source._id!, built.structure, built.renames, caller.tier);
+        if (over) return rulesRefusal(reply, over);
         const written = await writeSourceVersion(d, ownerId, source, built.structure, now);
         if (!written) return fail(reply, 409, { error: 'versionConflict' });
         current = written;
         structureChanged = true;
-        propagated = await propagateSource(d, ownerId, source._id!, built.structure, built.renames, now);
+        propagated = await propagateSource(d, ownerId, source._id!, built.structure, built.renames, now, { tier: caller.tier });
       }
     }
 
@@ -243,7 +247,9 @@ function buildStructure(
       if ([sent.header, ...sent.aliases].some((h) => h.length > limits.registry.maxAliasChars)) return bad;
       // What one saved format may keep (docs/proposals/saved-format-contents.md section 7): a "read as" text the source's formats would all
       // store, past `limits.rules.maxValueChars`, is refused like a rules file over a cap.
-      if (Object.entries(sent.readAs ?? {}).some(([text, as]) => text.length > limits.rules.maxValueChars || as.length > limits.rules.maxValueChars)) {
+      // (And API audit 2026-10-07: no more of them per column than a saved format may read another way, `limits.rules.maxReadAsPerColumn`.)
+      const readAs = Object.entries(sent.readAs ?? {});
+      if (readAs.length > limits.rules.maxReadAsPerColumn || readAs.some(([text, as]) => text.length > limits.rules.maxValueChars || as.length > limits.rules.maxValueChars)) {
         return { refusal: { status: 400, body: { error: 'rulesTooLarge' } as ApiErrorBody } };
       }
 

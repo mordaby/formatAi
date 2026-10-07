@@ -16,6 +16,10 @@
 // status; the others become `needsReview`") when the rebuilt rules do not resolve: a column the format gained
 // that this source has no mapping for (it becomes `unsupported`, and the user decides), or any reference (a
 // title row's aggregate column, a sort or group key, ...) to something this conversion does not have.
+//
+// API audit (2026-10-07): the rebuilt rules are held to the caps a save is held to (`overCap`: what one saved format may keep, the tier's
+// limits). Over one, they are NEVER written: the route refuses the edit before writing anything (it checks every conversion first), and a
+// conversion that changed meanwhile and comes out over a cap keeps its rules and is flagged `needsReview`.
 import { checkFormatLock, typeCheck } from '@formatai/engine';
 import {
   checkRules,
@@ -29,8 +33,10 @@ import {
   type RulesOutput,
   type RulesTransform,
   type SortKey,
+  type Tier,
   type Unsupported,
 } from '@formatai/shared';
+import { overCap, type RulesCheck } from './rules.js';
 
 /**
  * Which output columns an edit renamed: new header -> old header. A column counts as renamed when its header is
@@ -68,10 +74,12 @@ export interface Propagated {
   newColumns: string[];
   /** Why the rebuilt rules do not resolve (references, types, format lock); empty when they do. */
   problems: RepairProblem[];
+  /** The rebuilt rules are over a cap of a save (`overCap`): never written - what the route answers instead. Null when within them. */
+  overCap: Extract<RulesCheck, { ok: false }> | null;
 }
 
 /** Rebuilds `target` (one other conversion of the format) around `format`, the format after the edit. */
-export function applyFormat(target: Rules, format: Format, renames: ReadonlyMap<string, string>): Propagated {
+export function applyFormat(target: Rules, format: Format, renames: ReadonlyMap<string, string>, tier: Tier): Propagated {
   const oldFromByHeader = new Map<string, string | null>();
   for (const c of target.output.columns) if (!oldFromByHeader.has(c.header)) oldFromByHeader.set(c.header, c.from);
 
@@ -156,5 +164,5 @@ export function applyFormat(target: Rules, format: Format, renames: ReadonlyMap<
   for (const p of typeCheck(next)) problems.push({ kind: 'type', path: p.path, message: p.message });
   for (const p of checkFormatLock(next, format)) problems.push({ kind: 'formatMismatch', path: p.path, message: p.message });
 
-  return { rules: next, needsReview: problems.length > 0 || newColumns.length > 0, newColumns, problems };
+  return { rules: next, needsReview: problems.length > 0 || newColumns.length > 0, newColumns, problems, overCap: overCap(next, tier) };
 }

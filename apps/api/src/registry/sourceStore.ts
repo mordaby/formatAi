@@ -2,13 +2,13 @@
 // structure into all of its conversions ("Editing a source propagates to all its conversions, like a format edit").
 // Database helpers around the pure functions of `sourceLogic.ts`; every write is scoped by `ownerId`.
 import { deepEqual } from '@formatai/engine';
-import { limits, RulesSchema, type ConversionStatus, type Rules, type SourceStructure } from '@formatai/shared';
+import { limits, RulesSchema, type ConversionStatus, type Rules, type SourceStructure, type Tier } from '@formatai/shared';
 import type { ObjectId } from 'mongodb';
 import type { AppDb } from '../db.js';
 import type { ConversionDoc, SourceDoc } from '../models.js';
 import { nameKey } from './bodies.js';
 import { conversionWrite, saveVersion } from './conversionStore.js';
-import { plain, signatureOf } from './rules.js';
+import { plain, signatureOf, type RulesCheck } from './rules.js';
 import { applySource, newIgnoredHeaders, structureOfDoc, withDerivedRequired, withSourceAliases } from './sourceLogic.js';
 
 /** The first "Source N" no other source of the owner has. */
@@ -153,6 +153,36 @@ export interface PropagateOptions {
    * otherwise be filled with one-alias versions.
    */
   aliasesOnly?: boolean;
+  /**
+   * The owner's tier: the rewritten rules are held to the caps of a save (API audit 2026-10-07, `overCap`). One over a cap is never written:
+   * the conversion keeps its rules and is flagged `needsReview` (the route has refused such an edit up front, `sourceEditOverCap`; this is a
+   * conversion that changed meanwhile). Every structural propagation passes it.
+   */
+  tier?: Tier;
+}
+
+/**
+ * API audit (2026-10-07): what `propagateSource` would write into each conversion of the source (but `except`), held to the caps of a save
+ * BEFORE anything is written - the refusal of the first conversion that would come out over one (the route answers it as a save would,
+ * `rulesRefusal`), or null when none would. Stored rules that no longer parse are skipped (they are only flagged).
+ */
+export async function sourceEditOverCap(
+  d: AppDb,
+  ownerId: ObjectId,
+  sourceId: ObjectId,
+  structure: SourceStructure,
+  renames: ReadonlyMap<string, string>,
+  tier: Tier,
+  except?: ObjectId,
+): Promise<Extract<RulesCheck, { ok: false }> | null> {
+  const conversions = await d.conversions.find({ ownerId, sourceId, ...(except ? { _id: { $ne: except } } : {}) }).toArray();
+  for (const conv of conversions) {
+    const parsed = RulesSchema.safeParse(conv.rules);
+    if (!parsed.success) continue;
+    const applied = applySource(parsed.data as unknown as Rules, structure, renames, tier);
+    if (applied.overCap) return applied.overCap;
+  }
+  return null;
 }
 
 export interface Propagated {
@@ -209,7 +239,16 @@ export async function propagateSource(
         continue;
       }
 
-      const applied = applySource(before, structure, renames);
+      const applied = applySource(before, structure, renames, opts.tier);
+      if (applied.overCap) {
+        // Over a cap of a save: never written (see `PropagateOptions.tier`) - the rules stay, flagged for review.
+        const written: ConversionDoc = { ...cur, status: 'needsReview', version: cur.version + 1, updatedAt: now };
+        if (await saveVersion(d, ownerId, cur, written)) {
+          flagged.push({ id: cur._id!, formatId: cur.formatId });
+          break;
+        }
+        continue;
+      }
       if (!applied.changed && !applied.needsReview) break;
 
       const status: ConversionStatus = applied.needsReview ? 'needsReview' : cur.status;
