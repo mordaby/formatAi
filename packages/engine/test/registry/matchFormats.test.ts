@@ -100,6 +100,20 @@ describe('findFormatMatches', () => {
     expect(match!.lock.map((p) => p.path)).toEqual(['output.titleRows', 'output.columns[1].width']);
   });
 
+  it('a csv output named after another file (its "sheet") is not a lock difference: the sheet is not in the file', () => {
+    const csv = (sheetName: string, inputHeaders?: [string, string]): LearnResult => {
+      const r = rules({ ...(inputHeaders ? { inputHeaders } : {}), title: 'Report for March' });
+      return { ...r, output: { ...r.output, file: { type: 'csv' }, sheetName } };
+    };
+    const [match] = findFormatMatches({
+      rules: csv('orders 2026-10', ['Client', 'Sum']),
+      inputHeaders: ['Client', 'Sum'],
+      candidates: [candidate('F1', 'Monthly', { rules: csv('orders 2026-09') })],
+      sources: [SUPPLIER_A],
+    });
+    expect(match!.lock).toEqual([]);
+  });
+
   it('several formats with the same output: all of them, most recently used first', () => {
     const matches = findFormatMatches({
       rules: rules({ title: 'Report for March' }),

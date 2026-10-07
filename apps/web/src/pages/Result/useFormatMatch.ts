@@ -6,7 +6,7 @@
 // What is read: the list of formats (fetched when the result is shown, so a Save with no match waits for nothing), and - only for the formats
 // whose headers and file type already agree - their output side and conversions, and the sources' signatures. Structure only: no value of
 // the example is sent anywhere, and the comparison runs in the browser. Any failure is no offer: Save goes on as before.
-import { normalizeOutputHeader, type FormatSummary, type LearnResult, type Rules, type SignatureEntry } from '@formatai/shared';
+import { normalizeOutputHeader, type Format, type FormatSummary, type LearnResult, type Rules, type SignatureEntry } from '@formatai/shared';
 import type { FormatMatch, FormatProblem, SavedFormatCandidate } from '@formatai/engine';
 import { useCallback, useEffect, useRef } from 'react';
 import type { EditableRules } from '../../editor';
@@ -34,6 +34,8 @@ export interface FormatOffer {
   conversion?: { id: string; version: number; sourceName: string; sourceFormats: number };
   /** `locked`: why. `update`: what the update changes in the format (for all its sources); empty when nothing. */
   reasons: LockReason[];
+  /** The format's output side as stored: what a csv's rules take before they are saved into it (`withUnwrittenOutputOf`). */
+  format: Format;
 }
 
 /** The format lock's problems as reasons: one per kind, in order (a column's number format names the column). */
@@ -65,24 +67,34 @@ export function lockReasons(problems: readonly FormatProblem[], headers: readonl
   return out;
 }
 
-/** The engine's matches as offers. `signatures`: how many formats each source feeds. */
-export function offersOf(matches: readonly FormatMatch[], rules: LearnResult | Rules, signatures: readonly SignatureEntry[]): FormatOffer[] {
+/** The engine's matches as offers. `signatures`: how many formats each source feeds; `formats`: each candidate's stored output side, by id. */
+export function offersOf(
+  matches: readonly FormatMatch[],
+  rules: LearnResult | Rules,
+  signatures: readonly SignatureEntry[],
+  formats: ReadonlyMap<string, Format>,
+): FormatOffer[] {
   const headers = rules.output.columns.map((c) => c.header);
-  return matches.map((m): FormatOffer => {
+  return matches.flatMap((m): FormatOffer[] => {
+    const format = formats.get(m.formatId);
+    if (!format) return [];
     const reasons = lockReasons(m.lock, headers);
     if (m.same) {
       const entry = signatures.find((s) => s.sourceId === m.same!.sourceId);
       const sourceFormats = entry ? new Set(entry.conversions.map((c) => c.formatId)).size : 1;
-      return {
-        formatId: m.formatId,
-        formatName: m.formatName,
-        sources: m.sources,
-        kind: 'update',
-        conversion: { id: m.same.id, version: m.same.version, sourceName: m.same.sourceName, sourceFormats: Math.max(1, sourceFormats) },
-        reasons,
-      };
+      return [
+        {
+          formatId: m.formatId,
+          formatName: m.formatName,
+          sources: m.sources,
+          kind: 'update',
+          conversion: { id: m.same.id, version: m.same.version, sourceName: m.same.sourceName, sourceFormats: Math.max(1, sourceFormats) },
+          reasons,
+          format,
+        },
+      ];
     }
-    return { formatId: m.formatId, formatName: m.formatName, sources: m.sources, kind: reasons.length > 0 ? 'locked' : 'attach', reasons };
+    return [{ formatId: m.formatId, formatName: m.formatName, sources: m.sources, kind: reasons.length > 0 ? 'locked' : 'attach', reasons, format }];
   });
 }
 
@@ -150,7 +162,7 @@ export function useFormatMatch(enabled: boolean): UseFormatMatch {
           candidates: saved,
           sources: signatures.map(signatureOf),
         });
-        return offersOf(matches, rules, signatures);
+        return offersOf(matches, rules, signatures, new Map(saved.map((c) => [c.id, c.format] as const)));
       } catch {
         return []; // no offer, no harm: Save goes on as before
       }

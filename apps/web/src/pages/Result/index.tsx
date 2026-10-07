@@ -7,6 +7,7 @@
 // every further save is a new version of the source.
 import {
   defaultSourceName,
+  withUnwrittenOutputOf,
   tiers,
   type AttachSourceRequest,
   type AttachSourceResponse,
@@ -220,16 +221,24 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     const file = session.input;
     if (!info.metaStatus || !file) return;
     const { offer } = choice;
+    // (a csv's or txt's sheet name, widths, header style and direction are not in the file: the format's are taken, so a new file name is
+    // not a change of the format - the file written is the same)
+    const rules = withUnwrittenOutputOf(info.rules, offer.format);
     const rename = (): void => {
       setName(offer.formatName);
       kept.name = offer.formatName;
+      // What is on screen is what was saved (the next save from this editor is compared with it).
+      if (rules !== info.rules) {
+        const s = info.editor.store.getState();
+        info.editor.store.reset(rules, { exceptions: s.exceptions, oneTime: s.oneTime, edited: [...s.edited] });
+      }
     };
     if (choice.kind === 'update' && offer.conversion) {
       const conversion = offer.conversion;
       // The editor's own route (SPEC 8.11 "Saving"): a NEW version of that source's rules, based on the version just read - a conversion
       // changed meanwhile is refused, never overwritten. Earlier versions are kept (and can be restored from the history).
       const body: UpdateConversionRequest = {
-        rules: info.rules,
+        rules,
         status: info.metaStatus,
         acceptedDifferences: info.differences ?? 0,
         exampleExceptions: info.exceptions,
@@ -253,7 +262,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     const inputHeaders = result.exampleInput?.map((c) => c.header);
     const suggestedSourceName = defaultSourceName(file.name);
     const body: AttachSourceRequest = {
-      rules: info.rules,
+      rules,
       status: info.metaStatus,
       acceptedDifferences: info.differences ?? 0,
       exampleExceptions: info.exceptions,

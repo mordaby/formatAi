@@ -2,7 +2,8 @@
 // their text), summary rows and grouping. Everything else is the format lock's.
 import { describe, expect, it } from 'vitest';
 import type { Format } from '../src/format';
-import { normalizeOutputHeader, outputStructureOf, sameOutputStructure } from '../src/formatMatch';
+import { normalizeOutputHeader, outputStructureOf, sameOutputStructure, withUnwrittenOutputOf } from '../src/formatMatch';
+import type { LearnResult } from '../src/rules/schema';
 
 function format(over: { output?: Partial<Format['output']>; layout?: Format['layout']; outputValidations?: Format['outputValidations'] } = {}): Format {
   return {
@@ -76,6 +77,23 @@ describe('sameOutputStructure', () => {
     expect(sameOutputStructure(byCustomer, format())).toBe(false);
     expect(sameOutputStructure(byCustomer, format({ layout: { sort: [], group: { by: 'Order ID', showDetailRows: true, summaryRows: [{ cells: { Total: 'sum' } }] } } }))).toBe(false);
     expect(sameOutputStructure(byCustomer, format({ layout: { sort: [], group: { by: 'Customer', showDetailRows: false, summaryRows: [{ cells: { Total: 'sum' } }] } } }))).toBe(false);
+  });
+
+  it('a csv\'s sheet name, widths, header style and direction are not in the file: the format\'s are taken; an xlsx is left as it is', () => {
+    const rules = (type: 'csv' | 'xlsx'): LearnResult => ({
+      schemaVersion: 1,
+      input: { sheet: { pick: 'first' }, headerRow: 'auto', columns: [{ id: 'a', header: 'A', type: 'text' }] },
+      transform: { computed: [], valueMaps: [], sort: [] },
+      output: { file: { type }, sheetName: 'orders 2026-10', direction: 'ltr', language: 'en', titleRows: [], columns: [{ header: 'Order ID', from: 'a', width: 9, format: '0' }], headerStyle: { bold: true } },
+      validations: [],
+      unsupported: [],
+      assumptions: [],
+    });
+    const saved = format({ output: { file: { type: 'csv' }, sheetName: 'orders 2026-09', direction: 'rtl', columns: [{ header: 'Order ID', format: '#' }] } });
+    const taken = withUnwrittenOutputOf(rules('csv'), saved);
+    expect(taken.output).toEqual({ file: { type: 'csv' }, sheetName: 'orders 2026-09', direction: 'rtl', language: 'en', titleRows: [], columns: [{ header: 'Order ID', from: 'a', format: '0' }] });
+    // (what IS in the file - the number format - stays the rules' own; an xlsx keeps everything)
+    expect(withUnwrittenOutputOf(rules('xlsx'), format())).toEqual(rules('xlsx'));
   });
 
   it('what the format lock decides is not compared: number formats, widths, sheet, direction, sort, output checks', () => {

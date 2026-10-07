@@ -10,7 +10,7 @@
 //   3. The format lock (`checkFormatLock`) of the rules against the format: an attach whose rules break it is not offered (the server would
 //      refuse it); for an update it says the save changes the format (for all its sources).
 // The matches come most recently used first.
-import { sameOutputStructure, type Format, type LearnResult, type Rules } from '@formatai/shared';
+import { sameOutputStructure, withUnwrittenOutputOf, type Format, type LearnResult, type Rules } from '@formatai/shared';
 import { checkFormatLock, type FormatProblem } from './checkFormatLock';
 import { formatOf } from './formatOf';
 import { matchConversions, pickConversion, type ConversionSignatureInput } from './matchConversions';
@@ -73,7 +73,8 @@ export function findFormatMatches(args: FindFormatMatchesArgs): FormatMatch[] {
         formatName: c.name,
         sources: c.conversions.length,
         ...(conversion ? { same: conversion } : {}),
-        lock: checkFormatLock(args.rules, c.format),
+        // (a csv's or txt's sheet name, widths, header style and direction are not in the file: the format's are taken first)
+        lock: checkFormatLock(withUnwrittenOutputOf(args.rules, c.format), c.format),
       };
     });
 }

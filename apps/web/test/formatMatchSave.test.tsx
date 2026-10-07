@@ -272,6 +272,21 @@ describe('the same output from another input: add it as a new source', () => {
     expect(registry.attachSource).not.toHaveBeenCalled();
   });
 
+  it('a csv output named after another file is still added: its "sheet" is not in the file, and the format\'s is saved', async () => {
+    const csvOf = (sheetName: string, inputHeaders?: [string, string]): LearnResult => {
+      const r = learned(inputHeaders ? { inputHeaders } : {});
+      return { ...r, output: { ...r.output, file: { type: 'csv' }, sheetName } };
+    };
+    const monthly = saved('F1', 'Monthly accounts', csvOf('accounts 2026-09'));
+    const { registry } = await openResult({ rules: csvOf('accounts 2026-10', ['Acct no', 'Firm']), formats: [{ ...monthly, summary: { ...monthly.summary, fileType: 'csv' } }] });
+    await press('Save format');
+    await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(question()).toBe('This looks like your format Monthly accounts. Add this file as a new source of it?');
+    await answer('Add as a source');
+    await waitFor(() => expect(registry.attachSource).toHaveBeenCalledTimes(1));
+    expect(bodyOf(registry.attachSource).rules.output.sheetName).toBe('accounts 2026-09');
+  });
+
   it('the reasons are said in words, one per kind', () => {
     expect(
       lockReasons(

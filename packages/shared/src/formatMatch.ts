@@ -12,7 +12,7 @@
 // A file with no header row (`file.header: false`) never matches: its headers are names code made up, and a column count alone is a guess.
 // Pure; the browser runs it (in the worker, on `formatOf` of the learned rules) against the user's saved formats.
 import type { Format, FormatGroup } from './format';
-import type { SummaryRow } from './rules/schema';
+import type { LearnResult, Rules, SummaryRow } from './rules/schema';
 
 /** A header as the comparison reads it: trimmed, with every run of whitespace one space. */
 export function normalizeOutputHeader(header: string): string {
@@ -82,4 +82,29 @@ export function sameOutputStructure(a: Format, b: Format): boolean {
   const y = outputStructureOf(b);
   if (!x || !y || x.headers.length === 0) return false;
   return JSON.stringify(x) === JSON.stringify(y);
+}
+
+/**
+ * SPEC 8.13: a csv or txt file has no sheet, widths, header style or direction - none of them is written - and code names a csv's "sheet" after
+ * the file ("orders 2026-09"). Rules learned from such an output take the format's, so a new file name is not a difference from the format
+ * (the file written is the same, byte for byte). Any other output, or one of another file type or width, is returned as it is.
+ */
+export function withUnwrittenOutputOf<R extends LearnResult | Rules>(rules: R, format: Format): R {
+  const type = rules.output.file?.type ?? 'xlsx';
+  if (type === 'xlsx' || type !== (format.output.file?.type ?? 'xlsx') || rules.output.columns.length !== format.output.columns.length) return rules;
+  const { headerStyle: _style, ...output } = rules.output;
+  return {
+    ...rules,
+    output: {
+      ...output,
+      sheetName: format.output.sheetName,
+      direction: format.output.direction,
+      ...(format.output.headerStyle !== undefined ? { headerStyle: format.output.headerStyle } : {}),
+      columns: rules.output.columns.map((c, i) => {
+        const { width: _width, ...column } = c;
+        const width = format.output.columns[i]!.width;
+        return width !== undefined ? { ...column, width } : column;
+      }),
+    },
+  };
 }
