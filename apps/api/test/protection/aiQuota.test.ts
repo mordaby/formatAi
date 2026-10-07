@@ -6,7 +6,7 @@ import { limits, tiers, type AiLearnQuota } from '@formatai/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CompleteFn } from '../../src/learn/index.js';
 import type { CompleteRequest } from '../../src/llm/index.js';
-import { aiFailKey, aiLearnsKey } from '../../src/protection/keys.js';
+import { aiFailKey, aiLearnsKey, aiRequestsKey, failedRefundsKey } from '../../src/protection/keys.js';
 import { basicPayload, correctRules, correctRulesWireJson, wrongRoundingWireJson } from '../learn/fixtures.js';
 import {
   createHarness,
@@ -371,6 +371,69 @@ function defineQuotaSuite(kit: StoreKit): void {
   });
 
   // ---------------------------------------------------------------- the outcome route
+
+  // ---------------------------------------------------------------- API audit C1: requests, not successes
+
+  describe('the daily cap on requests that call the AI (API audit C1)', () => {
+    const cap = limits.protection.aiRequestsPerDay.registered;
+    /** The same pair under another input layout: another structure hash, so its own failed-attempt counter. */
+    const pairNo = (n: number) => basicPayload({ input: { ...basicPayload().input, layout: { headerRow: 0, rowsAbove: 0, footerFirstCell: [`end ${n}`] } } });
+
+    it(`counts every learn and loop round, counted or not, and answers the ${cap + 1}th 429 limitHit aiRequestsPerDay before calling the AI`, async () => {
+      expect(limits.protection.aiRequestsPerDay).toEqual({ registered: 40, paid: 400 });
+      tiers.registered.aiLearns = { count: 0, period: 'unlimited' }; // the success quota never refuses here: only the request cap can
+      const llm = makeComplete();
+      const h = await setup(llm.fn);
+      let learnId = '';
+      let rules: unknown = null;
+      for (let i = 0; i < cap - 1; i++) {
+        const res = await h.learn({ noCache: true });
+        expect(res.statusCode).toBe(200);
+        ({ learnId, rules } = res.json());
+      }
+      // a loop round is a request too: the 40th
+      const round = await h.post('/api/learn/repair', { payload: basicPayload(), previousRules: rules, problems: [], learnId });
+      expect(round.statusCode).toBe(200);
+      const calls = llm.calls.length;
+      for (const refused of [await h.learn({ noCache: true }), await h.post('/api/learn/repair', { payload: basicPayload(), previousRules: rules, problems: [], learnId })]) {
+        expect(refused.statusCode).toBe(429);
+        expect(refused.json()).toEqual({ error: 'limitHit', limit: 'aiRequestsPerDay' });
+      }
+      expect(llm.calls).toHaveLength(calls);
+      expect(await h.handle.counter(aiRequestsKey(TEST_USER, h.clock.current))).toBe(cap);
+      // Another user has a cap of their own; the next UTC day starts again.
+      expect((await h.learn({ noCache: true }, { user: testUserId(2) })).statusCode).toBe(200);
+      h.clock.current = new Date(h.clock.current.getTime() + DAY_MS);
+      expect((await h.learn({ noCache: true })).statusCode).toBe(200);
+    });
+
+    it('a request it refuses takes no unit of the AI-learn quota, and one the quota refuses counts no request', async () => {
+      const h = await setup(makeComplete().fn);
+      for (let i = 0; i < 3; i++) await h.learn({ noCache: true });
+      expect((await h.learn({ noCache: true })).json()).toEqual({ error: 'limitHit', limit: 'aiLearns', period: 'month' });
+      expect(await h.handle.counter(aiRequestsKey(TEST_USER, h.clock.current))).toBe(3);
+    });
+
+    it(`gives at most ${limits.protection.failedRefundsPerDay} learns back a day for a failed outcome: past it the report is taken, the learn stays counted`, async () => {
+      const refunds = limits.protection.failedRefundsPerDay;
+      expect(refunds).toBe(10);
+      tiers.registered.aiLearns = { count: 100, period: 'month' };
+      const h = await setup(makeComplete().fn);
+      for (let n = 0; n <= refunds; n++) {
+        const { learnId } = (await h.learn({ payload: pairNo(n), noCache: true })).json();
+        expect(await used(h)).toBe(1);
+        const res = (await outcome(h, learnId, 'failed')).json();
+        if (n < refunds) {
+          expect(res).toMatchObject({ counted: false, failedAttempts: 1 });
+          expect(await used(h)).toBe(0);
+        } else {
+          expect(res).toMatchObject({ counted: true, failedAttempts: 0 });
+          expect(await used(h)).toBe(1);
+        }
+      }
+      expect(await h.handle.counter(failedRefundsKey(TEST_USER, h.clock.current))).toBe(refunds);
+    });
+  });
 
   describe('POST /api/learn/:learnId/outcome', () => {
     it('needs a learnId issued to the same user, and a known outcome', async () => {

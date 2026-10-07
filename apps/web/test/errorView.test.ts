@@ -48,6 +48,15 @@ describe.each(['en', 'he'] as const)('error code -> message (%s)', (lang) => {
     }
   });
 
+  it("API audit C1: the day's cap on requests to the AI is an amber block that says what keeps working - no sign-in, no retry", () => {
+    expect(errorView(i18n, api('limitHit', { limit: 'aiRequestsPerDay' }))).toEqual({
+      tone: 'block',
+      text: limitMessages.aiRequestsPerDay[lang],
+      todo: i18n.t('aiLimit.local'),
+      action: 'none',
+    });
+  });
+
   it('rate limiting says when to try again, when the server said', () => {
     const plain = errorView(i18n, api('rateLimited'));
     expect(plain).toMatchObject({ tone: 'block', action: 'tryAgain', text: apiErrorMessages.rateLimited[lang] });

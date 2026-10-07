@@ -41,6 +41,7 @@ budgets (`limits.budgets`), and the user's AI-learn quota (`tiers.*.aiLearns: { 
 | 429 | `rateLimited` | too many requests from one IP this minute (`Retry-After` set) |
 | 403 | `signInForAi` | not signed in (learn, repair and outcome) |
 | 429 | `limitHit` + `limit: 'aiLearns'` + `period` | the AI-learn quota of the period is used up |
+| 429 | `limitHit` + `limit: 'aiRequestsPerDay'` | the user's requests that call the AI today (learn, step, repair - whatever they ended in) reached `limits.protection.aiRequestsPerDay` (registered 40, paid 400); a `failed` outcome gives a learn back at most `failedRefundsPerDay` (10) times a day |
 | 429 | `limitHit` + `limit: 'repairsPerLearn'` | the learn's rounds of the learning loop are used (`limits.llm.browserRepairCalls`, 3) |
 | 409 | `aiAttemptsExhausted` + `counted` | 3 failed attempts on the same example pair (`limits.learn.maxFailedAiAttempts`); `counted: true` when this very answer counted the pair as one AI learn |
 | 503 | `budgetExhausted` | the daily overall budget is spent (kill switch) |

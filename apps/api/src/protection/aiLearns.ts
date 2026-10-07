@@ -35,7 +35,7 @@
 // moves it there once (`markSucceeded` is idempotent); a round that fails changes nothing - and the browser reports once,
 // when the loop has ended: `verified` (it stays counted, or is counted now) or `failed` (one failed attempt, nothing counted).
 import { limits, type AiLearnQuotaState } from '@formatai/shared';
-import { aiFailKey, aiLearnStateKey, type AiQuota } from './keys.js';
+import { aiFailKey, aiLearnStateKey, type AiQuota, type DailyCap } from './keys.js';
 import type { ProtectionStore } from './store.js';
 
 export const LEARN_STATE = { open: 0, charged: 1, failed: 2, exhausted: 3 } as const;
@@ -180,13 +180,25 @@ export async function markSucceeded(ctx: AiLearnCtx): Promise<Settled> {
 /**
  * The browser reports that its full verification failed and the attempt did not work out. A learn the server
  * had counted is given back and recorded as a failed attempt on the pair; idempotent.
+ *
+ * API audit C1 (2026-10-07): at most `refunds.limit` such refunds per user per UTC day (`limits.protection.failedRefundsPerDay`). Past it
+ * the report changes nothing here: the learn stays counted, and no failure is recorded on the pair (the caller still evicts the cache).
+ * DECISION: the cap is counted before the move and given back when the move does not happen (another report got there first), so two
+ * reports at once never spend two refunds, and a report of a learn that was not counted spends none.
  */
-export async function markFailed(ctx: AiLearnCtx): Promise<Settled> {
+export async function markFailed(ctx: AiLearnCtx, refunds?: DailyCap): Promise<Settled> {
   const state = await ctx.store.getCounter(stateKey(ctx));
-  if (
-    state === LEARN_STATE.charged &&
-    (await ctx.store.transitionCounter(stateKey(ctx), LEARN_STATE.charged, LEARN_STATE.failed, stateExpiry(ctx)))
-  ) {
+  if (state !== LEARN_STATE.charged) return stateOf(ctx);
+  if (refunds) {
+    const used = await ctx.store.incrementCounter(refunds.key, 1, refunds.expiresAt);
+    if (used > refunds.limit) {
+      await ctx.store.incrementCounter(refunds.key, -1, refunds.expiresAt);
+      return stateOf(ctx);
+    }
+  }
+  const moved = await ctx.store.transitionCounter(stateKey(ctx), LEARN_STATE.charged, LEARN_STATE.failed, stateExpiry(ctx));
+  if (!moved && refunds) await ctx.store.incrementCounter(refunds.key, -1, refunds.expiresAt);
+  if (moved) {
     await charge(ctx, -1);
     const failed = await bumpFailures(ctx, 1);
     if (
@@ -194,6 +206,8 @@ export async function markFailed(ctx: AiLearnCtx): Promise<Settled> {
       (await ctx.store.transitionCounter(stateKey(ctx), LEARN_STATE.failed, LEARN_STATE.exhausted, stateExpiry(ctx)))
     ) {
       await charge(ctx, 1);
+      // (the pair counts as this one learn after all: nothing was refunded)
+      if (refunds) await ctx.store.incrementCounter(refunds.key, -1, refunds.expiresAt);
     }
   }
   return stateOf(ctx);

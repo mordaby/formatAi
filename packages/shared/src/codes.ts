@@ -183,6 +183,9 @@ export const LIMIT_CODES = [
   'stepsPerLearn',
   // 429: the user's AI-learn quota for its period is used up (`period` accompanies it).
   'aiLearns',
+  // 429 (API audit C1): the user's requests that call the AI today (learn, step, repair - whatever they ended in) reached
+  // `limits.protection.aiRequestsPerDay` for the tier.
+  'aiRequestsPerDay',
   // 403: saved formats (registered: lifetime total; delete frees a slot).
   'savedFormats',
   // 429: paid tier's new formats this calendar month (DECISION 9).

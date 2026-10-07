@@ -370,6 +370,11 @@ export const limitMessages: Record<LimitCode, Localized> = {
     en: "You've used all your AI learns for now.",
     he: 'ניצלתם את כל למידות ה-AI שלכם לעכשיו.',
   },
+  // API audit C1: the day's cap on requests to the AI (whatever they ended in), not the plan's AI learns.
+  aiRequestsPerDay: {
+    en: "You've reached today's limit of requests to the AI. It resets tomorrow; everything that works without the AI keeps working.",
+    he: 'הגעתם למכסה היומית של בקשות ל-AI. היא תתחדש מחר; כל מה שעובד בלי AI ממשיך לעבוד.',
+  },
   savedFormats: {
     en: "You've saved as many formats as your plan allows. Delete one to make room.",
     he: 'שמרתם את מספר הפורמטים המרבי שהתוכנית שלכם מאפשרת. מחקו אחד כדי לפנות מקום.',

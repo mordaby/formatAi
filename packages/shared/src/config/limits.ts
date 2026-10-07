@@ -96,6 +96,22 @@ export const limits = {
     dailyCounterGraceHours: 24,
     /** Lifetime of the first-party `anonId` cookie (SPEC 12). */
     anonCookieMaxAgeDays: 365,
+    /**
+     * API audit C1 (2026-10-07): a hard cap on the REQUESTS one signed-in user makes that call the AI - POST /api/learn, /step and
+     * /repair, whatever they end in - per UTC day, by tier. Independent of the AI-learn quota, which counts successes only: a failed
+     * learn, a provider error and a `failed` outcome cost the user nothing there, so a script could spend the shared daily budget
+     * (`budgets.dailyOverallUsd`) for everyone. Over it: 429 `limitHit` `aiRequestsPerDay`. A cache hit calls no AI and is not counted.
+     * DECISION: registered 40, paid 400 - generous for real use (a learn is its first call plus up to `llm.browserRepairCalls` loop
+     * rounds and `learn.checks.maxRounds` steps, so 40 is about ten whole learns a day, three times the plan's monthly AI learns), low
+     * enough that one account cannot spend the shared daily budget alone. Placeholder numbers (SPEC 20.4): tune from the ledger.
+     */
+    aiRequestsPerDay: { registered: 40, paid: 400 },
+    /**
+     * API audit C1: the `failed` outcome reports one user may have refunded per UTC day (`POST /api/learn/:learnId/outcome`). Past it a
+     * report is still taken - the result is evicted from the cache - but the learn stays counted and no failure is recorded on the pair.
+     * DECISION: 10 - a real user reports a failed learn a few times a day at most; refunding without end made every learn free.
+     */
+    failedRefundsPerDay: 10,
   },
   /**
    * SPEC 16.1 screen 7, 13 (v13, M4): the public forms - the business lead form, the paid waitlist and feedback. Character caps are counted

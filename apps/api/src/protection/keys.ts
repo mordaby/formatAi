@@ -39,6 +39,37 @@ export function aiLearnsKey(userId: string, period: Exclude<AiLearnPeriod, 'unli
   return `${base}:${period === 'month' ? monthKey(now) : dayKey(now)}`;
 }
 
+/** API audit C1: a signed-in user's requests that called the AI this UTC day (learn, step, repair - whatever they ended in). */
+export const aiRequestsKey = (userId: string, now: Date): string => `user:${userId}:aiRequests:${dayKey(now)}`;
+
+/** API audit C1: the `failed` outcome reports that gave a user's learn back this UTC day. */
+export const failedRefundsKey = (userId: string, now: Date): string => `user:${userId}:failedRefunds:${dayKey(now)}`;
+
+/**
+ * API audit C1: the counter every request that calls the AI must fit under, by tier (`limits.protection.aiRequestsPerDay`) - reserved
+ * with the AI-learn quota, so a refused request counts on neither.
+ */
+export function aiRequestsSpec(identity: Extract<Identity, { kind: 'user' }>, now: Date): LearnCounterSpec {
+  return {
+    key: aiRequestsKey(identity.userId, now),
+    limit: limits.protection.aiRequestsPerDay[identity.tier],
+    expiresAt: dailyCounterExpiry(now),
+    limitCode: 'aiRequestsPerDay',
+  };
+}
+
+/** A daily counter with a cap that refuses nothing by itself: what is over it is decided where it is read (the refunds below). */
+export interface DailyCap {
+  key: string;
+  limit: number;
+  expiresAt: Date;
+}
+
+/** API audit C1: the day's cap on refunds by a `failed` outcome (`limits.protection.failedRefundsPerDay`). */
+export function failedRefundsCap(userId: string, now: Date): DailyCap {
+  return { key: failedRefundsKey(userId, now), limit: limits.protection.failedRefundsPerDay, expiresAt: dailyCounterExpiry(now) };
+}
+
 /** Failed AI attempts on one example pair: the owner plus the structure tag (`AiLearnCtx.group`). */
 export const aiFailKey = (owner: string, group: string): string => `aiFail:${owner}:${group}`;
 

@@ -79,7 +79,7 @@ import {
 } from '../protection/aiLearns.js';
 import { identityOf, ownerOf, type Identity } from '../protection/identity.js';
 import { normalizeIp } from '../protection/ip.js';
-import { aiQuotaOf, dayKey, repairKey, stepKey, tierOf } from '../protection/keys.js';
+import { aiQuotaOf, aiRequestsSpec, dayKey, failedRefundsCap, repairKey, stepKey, tierOf } from '../protection/keys.js';
 import { issueLearnId, verifyLearnId } from '../protection/learnId.js';
 import type { Protection } from '../protection/index.js';
 import { reserveLearn } from '../protection/reserve.js';
@@ -402,12 +402,15 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       if (counted) return refuse(counted);
     }
 
-    // The quota unit is reserved now and settled after the call (kept when the learn counts, put back when it does not).
+    // API audit C1: every request that calls the AI counts against the user's daily request cap, whatever it ends in; and the quota
+    // unit is reserved now and settled after the call (kept when the learn counts, put back when it does not). Both in one reservation:
+    // a request one of them refuses counts on neither.
     const quota = aiQuotaOf(identity, now);
     const reserved = spec.reserve && quota.spec !== null;
-    if (reserved) {
-      const reservation = await reserveLearn(store, [quota.spec!]);
-      if (!reservation.ok) return refuse({ status: 429, body: { error: 'limitHit', limit: reservation.limitCode, period: quota.period } });
+    const reservation = await reserveLearn(store, [aiRequestsSpec(identity, now), ...(reserved ? [quota.spec!] : [])]);
+    if (!reservation.ok) {
+      const limit = reservation.limitCode;
+      return refuse({ status: 429, body: { error: 'limitHit', limit, ...(limit === 'aiLearns' ? { period: quota.period } : {}) } });
     }
 
     if (followUp?.ok) return { identity, owner, now, payload, learnId: spec.followUp!.learnId as string, ctx: ctxOf(identity, now, followUp), reserved };
@@ -665,7 +668,8 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       // The result did not match the example: never serve it again from the structure cache.
       await store.deleteCachedRules(owner, check.group).catch((err: unknown) => logFailure('failed to evict the learn cache', err));
     }
-    const settled = outcome === 'failed' ? await markFailed(ctx) : await markSucceeded(ctx);
+    // (API audit C1: a `failed` report gives the learn back at most `limits.protection.failedRefundsPerDay` times a day.)
+    const settled = outcome === 'failed' ? await markFailed(ctx, failedRefundsCap(identity.userId, now)) : await markSucceeded(ctx);
     const res: LearnOutcomeResponse = {
       counted: settled.counted,
       quota: await quotaState(store, ctx.quota),
