@@ -29,13 +29,23 @@ export function UpgradeButton({ variant = 'secondary', trigger = 'other', label 
       </Button>
       {open && (
         <Panel id={id} title={t('upgrade.title')} onClose={() => setOpen(false)}>
-          <p>{t('upgrade.text')}</p>
-          <WaitlistForm trigger={trigger} />
-          <p className="muted">
-            {t('waitlist.contact')}: <a href={webConfig.contactHref}>{t('upgrade.contact')}</a>
-          </p>
+          <UpgradeBody trigger={trigger} />
         </Panel>
       )}
     </span>
+  );
+}
+
+/** What the upgrade offers (the panel above, and the out-of-AI-formats dialog): a line on paid plans, the waitlist form, the mail link. */
+export function UpgradeBody({ trigger }: { trigger: WaitlistTrigger }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <p>{t('upgrade.text')}</p>
+      <WaitlistForm trigger={trigger} />
+      <p className="muted">
+        {t('waitlist.contact')}: <a href={webConfig.contactHref}>{t('upgrade.contact')}</a>
+      </p>
+    </>
   );
 }

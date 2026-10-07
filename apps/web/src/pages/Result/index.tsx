@@ -528,7 +528,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
 
 /** What the AI step reported: how many AI formats are left, and - when the result did not match every row - which try this was. */
 function AiNote({ ai, verified }: { ai: AiInfo; verified: boolean }) {
-  const { t, code } = useI18n();
+  const i18n = useI18n();
+  const { t, code } = i18n;
   const max = limits.learn.maxFailedAiAttempts;
   const tried = ai.failedAttempts ?? 0;
   if (!ai.quota && (verified || tried === 0)) return null;
@@ -541,7 +542,7 @@ function AiNote({ ai, verified }: { ai: AiInfo; verified: boolean }) {
       ) : !verified && tried > 0 ? (
         <InlineMessage tone="info">{t('ai.attempt', { n: tried, max })}</InlineMessage>
       ) : null}
-      {ai.quota ? <p className="muted tabular">{aiLeftLabel(t, ai.quota)}</p> : null}
+      {ai.quota ? <p className="muted tabular">{aiLeftLabel(i18n, ai.quota)}</p> : null}
     </div>
   );
 }

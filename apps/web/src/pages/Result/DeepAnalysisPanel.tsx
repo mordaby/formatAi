@@ -7,7 +7,8 @@
 // It also carries "See what we send" (SPEC 15) for the call it made, and the plain-words reasons a run was not used.
 import { aiReadinessMessages, aiStepPartMessages, type AiColumnNote, type AiLearnQuotaState, type AiStepPartCode } from '@formatai/shared';
 import { useId, useState, type ReactNode } from 'react';
-import { aiUsesLabel, includedLabel } from '../../app/aiQuota';
+import { AiLimitNotice, isAiQuotaHit, useAiLimit } from '../../app/AiLimit';
+import { aiUsesLabel, includedLabel, noAiLeft } from '../../app/aiQuota';
 import { errorView } from '../../app/messages';
 import { useLearnSession } from '../../app/LearnSession';
 import { SendPanel } from '../../app/SendPanel';
@@ -66,6 +67,7 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
   const i18n = useI18n();
   const { t, lang } = i18n;
   const session = useLearnSession();
+  const aiLimit = useAiLimit();
   const sent = session.completion.state.sent;
   const [sendOpen, setSendOpen] = useState(false);
   const sendId = useId();
@@ -76,10 +78,14 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
   const listed = p.columns.length + p.parts.length;
   const solved = p.total - p.columns.length;
   const done = !running && outcome?.kind === 'done';
-  const failed = !running && outcome !== null && outcome.kind !== 'done';
+  // A run the API refused for the quota is said by the out-of-AI-formats dialog and the notice (AiLimitProvider makes the quota 0): not as a failure here.
+  const quotaHit = outcome?.kind === 'error' && isAiQuotaHit(outcome.error);
+  const failed = !running && outcome !== null && outcome.kind !== 'done' && !quotaHit;
   const ticked = p.whole ? listed : p.columns.filter((c) => !p.unticked.has(columnKey(c))).length + p.parts.filter((c) => !p.unticked.has(partKey(c))).length;
-  const noneLeft = p.quota !== null && p.quota.remaining === 0;
+  const noneLeft = noAiLeft(p.quota);
   const canRun = p.who === 'user' && !running && !exhausted && !noneLeft && (listed === 0 || ticked > 0);
+  // With none left the button (where it is still shown) opens the dialog instead of being off: trying anyway is answered, not ignored.
+  const askOut = p.who === 'user' && !running && !exhausted && noneLeft;
   // Fields that still have no rule once the AI step has been tried (or cannot be, for now) are final for now: said honestly (never as an error),
   // and delivered anyway - the file can be downloaded with them empty, filled in by hand, or the format saved with them as "needs your input".
   const leftover = p.columns.length > 0;
@@ -87,7 +93,7 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
 
   // ----- what the last run came to -----
   const notice = ((): ReactNode => {
-    if (running || !outcome) return null;
+    if (running || !outcome || quotaHit) return null;
     if (outcome.kind === 'done') {
       const { asked, produced } = outcome;
       return (
@@ -248,6 +254,8 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
       ) : null}
 
       {notice}
+      {/* None left: said first, where it explains why the AI step is not offered. */}
+      {p.who === 'user' && noneLeft && p.quota && !running && !done ? <AiLimitNotice period={p.quota.period} /> : null}
       {fields}
       {final ? deliver : null}
 
@@ -266,23 +274,17 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
               {t('partial.banner.signIn')}
             </Button>
           ) : (
-            <Button variant={p.primary ? 'primary' : 'secondary'} loading={running} disabled={!canRun} onClick={p.onRun}>
+            <Button variant={p.primary ? 'primary' : 'secondary'} loading={running} disabled={!canRun && !askOut} onClick={askOut ? () => aiLimit.open() : p.onRun}>
               {t('deep.run')}
             </Button>
           )}
         </div>
       ) : null}
 
-      {p.who === 'user' && !running && !done && (noneLeft || showRun) ? (
-        noneLeft ? (
-          <p className="deep__note">
-            {t('aiLimit.title')}. {t('aiLimit.local')}
-          </p>
-        ) : (
-          <p className="deep__note tabular" data-testid="deep-uses">
-            {uses}
-          </p>
-        )
+      {p.who === 'user' && !running && !done && !noneLeft && showRun ? (
+        <p className="deep__note tabular" data-testid="deep-uses">
+          {uses}
+        </p>
       ) : null}
 
       {final ? null : deliver}

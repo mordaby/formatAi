@@ -195,13 +195,14 @@ describe('Home: "Learn the format" and "Learn with AI"', () => {
     expect((await screen.findByTestId('learn-ai-hint')).textContent).toBe(`Sign in free to learn with AI (${REG_AI} AI formats a month included).`);
   });
 
-  it('with no AI formats left the button is off and says so; "Learn the format" still works', async () => {
+  it('with no AI formats left the button stays on (it opens the out-of-AI-formats dialog, see aiOut.test) and the line is a notice; "Learn the format" still works', async () => {
     const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' as const })) } });
     const { engine } = engineWith(async (a) => completionOutput(a));
     renderApp({ engine, api });
     await dropFiles();
-    await waitFor(() => expect(screen.getByTestId('learn-ai-hint').textContent).toMatch(/You've used your AI formats/));
-    expect(learnAiButton().disabled).toBe(true);
+    await waitFor(() => expect(screen.getByTestId('ai-out-notice').textContent).toMatch(/^No AI formats left this month · back on /));
+    expect(screen.queryByTestId('learn-ai-hint')).toBeNull();
+    expect(learnAiButton().disabled).toBe(false);
     expect((screen.getByRole('button', { name: /Learn the format/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -443,7 +444,7 @@ describe('quota', () => {
     const { engine, learn } = engineWith(async (a) => completionOutput(a));
     await toResult(engine, api);
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Finish with AI' })).toBeNull());
-    expect(screen.getByText(/You've used your AI formats/)).toBeTruthy();
+    expect(within(screen.getByTestId('deep-panel')).getByTestId('ai-out-notice').textContent).toMatch(/^No AI formats left this month · back on /);
     expect(screen.getByTestId('deep-best').textContent).toContain('This is the best we can do for now: 3 fields need a rule');
     expect(screen.getByRole('button', { name: 'Download with these fields empty' })).toBeTruthy();
     expect(learn).toHaveBeenCalledTimes(1);

@@ -7,6 +7,7 @@ import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, S
 import { defaultSourceName, limits, promptVersion } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { isAiQuotaHit, useAiLimit } from '../../app/AiLimit';
 import { useLearnSession } from '../../app/LearnSession';
 import { LinkButton } from '../../app/LinkButton';
 import { useMe } from '../../app/Me';
@@ -213,12 +214,25 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
     void flow.start({ input, output, masking, ai: 'allowed', target });
   };
 
+  // The AI step was refused for the quota: the out-of-AI-formats dialog says so (and when they come back) over the form, the files kept -
+  // not an error screen. The known quota is 0 from here on.
+  const aiLimit = useAiLimit();
+  const quotaError = state.status === 'error' && isAiQuotaHit(state.error) ? state.error : undefined;
+  const { setQuota } = me;
+  const { reset } = flow;
+  useEffect(() => {
+    if (!quotaError) return;
+    if (quotaError.period) setQuota({ remaining: 0, period: quotaError.period });
+    reset();
+    aiLimit.open({ period: quotaError.period });
+  }, [quotaError, setQuota, reset, aiLimit]);
+
   let view;
   if (state.status === 'warn' || state.status === 'blocked') {
     view = <LearningPreflight key={state.status} state={state} onConfirm={flow.confirm} onCancel={flow.cancel} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (state.status === 'notReady') {
     view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.reset} />;
-  } else if (state.status === 'error') {
+  } else if (state.status === 'error' && !quotaError) {
     view = <LearningError key="error" error={state.error} onRetry={begin} onChangeFiles={flow.reset} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (state.status === 'done' && state.result.rules) {
     view = (

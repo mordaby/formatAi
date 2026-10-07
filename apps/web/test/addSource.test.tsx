@@ -55,11 +55,11 @@ const converted = (): unknown => ({
   totalRows: 3,
 });
 
-function setup(over: { registry?: Record<string, unknown>; learn?: Parameters<typeof fakeEngine>[0]; engine?: Record<string, unknown> } = {}) {
+function setup(over: { registry?: Record<string, unknown>; learn?: Parameters<typeof fakeEngine>[0]; engine?: Record<string, unknown>; apiLearn?: () => Promise<never> } = {}) {
   const api = fakeApi({
     user: USER,
     registry: { getFormat: vi.fn(async () => format), attachSource: vi.fn(async () => ({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' }), source: { id: 'S2', name: 'Supplier B', formats: 1 } })), ...over.registry },
-    learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const } })),
+    learn: over.apiLearn ?? vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const } })),
   });
   const { engine, learn } = fakeEngine(
     over.learn ??
@@ -289,6 +289,25 @@ describe('the Add a source screen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     expect(await screen.findByText('This format already has as many sources as your plan allows.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Upgrade' })).toBeTruthy();
+  });
+
+  it('the AI step refused for the quota (429 limitHit aiLearns): the out-of-AI-formats dialog over the form, the files kept - not an error screen', async () => {
+    const apiLearn = vi.fn(async () => Promise.reject(new ApiError('limitHit', 429, { limit: 'aiLearns', period: 'month' })));
+    setup({ apiLearn });
+    await screen.findByTestId('add-format-columns');
+    await drop('Example input', csv('supplier-b.csv'));
+    await drop('Example output', xlsx('load.xlsx'));
+    await waitFor(() => expect(learnButton().disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    const dialog = await screen.findByRole('dialog', { name: "You've used your AI formats for this month" });
+    expect(within(dialog).getByText(/^Your plan includes 3 AI formats a month\. They come back on /)).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Join the paid waitlist' })).toBeTruthy();
+    // (the free learn of Home has no place here: the source is learned against the format)
+    expect(within(dialog).queryByRole('button', { name: 'Learn without AI' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Change files' })).toBeNull();
+    expect(learnButton()).toBeTruthy();
   });
 
   it('a format that is not there says so', async () => {

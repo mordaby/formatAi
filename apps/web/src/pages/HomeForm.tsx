@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
-import { aiUsesLabel, includedLabel } from '../app/aiQuota';
+import { AiLimitNotice, useAiLimit } from '../app/AiLimit';
+import { aiUsesLabel, includedLabel, noAiLeft } from '../app/aiQuota';
 import { SendPanel } from '../app/SendPanel';
 import { useLearnSession } from '../app/LearnSession';
 import { useMe } from '../app/Me';
@@ -21,6 +22,7 @@ export function HomeForm({ busy }: HomeFormProps) {
   const session = useLearnSession();
   const me = useMe();
   const signIn = useSignIn();
+  const aiLimit = useAiLimit();
   const { input, output, masking } = session;
   const inputInfo = useFileInfo(input, 'input');
   const outputInfo = useFileInfo(output, 'output');
@@ -32,13 +34,11 @@ export function HomeForm({ busy }: HomeFormProps) {
   const ready = input !== null && output !== null && inputInfo?.status !== 'unreadable' && outputInfo?.status !== 'unreadable';
   // Which of the two buttons started the learn that is running (the one that shows it is working).
   const withAi = session.deepAnalysis;
-  // What "Learn with AI" costs, in one line: signed in, one AI format and only if it succeeds (or that none are left); a visitor, what signing in gives.
-  const noneLeft = me.user !== null && me.quota !== null && me.quota.remaining === 0;
-  const aiHint = me.user
-    ? noneLeft
-      ? `${t('aiLimit.title')}. ${t('aiLimit.local')}`
-      : aiUsesLabel(t, me.quota)
-    : t('home.learnAi.guest', { included: includedLabel(t) });
+  // What "Learn with AI" costs, in one line: signed in, one AI format and only if it succeeds; a visitor, what signing in gives. With none
+  // left (owner 2026-10-07) the line is a notice - when they come back, and the paid waitlist - and the button, still there, opens the dialog
+  // that says it all and offers "Learn without AI".
+  const noneLeft = me.user !== null && noAiLeft(me.quota);
+  const aiHint = me.user ? aiUsesLabel(t, me.quota) : t('home.learnAi.guest', { included: includedLabel(t) });
 
   return (
     <div className="view">
@@ -101,10 +101,10 @@ export function HomeForm({ busy }: HomeFormProps) {
           {/* The same learn, with the AI step to follow if the free engine leaves fields unsolved. A visitor is asked to sign in first (the learn then carries on by itself, see LearnSession). */}
           <Button
             variant="secondary"
-            disabled={!ready || me.status === 'loading' || noneLeft || (busy && !withAi)}
+            disabled={!ready || me.status === 'loading' || (busy && !withAi)}
             loading={busy && withAi}
             aria-describedby={ready ? aiHintId : `${aiHintId} ${hintId}`}
-            onClick={() => (me.user ? session.begin({ deep: true }) : signIn.open('ai'))}
+            onClick={() => (!me.user ? signIn.open('ai') : noneLeft ? aiLimit.open({ learnFree: true }) : session.begin({ deep: true }))}
           >
             {t('home.learnAi')}
           </Button>
@@ -114,9 +114,13 @@ export function HomeForm({ busy }: HomeFormProps) {
             </p>
           )}
         </div>
-        <p className="learn-row__hint" id={aiHintId} data-testid="learn-ai-hint">
-          {aiHint}
-        </p>
+        {noneLeft && me.quota ? (
+          <AiLimitNotice period={me.quota.period} textId={aiHintId} />
+        ) : (
+          <p className="learn-row__hint" id={aiHintId} data-testid="learn-ai-hint">
+            {aiHint}
+          </p>
+        )}
       </div>
     </div>
   );

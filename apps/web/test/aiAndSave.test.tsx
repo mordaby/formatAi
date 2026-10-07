@@ -59,23 +59,27 @@ async function learnWithAi(opts: { api: FakeApi; result?: Partial<LearnOutput> |
 }
 
 describe('the AI quota', () => {
-  it('a used-up quota says for how long, keeps the local work going, and offers "Upgrade" (paid plans are set up by the team)', async () => {
+  it('a used-up quota (a 429 at learn time) opens the out-of-AI-formats dialog over the form, the files kept, and offers the paid waitlist (paid plans are set up by the team)', async () => {
     const api = fakeApi({ user: USER, learn: vi.fn(async () => Promise.reject(new ApiError('limitHit', 429, { limit: 'aiLearns', period: 'month' }))) });
     await learnWithAi({ api });
-    expect(await screen.findByText("You've used all your AI learns for this month. They come back next month.")).toBeTruthy();
-    expect(screen.getByText('Formats your computer can work out on its own, and every format you saved, keep working.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Upgrade' }));
-    expect(await screen.findByText(/Paid plans are set up by our team for now/)).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Contact us' }).getAttribute('href')).toMatch(/^mailto:/);
+    const dialog = await screen.findByRole('dialog', { name: "You've used your AI formats for this month" });
+    expect(within(dialog).getByText(/^Your plan includes 3 AI formats a month\. They come back on /)).toBeTruthy();
+    expect(within(dialog).getByText('You can still learn formats without AI, and every format you saved keeps working.')).toBeTruthy();
+    // (no error screen behind it: the form, with both files)
+    expect(screen.queryByRole('button', { name: 'Change files' })).toBeNull();
+    expect(screen.getAllByText(/1,204/)).toHaveLength(2);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Join the paid waitlist' }));
+    expect(await within(dialog).findByText(/Paid plans are set up by our team for now/)).toBeTruthy();
+    expect(within(dialog).getByRole('link', { name: 'Contact us' }).getAttribute('href')).toMatch(/^mailto:/);
   });
 
   it.each([
-    ['lifetime', "You've used all your AI learns."],
-    ['day', "You've used all your AI learns for today. They come back tomorrow."],
-  ] as const)('a %s quota says its own period', async (period, text) => {
+    ['lifetime', "You've used your AI formats"],
+    ['day', "You've used your AI formats for today"],
+  ] as const)('a %s quota says its own period', async (period, title) => {
     const api = fakeApi({ user: USER, learn: vi.fn(async () => Promise.reject(new ApiError('limitHit', 429, { limit: 'aiLearns', period }))) });
     await learnWithAi({ api });
-    expect(await screen.findByText(text)).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: title })).toBeTruthy();
   });
 
   it('the 3-failure stop says the tries were used, what counted, and what to change', async () => {
