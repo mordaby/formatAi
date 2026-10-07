@@ -14,6 +14,12 @@ export const limits = {
     maxDropped: 5,
     maxCellChars: 40,
     maxBytes: 49_152,
+    /**
+     * The largest column position (`columns[].i`, 0-based) a payload may name: Excel's last column (XFD, 16,384 columns). API audit C3
+     * (2026-10-07): an unbounded position let one request build a sample table billions of cells wide (i = 50,000,000 took 3.5 s; ~4.29e9
+     * ran for minutes or ran out of memory). The browser never sends more: a sheet has no column past it.
+     */
+    maxColumnIndex: 16_383,
     /** SPEC 7.3 §"Size rules": drop samples first, but never below this many pairs. */
     minPairs: 4,
   },

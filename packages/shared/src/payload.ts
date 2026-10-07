@@ -414,8 +414,11 @@ const PROFILE_TYPES = [
 ] as const;
 const ProfileTypeSchema = z.enum(PROFILE_TYPES);
 
+/** A column position (0-based): never past Excel's last column (API audit C3, `limits.payload.maxColumnIndex`). */
+const ColumnIndexSchema = z.number().int().min(0).max(limits.payload.maxColumnIndex);
+
 const PayloadColumnSchema = z.looseObject({
-  i: z.number().int().min(0),
+  i: ColumnIndexSchema,
   header: z.string(),
   type: ProfileTypeSchema,
   shape: z.string().optional(),
@@ -423,6 +426,13 @@ const PayloadColumnSchema = z.looseObject({
   format: z.string().optional(),
   width: z.number().optional(),
 });
+
+/** One side's columns: within the column cap, and each position named once (two columns cannot sit in one place). */
+const PayloadColumnsSchema = z
+  .array(PayloadColumnSchema)
+  .min(1)
+  .max(limits.payload.maxColumns)
+  .refine((columns) => new Set(columns.map((c) => c.i)).size === columns.length, { message: 'column positions must be unique' });
 
 const SampleSchema = z.looseObject({
   in: z.array(PayloadCellSchema),
@@ -439,25 +449,25 @@ export const LearnPayloadSchema = z.looseObject({
     sheetName: z.string(),
     direction: z.enum(['rtl', 'ltr']),
     layout: z.looseObject({}),
-    columns: z.array(PayloadColumnSchema).min(1).max(limits.payload.maxColumns),
+    columns: PayloadColumnsSchema,
   }),
   output: z.looseObject({
     file: z.looseObject({ type: z.enum(['xlsx', 'csv', 'txt']) }),
     layout: z.looseObject({}),
-    columns: z.array(PayloadColumnSchema).min(1).max(limits.payload.maxColumns),
+    columns: PayloadColumnsSchema,
   }),
   target: z.looseObject({}).optional(),
   complete: z
     .looseObject({
       fixed: z.looseObject({}),
-      columns: z.array(z.number().int().min(0)).max(limits.payload.maxColumns),
+      columns: z.array(ColumnIndexSchema).max(limits.payload.maxColumns),
       parts: z.array(z.enum(AI_STEP_PART_CODES)).max(AI_STEP_PART_CODES.length),
     })
     .optional(),
   samples: z.array(SampleSchema).min(1).max(MAX_SAMPLES),
   dropped: z.array(z.array(PayloadCellSchema)).max(limits.payload.maxDropped).optional(),
   hints: z.array(z.unknown()),
-  skipColumns: z.array(z.number().int().min(0)).optional(),
+  skipColumns: z.array(ColumnIndexSchema).max(limits.payload.maxColumns).optional(),
 });
 
 /** A loop round's `rows` (`RepairRequest.rows`): sample-shaped rows, never more than a learn may send in total. */

@@ -234,6 +234,43 @@ describe('buildSampleInputTable', () => {
     const table = buildSampleInputTable(payload);
     expect(table.rows[0]![1]).toEqual({ v: '2024-03-15' });
   });
+
+  it('API audit C3: has the listed columns only, each read at its position - a huge position builds no huge table', () => {
+    const payload: LearnPayload = {
+      ...basicPayload(),
+      input: {
+        ...basicPayload().input,
+        columns: [
+          { i: 4_294_967_294, header: 'Amount', type: 'decimal' },
+          { i: 0, header: 'ID', type: 'idLike' },
+        ],
+      },
+      samples: [{ in: ['A1', 10], out: ['A1', 20] }],
+    };
+    const started = Date.now();
+    const table = buildSampleInputTable(payload);
+    expect(Date.now() - started).toBeLessThan(100); // was minutes (or out of memory) at this position
+    expect(table.headers).toEqual(['ID', 'Amount']);
+    expect(table.rows[0]).toEqual([{ v: 'A1' }, null]);
+  });
+
+  it('a gap between positions is no column of its own (the rules find their columns by header)', () => {
+    const payload: LearnPayload = {
+      ...basicPayload(),
+      input: {
+        ...basicPayload().input,
+        columns: [
+          { i: 0, header: 'ID', type: 'idLike' },
+          { i: 3, header: 'Amount', type: 'decimal' },
+        ],
+      },
+      samples: [{ in: ['A1', 'x', 'y', 10], out: ['A1', 20] }, { in: ['A2', 'x', 'y', 5], out: ['A2', 10] }],
+    };
+    const table = buildSampleInputTable(payload);
+    expect(table.headers).toEqual(['ID', 'Amount']);
+    expect(table.rows[0]).toEqual([{ v: 'A1' }, { v: 10 }]);
+    expect(runOnSamples(correctRules(), payload)).toEqual([]);
+  });
 });
 
 describe('runOnSamples: a column reported as unsupported', () => {

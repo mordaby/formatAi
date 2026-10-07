@@ -64,21 +64,24 @@ function toRawCell(
 }
 
 /**
- * Rebuilds a minimal `InputTable` from the payload: input headers in column-position
- * order (`payload.input.columns[].i`), one row per sample (`in`, in sample order)
- * followed by one row per dropped row. Row numbers are assigned 1-based in that same
- * order, purely so the engine's `OutRow.sourceRow` (shared by every row an expand
- * family produces) can be matched back to the sample/dropped row it came from once the
- * rules have run.
+ * Rebuilds a minimal `InputTable` from the payload: the input columns the payload lists, in column-position order
+ * (`payload.input.columns[].i`), one row per sample (`in`, in sample order) followed by one row per dropped row - each
+ * cell read at its column's position. Row numbers are assigned 1-based in that same order, purely so the engine's
+ * `OutRow.sourceRow` (shared by every row an expand family produces) can be matched back to the sample/dropped row it
+ * came from once the rules have run.
+ *
+ * DECISION (API audit C3, 2026-10-07): the table has exactly the listed columns - never one column per position up to
+ * the largest `i`. The rules find their columns by header (`mapHeaders`), so a position nobody lists (an empty header
+ * that could match nothing) adds nothing, and one large `i` (the schema caps it at Excel's last column too) can no
+ * longer make the table millions of cells wide.
  */
 export function buildSampleInputTable(payload: LearnPayload): InputTable {
-  const columnsByPosition: (PayloadColumn | undefined)[] = [];
-  for (const c of payload.input.columns) columnsByPosition[c.i] = c;
-  const headers = columnsByPosition.map((c) => c?.header ?? '');
+  const columns: PayloadColumn[] = [...payload.input.columns].sort((a, b) => a.i - b.i);
+  const headers = columns.map((c) => c.header);
 
   const inputRows: PayloadCell[][] = [...payload.samples.map((s) => s.in), ...(payload.dropped ?? [])];
 
-  const rows = inputRows.map((cells) => headers.map((_, i) => toRawCell(cells[i] ?? null, columnsByPosition[i])));
+  const rows = inputRows.map((cells) => columns.map((c) => toRawCell(cells[c.i] ?? null, c)));
   const rowNumbers = inputRows.map((_, i) => i + 1);
 
   return {
