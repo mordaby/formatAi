@@ -15,7 +15,6 @@ import type {
   RunError,
   RunSummary,
   SentColumn,
-  VerifyResult,
 } from '@formatai/engine';
 import type {
   BatchArgs,
@@ -158,18 +157,6 @@ export type ConvertOutput =
 
 export type { ConvertResult };
 
-// ---------- verify ----------
-
-export interface VerifyArgs {
-  input: FileBytes;
-  output: FileBytes;
-  rules: LearnResult | Rules;
-  /** SPEC 8.11 "One-off exceptions": 1-based example row numbers marked "fixed by hand". */
-  exceptions?: number[];
-}
-
-export type VerifyOutput = { ok: true; verification: VerifyResult } | { ok: false; reason: 'analysisFailed' };
-
 // ---------- inspect ----------
 
 /** A quick look at a dropped file, so the drop zone can show its size ("1,204 rows, 8 columns") before anything is learned. */
@@ -188,7 +175,6 @@ export interface EngineMethodMap {
   learn: { args: LearnArgs; result: LearnOutput; progress: LearnProgress };
   inspect: { args: InspectArgs; result: InspectOutput; progress: never };
   convert: { args: ConvertArgs; result: ConvertOutput; progress: never };
-  verify: { args: VerifyArgs; result: VerifyOutput; progress: never };
   loadExample: { args: LoadExampleArgs; result: LoadExampleOutput; progress: never };
   liveCheck: { args: LiveCheckArgs; result: LiveCheckResult; progress: never };
   /** Like `liveCheck`, but every row (the editor's Apply). */

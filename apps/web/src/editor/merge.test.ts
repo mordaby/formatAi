@@ -157,10 +157,6 @@ describe('lockProblem', () => {
     expect(lockProblem({ type: 'setSort', keys: [] }, rules, lock)).toBeNull();
     expect(lockProblem({ type: 'setOutputOptions', patch: { sheetName: 'Orders' } }, rules, lock)).toBeNull();
   });
-
-  it('a whole learn locks everything', () => {
-    expect(lockProblem({ type: 'setSort', keys: [] }, rules, { columns: new Set(), parts: new Set(), whole: true })?.code).toBe('locked');
-  });
 });
 
 describe('EditorStore.setLock', () => {

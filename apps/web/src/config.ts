@@ -17,7 +17,6 @@ export const webConfig = {
   workerTimeoutMs: {
     learn: 120_000,
     convert: 60_000,
-    verify: 60_000,
     inspect: 30_000,
     /** The rules editor (SPEC 8.11): reading the example again, then quick checks on it. */
     loadExample: 60_000,

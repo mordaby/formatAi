@@ -1,4 +1,4 @@
-// The typed main-thread facade over the engine worker: learn / convert / verify.
+// The typed main-thread facade over the engine worker: learn / convert / the rules editor's checks / the Run screen.
 // Owns the RpcClient and the default (real) Worker factory; tests inject a fake.
 import { limits, type LearnResult, type Rules } from '@formatai/shared';
 import { webConfig } from '../config';
@@ -29,8 +29,6 @@ import type {
   LearnHost,
   LearnOutput,
   LearnProgress,
-  VerifyArgs,
-  VerifyOutput,
 } from './engineApi';
 import { handleFromWorker, RpcClient, type HostFunctions, type WorkerHandle } from './rpcClient';
 
@@ -53,7 +51,6 @@ export interface EngineCallOptions<P = never> {
 export interface EngineClient {
   learn(args: LearnArgs, host: LearnHost, opts?: EngineCallOptions<LearnProgress>): Promise<LearnOutput>;
   convert(args: ConvertArgs, opts?: EngineCallOptions): Promise<ConvertOutput>;
-  verify(args: VerifyArgs, opts?: EngineCallOptions): Promise<VerifyOutput>;
   /** A quick look at one file (rows, columns), for the drop zones. */
   inspect(args: InspectArgs, opts?: EngineCallOptions): Promise<InspectOutput>;
   /**
@@ -156,7 +153,6 @@ export function createEngineClient(options: CreateEngineClientOptions = {}): Eng
         checkRoundAllowance(options.checkRoundAllowanceMs ?? CHECK_ROUND_ALLOWANCE_MS),
       ),
     convert: (args, opts) => call('convert', args, transfersOf(args.file), opts),
-    verify: (args, opts) => call('verify', args, transfersOf(args.input, args.output), opts),
     inspect: (args, opts) => call('inspect', args, transfersOf(args.file), opts),
     loadExample: (args, opts) => call('loadExample', args, transfersOf(args.input, args.output), opts),
     liveCheck: (exampleId, rules, options, opts) =>

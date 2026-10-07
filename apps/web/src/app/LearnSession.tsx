@@ -67,11 +67,10 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const signIn = useSignIn();
   const meRef = useRef(me);
   meRef.current = me;
-  // Read at the start of every learn, so a sign-in never replaces the flow (and with it a result on screen).
+  // Read at the start of every learn, so a sign-in never replaces the flow (and with it a result on screen). (The AI step never runs by
+  // itself, whoever is signed in: a learn is the free engine unless it says otherwise - `StartParams.ai` - and the AI step is the user's
+  // choice on the Result screen: "Finish with AI", or Home's "Learn with AI", which that screen acts on once the free result is in.)
   const getTier = useCallback((): Tier => meRef.current.tier, []);
-  // The AI step never runs by itself, whoever is signed in: a learn is the free engine, and the AI step is the user's choice on the
-  // Result screen ("Finish with AI", or Home's "Learn with AI", which that screen acts on once the free result is in).
-  const getAi = useCallback((): 'allowed' | 'notAllowed' => 'notAllowed', []);
   // ... and a learn started before that answer is waiting for it (it would otherwise run as a visitor's - tier, limits and all).
   const meAnswered = useRef<{ promise: Promise<void>; resolve(): void } | null>(null);
   if (meAnswered.current === null) {
@@ -92,7 +91,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   // (The Turnstile code stays: the lead form will use it.)
   // What either flow learns about the AI step - what is left, a refusal - is told the app the one way (app/aiReport.ts).
   const onAi = useOnAi();
-  const flow = useLearnFlow({ getTier, ready: whenMeKnown, getAi, onAi });
+  const flow = useLearnFlow({ getTier, ready: whenMeKnown, onAi });
   const completion = useLearnFlow({ getTier, ready: whenMeKnown, onAi });
   const [input, setInput] = useState<File | null>(null);
   const [output, setOutput] = useState<File | null>(null);
@@ -103,15 +102,15 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const latest = useRef({ input, output, masking, state: flow.state });
   latest.current = { input, output, masking, state: flow.state };
 
-  const { start, reset } = flow;
-  const { start: startCompletion, reset: resetCompletion } = completion;
+  const { start, cancel: reset } = flow;
+  const { start: startCompletion, cancel: resetCompletion } = completion;
   const begin = useCallback(
     (opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean }) => {
       if (!input || !output) return;
       if (opts?.deep !== undefined) setDeepAnalysis(opts.deep);
       // A new learn replaces the result: a "Finish with AI" still at work on the old one has nothing left to finish.
       resetCompletion();
-      // (no `ai` given: the free engine only, see `getAi`)
+      // (no `ai` given: the free engine only)
       void start({ input, output, masking, ...(opts?.ai ? { ai: opts.ai } : {}) });
     },
     [input, output, masking, start, resetCompletion],

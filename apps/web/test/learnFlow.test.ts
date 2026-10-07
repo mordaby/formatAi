@@ -46,7 +46,7 @@ type LearnImpl = (args: LearnArgs, host: LearnHost, opts: EngineCallOptions<Lear
 
 function fakeEngine(impl: LearnImpl) {
   const learn = vi.fn((args: LearnArgs, host: LearnHost, opts: EngineCallOptions<LearnProgress> = {}) => impl(args, host, opts));
-  const engine = { learn, convert: vi.fn(), verify: vi.fn(), terminate: vi.fn() } as unknown as EngineClient;
+  const engine = { learn, convert: vi.fn(), terminate: vi.fn() } as unknown as EngineClient;
   return { engine, learn };
 }
 
@@ -121,13 +121,11 @@ describe('LearnFlow', () => {
       return result({ path: 'llm', rules: r.rules });
     });
     const api = fakeApi();
-    const token = vi.fn(async () => 'turnstile-token');
-    const { flow, statuses, start } = makeFlow(engine, api, { getTurnstileToken: token });
+    const { flow, statuses, start } = makeFlow(engine, api);
     await start();
     expect(statuses).toEqual(['reading', 'checking', 'learning', 'verifying', 'done']);
     expect(api.learn).toHaveBeenCalledTimes(1);
     expect(api.learn.mock.calls[0]![0]).toBe(PAYLOAD);
-    expect(api.learn.mock.calls[0]![1]).toMatchObject({ turnstileToken: 'turnstile-token' });
     const s = state(flow);
     expect(s.sent).toHaveLength(1);
     expect(s.sent[0]).toMatchObject({ kind: 'learn', payload: PAYLOAD });
@@ -569,33 +567,28 @@ describe('LearnFlow', () => {
 });
 
 describe('LearnFlow: who is signed in is known before a learn is decided (the owner\'s bug)', () => {
-  it('waits for `ready`, THEN reads the tier and the AI choice - a learn started early is not run as a visitor\'s', async () => {
+  it('waits for `ready`, THEN reads the tier - a learn started early is not run as a visitor\'s', async () => {
     let signedIn = false;
     let open!: () => void;
     const ready = () => new Promise<void>((resolve) => (open = resolve));
     const { engine, learn } = fakeEngine(async () => result({ path: 'local' }));
-    const { start } = makeFlow(engine, fakeApi(), {
-      ready,
-      getTier: () => (signedIn ? 'registered' : 'anonymous'),
-      getAi: () => (signedIn ? 'allowed' : 'notAllowed'),
-    });
+    const { start } = makeFlow(engine, fakeApi(), { ready, getTier: () => (signedIn ? 'registered' : 'anonymous') });
     const running = start();
     await new Promise((r) => setTimeout(r, 10));
     expect(learn).not.toHaveBeenCalled(); // still waiting
     signedIn = true; // /api/me answered
     open();
     await running;
-    expect(learn.mock.calls[0]![0]).toMatchObject({ tier: 'registered', ai: 'allowed' });
+    expect(learn.mock.calls[0]![0]).toMatchObject({ tier: 'registered' });
   });
 
-  it('an explicit `ai` wins over getAi; with neither the field is left out (the engine\'s default is allowed)', async () => {
+  it('the AI step is the caller\'s explicit choice: a learn that does not say is the free engine only (`ai: notAllowed`)', async () => {
     const { engine, learn } = fakeEngine(async () => result({ path: 'local' }));
-    const a = makeFlow(engine, fakeApi(), { getAi: () => 'allowed' });
-    await a.flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'notAllowed' });
+    const { flow, start } = makeFlow(engine, fakeApi());
+    await start();
     expect(learn.mock.calls[0]![0].ai).toBe('notAllowed');
-    const b = makeFlow(engine, fakeApi());
-    await b.start();
-    expect('ai' in learn.mock.calls[1]![0]).toBe(false);
+    await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'allowed' });
+    expect(learn.mock.calls[1]![0].ai).toBe('allowed');
   });
 
   it('`ready` that rejects does not stop the learn (not knowing is the same as nobody signed in)', async () => {

@@ -121,8 +121,8 @@ export interface StartParams {
   /** SPEC 7.2: on by default in the UI. */
   masking: boolean;
   /**
-   * SPEC 21 v5 item 1: 'notAllowed' (not signed in) never reaches the AI step: the learn ends with the local
-   * result (`path: 'partial'`) when the fast path can't finish it. Default: 'allowed'.
+   * SPEC 21 v5 item 1: 'notAllowed' never reaches the AI step: the learn ends with the local result (`path: 'partial'`) when the fast path
+   * can't finish it. Default: 'notAllowed' (owner decision: the AI step never runs unless the user chose it - the caller says 'allowed').
    */
   ai?: 'allowed' | 'notAllowed';
   /** SPEC 5 A2 attach mode: the format this source must produce. */
@@ -145,15 +145,10 @@ export interface LearnFlowDeps {
   /** Read at the start of every learn, so a sign-in that happens while the screen is open does not replace the flow. Wins over `tier`. */
   getTier?: () => Tier;
   /**
-   * Resolves once it is known who is using the app (`/api/me` has answered). Awaited at the start of every learn, BEFORE `getTier` and
-   * `getAi` are read: a learn started while the answer is still on its way must not run as a visitor's (no AI step, the anonymous limits)
-   * when the person is signed in.
+   * Resolves once it is known who is using the app (`/api/me` has answered). Awaited at the start of every learn, BEFORE `getTier` is read:
+   * a learn started while the answer is still on its way must not run as a visitor's (the anonymous limits) when the person is signed in.
    */
   ready?: () => Promise<void>;
-  /** Whether the AI step is allowed, for a learn that did not say (`StartParams.ai`): read after `ready`. Default: allowed. */
-  getAi?: () => 'allowed' | 'notAllowed';
-  /** A fresh Cloudflare Turnstile token per learn call, when Turnstile is on (SPEC 9.5). */
-  getTurnstileToken?: () => Promise<string | undefined>;
   maxFileBytes?: number;
   /**
    * Called after a payload has been recorded in `state.sent` (so a UI can show it) and
@@ -218,10 +213,6 @@ export class LearnFlow {
     this.set(IDLE);
   }
 
-  reset(): void {
-    this.cancel();
-  }
-
   // ---------- the run ----------
 
   private async run(params: StartParams, tryAnyway: boolean): Promise<void> {
@@ -259,13 +250,11 @@ export class LearnFlow {
       }
     }
 
-    const token = (): Promise<string | undefined> => this.deps.getTurnstileToken?.() ?? Promise.resolve(undefined);
-
     // Who is using the app has to be known before the tier and the AI step are decided (see `LearnFlowDeps.ready`).
     try {
       await this.deps.ready?.();
     } catch {
-      // Not knowing is the same as nobody signed in: the learn goes on with what `getTier`/`getAi` say.
+      // Not knowing is the same as nobody signed in: the learn goes on with what `getTier` says.
     }
     if (stale()) return;
 
@@ -273,7 +262,7 @@ export class LearnFlow {
       callLearn: async (payload, columns) => {
         try {
           await record({ kind: 'learn', payload, ...(columns ? { columns } : {}) });
-          const res = await this.deps.api.learn(payload, { turnstileToken: await token(), signal: abort.signal });
+          const res = await this.deps.api.learn(payload, { signal: abort.signal });
           learnId = res.learnId;
           lastProblems = res.problems;
           ai = { learnId: res.learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, cached: res.cached };
@@ -304,7 +293,7 @@ export class LearnFlow {
           const n = { n: round.round, of: round.maxRounds };
           await record(fresh ? { kind: 'repair', fresh: true, payload, round: n } : { kind: 'repair', payload, previousRules, problems, round: n, ...recordedRepair(opts) });
           const res = fresh
-            ? await this.deps.api.learn(payload, { turnstileToken: await token(), ...FRESH_LEARN, signal: abort.signal })
+            ? await this.deps.api.learn(payload, { ...FRESH_LEARN, signal: abort.signal })
             : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, ...opts });
           lastProblems = res.problems;
           // (the next round repairs the fresh learn, under its own learnId)
@@ -343,7 +332,7 @@ export class LearnFlow {
     };
 
     try {
-      const args = await readArgs(params, this.deps.getTier?.() ?? this.deps.tier, tryAnyway, params.ai ?? this.deps.getAi?.());
+      const args = await readArgs(params, this.deps.getTier?.() ?? this.deps.tier, tryAnyway, params.ai ?? 'notAllowed');
       if (stale()) return; // cancelled or superseded while the files were being read
       const result = await this.deps.engine.learn(args, host, {
         signal: abort.signal,
@@ -471,7 +460,7 @@ function stateForProgress(p: LearnProgress, sent: readonly SentRecord[]): LearnF
   }
 }
 
-async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai: 'allowed' | 'notAllowed' | undefined): Promise<LearnArgs> {
+async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai: 'allowed' | 'notAllowed'): Promise<LearnArgs> {
   const [input, output] = await Promise.all([params.input.arrayBuffer(), params.output.arrayBuffer()]);
   return {
     input: { name: params.input.name, bytes: input },
@@ -479,7 +468,7 @@ async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai:
     masking: params.masking,
     tier,
     ...(tryAnyway ? { tryAnyway: true } : {}),
-    ...(ai ? { ai } : {}),
+    ai,
     ...(params.target ? { target: params.target } : {}),
     ...(params.complete ? { complete: { fixedRules: params.complete.fixedRules, columns: params.complete.columns, parts: params.complete.parts }, ...(params.complete.exampleId ? { keepExampleId: params.complete.exampleId } : {}) } : {}),
   };

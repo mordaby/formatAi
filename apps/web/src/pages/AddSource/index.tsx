@@ -221,7 +221,7 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   // not an error screen. (The known quota is 0 from here on: `onAi` said so.)
   const aiLimit = useAiLimit();
   const quotaError = state.status === 'error' && isAiQuotaHit(state.error) ? state.error : undefined;
-  const { reset } = flow;
+  const { cancel: reset } = flow;
   useEffect(() => {
     if (!quotaError) return;
     reset();
@@ -232,9 +232,9 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   if (state.status === 'warn' || state.status === 'blocked') {
     view = <LearningPreflight key={state.status} state={state} onConfirm={flow.confirm} onCancel={flow.cancel} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (state.status === 'notReady') {
-    view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.reset} />;
+    view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.cancel} />;
   } else if (state.status === 'error' && !quotaError) {
-    view = <LearningError key="error" error={state.error} onRetry={begin} onChangeFiles={flow.reset} onSignIn={() => signIn.open('keepGoing')} />;
+    view = <LearningError key="error" error={state.error} onRetry={begin} onChangeFiles={flow.cancel} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (state.status === 'done' && state.result.rules) {
     view = (
       <AttachResult
@@ -248,7 +248,7 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
         sourceName={nameTrimmed}
         input={input}
         masking={masking}
-        onChangeFiles={flow.reset}
+        onChangeFiles={flow.cancel}
       />
     );
   } else if (progressVisible && isRunning(state)) {

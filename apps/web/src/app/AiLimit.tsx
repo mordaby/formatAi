@@ -48,7 +48,7 @@ export function AiLimitProvider({ children }: { children: ReactNode }) {
   const handled = useRef<object | null>(null);
   const mainError = session.flow.state.status === 'error' ? session.flow.state.error : undefined;
   const completionError = session.completion.state.status === 'error' ? session.completion.state.error : undefined;
-  const { reset } = session.flow;
+  const { cancel: reset } = session.flow;
   useEffect(() => {
     const error = isAiQuotaHit(mainError) ? mainError : isAiQuotaHit(completionError) ? completionError : undefined;
     if (!error || handled.current === error) return;

@@ -5,11 +5,10 @@
 import type { AiStepPartCode } from '@formatai/shared';
 import type { EditAction, EditableRules, EditProblem } from './types';
 
-/** What the deep analysis is working on. `whole`: a whole learn, so nothing can be edited. */
+/** What the deep analysis is working on. */
 export interface EditLock {
   columns: ReadonlySet<string>;
   parts: ReadonlySet<AiStepPartCode>;
-  whole?: boolean;
 }
 
 /** The layout part an action edits, if it edits one. */
@@ -51,7 +50,6 @@ const locked = (path?: string, column?: string): EditProblem => ({
 
 /** The problem to answer an edit with while the deep analysis runs, or null when the edit may go ahead. */
 export function lockProblem(action: EditAction, rules: EditableRules, lock: EditLock): EditProblem | null {
-  if (lock.whole === true) return locked();
   switch (action.type) {
     // A whole new rules text, and the shape of the columns: they would move what the answer was made for.
     case 'setAdvancedJson':

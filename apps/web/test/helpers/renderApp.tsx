@@ -76,7 +76,6 @@ export function fakeEngine(impl: LearnImpl = async () => learnResult(), inspect?
     learn,
     inspect: inspectFn,
     convert: vi.fn(),
-    verify: vi.fn(),
     // The rules editor's checks: every row matches, nothing is wrong.
     liveCheck: vi.fn(async () => liveResult()),
     fullCheck: vi.fn(async () => liveResult()),

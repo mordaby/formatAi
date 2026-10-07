@@ -79,9 +79,8 @@ export interface WorkbenchProps {
   /**
    * The deep analysis with AI is working on these fields (output column headers, layout parts): they say so on the map and cannot be edited
    * until it is done - nor can the shape of the columns, nor undo - while the rest of the page stays usable (`EditorStore.setLock`).
-   * `whole`: it is a whole learn, so nothing can be edited.
    */
-  analysing?: { columns: ReadonlySet<string>; parts: readonly AiStepPartCode[]; whole?: boolean } | undefined;
+  analysing?: { columns: ReadonlySet<string>; parts: readonly AiStepPartCode[] } | undefined;
   /** The learn's own verification, shown in the map until the live check answers. */
   verification?: VerificationLike | null | undefined;
   /** learn-v7: what the AI step noted about the columns it could not build (its guess, a recorded function request): shown in the session only. */
@@ -177,7 +176,7 @@ export function Workbench(props: WorkbenchProps) {
 
   // Read-only while the deep analysis works (see `analysing`): the store refuses what would touch it.
   const lock = useMemo<EditLock | null>(
-    () => (analysing ? { columns: analysing.columns, parts: new Set(analysing.parts), ...(analysing.whole ? { whole: true } : {}) } : null),
+    () => (analysing ? { columns: analysing.columns, parts: new Set(analysing.parts) } : null),
     [analysing],
   );
   useEffect(() => {

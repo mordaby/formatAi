@@ -14,12 +14,11 @@ import {
   readWorkbook,
   sentColumns,
   sniffDelimitedText,
-  verifyAgainstExample,
   type LearnCallResult,
 } from '@formatai/engine';
 import { limits } from '@formatai/shared';
 import type { AnalysisProgress, PairAnalysis } from '@formatai/engine';
-import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress, VerifyArgs, VerifyOutput } from './engineApi';
+import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress } from './engineApi';
 import type { LiveCheckArgs, LiveCheckResult, LoadExampleArgs, LoadExampleOutput, StaticChecksArgs, StaticProblem } from './editorApi';
 import { checkExample, exampleInputOf, getExample, rememberExample, runStaticChecks } from './liveCheck';
 import { convertMethods } from './convertMethods';
@@ -143,16 +142,6 @@ async function convert(args: ConvertArgs): Promise<Transfer<ConvertOutput> | Con
   return new Transfer(out, [bytes]);
 }
 
-async function verify(args: VerifyArgs): Promise<VerifyOutput> {
-  const inputWb = await readWorkbook(new Uint8Array(args.input.bytes), args.input.name);
-  const outputWb = await readWorkbook(new Uint8Array(args.output.bytes), args.output.name);
-  const outputSniff =
-    outputWb.fileType === 'csv' || outputWb.fileType === 'txt' ? sniffDelimitedText(new Uint8Array(args.output.bytes)) : undefined;
-  const analysis = analyzePair(inputWb, outputWb, outputSniff ? { outputSniff } : {});
-  if (!analysis.ok) return { ok: false, reason: 'analysisFailed' };
-  return { ok: true, verification: verifyAgainstExample(args.rules, analysis, args.exceptions ? { exceptions: args.exceptions } : {}) };
-}
-
 /**
  * A cheap look at one dropped file: does it open, and how big is its table (first non-empty sheet).
  * Only counts: whether the file is acceptable is the pre-flight's decision when the user goes on.
@@ -221,4 +210,4 @@ function staticChecks(args: StaticChecksArgs): StaticProblem[] {
   return runStaticChecks(args.rules, { tier: args.tier, ...(args.format ? { format: args.format } : {}) });
 }
 
-export const engineMethods = { learn, convert, verify, inspect, loadExample, liveCheck, fullCheck, staticChecks, ...convertMethods } satisfies MethodMap;
+export const engineMethods = { learn, convert, inspect, loadExample, liveCheck, fullCheck, staticChecks, ...convertMethods } satisfies MethodMap;
