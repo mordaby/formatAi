@@ -354,6 +354,24 @@ function defineProtectionSuite(kit: StoreKit): void {
       expect(llm.calls).toHaveLength(before);
     });
 
+    it('API audit C2: the learnId belongs to its example pair - a payload of another structure is refused (400 invalidLearnId), using no round', async () => {
+      const llm = makeComplete();
+      const h = await setup({ complete: llm.fn });
+      const cookie = anonCookie(await h.get('/api/session'));
+      const { rules, learnId } = await learned(h, cookie);
+      const before = llm.calls.length;
+      const base = basicPayload();
+      const otherPair = { ...base, output: { ...base.output, columns: [base.output.columns[0]!, { i: 1, header: 'Grand total', type: 'decimal' as const }] } };
+      const res = await h.post('/api/learn/repair', { ...repairBody(rules, learnId), payload: otherPair }, { cookie });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: 'invalidLearnId' });
+      expect(llm.calls).toHaveLength(before);
+      expect(await h.handle.counter(`repair:${learnId.split('.')[0]}`)).toBe(0);
+      // Its own payload - other rows of the same structure included - still goes through.
+      const sameStructure = { ...base, samples: [{ in: ['B7', 3], out: ['B7', 6] }] };
+      expect((await h.post('/api/learn/repair', { ...repairBody(rules, learnId), payload: sameStructure }, { cookie })).statusCode).toBe(200);
+    });
+
     it('rejects an expired learnId', async () => {
       const h = await setup({ complete: makeComplete().fn });
       const cookie = anonCookie(await h.get('/api/session'));

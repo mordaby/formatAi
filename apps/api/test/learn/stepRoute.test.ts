@@ -131,6 +131,18 @@ describe('POST /api/learn answering with checks, then POST /api/learn/step', () 
     expect(fake.calls).toHaveLength(0);
   });
 
+  it("API audit C2: ...and of this payload's example pair - a step with another structure's payload is refused, using no step", async () => {
+    const { app: a, fake, store } = await start('all');
+    fake.enqueue(asksChecks);
+    const { learnId } = (await post(a, '/api/learn', { payload: basicPayload() })).json();
+    const other: LearnPayload = { ...basicPayload(), masking: true };
+    const res = await post(a, '/api/learn/step', { token: learnId, payload: other, rounds: [ROUND(1)] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'invalidLearnId' });
+    expect(fake.calls).toHaveLength(1);
+    expect(store.counter(`step:${String(learnId).split('.')[0]}`)).toBe(0);
+  });
+
   it(`at most ${limits.learn.checks.maxRounds} steps per learn; a step may not skip ahead`, async () => {
     const { app: a, fake } = await start('all');
     fake.enqueue(asksChecks);

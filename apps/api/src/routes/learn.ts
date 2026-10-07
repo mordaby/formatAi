@@ -380,6 +380,10 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     // SPEC 9.3: a follow-up belongs to a learn this owner really ran (signed, owner-bound, unexpired).
     const followUp = spec.followUp ? verifyLearnId(secret, owner, spec.followUp.learnId, now) : null;
     if (followUp && !followUp.ok) return refuse({ status: 400, body: { error: 'invalidLearnId' } });
+    // API audit C2 (2026-10-07): ... and to the example pair it was issued for - the payload's structure must be the one the learnId
+    // carries (the web sends the learn's own payload object again). Otherwise one learn's id would buy rounds and steps for any other
+    // pair, whose failed-attempt cap and cache entry the follow-up never touches.
+    if (followUp?.ok && groupOf(learnCacheKey(payload)) !== followUp.group) return refuse({ status: 400, body: { error: 'invalidLearnId' } });
 
     const hit = await spec.cacheHit?.(payload, identity, now);
     if (hit) return { done: reply.send(hit) };
