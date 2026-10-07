@@ -6,7 +6,7 @@
 // something is left, the Result screen's deep-analysis panel offers "Finish with AI" (the AI step only decides how THIS input produces the
 // format's columns, and is never run without that click). Saving makes a new conversion of the format (a link from the source to it).
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
-import { defaultSourceName } from '@formatai/shared';
+import { canAddSource, defaultSourceName } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { isAiQuotaHit, useAiLimit, useQuotaRefusal } from '../../app/AiLimit';
@@ -40,6 +40,7 @@ import { useCopiedListGate } from '../Result/CopiedListSave';
 import { DeepAnalysisPanel } from '../Result/DeepAnalysisPanel';
 import { missingFields } from '../Result/missingFields';
 import type { UseCompletion } from '../Result/useCompletion';
+import { SourceLimit } from '../Formats/AddSourceEntry';
 import { compareOutput, fileTypeOfName, type OutputMismatch, type OutputFileType } from '../Result/matchFormat';
 import { SaveFailureMessage } from '../Result/SaveMessages';
 import { defaultFormatName } from '../Result/session';
@@ -74,6 +75,7 @@ export default function AddSourcePage() {
 function AddSourceLoader() {
   const { t } = useI18n();
   const { api } = useServices();
+  const me = useMe();
   const { id = '' } = useParams();
   // The format, and the names the company's sources already use. The list is a convenience (SPEC 8.15): when it can't be read the save
   // goes on, and the server has the last word on a name in use.
@@ -128,6 +130,25 @@ function AddSourceLoader() {
     );
   }
   const { detail, sources } = data.state.data;
+  // The plan's sources per format (SPEC 11), said before anything is dropped or learned: at the limit there is no form (the save would be
+  // refused), only the limit and the upgrade. (The signed-in user's plan: a session that ends on this screen keeps it - SPEC 5 E.)
+  if (me.user && !canAddSource(me.user.tier, detail.conversions.length)) {
+    return (
+      <main id="main" className="page" tabIndex={-1}>
+        <section className="tool">
+          <div className="view">
+            <p>
+              <Link to="/formats">{t('format.back')}</Link>
+            </p>
+            <header className="tool__head">
+              <h1>{t('add.title', { name: detail.format.name })}</h1>
+            </header>
+            <SourceLimit formatName={detail.format.name} sources={detail.conversions.length} />
+          </div>
+        </section>
+      </main>
+    );
+  }
   return <AddSource format={detail.format} sourceCount={detail.conversions.length} sources={sources} formatSourceNames={detail.conversions.map((c) => c.sourceName)} />;
 }
 

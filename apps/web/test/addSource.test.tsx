@@ -339,6 +339,30 @@ describe('the Add a source screen', () => {
     expect(screen.getByRole('button', { name: 'Upgrade' })).toBeTruthy();
   });
 
+  it('a format already at the limit (registered, 3 sources) says so before anything is dropped: no form, the limit and Upgrade - in either language', async () => {
+    const full = getFormatResponse({ id: 'F1', name: 'Supplier price list', sources: ['A', 'B', 'C'].map((x) => conversionSummary({ id: `C${x}`, sourceName: `Supplier ${x}` })), detail: { ...format.format, sources: 3 } });
+    const { learn } = setup({ registry: { getFormat: vi.fn(async () => full) } });
+    expect(await screen.findByTestId('source-limit')).toBeTruthy();
+    expect(screen.getByTestId('source-limit').textContent).toContain("Supplier price list already has 3 sources (your plan's limit).");
+    expect(screen.getByRole('button', { name: 'Upgrade' })).toBeTruthy();
+    expect(screen.queryByTestId('add-format-columns')).toBeNull();
+    expect(screen.queryByLabelText('Example input')).toBeNull();
+    expect(learn).not.toHaveBeenCalled();
+    cleanup();
+
+    setup({ registry: { getFormat: vi.fn(async () => full) }, lang: 'he' });
+    expect(await screen.findByTestId('source-limit')).toBeTruthy();
+    expect(screen.getByTestId('source-limit').textContent).toContain('לפורמט Supplier price list כבר יש 3 מקורות (המגבלה של התוכנית שלכם).');
+  });
+
+  it('a paid plan has no limit: a format with 3 sources still opens the form', async () => {
+    const PAID = { ...USER, tier: 'paid' as const };
+    const full = getFormatResponse({ id: 'F1', name: 'Supplier price list', sources: ['A', 'B', 'C'].map((x) => conversionSummary({ id: `C${x}`, sourceName: `Supplier ${x}` })), detail: { ...format.format, sources: 3 } });
+    setup({ registry: { getFormat: vi.fn(async () => full) }, auth: { me: vi.fn(async () => PAID), setLanguage: vi.fn(async () => PAID) } });
+    expect(await screen.findByTestId('add-format-columns')).toBeTruthy();
+    expect(screen.queryByTestId('source-limit')).toBeNull();
+  });
+
   it('the AI step refused for the quota (429 limitHit aiLearns): the out-of-AI-formats dialog over the form, the files kept - not an error screen', async () => {
     const apiLearn = vi.fn(async () => Promise.reject(new ApiError('limitHit', 429, { limit: 'aiLearns', period: 'month' })));
     setup({ apiLearn, learn: freeThenAi });

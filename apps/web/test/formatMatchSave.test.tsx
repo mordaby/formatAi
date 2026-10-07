@@ -5,7 +5,7 @@
 // ONE dialog: the format question first, the "keep these" lines below. A fake API (the user's formats and sources) and a fake worker that runs
 // the engine's own comparison.
 import { formatOf } from '@formatai/engine';
-import type { FormatSummary, GetFormatResponse, LearnResult, Rules, SignatureEntry } from '@formatai/shared';
+import type { FormatSummary, GetFormatResponse, LearnResult, MeUser, Rules, SignatureEntry } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
@@ -106,6 +106,8 @@ interface Setup {
   partial?: boolean;
   /** The feature switch "Formats with several sources" (default on here: this file is about what it shows). */
   formatSources?: boolean;
+  /** Who is signed in (default: a registered user, `USER`). */
+  user?: MeUser;
 }
 
 /** Learns (a fake worker) and opens the Result screen of a signed-in user who has `formats`. */
@@ -129,7 +131,7 @@ async function openResult(setup: Setup = {}) {
     updateConversion: vi.fn(async (id: string, body: { baseVersion?: number }) => ({ conversion: conversionSummary({ id, formatId: 'F1', version: (body.baseVersion ?? 0) + 1 }), formatChanged: true, affectedSources: 0, needsReview: [] })),
     attachSource: vi.fn(async (formatId: string) => ({ conversion: conversionSummary({ id: 'C2', formatId, sourceId: 'S2', sourceName: 'accounts', version: 1 }), source: { id: 'S2', name: 'accounts', formats: 1 } })),
   };
-  const api = fakeApi({ user: USER, registry, features: { formatSources: setup.formatSources ?? true } });
+  const api = fakeApi({ user: setup.user ?? USER, registry, features: { formatSources: setup.formatSources ?? true } });
   const view = renderApp({ engine: fake.engine, api, lang: setup.lang ?? 'en', dataRouter: true });
   const en = (setup.lang ?? 'en') === 'en';
   fireEvent.change(screen.getByLabelText(en ? 'Example input' : 'דוגמת קלט'), { target: { files: [csv('accounts.csv')] } });
@@ -314,6 +316,87 @@ describe('the same output from another input: add it as a new source', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/formats/F1/add-source'));
     expect(registry.attachSource).not.toHaveBeenCalled();
     expect(router.state.location.state).toEqual({ fromSession: true });
+  });
+});
+
+describe("the plan's sources per format (SPEC 11): never an add the server would refuse", () => {
+  const OTHER_INPUT = () => learned({ inputHeaders: ['Acct no', 'Firm'] });
+  const sources = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: `F1-C${i + 1}`, sourceId: i === 0 ? 'S1' : `S${i + 7}`, sourceName: i === 0 ? 'CRM A' : `CRM ${i + 1}`, version: 1 }));
+  const withSources = (n: number) => saved('F1', 'Monthly accounts', learned(), { sources: sources(n) });
+
+  it('a registered user, a format at 3 sources, another input: no "Add as a source" - the limit, the upgrade, and a new format', async () => {
+    const { registry } = await openResult({ rules: OTHER_INPUT(), formats: [withSources(3)] });
+    await press('Save format');
+    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(question()).toBe('This output looks like one of your formats.');
+    expect(within(box).getByTestId('format-match-limit').textContent).toContain("Monthly accounts already has 3 sources (your plan's limit).");
+    expect(answers()).toEqual(['Upgrade', 'Save as a new format', 'Cancel']);
+    expect(within(box).queryByRole('button', { name: 'Add as a source' })).toBeNull();
+    await answer('Save as a new format');
+    await waitFor(() => expect(registry.createFormat).toHaveBeenCalledTimes(1));
+    expect(registry.attachSource).not.toHaveBeenCalled();
+  });
+
+  it('at the limit, the input of one of its sources: "Update its rules" adds no source, so it is offered as ever', async () => {
+    await openResult({ formats: [withSources(3)] });
+    await press('Save format');
+    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(question()).toBe('This is your format Monthly accounts, from CRM A. Update its rules, or save as a new format?');
+    expect(answers()).toEqual(['Update its rules', 'Save as a new format', 'Cancel']);
+    expect(within(box).queryByTestId('format-match-limit')).toBeNull();
+  });
+
+  it('under the limit (2 of 3): "Add as a source" as before', async () => {
+    await openResult({ rules: OTHER_INPUT(), formats: [withSources(2)] });
+    await press('Save format');
+    await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(answers()).toEqual(['Add as a source', 'Save as a new format', 'Cancel']);
+  });
+
+  it('a paid plan has no limit: 3 (or more) sources and still "Add as a source"', async () => {
+    const { registry } = await openResult({ rules: OTHER_INPUT(), formats: [withSources(5)], user: { ...USER, tier: 'paid' } });
+    await press('Save format');
+    await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(answers()).toEqual(['Add as a source', 'Save as a new format', 'Cancel']);
+    await answer('Add as a source');
+    await waitFor(() => expect(registry.attachSource).toHaveBeenCalledTimes(1));
+  });
+
+  it('a free result with fields missing, at the limit: never sent to Add a source', async () => {
+    const rules = OTHER_INPUT();
+    rules.output.columns[1]!.from = null;
+    const { router } = await openResult({ rules, formats: [withSources(3)], partial: true });
+    await press('Save format');
+    await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(answers()).toEqual(['Upgrade', 'Save as a new format', 'Cancel']);
+    expect(router.state.location.pathname).not.toBe('/formats/F1/add-source');
+  });
+
+  it('several formats: the one at its limit says so in the list, and its answers follow', async () => {
+    const full = saved('F1', 'Monthly accounts', learned(), { sources: sources(3), updatedAt: '2026-08-03T10:00:00.000Z' });
+    const open = saved('F2', 'Accounts for the board', learned(), { updatedAt: '2026-08-01T10:00:00.000Z', sources: [{ id: 'F2-C1', sourceId: 'S5', sourceName: 'ERP', version: 2 }] });
+    await openResult({ rules: OTHER_INPUT(), formats: [full, open] });
+    await press('Save format');
+    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect([...box.querySelectorAll('[data-format]')].map((o) => [o.getAttribute('data-format'), o.getAttribute('data-kind'), o.textContent])).toEqual([
+      ['F1', 'full', "Monthly accountsAlready has 3 sources (your plan's limit)"],
+      ['F2', 'attach', 'Accounts for the boardAdd this file as a new source of it'],
+    ]);
+    expect(answers()).toEqual(['Upgrade', 'Save as a new format', 'Cancel']);
+    const radios = within(box).getAllByRole('radio') as HTMLInputElement[];
+    await act(async () => void fireEvent.click(radios[1]!));
+    expect(within(box).queryByTestId('format-match-limit')).toBeNull();
+    expect(answers()).toEqual(['Add as a source', 'Save as a new format', 'Cancel']);
+  });
+
+  it('says it in Hebrew', async () => {
+    await openResult({ rules: OTHER_INPUT(), formats: [withSources(3)], lang: 'he' });
+    await press('שמירת הפורמט');
+    const box = await screen.findByRole('dialog', { name: 'לשמור את הפורמט?' });
+    expect(question()).toBe('הפלט הזה נראה כמו אחד מהפורמטים שלכם.');
+    expect(within(box).getByTestId('format-match-limit').textContent).toContain('לפורמט Monthly accounts כבר יש 3 מקורות (המגבלה של התוכנית שלכם).');
+    expect(answers()).toEqual(['שדרוג', 'שמירה כפורמט חדש', 'ביטול']);
   });
 });
 

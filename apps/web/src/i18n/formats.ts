@@ -40,6 +40,8 @@ export const formatsEn = {
   'formats.slots': 'Saved formats: {used} of {max}',
   'formats.convert': 'Run this format',
   'formats.addSource': 'Add a source',
+  // (the plan's sources per format, SPEC 11: shown before the user starts, never after a learn)
+  'formats.sourceLimit': '{format} already has {n} sources (your plan\'s limit).',
   'formats.editRules': 'Edit rules',
   'formats.rename': 'Rename',
   'formats.delete': 'Delete',
@@ -179,6 +181,7 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'formats.slots': 'פורמטים שמורים: {used} מתוך {max}',
   'formats.convert': 'הרצת הפורמט',
   'formats.addSource': 'הוספת מקור',
+  'formats.sourceLimit': 'לפורמט {format} כבר יש {n} מקורות (המגבלה של התוכנית שלכם).',
   'formats.editRules': 'עריכת כללים',
   'formats.rename': 'שינוי שם',
   'formats.delete': 'מחיקה',

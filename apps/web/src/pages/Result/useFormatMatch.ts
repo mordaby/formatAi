@@ -3,10 +3,13 @@
 // compared with the user's saved formats, by the OUTPUT only (the engine's `findFormatMatches`, in the worker: the same structure, then whether
 // the example input is one of that format's sources, then the format lock). Nothing is asked when nothing matches: Save goes on at once.
 //
+// The plan's "sources per format" (SPEC 11) is known here too: a format that already has as many sources as the plan allows is never offered
+// "Add as a source" (the server would refuse it) - the offer says so instead (`full`), with the upgrade, and keeps "Save as a new format".
+//
 // What is read: the list of formats (fetched when the result is shown, so a Save with no match waits for nothing), and - only for the formats
 // whose headers and file type already agree - their output side and conversions, and the sources' signatures. Structure only: no value of
 // the example is sent anywhere, and the comparison runs in the browser. Any failure is no offer: Save goes on as before.
-import { normalizeOutputHeader, type Format, type FormatSummary, type LearnResult, type Rules, type SignatureEntry } from '@formatai/shared';
+import { canAddSource, normalizeOutputHeader, tiers, type Format, type FormatSummary, type LearnResult, type Rules, type SignatureEntry, type Tier } from '@formatai/shared';
 import type { FormatMatch, FormatProblem, SavedFormatCandidate } from '@formatai/engine';
 import { useCallback, useEffect, useRef } from 'react';
 import type { EditableRules } from '../../editor';
@@ -28,8 +31,12 @@ export interface FormatOffer {
   /**
    * `update`: the example input is one of its sources - saving writes a new version of that conversion. `attach`: the file becomes a new source
    * of it. `locked`: it would be a new source, but the learned rules break the format lock (`reasons`): it cannot be added as they are.
+   * `full`: it would be a new source, but the format already has as many sources as the plan allows (`limit`): it cannot be added (an update
+   * adds no source, so it is never `full`).
    */
-  kind: 'update' | 'attach' | 'locked';
+  kind: 'update' | 'attach' | 'locked' | 'full';
+  /** `full`: the plan's sources per format (the format has `sources` of them). */
+  limit?: number;
   /** `update`: the conversion, its version (the save's `baseVersion`), its source's name and how many formats that source feeds. */
   conversion?: { id: string; version: number; sourceName: string; sourceFormats: number };
   /** `locked`: why. `update`: what the update changes in the format (for all its sources); empty when nothing. */
@@ -67,12 +74,16 @@ export function lockReasons(problems: readonly FormatProblem[], headers: readonl
   return out;
 }
 
-/** The engine's matches as offers. `signatures`: how many formats each source feeds; `formats`: each candidate's stored output side, by id. */
+/**
+ * The engine's matches as offers. `signatures`: how many formats each source feeds; `formats`: each candidate's stored output side, by id;
+ * `tier`: whose plan's sources per format count (the API's own check, `canAddSource`).
+ */
 export function offersOf(
   matches: readonly FormatMatch[],
   rules: LearnResult | Rules,
   signatures: readonly SignatureEntry[],
   formats: ReadonlyMap<string, Format>,
+  tier: Tier,
 ): FormatOffer[] {
   const headers = rules.output.columns.map((c) => c.header);
   return matches.flatMap((m): FormatOffer[] => {
@@ -93,6 +104,11 @@ export function offersOf(
           format,
         },
       ];
+    }
+    // (the limit first, as the server checks it first: at the limit nothing is added, whatever the rules)
+    const cap = tiers[tier].sourcesPerFormat;
+    if (!canAddSource(tier, m.sources) && cap !== 'unlimited') {
+      return [{ formatId: m.formatId, formatName: m.formatName, sources: m.sources, kind: 'full', limit: cap, reasons: [], format }];
     }
     return [{ formatId: m.formatId, formatName: m.formatName, sources: m.sources, kind: reasons.length > 0 ? 'locked' : 'attach', reasons, format }];
   });
@@ -121,8 +137,11 @@ export interface UseFormatMatch {
   find(rules: EditableRules, inputHeaders: readonly string[] | undefined): Promise<FormatOffer[]>;
 }
 
-/** `enabled`: a signed-in user with a learn not saved yet (the list is read once, in the background, as soon as it is). */
-export function useFormatMatch(enabled: boolean): UseFormatMatch {
+/**
+ * `enabled`: a signed-in user with a learn not saved yet, and "Formats with several sources" on (the list is read once, in the background, as
+ * soon as it is). `tier`: the user's plan, for its sources per format.
+ */
+export function useFormatMatch(enabled: boolean, tier: Tier): UseFormatMatch {
   const { api, engine } = useServices();
   const list = useRef<Promise<FormatSummary[]> | null>(null);
   const loaded = useRef<FormatSummary[] | null>(null);
@@ -162,12 +181,12 @@ export function useFormatMatch(enabled: boolean): UseFormatMatch {
           candidates: saved,
           sources: signatures.map(signatureOf),
         });
-        return offersOf(matches, rules, signatures, new Map(saved.map((c) => [c.id, c.format] as const)));
+        return offersOf(matches, rules, signatures, new Map(saved.map((c) => [c.id, c.format] as const)), tier);
       } catch {
         return []; // no offer, no harm: Save goes on as before
       }
     },
-    [api, engine, read],
+    [api, engine, read, tier],
   );
   return { surelyNone, find };
 }

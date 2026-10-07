@@ -5,11 +5,15 @@
 //   - it is not: "This looks like your format X. Add this file as a new source of it?" - Add as a source / Save as a new format / Cancel;
 //   - it is not, and the learned rules break the format lock: "... but this file can't be added as a source of it: <why>." - Save as a new
 //     format / Cancel;
-//   - several formats: a radio list (most recently used first, the first chosen), each saying which of the three it is; the buttons follow it.
+//   - it is not, and the format already has as many sources as the plan allows (SPEC 11): "This output looks like one of your formats." and
+//     "X already has N sources (your plan's limit)." with the upgrade - Save as a new format / Cancel (never an add the server would refuse);
+//   - several formats: a radio list (most recently used first, the first chosen), each saying which of these it is; the buttons follow it.
+// All of it is part of "Formats with several sources" (the feature switch): while it is off this dialog is never shown.
 // ... and below it, when the rules hold a list of fixed values or an identifier-shaped value (`CopiedListSave`), the same lines and the same
 // question, answered with a radio (neither is chosen for the user: the words have no agenda) before the save buttons can be used.
 import { useId, useState, type ReactNode } from 'react';
 import type { SaveFinding } from '../../editor';
+import { UpgradeButton } from '../../app/Upgrade';
 import { useI18n, type MessageKey } from '../../i18n';
 import { Button, Dialog } from '../../ui';
 import { FindingLines, findingForm, type SaveChoice } from './CopiedListSave';
@@ -65,6 +69,16 @@ export function FormatMatchDialog({ offers, findings, needsInput, onAnswer, onCa
     if (needsInput > 0) out.push(<p key="input" className="muted">{t(needsInput === 1 ? 'match.needsInput.one' : 'match.needsInput.other', { n: needsInput })}</p>);
     return out;
   };
+  // A format at the plan's sources per format: said with the upgrade, under the question (the add is not offered).
+  const limit = (o: FormatOffer): ReactNode =>
+    o.kind === 'full' ? (
+      <div className="format-match__limit" data-testid="format-match-limit">
+        <p>
+          <Marked id="match.limit" nodes={{ format: name(o.formatName), n: <span className="tabular">{o.sources}</span> }} />
+        </p>
+        <UpgradeButton variant="link" trigger="sourcesPerFormat" />
+      </div>
+    ) : null;
 
   const question =
     offers.length === 1 ? (
@@ -74,10 +88,13 @@ export function FormatMatchDialog({ offers, findings, needsInput, onAnswer, onCa
             <Marked id="match.update" nodes={{ format: name(offer.formatName), source: name(offer.conversion!.sourceName) }} />
           ) : offer.kind === 'attach' ? (
             <Marked id="match.attach" nodes={{ format: name(offer.formatName) }} />
+          ) : offer.kind === 'full' ? (
+            t('match.full')
           ) : (
             <Marked id="match.locked" nodes={{ format: name(offer.formatName), reasons: reasonsText(offer.reasons) }} />
           )}
         </p>
+        {limit(offer)}
         {notes(offer)}
       </>
     ) : (
@@ -97,6 +114,8 @@ export function FormatMatchDialog({ offers, findings, needsInput, onAnswer, onCa
                     <Marked id="match.option.update" nodes={{ source: <bdi>{o.conversion!.sourceName}</bdi> }} />
                   ) : o.kind === 'attach' ? (
                     t('match.option.attach')
+                  ) : o.kind === 'full' ? (
+                    t('match.option.full', { n: o.sources })
                   ) : (
                     t('match.option.locked', { reasons: reasonsText(o.reasons) })
                   )}
@@ -105,6 +124,7 @@ export function FormatMatchDialog({ offers, findings, needsInput, onAnswer, onCa
             );
           })}
         </fieldset>
+        {limit(offer)}
         {notes(offer)}
       </>
     );
@@ -140,7 +160,7 @@ export function FormatMatchDialog({ offers, findings, needsInput, onAnswer, onCa
             {t('match.do.attach')}
           </Button>
         ) : null}
-        <Button variant={offer.kind === 'locked' ? 'primary' : 'secondary'} disabled={waitingForKeep} onClick={() => answer({ kind: 'new' })} data-answer="new">
+        <Button variant={offer.kind === 'locked' || offer.kind === 'full' ? 'primary' : 'secondary'} disabled={waitingForKeep} onClick={() => answer({ kind: 'new' })} data-answer="new">
           {t('match.do.new')}
         </Button>
         <Button variant="ghost" onClick={onCancel} data-answer="cancel">

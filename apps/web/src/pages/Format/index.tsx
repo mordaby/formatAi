@@ -88,7 +88,7 @@ function FormatDetail() {
               <LinkButton variant="secondary" to={`/convert?format=${encodeURIComponent(format.id)}`}>
                 {t('formats.convert')}
               </LinkButton>
-              <AddSourceEntry formatId={format.id} variant="primary" />
+              <AddSourceEntry formatId={format.id} formatName={format.name} sources={conversions.length} variant="primary" />
             </div>
           </header>
 

@@ -57,7 +57,8 @@ describe('My formats', () => {
     expect(supplier.textContent).toContain('Last run');
 
     expect(within(supplier).getByRole('link', { name: 'Run this format' }).getAttribute('href')).toBe('/convert?format=F1');
-    expect(within(supplier).getByRole('link', { name: 'Add a source' }).getAttribute('href')).toBe('/formats/F1/add-source');
+    // (3 sources: a registered plan's limit - said up front instead of a way in, see "sources per format" below)
+    expect(within(supplier).queryByRole('link', { name: 'Add a source' })).toBeNull();
     expect(within(supplier).getByRole('link', { name: 'Edit rules' }).getAttribute('href')).toBe('/formats/F1');
     expect(within(supplier).getByRole('button', { name: 'Rename' })).toBeTruthy();
     expect(within(supplier).getByRole('button', { name: 'Delete' })).toBeTruthy();
@@ -66,6 +67,55 @@ describe('My formats', () => {
     expect(contacts.querySelector('.format-card__sources')!.textContent).toBe('←1 source');
     expect(within(contacts).getByText('1 with differences')).toBeTruthy();
     expect(contacts.textContent).toContain('Not run yet');
+    expect(within(contacts).getByRole('link', { name: 'Add a source' }).getAttribute('href')).toBe('/formats/F2/add-source');
+  });
+
+  describe("the plan's sources per format, said before the user starts (SPEC 11)", () => {
+    const ON = { formatSources: true };
+    it('a registered user at 3 sources: no way in, the limit and the upgrade - on the card and on the format', async () => {
+      const { unmount } = renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) }, features: ON }), route: '/formats' });
+      await screen.findByTestId('format-list');
+      const card = cards()[0]!;
+      await waitFor(() => expect(within(card).getByTestId('source-limit')).toBeTruthy());
+      expect(within(card).getByTestId('source-limit').textContent).toContain("Supplier price list already has 3 sources (your plan's limit).");
+      expect(within(card).getByRole('button', { name: 'Upgrade' })).toBeTruthy();
+      expect(within(card).queryByRole('link', { name: 'Add a source' })).toBeNull();
+      unmount();
+
+      const three = getFormatResponse({
+        id: 'F1',
+        name: 'Supplier price list',
+        sources: ['A', 'B', 'C'].map((x) => conversionSummary({ id: `C${x}`, sourceName: `Supplier ${x}` })),
+      });
+      renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => three) }, features: ON }), route: '/formats/F1' });
+      expect(await screen.findByRole('heading', { name: 'Supplier price list' })).toBeTruthy();
+      await waitFor(() => expect(screen.getByTestId('source-limit').textContent).toContain("already has 3 sources (your plan's limit)."));
+      expect(screen.queryByRole('link', { name: 'Add a source' })).toBeNull();
+      expect(screen.getByRole('link', { name: 'Run this format' })).toBeTruthy();
+    });
+
+    it('under the limit (2 of 3): the way in, and no limit line', async () => {
+      const two = formatSummary({ ...SUPPLIER, sources: 2 });
+      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [two]) }, features: ON }), route: '/formats' });
+      await screen.findByTestId('format-list');
+      await waitFor(() => expect(within(cards()[0]!).getByRole('link', { name: 'Add a source' })).toBeTruthy());
+      expect(screen.queryByTestId('source-limit')).toBeNull();
+    });
+
+    it('a paid plan has no limit: 12 sources and still the way in', async () => {
+      const many = formatSummary({ ...SUPPLIER, sources: 12 });
+      renderApp({ api: fakeApi({ user: { ...USER, tier: 'paid' }, registry: { listFormats: vi.fn(async () => [many]) }, features: ON }), route: '/formats' });
+      await screen.findByTestId('format-list');
+      await waitFor(() => expect(within(cards()[0]!).getByRole('link', { name: 'Add a source' })).toBeTruthy());
+      expect(screen.queryByTestId('source-limit')).toBeNull();
+    });
+
+    it('says it in Hebrew', async () => {
+      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) }, features: ON }), route: '/formats', lang: 'he' });
+      await screen.findByTestId('format-list');
+      await waitFor(() => expect(screen.getByTestId('source-limit').textContent).toContain('לפורמט Supplier price list כבר יש 3 מקורות (המגבלה של התוכנית שלכם).'));
+      expect(screen.queryByRole('link', { name: 'הוספת מקור' })).toBeNull();
+    });
   });
 
   it('shows how many of the plan\'s saved formats are used', async () => {

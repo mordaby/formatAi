@@ -303,6 +303,19 @@
   grid-column: 2;
   font-size: var(--fs-small);
 }
+/* A format at the plan's sources per format (SPEC 11): the line and the upgrade, under the question - and on a format's card and page. */
+.format-match__limit,
+.source-limit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--s-2);
+  row-gap: var(--s-1);
+}
+.format-match__limit p,
+.source-limit p {
+  margin: 0;
+}
 .format-match__keep {
   margin-block-start: var(--s-3);
   padding-block-start: var(--s-3);

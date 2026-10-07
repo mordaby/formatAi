@@ -156,7 +156,7 @@ export function FormatCard({ format, onRenamed, onDeleted }: FormatCardProps) {
         <LinkButton variant="secondary" size="sm" to={`/convert?format=${encodeURIComponent(format.id)}`}>
           {t('formats.convert')}
         </LinkButton>
-        <AddSourceEntry formatId={format.id} variant="secondary" size="sm" />
+        <AddSourceEntry formatId={format.id} formatName={format.name} sources={format.sources} variant="secondary" size="sm" />
         <LinkButton variant="secondary" size="sm" to={`/formats/${format.id}`} state={{ edit: true }}>
           {t('formats.editRules')}
         </LinkButton>

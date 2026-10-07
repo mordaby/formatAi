@@ -193,7 +193,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
   // formats is read in the background as soon as the result is shown, so a Save that matches nothing waits for nothing) - only while the
   // feature switch "Formats with several sources" is on: off, nothing is read and Save saves a new format, one click.
   const { formatSources } = useFeatures();
-  const formatMatch = useFormatMatch(formatSources && me.user !== null && !source);
+  const formatMatch = useFormatMatch(formatSources && me.user !== null && !source, me.tier);
   const [matching, setMatching] = useState(false);
   const matchingNow = useRef(false);
 
