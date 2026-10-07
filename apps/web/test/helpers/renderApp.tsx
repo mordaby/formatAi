@@ -1,3 +1,4 @@
+import { findFormatMatches } from '@formatai/engine';
 import { tiers, type LearnPayload, type LearnResult, type MeUser } from '@formatai/shared';
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
@@ -10,7 +11,7 @@ import type { ContactApi } from '../../src/api/contact';
 import type { RegistryApi } from '../../src/api/registry';
 import { I18nProvider, type Lang } from '../../src/i18n';
 import { ServicesProvider } from '../../src/services';
-import type { LearnHost, LearnOutput } from '../../src/worker/engineApi';
+import type { LearnArgs, LearnHost, LearnOutput } from '../../src/worker/engineApi';
 import type { LiveCheckResult } from '../../src/worker/editorApi';
 import type { EngineClient } from '../../src/worker/engineClient';
 import { rules as fixtureRules } from '../../src/rulesText/fixtures';
@@ -61,7 +62,8 @@ export function learnResult(over: Record<string, unknown> = {}): LearnOutput {
   } as unknown as LearnOutput;
 }
 
-type LearnImpl = (host: LearnHost) => Promise<LearnOutput>;
+/** `args`: what the screen asked the worker for (the target, `ai`, ...), for a fake that answers as the engine would. */
+type LearnImpl = (host: LearnHost, args: LearnArgs) => Promise<LearnOutput>;
 
 export interface FakeEngine {
   engine: EngineClient;
@@ -70,7 +72,7 @@ export interface FakeEngine {
 }
 
 export function fakeEngine(impl: LearnImpl = async () => learnResult(), inspect?: () => unknown, extra: Record<string, unknown> = {}): FakeEngine {
-  const learn = vi.fn(async (_args: unknown, host: LearnHost) => impl(host));
+  const learn = vi.fn(async (args: LearnArgs, host: LearnHost) => impl(host, args));
   const inspectFn = vi.fn(async () => (inspect ? inspect() : { readable: true, rows: 1204, columns: 8, direction: 'ltr' }));
   const engine = {
     learn,
@@ -83,6 +85,8 @@ export function fakeEngine(impl: LearnImpl = async () => learnResult(), inspect?
     // Reading an example pair again (a saved source's optional check), and a file's headers (Add a source).
     loadExample: vi.fn(async () => ({ ok: true, exampleId: 'ex-loaded', inputRows: 3, outputRows: 3 })),
     readHeaders: vi.fn(async () => ({ ok: true, headers: [], sheetName: 'Sheet1', direction: 'ltr', rows: 3 })),
+    // "Is this one of your formats?" at Save: the engine's own comparison (rules and headers only, nothing to fake).
+    formatMatches: vi.fn(async (args: Parameters<typeof findFormatMatches>[0]) => findFormatMatches(args)),
     terminate: vi.fn(),
     ...extra,
   } as unknown as EngineClient;
@@ -130,6 +134,8 @@ export function fakeApi(over: Partial<Omit<Api, 'auth' | 'registry' | 'contact'>
       attachSource: vi.fn(),
       // The company's sources (SPEC 8.15): none unless a test says so.
       listSources: vi.fn(async () => []),
+      // Every source's signature ("is this example one of your sources?" at Save): none unless a test says so.
+      signatures: vi.fn(async () => []),
       getSource: vi.fn(),
       updateSource: vi.fn(),
       deleteSource: vi.fn(async () => undefined),

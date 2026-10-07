@@ -18,6 +18,8 @@ import type {
   ListSourcesResponse,
   ListVersionsResponse,
   RenameFormatRequest,
+  SignatureEntry,
+  SignaturesResponse,
   SourceSummary,
   UpdateConversionRequest,
   UpdateConversionResponse,
@@ -41,6 +43,8 @@ export interface RegistryApi {
   attachSource(formatId: string, body: AttachSourceRequest): Promise<AttachSourceResponse>;
   /** GET /api/sources (SPEC 8.15): the caller's sources; Add a source reads their names (a name is the company's, unique among them). */
   listSources(signal?: AbortSignal): Promise<SourceSummary[]>;
+  /** GET /api/signatures: every source's input signature (headers, aliases), with the formats it feeds - "is this example one of your sources?" at Save. */
+  signatures(signal?: AbortSignal): Promise<SignatureEntry[]>;
   /** GET /api/conversions/:id: the rules, for the editor. */
   getConversion(id: string, signal?: AbortSignal): Promise<ConversionDetail>;
   /** PATCH /api/conversions/:id: rename its SOURCE and/or save edited rules (a format edit reaches every source of the format, an input-side edit every format of the source). */
@@ -81,6 +85,7 @@ export function createRegistryApi(request: HttpRequest): RegistryApi {
     // The whole answer (the source the save used comes with it).
     attachSource: (formatId, body) => request<AttachSourceResponse>('POST', `/api/formats/${enc(formatId)}/conversions`, asSaved(body)),
     listSources: async (signal) => (await request<ListSourcesResponse>('GET', '/api/sources', undefined, signal)).sources,
+    signatures: async (signal) => (await request<SignaturesResponse>('GET', '/api/signatures', undefined, signal)).signatures,
     getConversion: async (id, signal) => (await request<{ conversion: ConversionDetail }>('GET', `/api/conversions/${enc(id)}`, undefined, signal)).conversion,
     updateConversion: (id, body) => request<UpdateConversionResponse>('PATCH', `/api/conversions/${enc(id)}`, asSaved(body)),
     deleteConversion: async (id) => {

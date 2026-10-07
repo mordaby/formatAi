@@ -1,7 +1,7 @@
 // The worker methods of "convert a file" (SPEC 5 C, 5 D, 8.15, 21 v5 item 5): types only, re-exported from engineApi.ts so the
 // rest of the app sees one worker surface. Matching a file to a saved SOURCE, running one of its conversions with the user's row
 // decisions (the review happens BEFORE the file is written), and packing a batch into a zip and a summary workbook.
-import type { ConversionMatch, ConversionPick, Flag, InputColumnGap, OutputSheet, RowDecisions, RunError, RunSummary, UnlikeColumn } from '@formatai/engine';
+import type { ConversionMatch, ConversionPick, Flag, FormatMatch, InputColumnGap, OutputSheet, RowDecisions, RunError, RunSummary, SavedFormatCandidate, UnlikeColumn } from '@formatai/engine';
 import type { LearnResult, Rules, SignatureColumn } from '@formatai/shared';
 import type { FileBytes } from './engineApi';
 
@@ -45,6 +45,19 @@ export type MatchFileOutput =
       pick: ConversionPick;
     }
   | { ok: false; reason: 'unreadable' | 'noTable' };
+
+// ---------- a learned example that matches a saved format (owner decision 2026-10-07, SPEC 5 A step 8) ----------
+
+/** The rules on screen, the example input's headers and what the API says about the user's formats and sources: structure only. */
+export interface FormatMatchesArgs {
+  rules: LearnResult | Rules;
+  inputHeaders?: string[] | undefined;
+  candidates: SavedFormatCandidate[];
+  sources: SignatureInput[];
+}
+
+/** The formats with the same output (most recently used first), each with the source it would update and the format lock's answer. */
+export type FormatMatchesOutput = FormatMatch[];
 
 // ---------- which columns a conversion needs that a file lacks (SPEC 8.15, 21 v11 items 4-7) ----------
 
