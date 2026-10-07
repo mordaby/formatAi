@@ -19,6 +19,7 @@ import { isCompletable, type AiColumnNote, type AiStepPartCode, type LearnResult
 import type { AmbiguousColumn, FillSummary, OneTimeQuestion, VerifyResult } from '@formatai/engine';
 import type { CheckRoundInfo, LearnOutput, LoopRoundInfo } from '../../worker/engineApi';
 import { useEffect, useReducer, useRef } from 'react';
+import { useOnAi } from '../../app/aiReport';
 import { useLearnSession } from '../../app/LearnSession';
 import { useServices } from '../../services';
 import { mergeRules, type EditableRules } from '../../editor';
@@ -100,6 +101,7 @@ export interface UseCompletion {
 export function useCompletion(kept: ResultSession, exampleId: string | undefined, onNotes?: (askedHeaders: string[], notes: AiColumnNote[]) => void): UseCompletion {
   const session = useLearnSession();
   const { api } = useServices();
+  const onAi = useOnAi();
   const store = kept.store;
   const state = session.completion.state;
   // (the record is the session's, a plain object: a change to it re-renders this screen)
@@ -129,6 +131,8 @@ export function useCompletion(kept: ResultSession, exampleId: string | undefined
       } catch {
         return; // nothing to tell: the server keeps its own count
       }
+      // (what is left, as the server says it now: shown whether or not the answer was used)
+      onAi({ quota: res.quota });
       const now = kept.completion;
       if (!now || now.ai?.learnId !== learnId) return;
       const next: AiInfo = { ...now.ai, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, exhausted: res.exhausted };
@@ -171,7 +175,7 @@ export function useCompletion(kept: ResultSession, exampleId: string | undefined
     } else if (state.status === 'idle') {
       settle(null); // cancelled meanwhile (a new learn, Start over): nothing came of it
     }
-  }, [state, kept, store, session.completion, api]);
+  }, [state, kept, store, session.completion, api, onAi]);
 
   const start = (plan: CompletionPlanInput): void => {
     const prev = kept.completion;

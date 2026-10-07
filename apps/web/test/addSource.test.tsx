@@ -327,6 +327,31 @@ describe('the Add a source screen', () => {
     expect(learnButton()).toBeTruthy();
   });
 
+  // The audit's C10: every flow tells the app what is left of the AI formats, and that the session is gone - not only Home's learn.
+  it('what is left of the AI formats after the learn is what the account menu says (the learn reported it)', async () => {
+    setup(); // (the learn's answer: 2 left; the account menu read 3 before)
+    await screen.findByTestId('add-format-columns');
+    await drop('Example input', csv('supplier-b.csv'));
+    await drop('Example output', xlsx('load.xlsx'));
+    await waitFor(() => expect(learnButton().disabled).toBe(false));
+    await act(async () => void fireEvent.click(learnButton()));
+    await screen.findByTestId('rules-map');
+    fireEvent.click(await screen.findByRole('button', { name: 'Account menu for Dana Levi' }));
+    const panel = await screen.findByRole('group', { name: 'Account' });
+    await waitFor(() => expect(panel.textContent).toContain('AI formats left this month: 2'));
+  });
+
+  it('a learn refused because the session is gone reads who is signed in again (so "Sign in" works)', async () => {
+    const { api } = setup({ apiLearn: async () => Promise.reject(new ApiError('signInForAi', 403)) });
+    await screen.findByTestId('add-format-columns');
+    await drop('Example input', csv('supplier-b.csv'));
+    await drop('Example output', xlsx('load.xlsx'));
+    await waitFor(() => expect(learnButton().disabled).toBe(false));
+    const before = api.auth.me.mock.calls.length;
+    await act(async () => void fireEvent.click(learnButton()));
+    await waitFor(() => expect(api.auth.me.mock.calls.length).toBeGreaterThan(before));
+  });
+
   it('a format that is not there says so', async () => {
     renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => Promise.reject(new ApiError('notFound', 404))) } }), route: ROUTE });
     expect(await screen.findByText("We couldn't find this format. It may have been deleted.")).toBeTruthy();

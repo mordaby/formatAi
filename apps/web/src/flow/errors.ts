@@ -15,6 +15,16 @@ export type FlowError =
   | { kind: 'learnFailed'; problems: RepairProblem[] }
   | { kind: 'unexpected'; message: string };
 
+/** The API refused the AI step because the period's AI formats are used up (429 `limitHit { limit: 'aiLearns', period }`). */
+export function isAiQuotaHit(error: FlowError | undefined): error is FlowError & { kind: 'api' } {
+  return error?.kind === 'api' && error.code === 'limitHit' && error.limit === 'aiLearns';
+}
+
+/** The API says the session is gone (a stale "signed in"): who is signed in has to be read again. */
+export function isSessionGone(error: FlowError | undefined): boolean {
+  return error?.kind === 'api' && (error.code === 'signInForAi' || error.code === 'signInRequired');
+}
+
 /** The user (or a newer run) cancelled; not an error to show. */
 export function isCancellation(e: unknown): boolean {
   return e instanceof RpcAbortedError || (e instanceof DOMException && e.name === 'AbortError') || (e instanceof Error && e.name === 'CancelledError');

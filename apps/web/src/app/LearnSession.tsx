@@ -3,6 +3,7 @@ import { stripAiNotes, type AiStepPartCode, type LearnResult, type Rules, type T
 import { useLearnFlow, type UseLearnFlow } from '../flow/useLearnFlow';
 import { peekResultSession, seedResultSession } from '../pages/Result/session';
 import { webConfig } from '../config';
+import { useOnAi } from './aiReport';
 import { useMe } from './Me';
 import { fileOf, getPendingStore, keepPendingWithinTheHour, storeFile, type PendingLearn, type PendingResult } from './pendingLearn';
 import { useSignIn } from './SignIn';
@@ -89,8 +90,10 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   );
   // No anti-bot widget here: the free learn never reaches the AI step (the one thing Turnstile guarded), so it asks for no token.
   // (The Turnstile code stays: the lead form will use it.)
-  const flow = useLearnFlow({ getTier, ready: whenMeKnown, getAi });
-  const completion = useLearnFlow({ getTier, ready: whenMeKnown });
+  // What either flow learns about the AI step - what is left, a refusal - is told the app the one way (app/aiReport.ts).
+  const onAi = useOnAi();
+  const flow = useLearnFlow({ getTier, ready: whenMeKnown, getAi, onAi });
+  const completion = useLearnFlow({ getTier, ready: whenMeKnown, onAi });
   const [input, setInput] = useState<File | null>(null);
   const [output, setOutput] = useState<File | null>(null);
   const [masking, setMasking] = useState(true);
@@ -262,21 +265,6 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       ranOnce.current = true;
     }
   }, [restoring, status, doneResult, restored]);
-
-  // The API says the session is gone (a stale "signed in"): read who is signed in again, so "Sign in" works.
-  const flowError = flow.state.status === 'error' ? flow.state.error : undefined;
-  const sessionGone = flowError?.kind === 'api' && (flowError.code === 'signInForAi' || flowError.code === 'signInRequired');
-  const { refresh } = me;
-  useEffect(() => {
-    if (sessionGone) void refresh();
-  }, [sessionGone, refresh]);
-
-  // What is left of the AI learns, as the learn reported it.
-  const quota = flow.state.status === 'done' ? flow.state.ai?.quota : undefined;
-  const { setQuota } = me;
-  useEffect(() => {
-    if (quota) setQuota(quota);
-  }, [quota, setQuota]);
 
   const value = useMemo<LearnSession>(
     () => ({ flow, completion, input, output, masking, deepAnalysis, setInput, setOutput, setMasking, begin, finishWithAi, completeWithAi, startOver, restoring }),

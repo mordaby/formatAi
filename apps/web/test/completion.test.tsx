@@ -430,6 +430,25 @@ describe('"Finish with AI" completes only what is missing', () => {
     expect(line('col:Total').getAttribute('data-ai-step')).toBe('true');
   });
 
+  it('an answer that was counted but not used still updates what is left of the AI formats (the account menu says it)', async () => {
+    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 1, period: 'month' as const }, failedAttempts: 1, exhausted: false }));
+    const api = fakeApi({
+      user: USER,
+      learn: vi.fn(async () => ({ rules: null, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 1, period: 'month' as const } })),
+      registry: { learnOutcome },
+    });
+    const { engine } = engineWith(async (args, host) => {
+      await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: false, output: { columns: [] }, samples: [], skipColumns: [] });
+      return completionOutput(args, {}, { matches: false });
+    });
+    await start(engine, api);
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-kept');
+    fireEvent.click(await screen.findByRole('button', { name: 'Account menu for Dana Levi' }));
+    const panel = await screen.findByRole('group', { name: 'Account' });
+    await waitFor(() => expect(panel.textContent).toContain('AI formats left this month: 1'));
+  });
+
   it('the learn outcome is reported on the answer\'s own learn id (verified only when lock, match and production all hold)', async () => {
     const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
     const api = fakeApi({ user: USER, registry: { learnOutcome } });

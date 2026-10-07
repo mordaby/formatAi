@@ -6,6 +6,7 @@ import { defaultSourceName, limits, promptVersion, tiers, type CreateFormatReque
 import { completionPlan, fixedColumnShare, isCompletable } from '@formatai/shared';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useOnAi } from '../../app/aiReport';
 import { aiLeftLabel } from '../../app/aiQuota';
 import { LeaveDialog } from '../../app/LeaveGuard';
 import { useLearnSession } from '../../app/LearnSession';
@@ -125,13 +126,10 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
   // (a copied list is not among them: it is asked at Save, see `copied`).
   const oneTimers = useMemo(() => oneTimeQuestionsOf(completed?.oneTimers, result.path === 'llm' ? result.oneTimers?.questions : undefined), [completed?.oneTimers, result]);
   const [confirmWhole, setConfirmWhole] = useState(false);
-  // What the AI step reported for the answer on screen (the completion's, once one has been applied).
+  // What the AI step reported for the answer on screen (the completion's, once one has been applied). (What is left of the AI formats is
+  // kept by the flows themselves - `onAi`, app/aiReport.ts - whether or not an answer was used.)
   const aiInfo = completed ? completed.ai : ai;
-  const { setQuota } = me;
-  const quotaNow = completed?.ai?.quota;
-  useEffect(() => {
-    if (quotaNow) setQuota(quotaNow);
-  }, [quotaNow, setQuota]);
+  const onAi = useOnAi();
 
   // SPEC 21 v5 item 1: the free engine's own result, shown before the AI step. Once the AI step has completed it, it is an ordinary result.
   const partial = result.path === 'partial' && !completed ? result.partial : undefined;
@@ -224,7 +222,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
         if (info.metaStatus === 'differencesAccepted' && aiInfo?.learnId) {
           api.registry
             .learnOutcome(aiInfo.learnId, 'accepted')
-            .then((r) => me.setQuota(r.quota))
+            .then((r) => onAi({ quota: r.quota }))
             .catch(() => undefined);
         }
       },

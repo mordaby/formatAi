@@ -15,6 +15,8 @@ export interface UseLearnFlowOptions {
   getTurnstileToken?: () => Promise<string | undefined>;
   /** See `LearnFlowDeps.beforeSend`. Pass a stable function (it is a dependency of the flow instance). */
   beforeSend?: LearnFlowDeps['beforeSend'];
+  /** See `LearnFlowDeps.onAi` (app/aiReport.ts `useOnAi`). Pass a stable function. */
+  onAi?: LearnFlowDeps['onAi'];
 }
 
 export interface UseLearnFlow {
@@ -39,10 +41,22 @@ export function useLearnFlow(options: UseLearnFlowOptions = {}): UseLearnFlow {
   const getAi = options.getAi;
   const getTurnstileToken = options.getTurnstileToken;
   const beforeSend = options.beforeSend;
+  const onAi = options.onAi;
 
   const flow = useMemo(
-    () => new LearnFlow({ engine, api, tier, ...(getTier ? { getTier } : {}), ...(ready ? { ready } : {}), ...(getAi ? { getAi } : {}), ...(getTurnstileToken ? { getTurnstileToken } : {}), ...(beforeSend ? { beforeSend } : {}) }),
-    [engine, api, tier, getTier, ready, getAi, getTurnstileToken, beforeSend],
+    () =>
+      new LearnFlow({
+        engine,
+        api,
+        tier,
+        ...(getTier ? { getTier } : {}),
+        ...(ready ? { ready } : {}),
+        ...(getAi ? { getAi } : {}),
+        ...(getTurnstileToken ? { getTurnstileToken } : {}),
+        ...(beforeSend ? { beforeSend } : {}),
+        ...(onAi ? { onAi } : {}),
+      }),
+    [engine, api, tier, getTier, ready, getAi, getTurnstileToken, beforeSend, onAi],
   );
   // Leaving the screen stops a run in progress (the worker drops the call; it keeps what it holds for other screens).
   useEffect(() => () => flow.cancel(), [flow]);

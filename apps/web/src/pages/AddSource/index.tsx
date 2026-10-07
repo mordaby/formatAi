@@ -8,6 +8,7 @@ import { defaultSourceName, limits, promptVersion } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { isAiQuotaHit, useAiLimit } from '../../app/AiLimit';
+import { useOnAi } from '../../app/aiReport';
 import { useLearnSession } from '../../app/LearnSession';
 import { LinkButton } from '../../app/LinkButton';
 import { useMe } from '../../app/Me';
@@ -171,7 +172,9 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
 
   // (a stable function: a new one every render would make a new flow every render, and drop the learn in progress)
   const getTier = useCallback(() => meRef.current.tier, []);
-  const flow = useLearnFlow({ getTier });
+  // What the learn learns about the AI step (what is left, a refusal) is told the app the same way as everywhere (app/aiReport.ts).
+  const onAi = useOnAi();
+  const flow = useLearnFlow({ getTier, onAi });
   const target = useMemo(() => formatOf(format), [format]);
 
   const [sourceName, setSourceName] = useState('');
@@ -215,17 +218,15 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   };
 
   // The AI step was refused for the quota: the out-of-AI-formats dialog says so (and when they come back) over the form, the files kept -
-  // not an error screen. The known quota is 0 from here on.
+  // not an error screen. (The known quota is 0 from here on: `onAi` said so.)
   const aiLimit = useAiLimit();
   const quotaError = state.status === 'error' && isAiQuotaHit(state.error) ? state.error : undefined;
-  const { setQuota } = me;
   const { reset } = flow;
   useEffect(() => {
     if (!quotaError) return;
-    if (quotaError.period) setQuota({ remaining: 0, period: quotaError.period });
     reset();
     aiLimit.open({ period: quotaError.period });
-  }, [quotaError, setQuota, reset, aiLimit]);
+  }, [quotaError, reset, aiLimit]);
 
   let view;
   if (state.status === 'warn' || state.status === 'blocked') {
@@ -398,6 +399,7 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
   const { api } = useServices();
   const me = useMe();
   const signIn = useSignIn();
+  const onAi = useOnAi();
   const navigate = useNavigate();
   const rules = result.rules!;
   // The session ended (a save refused for it): read who is signed in, and sign in again in a new tab - this page, the learn and the edits
@@ -441,7 +443,7 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
         if (info.metaStatus === 'differencesAccepted' && ai?.learnId) {
           api.registry
             .learnOutcome(ai.learnId, 'accepted')
-            .then((r) => me.setQuota(r.quota))
+            .then((r) => onAi({ quota: r.quota }))
             .catch(() => undefined);
         }
         void me.refreshFormats();

@@ -73,6 +73,12 @@ export interface AiInfo {
   cached?: boolean | undefined;
 }
 
+/**
+ * What a flow tells the app about the AI step as soon as it knows (`LearnFlowDeps.onAi`): what is left of the AI formats, as the server just
+ * said (an answer, a round, a step, an outcome report), or a refusal (for the quota, or because the session is gone).
+ */
+export type AiEvent = { quota: AiLearnQuotaState } | { error: FlowError };
+
 export type LearnFlowState =
   | { status: 'idle'; sent: readonly SentRecord[] }
   | ({ status: 'reading' } & Common)
@@ -156,6 +162,11 @@ export interface LearnFlowDeps {
    * spending LLM calls by accident.
    */
   beforeSend?: (record: SentRecord) => void | Promise<void>;
+  /**
+   * Every flow tells the app the same way (C10): the quota after each answer of the API and each outcome report, and a refusal the run ended
+   * with (the app shows the quota everywhere, and reads who is signed in again when the session is gone). See app/aiReport.ts.
+   */
+  onAi?: (event: AiEvent) => void;
 }
 
 const IDLE: LearnFlowState = { status: 'idle', sent: [] };
@@ -266,6 +277,7 @@ export class LearnFlow {
           learnId = res.learnId;
           lastProblems = res.problems;
           ai = { learnId: res.learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, cached: res.cached };
+          if (res.quota && !stale()) this.deps.onAi?.({ quota: res.quota });
           return asCallResult(res);
         } catch (e) {
           hostError = e;
@@ -304,6 +316,7 @@ export class LearnFlow {
             failedAttempts: res.failedAttempts,
             quota: res.quota ?? ai?.quota,
           };
+          if (res.quota && !stale()) this.deps.onAi?.({ quota: res.quota });
           return asCallResult(res);
         } catch (e) {
           hostError = e;
@@ -320,6 +333,7 @@ export class LearnFlow {
           const res = await this.deps.api.step(learnId, payload, rounds, { signal: abort.signal });
           lastProblems = res.problems;
           ai = { ...ai, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota ?? ai?.quota };
+          if (res.quota && !stale()) this.deps.onAi?.({ quota: res.quota });
           return asCallResult(res);
         } catch (e) {
           hostError = e;
@@ -360,7 +374,9 @@ export class LearnFlow {
       }
     } catch (e) {
       if (stale() || isCancellation(e)) return;
-      this.set({ status: 'error', error: toFlowError(e, hostError), sent });
+      const error = toFlowError(e, hostError);
+      this.set({ status: 'error', error, sent });
+      if (error.kind === 'api') this.deps.onAi?.({ error });
     } finally {
       if (this.abort === abort) this.abort = null;
     }
@@ -370,6 +386,7 @@ export class LearnFlow {
   private async reportOutcome(runId: number, learnId: string, outcome: 'verified' | 'failed'): Promise<void> {
     try {
       const res = await this.deps.api.registry.learnOutcome(learnId, outcome);
+      if (runId === this.runId) this.deps.onAi?.({ quota: res.quota });
       const s = this.state;
       if (runId !== this.runId || s.status !== 'done') return;
       this.set({ ...s, ai: { ...s.ai, learnId, counted: res.counted, failedAttempts: res.failedAttempts, quota: res.quota, exhausted: res.exhausted } });
