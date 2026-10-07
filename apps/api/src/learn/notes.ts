@@ -18,11 +18,8 @@ import {
   type LearnResult,
   type PayloadCell,
 } from '@formatai/shared';
+import { isRecord } from '../http.js';
 import type { ProtectionStore } from '../protection/store.js';
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
 
 // ---------- structure: an invalid note is dropped, never a reason to repair ----------
 

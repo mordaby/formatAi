@@ -1,12 +1,13 @@
 // What every registry route needs and would otherwise repeat: who is calling, ownership-checked reads, the way a refusal is
 // sent. Shared by `routes.ts` (formats and conversions) and `sourceRoutes.ts` (sources, SPEC 8.15).
-import type { ApiErrorBody, Tier } from '@formatai/shared';
+import type { Tier } from '@formatai/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { ObjectId } from 'mongodb';
 import type { AppDb } from '../db.js';
 import type { ConversionDoc, FormatDoc, SourceDoc } from '../models.js';
 import { identityOf, type Identity } from '../protection/identity.js';
 import type { Protection } from '../protection/index.js';
+import { fail } from '../http.js';
 import { objectIdOf } from './ids.js';
 import type { RulesCheck } from './rules.js';
 
@@ -33,9 +34,8 @@ export interface RegistryContextOptions {
   identify?: (req: FastifyRequest) => Identity;
 }
 
-export function fail(reply: FastifyReply, status: number, body: ApiErrorBody): FastifyReply {
-  return reply.code(status).send(body);
-}
+/** (The shared refusal: `../http.ts`.) */
+export { fail };
 
 /**
  * How a rules file that failed `checkRulesFile` (or `overCap`) is answered. Over a cap of what one saved format may keep

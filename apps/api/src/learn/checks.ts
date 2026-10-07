@@ -34,13 +34,10 @@ import {
   type Tier,
   unsupportedDespiteEvidence,
 } from '@formatai/shared';
+import { isRecord } from '../http.js';
 import { dropInvalidNotes } from './notes.js';
 import { overfitLint } from './overfitLint.js';
 import { buildSampleInputTable, runOnSamples } from './sampleRun.js';
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
 
 function looksLikeExpr(v: unknown): v is Expr {
   return isRecord(v) && ('col' in v || 'const' in v || 'param' in v || 'op' in v);

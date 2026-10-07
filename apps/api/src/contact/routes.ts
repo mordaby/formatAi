@@ -14,16 +14,16 @@ import {
   checkLead,
   checkWaitlist,
   limits,
-  type ApiErrorBody,
   type ContactCheck,
   type ContactResponse,
 } from '@formatai/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { FeedbackDoc, LeadDoc } from '../models.js';
 import { identityOf, type Identity } from '../protection/identity.js';
-import { hashIp, normalizeIp } from '../protection/ip.js';
+import { fail } from '../http.js';
+import { hashIp } from '../protection/ip.js';
 import { dailyCounterExpiry, dayKey, endOfUtcDay } from '../protection/keys.js';
-import { createRateLimiter } from '../protection/rateLimit.js';
+import { createRateLimiter, limitByIp } from '../protection/rateLimit.js';
 import type { Protection } from '../protection/index.js';
 import { objectIdOf } from '../registry/ids.js';
 import type { ContactStore } from './store.js';
@@ -47,10 +47,6 @@ interface Admitted<T> {
   at: Date;
 }
 
-function fail(reply: FastifyReply, status: number, body: ApiErrorBody): FastifyReply {
-  return reply.code(status).send(body);
-}
-
 export function registerContactRoutes(app: FastifyInstance, opts: RegisterContactRoutesOptions): void {
   const { protection, store } = opts;
   const identify = opts.identify ?? identityOf;
@@ -63,12 +59,7 @@ export function registerContactRoutes(app: FastifyInstance, opts: RegisterContac
   });
 
   /** Per-IP request rate limit: runs before the body is even parsed. */
-  const rateLimit = async (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> => {
-    const verdict = limiter.hit(normalizeIp(req.ip));
-    if (verdict.allowed) return undefined;
-    void reply.header('retry-after', String(verdict.retryAfterSec));
-    return fail(reply, 429, { error: 'rateLimited' });
-  };
+  const rateLimit = (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> => limitByIp(limiter, req, reply);
 
   /**
    * The checks every form shares: the body, then Turnstile (visitors), then the daily cap. Returns the checked fields and who is

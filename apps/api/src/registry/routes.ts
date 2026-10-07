@@ -39,7 +39,8 @@ import type { Identity } from '../protection/identity.js';
 import type { Protection } from '../protection/index.js';
 import { newFormatsKey } from '../protection/keys.js';
 import { reserveLearn } from '../protection/reserve.js';
-import { isRecord, nameKey, parseName, parseRun, parseSaveFields, parseSourceChoice, parseUpdateFields } from './bodies.js';
+import { isRecord } from '../http.js';
+import { nameKey, parseName, parseRun, parseSaveFields, parseSourceChoice, parseUpdateFields } from './bodies.js';
 import { createRegistryContext, fail, rulesRefusal, type Caller } from './context.js';
 import { conversionWrite, saveVersion, versionCap } from './conversionStore.js';
 import {

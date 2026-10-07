@@ -79,7 +79,8 @@ import {
   type Settled,
 } from '../protection/aiLearns.js';
 import { identityOf, ownerOf, type Identity } from '../protection/identity.js';
-import { normalizeIp } from '../protection/ip.js';
+import { fail } from '../http.js';
+import { limitByIp } from '../protection/rateLimit.js';
 import { aiQuotaOf, aiRequestsSpec, dayKey, failedRefundsCap, repairKey, stepKey, tierOf } from '../protection/keys.js';
 import { issueLearnId, verifyLearnId } from '../protection/learnId.js';
 import type { Protection } from '../protection/index.js';
@@ -167,10 +168,6 @@ interface Admitted {
   prompt: PromptVersion;
 }
 
-function fail(reply: FastifyReply, status: number, body: ApiErrorBody): FastifyReply {
-  return reply.code(status).send(body);
-}
-
 /** SPEC 13 `llm_calls`: one document per call this learn made. `cacheHit` is the structure cache
  * (SPEC 9.5) - false for a real call, whatever the provider's own prompt cache did (`tokensCached`). */
 function whoOf(identity: UserIdentity): Pick<LlmCallDoc, 'anonId' | 'userId'> {
@@ -238,12 +235,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
   };
 
   /** Per-IP request rate limit (config): runs before the body is even parsed. */
-  const rateLimit = async (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> => {
-    const verdict = protection.rateLimiter.hit(normalizeIp(req.ip));
-    if (verdict.allowed) return undefined;
-    void reply.header('retry-after', String(verdict.retryAfterSec));
-    return fail(reply, 429, { error: 'rateLimited' });
-  };
+  const rateLimit = (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> => limitByIp(protection.rateLimiter, req, reply);
 
   /** SPEC 9.5 the daily budget (the kill switch). Returns the refusal to send, or null when the day still has budget. */
   const budgetRefusal = async (now: Date): Promise<Refusal | null> => {

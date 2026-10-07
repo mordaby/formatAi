@@ -21,6 +21,7 @@ import {
   type SignatureColumn,
   type Tier,
 } from '@formatai/shared';
+import { isRecord } from '../http.js';
 
 /** What the rules file is checked to be (SPEC 9.2 layers 1-4: structure, references, types, limits). */
 export type RulesCheck =
@@ -127,10 +128,6 @@ export interface SaveMeta {
   model?: string;
   promptVersion?: string;
   now: Date;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 /**
