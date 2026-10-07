@@ -78,6 +78,14 @@ export function useSendPreview(opts: { input: File | null; output: File | null; 
   return state;
 }
 
+type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
+
+/** A note on the last flip, said in the language on screen. */
+interface Note {
+  tone: 'warn' | 'info';
+  text(t: Translate): string;
+}
+
 /** What a flip asked, to say what it did once the new preview is in. */
 interface Flip {
   side: Side;
@@ -90,7 +98,7 @@ interface Flip {
  * A column as the dialog names it: its header, with its side when the other side (or its own) has a column of the same name - a copy is
  * "ID (input)" and "ID (output)", so two switches never share a name.
  */
-function columnName(columns: Columns, side: Side, index: number, t: (key: MessageKey, params?: Record<string, string | number>) => string): string {
+function columnName(columns: Columns, side: Side, index: number, t: Translate): string {
   const header = columns[side][index]?.header ?? '';
   if (header === '') return `#${index + 1}`;
   const same = [...columns.input, ...columns.output].filter((c) => c.header === header).length;
@@ -113,12 +121,13 @@ export function SendPreviewDialog({ open, onClose }: { open: boolean; onClose():
   const state = useSendPreview({ input, output, masking, choices: columnChoices, tier: me.tier, enabled: open });
   const sent = session.flow.state.sent;
   const flip = useRef<Flip | null>(null);
-  const [notes, setNotes] = useState<{ tone: 'warn' | 'info'; text: string }[]>([]);
+  // (each note is said in the language on screen when it is shown: a function of `t`, not a string)
+  const [notes, setNotes] = useState<Note[]>([]);
   const preview = state.status === 'done' ? state.preview : null;
   const sentId = useId();
 
-  // Another example, or masking turned on or off: the last flip's notes are about something else.
-  useEffect(() => setNotes([]), [input, output, masking]);
+  // Another example, masking turned on or off, or the dialog closed: the last flip's notes are about something else.
+  useEffect(() => setNotes([]), [input, output, masking, open]);
   // A flip's notes, once its preview is in: un-hiding what code found to be identifiers, hiding real values, and the columns that went with it.
   useEffect(() => {
     const f = flip.current;
@@ -126,19 +135,28 @@ export function SendPreviewDialog({ open, onClose }: { open: boolean; onClose():
     flip.current = null;
     const col = f.before[f.side][f.index];
     if (!col) return;
-    const name = columnName(f.before, f.side, f.index, t);
-    const next: { tone: 'warn' | 'info'; text: string }[] = [];
-    if (!f.hidden && col.class === 'identifier') next.push({ tone: 'warn', text: t(col.identifier?.shape ? WARN[col.identifier.shape] : 'sendPreview.warn.identifier', { column: name }) });
-    if (f.hidden && !col.hiddenByDefault) next.push({ tone: 'info', text: t(col.class === 'measure' ? 'sendPreview.hide.measure' : 'sendPreview.hide.other', { column: name }) });
-    const moved: string[] = [];
+    const name = (tr: Translate): string => columnName(f.before, f.side, f.index, tr);
+    const next: Note[] = [];
+    if (!f.hidden && col.class === 'identifier') {
+      const key = col.identifier?.shape ? WARN[col.identifier.shape] : 'sendPreview.warn.identifier';
+      next.push({ tone: 'warn', text: (tr) => tr(key, { column: name(tr) }) });
+    }
+    if (f.hidden && !col.hiddenByDefault) {
+      const key: MessageKey = col.class === 'measure' ? 'sendPreview.hide.measure' : 'sendPreview.hide.other';
+      next.push({ tone: 'info', text: (tr) => tr(key, { column: name(tr) }) });
+    }
+    const moved: { side: Side; header: string }[] = [];
     for (const side of ['input', 'output'] as const) {
       preview.columns[side].forEach((c, k) => {
-        if ((side !== f.side || k !== f.index) && c.hidden !== f.before[side][k]?.hidden) moved.push(t(side === 'input' ? 'sendPreview.side.input' : 'sendPreview.side.output', { column: c.header || `#${k + 1}` }));
+        if ((side !== f.side || k !== f.index) && c.hidden !== f.before[side][k]?.hidden) moved.push({ side, header: c.header || `#${k + 1}` });
       });
     }
-    if (moved.length > 0) next.push({ tone: 'info', text: t('sendPreview.linked', { columns: moved.join(', ') }) });
+    if (moved.length > 0) {
+      const list = (tr: Translate): string => moved.map((m) => tr(m.side === 'input' ? 'sendPreview.side.input' : 'sendPreview.side.output', { column: m.header })).join(', ');
+      next.push({ tone: 'info', text: (tr) => tr('sendPreview.linked', { columns: list(tr) }) });
+    }
     setNotes(next);
-  }, [preview, t]);
+  }, [preview]);
 
   const choose = (side: Side, index: number, hidden: boolean): void => {
     if (!preview) return;
@@ -196,7 +214,7 @@ export function SendPreviewDialog({ open, onClose }: { open: boolean; onClose():
         <div className="send-preview__notes" aria-live="polite">
           {notes.map((n, i) => (
             <InlineMessage key={i} tone={n.tone}>
-              {n.text}
+              {n.text(t)}
             </InlineMessage>
           ))}
         </div>
