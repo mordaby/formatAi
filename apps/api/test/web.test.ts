@@ -11,6 +11,7 @@ import { makeEnv } from './protection/harness.js';
 
 const INDEX = '<!doctype html><html><head><title>t</title></head><body><div id="root"></div></body></html>';
 const SCRIPT = `console.log("${'x'.repeat(2000)}");`;
+const FONT = 'wOF2-FONT-BYTES';
 
 let root: string;
 let dist: string;
@@ -22,6 +23,8 @@ beforeAll(() => {
   writeFileSync(path.join(dist, 'assets', 'app-abc123.js'), SCRIPT);
   writeFileSync(path.join(dist, 'assets', 'app-abc123.js.br'), 'BROTLI-BYTES');
   writeFileSync(path.join(dist, 'assets', 'app-abc123.js.gz'), 'GZIP-BYTES');
+  mkdirSync(path.join(dist, 'fonts', 'ibm-plex-sans-hebrew'), { recursive: true });
+  writeFileSync(path.join(dist, 'fonts', 'ibm-plex-sans-hebrew', 'IBMPlexSansHebrew-Regular.woff2'), FONT);
   writeFileSync(path.join(root, 'secret.txt'), 'outside the web root');
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -76,6 +79,15 @@ describe('the web app, served by the API', () => {
     const plain = await a.inject({ method: 'GET', url: '/assets/app-abc123.js' });
     expect(plain.headers['content-encoding']).toBeUndefined();
     expect(String(plain.headers.vary).toLowerCase()).toContain('accept-encoding');
+  });
+
+  it('serves the self-hosted font as woff2, from its own origin, revalidated (its name carries no hash)', async () => {
+    const res = await (await start()).inject({ method: 'GET', url: '/fonts/ibm-plex-sans-hebrew/IBMPlexSansHebrew-Regular.woff2' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('font/woff2');
+    expect(res.headers['cache-control']).toBe('no-cache');
+    expect(res.headers['content-security-policy']).toBe(CONTENT_SECURITY_POLICY);
+    expect(res.body).toBe(FONT);
   });
 
   it('answers a page route (no file extension) with index.html: the app decides what to show', async () => {
@@ -151,13 +163,17 @@ describe('the Content-Security-Policy', () => {
     return found ? found.split(' ').slice(1) : [];
   };
 
-  it('allows exactly the external origins the app loads: Turnstile, Google Fonts and the Google avatar', () => {
+  it('allows exactly the external origins the app loads: Turnstile and the Google avatar', () => {
     expect(directive('script-src')).toEqual(["'self'", 'https://challenges.cloudflare.com']);
     expect(directive('frame-src')).toEqual(['https://challenges.cloudflare.com']);
-    expect(directive('style-src')).toContain('https://fonts.googleapis.com');
-    expect(directive('font-src')).toContain('https://fonts.gstatic.com');
     expect(directive('img-src')).toContain('https://*.googleusercontent.com');
     expect(directive('connect-src')).toEqual(["'self'"]);
+  });
+
+  it('loads fonts and styles from our own origin only: the font is self-hosted, no font provider (owner decision 2026-10-07)', () => {
+    expect(directive('font-src')).toEqual(["'self'"]);
+    expect(directive('style-src')).toEqual(["'self'", "'unsafe-inline'"]);
+    expect(CONTENT_SECURITY_POLICY).not.toMatch(/fonts\.googleapis|gstatic/);
   });
 
   it('forbids inline and eval script, plugins, other base URLs and being framed', () => {

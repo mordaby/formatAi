@@ -184,8 +184,9 @@ describe('the overview', () => {
     expect(within(row('passed the server checks')).getByText('6')).toBeTruthy();
     expect(within(row('answered, but did not pass the checks')).getByText('2')).toBeTruthy();
     expect(within(row('Answered from the saved structure (no AI call)')).getByText('3')).toBeTruthy();
-    // learns done on the computer are not known to the server: n/a, never 0
-    expect(within(row("Solved on the person's own computer")).getByText('n/a')).toBeTruthy();
+    // learns done on the computer are not tracked yet (no event records them): said so, never 0
+    expect(within(row("Solved on the person's own computer")).getByText('Not tracked yet')).toBeTruthy();
+    expect(screen.getByText(/Learns done on the computer leave no trace on the server yet, so they are not counted./)).toBeTruthy();
     expect(within(row('Runs, all time')).getByText('41')).toBeTruthy();
     expect(within(row('AI calls')).getByText('14')).toBeTruthy();
     expect(within(row('Estimated cost')).getByText('$0.0425')).toBeTruthy();
@@ -223,8 +224,8 @@ describe('the overview', () => {
     expect(within(rowByLabel('Estimated cost')).getByText('n/a')).toBeTruthy();
   });
 
-  it('shows the local learns when the server knows them, and switches the time range', async () => {
-    const overviewCall = vi.fn(async (days: number) => overview({ days, learns: { ai: 1, aiVerified: 1, aiFailed: 0, aiErrored: 0, cache: 0, local: 17 } }));
+  it('switches the time range', async () => {
+    const overviewCall = vi.fn(async (days: number) => overview({ days, learns: { ai: 17, aiVerified: 1, aiFailed: 0, aiErrored: 0, cache: 0, local: null } }));
     adminApp(adminApi({ overview: overviewCall }));
     await screen.findByText('17');
     expect(screen.getByRole('button', { name: 'Last 30 days' }).getAttribute('aria-pressed')).toBe('true');
@@ -478,8 +479,8 @@ describe('Hebrew', () => {
     const tabs = screen.getByRole('navigation', { name: 'חלקי הניהול' });
     expect(within(tabs).getAllByRole('button').map((b) => b.textContent)).toEqual(['סקירה', 'בקשות לפונקציות', 'משתמשים', 'פניות ומשוב']);
     expect(await screen.findByText('משתמשים עם חשבון')).toBeTruthy();
-    // "not known" is said in words, not as 0
-    expect(within(screen.getByText('נפתרו במחשב של המשתמש').closest('tr')!).getByText('לא ידוע')).toBeTruthy();
+    // "not tracked yet" is said in words, not as 0
+    expect(within(screen.getByText('נפתרו במחשב של המשתמש').closest('tr')!).getByText('עדיין לא נמדד')).toBeTruthy();
     expect(screen.getByRole('button', { name: '30 הימים האחרונים' })).toBeTruthy();
 
     fireEvent.click(within(tabs).getByRole('button', { name: 'משתמשים' }));

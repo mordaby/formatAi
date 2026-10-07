@@ -94,10 +94,10 @@ function Numbers({ o }: { o: AdminOverview }) {
               { label: t('admin.ov.learns.aiFailed'), value: num(o.learns.aiFailed), sub: true },
               { label: t('admin.ov.learns.aiErrored'), value: num(o.learns.aiErrored), sub: true },
               { label: t('admin.ov.learns.cache'), value: num(o.learns.cache) },
-              { label: t('admin.ov.learns.local'), value: o.learns.local === null ? t('admin.na') : num(o.learns.local) },
+              { label: t('admin.ov.learns.local'), value: t('admin.ov.learns.localNotTracked') },
             ]}
           />
-          <p className="muted admin-note">{o.learns.local === null ? `${t('admin.ov.learns.localNote')} ` : ''}{t('admin.ov.learns.verifiedNote')}</p>
+          <p className="muted admin-note">{t('admin.ov.learns.localNote')} {t('admin.ov.learns.verifiedNote')}</p>
         </Block>
 
         <Block title={t('admin.ov.registry')}>

@@ -1,4 +1,4 @@
-import { connectDb, ensureIndexes } from './db.js';
+import { backfillCounterExpiry, connectDb, ensureIndexes } from './db.js';
 import { loadEnv } from './env.js';
 import { checkProductionConfig, formatProductionProblems, webDistDir } from './productionConfig.js';
 import { buildServer } from './server.js';
@@ -21,6 +21,9 @@ async function main(): Promise<void> {
   const db = await connectDb(env);
   if (db) {
     await ensureIndexes(db);
+    // Retention (owner decision 2026-10-07): counters from before every counter had an expiry get one, once (a no-op afterwards).
+    const backfilled = await backfillCounterExpiry(db);
+    if (backfilled > 0) console.info(`usage_counters: set the expiry of ${backfilled} counter(s) written without one`);
   }
 
   // One service, one origin: production (or an explicit WEB_DIST) serves the built web app too. Development keeps Vite on 5173.

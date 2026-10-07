@@ -2,7 +2,7 @@
 // the `llm_calls` ledger - behind one small interface, so the route logic is the same against real
 // MongoDB and against the in-memory store used by tests and by dev runs with no database.
 import { limits, type ValueType } from '@formatai/shared';
-import type { AppDb } from '../db.js';
+import type { AppDb, CounterWriteOptions } from '../db.js';
 import { incrementCounter } from '../db.js';
 import type { FunctionRequestDoc, LearnCacheDoc, LlmCallDoc } from '../models.js';
 import type { DaySpend } from './budget.js';
@@ -33,14 +33,15 @@ export interface FunctionRequestWrite {
 
 export interface ProtectionStore {
   /** Atomically adds `by` (may be negative) to a usage counter, creating it; returns the new total.
-   * Pass `expiresAt` for anon/ip/repair keys (TTL-expired); omit it for user keys. */
-  incrementCounter(key: string, by: number, expiresAt?: Date): Promise<number>;
+   * Every counter has an expiry (owner decision 2026-10-07; see `incrementCounter` in db.ts): `expiresAt` is set on every write,
+   * or with `keepExpiry` only when the counter has none. */
+  incrementCounter(key: string, by: number, expiresAt: Date, opts?: CounterWriteOptions): Promise<number>;
   /** A usage counter's current value (0 when absent or expired). */
   getCounter(key: string): Promise<number>;
   /** Atomically moves a counter that holds a small state number from `from` to `to` (an absent counter is
-   * 0), refreshing `expiresAt` when given. True when it was in `from` and now is in `to`; false when another
+   * 0), refreshing `expiresAt`. True when it was in `from` and now is in `to`; false when another
    * request got there first - which is what makes a state change happen at most once (SPEC 21 v5). */
-  transitionCounter(key: string, from: number, to: number, expiresAt?: Date): Promise<boolean>;
+  transitionCounter(key: string, from: number, to: number, expiresAt: Date): Promise<boolean>;
   /** What UTC day `day` (`yyyy-mm-dd`) has spent so far. */
   getSpend(day: string): Promise<DaySpend>;
   /** Atomically adds a call's cost to the day's total. */
@@ -65,21 +66,21 @@ export interface ProtectionStore {
 /** MongoDB-backed store. */
 export function createMongoStore(appDb: AppDb): ProtectionStore {
   return {
-    incrementCounter: (key, by, expiresAt) => incrementCounter(appDb, key, by, expiresAt),
+    incrementCounter: (key, by, expiresAt, opts) => incrementCounter(appDb, key, by, expiresAt, opts),
 
     async getCounter(key) {
       const doc = await appDb.usageCounters.findOne({ key });
       if (!doc) return 0;
-      // The TTL index removes expired counters only every minute or so; the check here is exact.
+      // The TTL index removes expired counters only every minute or so; the check here is exact. (`expiresAt` may be missing only on a
+      // counter written before every counter had one, until `backfillCounterExpiry` has run.)
       if (doc.expiresAt && doc.expiresAt.getTime() <= Date.now()) return 0;
       return doc.count;
     },
 
     async transitionCounter(key, from, to, expiresAt) {
-      const set = expiresAt ? { count: to, expiresAt } : { count: to };
       try {
         // Upsert only makes sense from 0 (an absent counter); from any other state a miss means "not in `from`".
-        const res = await appDb.usageCounters.updateOne({ key, count: from }, { $set: set }, { upsert: from === 0 });
+        const res = await appDb.usageCounters.updateOne({ key, count: from }, { $set: { count: to, expiresAt } }, { upsert: from === 0 });
         return res.modifiedCount + res.upsertedCount > 0;
       } catch (err) {
         // The counter exists in another state: the upsert's insert hits the unique `key` index.
@@ -163,6 +164,10 @@ export interface MemoryStore extends ProtectionStore {
   readonly ledger: LlmCallDoc[];
   /** Current value of a usage counter (0 when absent or expired), for assertions. */
   counter(key: string): number;
+  /** The `expiresAt` of a live usage counter (undefined when absent or expired), for assertions. */
+  counterExpiry(key: string): Date | undefined;
+  /** The keys of the live usage counters, for assertions. */
+  counterKeys(): string[];
   readonly cacheEntries: Map<string, LearnCacheDoc>;
   readonly spend: Map<string, DaySpend>;
   /** The `function_requests` documents by key, for assertions. */
@@ -170,15 +175,15 @@ export interface MemoryStore extends ProtectionStore {
 }
 
 export function createMemoryStore(now: () => Date = () => new Date()): MemoryStore {
-  const counters = new Map<string, { count: number; expiresAt?: Date }>();
+  const counters = new Map<string, { count: number; expiresAt: Date }>();
   const spend = new Map<string, DaySpend>();
   const cacheEntries = new Map<string, LearnCacheDoc>();
   const ledger: LlmCallDoc[] = [];
   const functionRequests = new Map<string, FunctionRequestDoc>();
 
-  const live = (key: string): { count: number; expiresAt?: Date } | undefined => {
+  const live = (key: string): { count: number; expiresAt: Date } | undefined => {
     const c = counters.get(key);
-    if (c?.expiresAt && c.expiresAt.getTime() <= now().getTime()) {
+    if (c && c.expiresAt.getTime() <= now().getTime()) {
       counters.delete(key);
       return undefined;
     }
@@ -191,24 +196,26 @@ export function createMemoryStore(now: () => Date = () => new Date()): MemorySto
     spend,
     functionRequests,
     counter: (key) => live(key)?.count ?? 0,
+    counterExpiry: (key) => live(key)?.expiresAt,
+    counterKeys: () => [...counters.keys()].filter((k) => live(k) !== undefined),
 
     async getCounter(key) {
       return live(key)?.count ?? 0;
     },
 
     async transitionCounter(key, from, to, expiresAt) {
-      const c = live(key) ?? { count: 0 };
+      const c = live(key) ?? { count: 0, expiresAt };
       if (c.count !== from) return false;
       c.count = to;
-      if (expiresAt) c.expiresAt = expiresAt;
+      c.expiresAt = expiresAt;
       counters.set(key, c);
       return true;
     },
 
-    async incrementCounter(key, by, expiresAt) {
-      const c = live(key) ?? { count: 0 };
+    async incrementCounter(key, by, expiresAt, opts = {}) {
+      const c = live(key) ?? { count: 0, expiresAt };
       c.count += by;
-      if (expiresAt) c.expiresAt = expiresAt;
+      if (!opts.keepExpiry) c.expiresAt = expiresAt;
       counters.set(key, c);
       return c.count;
     },

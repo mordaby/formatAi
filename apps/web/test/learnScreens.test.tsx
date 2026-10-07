@@ -1,3 +1,4 @@
+import { limits } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
@@ -40,9 +41,9 @@ describe('Home', () => {
     renderApp();
     fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
     const panel = screen.getByRole('region', { name: 'See what we send' });
-    expect(panel.textContent).toContain('Up to 12 sample rows. Names, ID numbers and other text are replaced with look-alike values first.');
+    expect(panel.textContent).toContain(`Up to ${limits.payload.maxPairs} sample rows. Names, identifier numbers and other text are replaced with look-alike values first.`);
     fireEvent.click(screen.getByRole('switch', { name: 'Masking' }));
-    expect(panel.textContent).toContain('Up to 12 sample rows, exactly as they are.');
+    expect(panel.textContent).toContain(`Up to ${limits.payload.maxPairs} sample rows, exactly as they are.`);
   });
 
   it('enables Learn only with both files, and shows their rows and columns', async () => {

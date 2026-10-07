@@ -16,7 +16,8 @@ import {
   stateOf,
   type AiLearnCtx,
 } from '../../src/protection/aiLearns.js';
-import type { AiQuota } from '../../src/protection/keys.js';
+import type { CounterWriteOptions } from '../../src/db.js';
+import { monthlyCounterExpiry, type AiQuota } from '../../src/protection/keys.js';
 import { reserveLearn } from '../../src/protection/reserve.js';
 import { createMemoryStore } from '../../src/protection/store.js';
 
@@ -28,7 +29,7 @@ function setup(limit = 10, unlimited = false) {
   const store = createMemoryStore(() => now);
   const quota: AiQuota = unlimited
     ? { period: 'unlimited', spec: null }
-    : { period: 'month', spec: { key: QUOTA_KEY, limit, limitCode: 'aiLearns' } };
+    : { period: 'month', spec: { key: QUOTA_KEY, limit, expiresAt: monthlyCounterExpiry(now), limitCode: 'aiLearns' } };
   let n = 0;
   /** A new learn on the same pair: its unit is reserved, as the route does before the LLM call. */
   const startLearn = async (): Promise<AiLearnCtx> => {
@@ -147,7 +148,7 @@ describe('markSucceeded', () => {
     const { store, startLearn } = setup();
     const ctx = await startLearn();
     await settleLearn(ctx, { answered: true, verified: false });
-    await store.incrementCounter(`aiFail:user:u1:${ctx.group}`, -1); // the window expired underneath it
+    await store.incrementCounter(`aiFail:user:u1:${ctx.group}`, -1, now, { keepExpiry: true }); // the window expired underneath it
     await markSucceeded(ctx);
     expect(await failedAttemptsOf(store, 'user:u1', ctx.group)).toBe(0);
   });
@@ -156,8 +157,13 @@ describe('markSucceeded', () => {
     let clock = now;
     const store = createMemoryStore(() => clock);
     const writes: { key: string; by: number; expiresAt: Date | undefined }[] = [];
-    const recording = { ...store, incrementCounter: (key: string, by: number, expiresAt?: Date) => (writes.push({ key, by, expiresAt }), store.incrementCounter(key, by, expiresAt)) };
-    const quota: AiQuota = { period: 'month', spec: { key: QUOTA_KEY, limit: 10, limitCode: 'aiLearns' } };
+    const recording = {
+      ...store,
+      incrementCounter: (key: string, by: number, expiresAt: Date, opts?: CounterWriteOptions) => (
+        writes.push({ key, by, expiresAt }), store.incrementCounter(key, by, expiresAt, opts)
+      ),
+    };
+    const quota: AiQuota = { period: 'month', spec: { key: QUOTA_KEY, limit: 10, expiresAt: monthlyCounterExpiry(now), limitCode: 'aiLearns' } };
     const ctx: AiLearnCtx = { store: recording, owner: 'user:u1', quota, group: groupOf('b'.repeat(64)), uuid: 'learn-x', learnExpiresAt: new Date(now.getTime() + 72 * 60 * 60_000), now };
     expect((await reserveLearn(recording, [quota.spec!])).ok).toBe(true);
     await settleLearn(ctx, { answered: true, verified: false }); // a failure recorded, with its window

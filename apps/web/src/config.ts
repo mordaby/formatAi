@@ -61,12 +61,14 @@ export const webConfig = {
   contactHref: `mailto:${contactEmail}`,
   /**
    * The public legal pages (privacy, terms, accessibility statement; v13 M4). EVERY value in square brackets is a placeholder the OWNER must
-   * replace before launch, and the retention numbers are PROPOSALS (see the header of i18n/legal.ts: the whole text needs the owner's or a
-   * lawyer's review).
+   * replace before launch (see the header of i18n/legal.ts: the whole text needs the owner's or a lawyer's review).
    */
   legal: {
-    /** When the three texts last changed (ISO date): shown at the top of each page. Change it whenever the text changes. */
-    updated: '2026-10-05',
+    /**
+     * When each text last changed (ISO date): shown at the top of its page. Change a page's date whenever its text changes - only that
+     * page's (the accessibility statement's date is also the date of the review it rests on).
+     */
+    updated: { privacy: '2026-10-07', terms: '2026-10-05', accessibility: '2026-10-05' },
     contactEmail,
     operator: { en: 'FormatAI', he: '[שם החברה וכתובתה - להשלמה על ידי הבעלים]' } satisfies Localized,
     /** "Disputes will be decided only by ..." (the terms). */
@@ -78,8 +80,7 @@ export const webConfig = {
       email: '[accessibility email - to be completed]',
       phone: { en: '[phone - to be completed]', he: '[טלפון - להשלמה]' } satisfies Localized,
     },
-    /** How long the privacy policy says records are kept. PROPOSALS: no job deletes old documents yet. */
-    retentionMonths: { aiCallRecords: 12, forms: 24 },
+    // (How long records are kept is `limits.retention` in the shared config: the API's TTL indexes and the privacy page read the same numbers.)
   },
   /** SPEC 16.2: the UI-language cookie. */
   languageCookie: { name: 'lang', maxAgeSeconds: 365 * 24 * 60 * 60 },

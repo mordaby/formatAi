@@ -19,6 +19,7 @@ import {
   type PayloadCell,
 } from '@formatai/shared';
 import { isRecord } from '../http.js';
+import { monthlyCounterExpiry } from '../protection/expiry.js';
 import type { ProtectionStore } from '../protection/store.js';
 
 // ---------- structure: an invalid note is dropped, never a reason to repair ----------
@@ -248,7 +249,7 @@ export interface NotesOutcome {
   rejected: number;
 }
 
-/** `fnreq:<what>:<yyyy-mm>`: how many requests were recorded / rejected this month (counts only). */
+/** `fnreq:<what>:<yyyy-mm>`: how many requests were recorded / rejected this month (counts only; expires with the month, plus the grace). */
 export const requestCounterKey = (what: 'recorded' | 'rejected', now: Date): string => `fnreq:${what}:${now.toISOString().slice(0, 7)}`;
 
 /**
@@ -302,8 +303,9 @@ export async function recordFunctionRequests(rules: LearnResult, payload: LearnP
   }
   // Counts only (SPEC 15): how many were kept and how many refused.
   try {
-    if (recorded > 0) await ctx.store.incrementCounter(requestCounterKey('recorded', ctx.now), recorded);
-    if (rejected > 0) await ctx.store.incrementCounter(requestCounterKey('rejected', ctx.now), rejected);
+    const expiresAt = monthlyCounterExpiry(ctx.now);
+    if (recorded > 0) await ctx.store.incrementCounter(requestCounterKey('recorded', ctx.now), recorded, expiresAt);
+    if (rejected > 0) await ctx.store.incrementCounter(requestCounterKey('rejected', ctx.now), rejected, expiresAt);
   } catch (err) {
     ctx.onError?.(err);
   }

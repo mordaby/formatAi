@@ -113,14 +113,13 @@ export function releaseReservation(ctx: AiLearnCtx): Promise<void> {
 }
 
 /**
- * Records (+1) or takes back (-1) a failed attempt on the pair. A take-back keeps the window the failures are counted in (no new expiry).
- * API audit (2026-10-07): it never RE-CREATES a counter whose window is over - nothing recorded is nothing to take back - and a counter it
- * takes below zero (two take-backs at once) is put back to zero WITH an expiry: before, an expired counter came back as a document with no
- * expiry at all, which the TTL index never removes.
+ * Records (+1) or takes back (-1) a failed attempt on the pair. A take-back keeps the window the failures are counted in (`keepExpiry`: the
+ * expiry is set only on a counter that has none). API audit (2026-10-07): it never RE-CREATES a counter whose window is over - nothing
+ * recorded is nothing to take back - and a counter it takes below zero (two take-backs at once) is put back to zero WITH a fresh expiry.
  */
 async function bumpFailures(ctx: AiLearnCtx, by: 1 | -1): Promise<number> {
   if (by === -1 && (await failedAttemptsOf(ctx.store, ctx.owner, ctx.group)) <= 0) return 0;
-  const n = await ctx.store.incrementCounter(failKey(ctx), by, by === 1 ? failExpiry(ctx) : undefined);
+  const n = await ctx.store.incrementCounter(failKey(ctx), by, failExpiry(ctx), { keepExpiry: by === -1 });
   if (n < 0) return ctx.store.incrementCounter(failKey(ctx), 1, failExpiry(ctx)); // never below zero
   return n;
 }

@@ -89,7 +89,7 @@ the start check that lists everything at once). Behind a proxy or load balancer 
 One service, one origin: in production (or when `WEB_DIST` is set) the API also serves the built web app (`src/web.ts`):
 static files with a year's cache for the hashed `/assets` and `no-cache` for `index.html`, pre-compressed `.br`/`.gz`
 copies written by the web build, a fallback to `index.html` for page routes (never for `/api/*` or a missing file),
-and the security headers (a Content-Security-Policy that allows only Turnstile, Google Fonts and the Google avatar,
+and the security headers (a Content-Security-Policy that allows only Turnstile and the Google avatar - the font is our own file -
 `nosniff`, `Referrer-Policy`, `frame-ancestors`, HSTS on https). Development is unchanged (Vite on 5173).
 `buildServer({ webDist })` turns it on; `index.ts` passes it.
 
