@@ -33,12 +33,18 @@ import {
 import { dateReadings } from './dateReadings';
 import type { Relation, RelationBody, SummaryAgg } from './types';
 
+// The thresholds and caps below are config (`limits.analysis`, SPEC 6.2 step 4): see there for what each means.
+const RELATIONS = limits.analysis.relations;
 /** Failing aligned-row indices kept per relation. */
-export const MAX_FAILING = 50;
+export const MAX_FAILING = limits.analysis.maxFailing;
 /** Relations kept per output column. */
-export const MAX_RELATIONS = 6;
+export const MAX_RELATIONS = limits.analysis.maxRelations;
 /** The sample pass keeps candidates this far below minCoverage (sampling noise). */
-const SLACK = 0.03;
+const SLACK = limits.analysis.sampleSlack;
+/** A column counts as numeric when this share of its non-empty cells are numbers. */
+const NUMERIC_SHARE = limits.analysis.numericColumnShare;
+/** Plain numbers read as Excel serials only in the range of 1910-01-01 .. 2099-12-31. */
+const { serialDateMin: SERIAL_MIN, serialDateMax: SERIAL_MAX } = limits.analysis;
 
 export interface RelationEnv {
   /** Source columns aligned to the rows: input columns, then created family columns. */
@@ -392,7 +398,7 @@ function padCands(env: RelationEnv, out: ColumnData): Cand[] {
   env.src.forEach((a, s) => {
     const counts = new Map<string, number>();
     const padded = new Map<string, Set<number>>();
-    for (const k of bothRows(env, a, out, 200)) {
+    for (const k of bothRows(env, a, out, RELATIONS.textProbeRows)) {
       const t = textAt(a, k);
       const o = out.text[k]!.trim();
       if (t === '' || o.length <= t.length || !o.endsWith(t)) continue;
@@ -439,7 +445,7 @@ function substrCands(env: RelationEnv, out: ColumnData): Cand[] {
     const pre = new Map<number, number>();
     const suf = new Map<number, number>();
     const fix = new Map<string, number>();
-    for (const k of bothRows(env, a, out, 200)) {
+    for (const k of bothRows(env, a, out, RELATIONS.textProbeRows)) {
       const t = textAt(a, k);
       const o = textAt(out, k);
       if (o === '' || o === t || o.length >= t.length) continue;
@@ -499,7 +505,7 @@ function splitCands(env: RelationEnv, out: ColumnData): Cand[] {
   env.src.forEach((a, s) => {
     if (kindShare(a, TEXT) === 0) return;
     const counts = new Map<string, number>();
-    for (const k of bothRows(env, a, out, 200)) {
+    for (const k of bothRows(env, a, out, RELATIONS.textProbeRows)) {
       const t = textAt(a, k);
       const o = textAt(out, k);
       if (o === '' || o === t) continue;
@@ -533,7 +539,7 @@ function splitCands(env: RelationEnv, out: ColumnData): Cand[] {
 }
 
 const CONCAT_SEPARATORS = [' ', ', ', ',', ' - ', '-', '_', '/', ' / ', '|', ' | ', ';', '; ', '.', ''];
-const MAX_CONCAT_PARTS = 5;
+const MAX_CONCAT_PARTS = RELATIONS.concatMaxParts;
 
 /** Sequences of distinct source columns whose texts, joined with sep, give o exactly. */
 function concatSequences(texts: string[], o: string, sep: string, limit: number): number[][] {
@@ -565,7 +571,7 @@ function concatCands(env: RelationEnv, out: ColumnData): Cand[] {
   const rows: number[] = [];
   for (const k of env.sample) {
     if (out.kind[k] === TEXT) rows.push(k);
-    if (rows.length >= 12) break;
+    if (rows.length >= RELATIONS.concatProbeRows) break;
   }
   if (rows.length === 0) return [];
   const textsAt = (k: number): string[] => src.map((a, s) => (usable[s] ? textAt(a, k) : ''));
@@ -573,7 +579,7 @@ function concatCands(env: RelationEnv, out: ColumnData): Cand[] {
   const o0 = out.text[first]!.trim();
   const seqs = new Map<string, { sep: string; cols: number[] }>();
   for (const sep of CONCAT_SEPARATORS) {
-    for (const cols of concatSequences(textsAt(first), o0, sep, 8)) seqs.set(`${sep}\u0000${cols.join(',')}`, { sep, cols });
+    for (const cols of concatSequences(textsAt(first), o0, sep, RELATIONS.concatMaxSequences)) seqs.set(`${sep}\u0000${cols.join(',')}`, { sep, cols });
   }
   const cands: Cand[] = [];
   for (const { sep, cols } of seqs.values()) {
@@ -583,7 +589,7 @@ function concatCands(env: RelationEnv, out: ColumnData): Cand[] {
       const o = out.text[k]!.trim();
       if (parts.join(sep) === o || parts.filter((p) => p !== '').join(sep) === o) hits++;
     }
-    if (hits < 0.75 * rows.length) continue;
+    if (hits < RELATIONS.concatMinHitShare * rows.length) continue;
     for (const skipEmpty of [false, true]) {
       cands.push({
         body: { rel: 'concat', in: cols, separator: sep, skipEmpty },
@@ -603,12 +609,12 @@ function concatCands(env: RelationEnv, out: ColumnData): Cand[] {
 // ---------- stage 2b: template (fixed text around and between input values) ----------
 
 /** Sample rows the candidate templates are derived from and cross-checked on before the full test. */
-const TEMPLATE_PROBE_ROWS = 12;
+const TEMPLATE_PROBE_ROWS = limits.analysis.templateSearch.probeRows;
 /** Probe rows a search runs on (a column that is empty on one row can be located on another). */
-const TEMPLATE_SEARCH_ROWS = 3;
+const TEMPLATE_SEARCH_ROWS = limits.analysis.templateSearch.searchRows;
 /** Search budget per probe row, and candidates kept: past this the data fits many readings and none is reported anyway. */
-const TEMPLATE_MAX_NODES = 4000;
-const TEMPLATE_MAX_CANDIDATES = 40;
+const TEMPLATE_MAX_NODES = limits.analysis.templateSearch.maxNodes;
+const TEMPLATE_MAX_CANDIDATES = limits.analysis.templateSearch.maxCandidates;
 
 interface TemplateShape {
   /** Source column of each value, in output order (a column may repeat). */
@@ -652,7 +658,7 @@ function templateTest(out: ColumnData, srcCols: ColumnData[], lits: string[]): T
  *  - it is the ONLY template that fits: two readings that both reproduce every row (a column equal to another,
  *    a column that is constant and could equally be fixed text) report none, and the column goes to the AI.
  * The input values are located as substrings of the output on a few rows, the literals are what lies between
- * them, and each candidate is then confirmed on the 2,000-row sample and on all rows. No regex.
+ * them, and each candidate is then confirmed on the sample (`limits.analysis.sampleRows`) and on all rows. No regex.
  */
 function templateRelation(env: RelationEnv, out: ColumnData, outIndex: number): Relation | null {
   const { maxColumns, maxLiteralChars, maxTotalLiteralChars } = limits.learn.template;
@@ -766,7 +772,7 @@ function dateSources(a: ColumnData): { dates: Float64Array; from: string }[] {
     for (let k = 0; k < a.n && ok; k++) {
       if (a.kind[k] === EMPTY) continue;
       const v = a.num[k]!;
-      if (!Number.isInteger(v) || v < 3654 || v > 73415) ok = false;
+      if (!Number.isInteger(v) || v < SERIAL_MIN || v > SERIAL_MAX) ok = false;
       else serial[k] = v;
     }
     if (ok) out.push({ dates: serial, from: 'excelSerial' });
@@ -799,7 +805,7 @@ function dateCands(env: RelationEnv, out: ColumnData, outFormat: string | undefi
       const rows: number[] = [];
       for (const k of env.sample) {
         if (!Number.isNaN(dates[k]!) && out.kind[k] === TEXT) rows.push(k);
-        if (rows.length >= 5) break;
+        if (rows.length >= RELATIONS.dateProbeRows) break;
       }
       if (rows.length === 0) continue;
       const formats = [
@@ -882,10 +888,10 @@ function numberFormatCands(env: RelationEnv, out: ColumnData): Cand[] {
   if (kindShare(out, TEXT) < 0.5) return [];
   const cands: Cand[] = [];
   env.src.forEach((a, s) => {
-    if (numericShare(a) < 0.9) return;
+    if (numericShare(a) < NUMERIC_SHARE) return;
     const counts = new Map<string, number>();
     const renderings = new Map<string, NumberRendering>();
-    for (const k of bothRows(env, a, out, 50)) {
+    for (const k of bothRows(env, a, out, RELATIONS.numberFormatProbeRows)) {
       const o = out.text[k]!.trim();
       if (a.numKey[k] === null || o === a.numKey[k]) continue;
       const r = readRendering(o);
@@ -990,7 +996,7 @@ function binD(op: BinOp, x: Decimal | undefined, y: Decimal | undefined): Decima
 const ZERO = new Decimal(0);
 
 function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
-  if (nonEmptyCount(out) === 0 || numericShare(out) < 0.9 || kindShare(out, DATE) > 0) return [];
+  if (nonEmptyCount(out) === 0 || numericShare(out) < NUMERIC_SHARE || kindShare(out, DATE) > 0) return [];
   let kOut = 0;
   for (let k = 0; k < out.n; k++) {
     const nk = out.numKey[k];
@@ -1000,7 +1006,7 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
   const ctx: NumCtx = { out, kOut, tolAbs: 0.5 * 10 ** -kOut };
   const nums: number[] = [];
   env.src.forEach((a, s) => {
-    if (nonEmptyCount(a) > 0 && kindShare(a, DATE) === 0 && numericShare(a) >= 0.9) nums.push(s);
+    if (nonEmptyCount(a) > 0 && kindShare(a, DATE) === 0 && numericShare(a) >= NUMERIC_SHARE) nums.push(s);
   });
   const cands: Cand[] = [];
   const need = (env.minCoverage - SLACK) * env.sample.length;
@@ -1048,7 +1054,7 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
       if (x === undefined || Number.isNaN(x) || x === 0 || Number.isNaN(out.num[k]!) || out.kind[k] === EMPTY) continue;
       top.push(k);
       top.sort((p, q) => Math.abs(a.num[q]!) - Math.abs(a.num[p]!));
-      if (top.length > 3) top.pop();
+      if (top.length > RELATIONS.constantProbeRows) top.pop();
     }
     const mulConsts = new Set<string>();
     const divConsts = new Set<string>();
@@ -1170,12 +1176,12 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
   }
 
   // Sum of 3+ columns: subset sums on a few rows, then the sample.
-  const pool = nums.slice(0, 16);
-  if (pool.length >= 3) {
+  const pool = nums.slice(0, RELATIONS.sumMaxColumns);
+  if (pool.length >= RELATIONS.sumMinColumns) {
     const probe: number[] = [];
     for (const k of env.sample) {
       if (out.kind[k] !== EMPTY && !Number.isNaN(out.num[k]!)) probe.push(k);
-      if (probe.length >= 3) break;
+      if (probe.length >= RELATIONS.sumProbeRows) break;
     }
     if (probe.length > 0) {
       const n = pool.length;
@@ -1200,7 +1206,7 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
       for (let m = 1; m < size; m++) {
         let bits = 0;
         for (let x = m; x; x &= x - 1) bits++;
-        if (bits >= 3 && alive[m]) masks.push(m);
+        if (bits >= RELATIONS.sumMinColumns && alive[m]) masks.push(m);
       }
       masks.sort((p, q) => {
         let bp = 0;
@@ -1209,7 +1215,7 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
         for (let x = q; x; x &= x - 1) bq++;
         return bp - bq || p - q;
       });
-      for (const m of masks.slice(0, 5)) {
+      for (const m of masks.slice(0, RELATIONS.sumMaxCandidates)) {
         const cols = pool.filter((_, i) => (m >> i) & 1);
         const srcCols = cols.map((s) => env.src[s]!);
         const pre = (k: number): boolean => {
@@ -1249,7 +1255,7 @@ function numericCands(env: RelationEnv, out: ColumnData): Cand[] {
 
 // ---------- stage 4: value maps ----------
 
-const MAX_MAP_VALUES = 50;
+const MAX_MAP_VALUES = RELATIONS.valueMapMaxEntries;
 
 const REPEATED_ROWS = new WeakMap<ColumnData[], Uint8Array>();
 
@@ -1565,7 +1571,7 @@ export function summaryRelations(
     while (out.text[firstRow] !== top) firstRow++;
     make({ rel: 'constant', in: [], value: payloadCell(out, firstRow) }, (j) => out.text[j] === top);
   }
-  const outNumeric = numericShare(out) >= 0.9;
+  const outNumeric = numericShare(out) >= NUMERIC_SHARE;
   inCols.forEach((col, i) => {
     for (const fn of AGG_ORDER) {
       if (!outNumeric && fn !== 'first' && fn !== 'last' && !((fn === 'min' || fn === 'max') && kindShare(out, DATE) > 0)) continue;

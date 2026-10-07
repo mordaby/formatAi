@@ -270,6 +270,199 @@ export const limits = {
     maxBlankRowsAfter: 20,
   },
   /**
+   * SPEC 6.1, 6.2, 7.1 (non-negotiable #8): the thresholds and caps of the engine's table detection (`io/detectTable.ts`) and pair
+   * analysis (`learn/analyze/*`). They were named constants and inline numbers in the engine; moved here with the SAME values (refactor,
+   * 2026-10-07: no behaviour change). The ones that SPEC 6 and 7.1 quote (15 rows, 2,000 rows, 0.9, 50 values, 5 breakpoints, 200
+   * shuffles, 95%) are the values below. Shares are fractions of rows (or cells) between 0 and 1. A change here changes what the analysis
+   * reports: run the eval's stress (`pnpm --filter ./eval stress`) and the case verifier before keeping one.
+   */
+  analysis: {
+    /** SPEC 6.1: finding the header row and the data under it. */
+    table: {
+      /** The header is searched for in this many rows from the top (input and output). */
+      headerScanRows: 15,
+      /** A header row has at least this share of its columns filled (and never fewer than 2 cells). */
+      headerMinNonEmptyShare: 0.5,
+      /** ... and at least this share of its filled cells are text. */
+      headerMinTextShare: 0.7,
+      /** A header is followed by this many consistently typed data rows ... */
+      headerDataRows: 3,
+      /** ... or, to still find it and reject the sheet later, at least this many; also the fewest data rows a sheet may have. */
+      minDataRows: 2,
+      /** A block of rows is "consistently typed" when this share of its columns hold one cell type. */
+      dataBlockConsistentShare: 0.6,
+    },
+    /** SPEC 6.2 "Speed on large files": candidate relations are tried on this many aligned rows first, then confirmed on all of them. */
+    sampleRows: 2000,
+    /** SPEC 6.2: a relation is reported (as a hint) only when it holds on at least this share of the rows. */
+    minCoverage: 0.9,
+    /** The sample pass keeps a candidate this far below `minCoverage` (sampling noise). */
+    sampleSlack: 0.03,
+    /** A column counts as numeric when at least this share of its non-empty cells are numbers. */
+    numericColumnShare: 0.9,
+    /** A text longer than this many characters is never read as a number stored as text ("1,234.50", "₪100"). */
+    maxNumericTextChars: 40,
+    /** Failing aligned-row indices kept per relation, and relations kept per output column. */
+    maxFailing: 50,
+    maxRelations: 6,
+    /** Header check of a csv/txt output: a reading counts as "the rows are explained" when relations explain at least this share of its rows. */
+    headerMinExplainedShare: 0.9,
+    /** A plain number is read as an Excel serial date only from 1910-01-01 (3654) to 2099-12-31 (73415). */
+    serialDateMin: 3654,
+    serialDateMax: 73415,
+    /** SPEC 6.2 step 3 (pivot): at least this many output headers equal values of one input column, which has at most `maxDistinctValues`. */
+    pivot: {
+      minColumns: 3,
+      maxDistinctValues: 1000,
+    },
+    /** SPEC 6.2 step 2: lining output rows up with input rows (`align.ts`). */
+    align: {
+      /** Aligned output rows sampled to test a key, and to count the columns an alignment explains. */
+      keySampleRows: 1000,
+      explainSampleRows: 300,
+      /** A key is accepted when it is found for this share of the sampled output rows ... */
+      keyMinMatchShare: 0.5,
+      /** ... and at least this share of its matches are unique, or ... */
+      keyMinUniqueShare: 0.8,
+      /** ... a match points to this many input rows or fewer on average. */
+      keyMaxSpread: 1.5,
+      /** An input column is a key candidate when this share of its non-empty cells are distinct. */
+      keyMinDistinctShare: 0.5,
+      /** An output value is "found" in an input column when this share of the sampled output cells are among its values. */
+      valueMinContainment: 0.8,
+      /** A two-column key is looked for only when the best single key matches fewer than this share of the rows. */
+      strongKeyMatchShare: 0.9,
+      /** Output/input column pairs (the best by containment) tried together as a two-column key. */
+      maxValuePairs: 10,
+      /** A summary's group column is filled on at least this share of the output rows ... */
+      summaryMinNonEmptyShare: 0.95,
+      /** ... and the input has at most 1 / this many groups per output row (most groups must be present). */
+      summaryMinGroupShare: 0.8,
+      /** An output column is "explained" by an input column or aggregate on at least this share of the rows (or groups). */
+      explainMinShare: 0.9,
+    },
+    /** SPEC 6.2 step 4: bands of a numeric or date column (e.g. `Qty < 10 -> single`). */
+    bands: {
+      /** At most this many breakpoints between bands (so at most 6 bands). */
+      maxBreakpoints: 5,
+      /** A band must hold at least this many rows that agree with it. */
+      minBandRows: 2,
+    },
+    /** SPEC 6.2 "Bands must beat chance": the permutation test. */
+    chance: {
+      /** How many shuffles of the output values the test runs. */
+      shuffles: 200,
+      /** A band rule is reported only when shuffled output values pass the same search at most this share of the time. */
+      maxRate: 0.01,
+      /** Above this many rows the test is skipped (luck cannot line that many rows up into a few bands). */
+      maxRows: 1000,
+    },
+    /** SPEC 6.2 step 4: unknown columns the input determines (`derived.ts`). */
+    derived: {
+      /** Fewer aligned rows than this can't show a dependency. */
+      minRows: 6,
+      /** Columns considered for a two-column dependency: the ones with the fewest distinct values. */
+      maxPairColumns: 10,
+      /** Two columns are combined only when their value pairs fit a table this big (bounds memory, not evidence). */
+      maxPairTableCells: 1_000_000,
+      /** Columns named in the hint of a constant the input can write. */
+      maxConstantSources: 2,
+    },
+    /** SPEC 6.2 step 4 (`relations.ts`): the search for the relation of one output column. */
+    relations: {
+      /** Sample rows read to find a padding, a split or a substring, and a number rendering. */
+      textProbeRows: 200,
+      numberFormatProbeRows: 50,
+      /** Sample rows a date rendering is searched on, and the rows the concat sequences are derived from. */
+      dateProbeRows: 5,
+      concatProbeRows: 12,
+      /** `concat`: at most this many columns joined, this many candidate sequences per separator, and this share of the probe rows must agree. */
+      concatMaxParts: 5,
+      concatMaxSequences: 8,
+      concatMinHitShare: 0.75,
+      /** `mulConst` / `addConst`: the rows with the largest input values the constant is derived from. */
+      constantProbeRows: 3,
+      /** `sum` of 3+ columns: the first `sumMaxColumns` numeric columns are searched, on `sumProbeRows` rows, keeping `sumMaxCandidates`. */
+      sumMinColumns: 3,
+      sumMaxColumns: 16,
+      sumProbeRows: 3,
+      sumMaxCandidates: 5,
+      /** `valueMap` (SPEC 6.2 step 4): a value map is built for at most this many distinct keys. */
+      valueMapMaxEntries: 50,
+    },
+    /** The search budget of the `template` relation (the template's own size limits are `learn.template`). */
+    templateSearch: {
+      /** Sample rows the candidate templates are derived from and cross-checked on, and the probe rows a search runs on. */
+      probeRows: 12,
+      searchRows: 3,
+      /** Search budget per probe row, and candidates kept: past this the data fits many readings and none is reported anyway. */
+      maxNodes: 4000,
+      maxCandidates: 40,
+    },
+    /** SPEC 6.2 step 4 "dropped rows" (`dropped.ts`). */
+    dropped: {
+      /** A filter on a set of values is tried only on a column with at most this many distinct values. */
+      maxFilterValues: 50,
+      /** A filter lists its kept / dropped values only when there are at most this many. */
+      maxListedValues: 20,
+      /** Candidate filters kept. */
+      maxFilters: 5,
+      /** When no single column is a dedupe key, this many columns (the most distinct) are tried in pairs. */
+      maxKeyColumns: 5,
+    },
+    /** SPEC 6.2 step 3 (`families.ts`): one input row becoming several output rows. */
+    families: {
+      /** Columns to rows: the value column an output reads from the input columns its labels name must equal them on this share of the rows. */
+      minValueShare: 0.9,
+      /** A fan-out where every row has the same number of output rows is a "fixed fan-out" up to this size. */
+      fixedFanOutMaxSize: 5,
+    },
+    /** SPEC 6.2 "Classify output rows" (`tables.ts`). */
+    tables: {
+      /** A first row of a "headerless" output is a header when at least this share of its cells repeat the input's headers. */
+      firstRowHeaderShare: 0.5,
+      /** A row differs structurally from its scope (a summary row) when it is empty in a column where at least this share of the scope's rows hold a value. */
+      summaryEmptyShare: 0.9,
+    },
+    /** SPEC 6.2 step 4, across-row patterns (`windows.ts`): how many columns are tried. */
+    windows: {
+      /** Numeric (and rankable) input columns tried as the column a window reads. */
+      maxValueColumns: 10,
+      /** Group columns tried for the order-independent patterns, and for the order-dependent ones (a pass over all rows each). */
+      maxGroupColumns: 24,
+      maxOrderedGroupColumns: 4,
+      /** Other readings kept in a finding's `alt`, and as relations. */
+      maxAlternatives: 3,
+    },
+    /** SPEC 6.2 "Classify output rows" (`layout.ts`): the output's language, when its headers and titles have no letters to tell. */
+    layout: {
+      /** Rows read from each column to find the share of Hebrew letters. */
+      languageSampleRows: 200,
+    },
+    /** SPEC 7.1: the column profile (`profile.ts`). */
+    profile: {
+      /** Values read for the shape signature, spread over the column. */
+      shapeSampleRows: 2000,
+      /** A shape signature has at most this many shapes ... */
+      maxShapes: 4,
+      /** ... is at most this many characters long, and is built from values of at most this many characters. */
+      maxShapeChars: 80,
+      maxShapeValueChars: 30,
+      /** A signature is given only when its shapes cover at least this share of the values (free text gets none). */
+      shapeMinCoveredShare: 0.5,
+      /** `israeliId`: a valid check digit on at least this share of the rows, and this share at least `israeliIdMinChars` long. */
+      israeliIdMinShare: 0.95,
+      israeliIdMinChars: 7,
+      /** Digit strings are identifiers (`idLike`) from this many digits (too long for an amount) ... */
+      idLikeMinDigits: 8,
+      /** ... or, in text (csv), when all have the same length of at least this many digits and at least this share of them differ. */
+      idLikeSameLengthMinDigits: 5,
+      idLikeMinDistinctShare: 0.5,
+      /** The payload gives a column's number of distinct values when there are at most this many, else their share. */
+      payloadMaxListedDistinct: 20,
+    },
+  },
+  /**
    * SPEC 6.5: the local fast path.
    * DECISION: 'wide' (a looser fast path that would also cover some cases that
    * currently need the LLM) is reserved for later, once eval data shows the

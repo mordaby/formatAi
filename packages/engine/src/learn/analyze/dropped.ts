@@ -4,13 +4,13 @@
 // set of values, emptiness, or a numeric or date threshold). The engine order
 // is filter -> dedupe; a copy of a kept row is attributed to dedupe.
 
-import type { PayloadCell } from '@formatai/shared';
+import { limits, type PayloadCell } from '@formatai/shared';
 import { DATE, EMPTY, canonNum, isoOfSerial, keys, payloadCell, type ColumnData } from './cells';
 import type { DedupeRelation, DroppedAnalysis, FilterRelation } from './types';
 
-const MAX_FAILING = 50;
-const MAX_LISTED_VALUES = 20;
-const MAX_FILTERS = 5;
+// The caps are config (`limits.analysis`, SPEC 6.2 step 4).
+const MAX_FAILING = limits.analysis.maxFailing;
+const { maxListedValues: MAX_LISTED_VALUES, maxFilters: MAX_FILTERS, maxFilterValues: MAX_FILTER_VALUES } = limits.analysis.dropped;
 
 type Dup = { row: number; of: number };
 
@@ -118,7 +118,7 @@ function findDedupe(inCols: ColumnData[], kept: number[], dropped: number[], pre
   if (found === null && allDups.length === 0) {
     const ranked = shared
       .sort((a, b) => distinct[b]! - distinct[a]! || a - b)
-      .slice(0, 5)
+      .slice(0, limits.analysis.dropped.maxKeyColumns)
       .sort((a, b) => a - b);
     for (let i = 0; i < ranked.length; i++) for (let j = i + 1; j < ranked.length; j++) tryKey([ranked[i]!, ranked[j]!]);
     found = key as { cols: number[]; dups: Dup[] } | null;
@@ -224,7 +224,7 @@ function filtersOn(col: ColumnData, c: number, universe: number[], isDropped: Ui
   if (droppedEmpty > 0) out.push(makeFilter(c, universe, isDropped, (r) => col.kind[r] === EMPTY, 1, { droppedWhen: { op: 'isEmpty' } }));
   if (keptEmpty > 0) out.push(makeFilter(c, universe, isDropped, (r) => col.kind[r] !== EMPTY, 1, { droppedWhen: { op: 'notEmpty' } }));
 
-  // A set of values. DECISION: only on low-cardinality columns (<= 50 values, and
+  // A set of values. DECISION: only on low-cardinality columns (<= `MAX_FILTER_VALUES` (50) values, and
   // at most half the rows or a dropped value that repeats): a column of unique
   // ids "separates" any rows.
   const counts = new Map<string, { kept: number; dropped: number; row: number }>();
@@ -232,7 +232,7 @@ function filtersOn(col: ColumnData, c: number, universe: number[], isDropped: Ui
     const k = ks[r] ?? '';
     let e = counts.get(k);
     if (!e) {
-      if (counts.size > 50) break; // too many values for a value-set filter
+      if (counts.size > MAX_FILTER_VALUES) break; // too many values for a value-set filter
       e = { kept: 0, dropped: 0, row: r };
       counts.set(k, e);
     }
@@ -241,7 +241,7 @@ function filtersOn(col: ColumnData, c: number, universe: number[], isDropped: Ui
   }
   let repeatedDrop = false;
   for (const e of counts.values()) if (e.dropped >= 2) repeatedDrop = true;
-  if (counts.size >= 2 && counts.size <= 50 && (counts.size <= Math.max(2, N / 2) || repeatedDrop)) {
+  if (counts.size >= 2 && counts.size <= MAX_FILTER_VALUES && (counts.size <= Math.max(2, N / 2) || repeatedDrop)) {
     const droppedKeys = new Set<string>();
     for (const [k, e] of counts) if (e.dropped > e.kept) droppedKeys.add(k);
     if (droppedKeys.size > 0 && !(droppedKeys.size === 1 && droppedKeys.has(''))) {
