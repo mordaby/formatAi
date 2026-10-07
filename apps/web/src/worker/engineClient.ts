@@ -29,6 +29,9 @@ import type {
   LearnHost,
   LearnOutput,
   LearnProgress,
+  SendPreviewArgs,
+  SendPreviewOutput,
+  SendPreviewProgress,
 } from './engineApi';
 import { handleFromWorker, RpcClient, type HostFunctions, type WorkerHandle } from './rpcClient';
 
@@ -50,6 +53,8 @@ export interface EngineCallOptions<P = never> {
 
 export interface EngineClient {
   learn(args: LearnArgs, host: LearnHost, opts?: EngineCallOptions<LearnProgress>): Promise<LearnOutput>;
+  /** "See what we send" before the learn: the request the AI step would get for the two files, as it would go (the files' bytes are moved). */
+  sendPreview(args: SendPreviewArgs, opts?: EngineCallOptions<SendPreviewProgress>): Promise<SendPreviewOutput>;
   convert(args: ConvertArgs, opts?: EngineCallOptions): Promise<ConvertOutput>;
   /** A quick look at one file (rows, columns), for the drop zones. */
   inspect(args: InspectArgs, opts?: EngineCallOptions): Promise<InspectOutput>;
@@ -152,6 +157,7 @@ export function createEngineClient(options: CreateEngineClientOptions = {}): Eng
         { callLearn: host.callLearn, callRepair: host.callRepair, callStep: host.callStep } as unknown as HostFunctions,
         checkRoundAllowance(options.checkRoundAllowanceMs ?? CHECK_ROUND_ALLOWANCE_MS),
       ),
+    sendPreview: (args, opts) => call('sendPreview', args, args.input && args.output ? transfersOf(args.input, args.output) : [], opts),
     convert: (args, opts) => call('convert', args, transfersOf(args.file), opts),
     inspect: (args, opts) => call('inspect', args, transfersOf(args.file), opts),
     loadExample: (args, opts) => call('loadExample', args, transfersOf(args.input, args.output), opts),

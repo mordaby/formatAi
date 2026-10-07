@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { UserColumnChoices } from '@formatai/engine';
 import { stripAiNotes, type AiStepPartCode, type LearnResult, type Rules, type Tier } from '@formatai/shared';
+import { hasChoices } from '../flow/learnFlow';
 import { useLearnFlow, type UseLearnFlow } from '../flow/useLearnFlow';
 import { peekResultSession, seedResultSession } from '../pages/Result/session';
 import { webConfig } from '../config';
@@ -26,9 +28,15 @@ export interface LearnSession {
   output: File | null;
   /** SPEC 7.2: on by default. */
   masking: boolean;
+  /**
+   * "See what we send" (owner, 2026-10-07): the user's choice per column of these two files, hidden or sent as it is. For every request of
+   * the learns of these files (the first call, repairs, checks, a completion); a new file (either side) starts again from none.
+   */
+  columnChoices: UserColumnChoices;
   setInput(file: File | null): void;
   setOutput(file: File | null): void;
   setMasking(masking: boolean): void;
+  setColumnChoices(choices: UserColumnChoices): void;
   /** Home's "Learn with AI" chose the AI step for this learn: it starts by itself after the free result, only if fields are missing. Not remembered: the next learn asks again. */
   deepAnalysis: boolean;
   /**
@@ -50,11 +58,22 @@ export interface LearnSession {
   completion: UseLearnFlow;
   /** Forget the files and the result: back to an empty Home. */
   startOver(): void;
+  /**
+   * The learned result of these files has been saved (the Result screen's Save, Save changes; Add to a format from them). The next time the
+   * learn page shows, it starts empty (owner, 2026-10-07): `clearIfSaved`. Leaving without saving keeps the files.
+   */
+  saved: boolean;
+  markSaved(): void;
+  /** The learn page shows: after a save it starts empty (`startOver`); otherwise nothing changes. */
+  clearIfSaved(): void;
   /** A kept learn is being put back after a sign-in (the Result screen waits for it instead of going home). */
   restoring: boolean;
 }
 
 const LearnSessionContext = createContext<LearnSession | null>(null);
+
+/** No choice made: every column as code decides. */
+const NO_CHOICES: UserColumnChoices = {};
 
 export function useLearnSession(): LearnSession {
   const ctx = useContext(LearnSessionContext);
@@ -96,11 +115,23 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const [input, setInput] = useState<File | null>(null);
   const [output, setOutput] = useState<File | null>(null);
   const [masking, setMasking] = useState(true);
+  const [columnChoices, setColumnChoices] = useState<UserColumnChoices>(NO_CHOICES);
+  const [saved, setSaved] = useState(false);
   const [deepAnalysis, setDeepAnalysis] = useState(false);
   const [restoring, setRestoring] = useState(true);
   // The latest of everything a callback below needs to read at the moment it runs (not when it was made).
-  const latest = useRef({ input, output, masking, state: flow.state });
-  latest.current = { input, output, masking, state: flow.state };
+  const latest = useRef({ input, output, masking, columnChoices, state: flow.state });
+  latest.current = { input, output, masking, columnChoices, state: flow.state };
+  // A new example (another file on either side) starts with no choice: the choices were for the columns of the files they were made on.
+  const chooseInput = useCallback((file: File | null) => {
+    setInput(file);
+    setColumnChoices(NO_CHOICES);
+  }, []);
+  const chooseOutput = useCallback((file: File | null) => {
+    setOutput(file);
+    setColumnChoices(NO_CHOICES);
+  }, []);
+  const markSaved = useCallback(() => setSaved(true), []);
 
   const { start, cancel: reset } = flow;
   const { start: startCompletion, cancel: resetCompletion } = completion;
@@ -111,9 +142,9 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       // A new learn replaces the result: a "Finish with AI" still at work on the old one has nothing left to finish.
       resetCompletion();
       // (no `ai` given: the free engine only)
-      void start({ input, output, masking, ...(opts?.ai ? { ai: opts.ai } : {}) });
+      void start({ input, output, masking, columnChoices, ...(opts?.ai ? { ai: opts.ai } : {}) });
     },
-    [input, output, masking, start, resetCompletion],
+    [input, output, masking, columnChoices, start, resetCompletion],
   );
   const finishWithAi = useCallback(() => begin({ ai: 'allowed' }), [begin]);
   const completeWithAi = useCallback(
@@ -126,20 +157,26 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
         input,
         output,
         masking,
+        columnChoices,
         ai: 'allowed',
         ...(tryAnyway ? { tryAnyway: true } : {}),
         complete: { fixedRules: plan.fixedRules, columns: plan.columns, parts: plan.parts, exampleId: plan.exampleId },
       });
     },
-    [input, output, masking, startCompletion],
+    [input, output, masking, columnChoices, startCompletion],
   );
   const startOver = useCallback(() => {
     reset();
     resetCompletion();
     setInput(null);
     setOutput(null);
+    setColumnChoices(NO_CHOICES);
+    setSaved(false);
     setDeepAnalysis(false);
   }, [reset, resetCompletion]);
+  const clearIfSaved = useCallback(() => {
+    if (saved) startOver();
+  }, [saved, startOver]);
 
   // ---- keeping what has been learned across the trip to the provider (SPEC 5 E) ----
   // ... for an hour at most, as the privacy page says: dropped on its hour while a tab is open, and at once on a page load past it.
@@ -154,7 +191,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => {
     signIn.setBeforeRedirect(async ({ reason }) => {
-      const { input: i, output: o, masking: m, state } = latest.current;
+      const { input: i, output: o, masking: m, columnChoices: choices, state } = latest.current;
       // A visitor's "Learn with AI" (Home, the 'ai' wall): the learn they asked for is a new one from the two files, so nothing of an earlier
       // result is kept - only the files and the choice (the free engine runs again after the sign-in, and the AI step follows it).
       const aiLearn = reason === 'ai' && i !== null && o !== null;
@@ -174,6 +211,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
         input: i ? await storeFile(i) : null,
         output: o ? await storeFile(o) : null,
         masking: m,
+        ...(hasChoices(choices) ? { columnChoices: choices } : {}),
         ...(tryAnyway ? { tryAnyway: true } : {}),
         ...(aiLearn ? { deepAnalysis: true } : {}),
         result,
@@ -223,16 +261,18 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       setInput(i);
       setOutput(o);
       setMasking(record.masking);
+      const choices = record.columnChoices ?? NO_CHOICES;
+      setColumnChoices(choices);
       if (record.result && i && o) {
         seed.current = record.result;
         // The local analysis only: the AI step is the user's choice on the Result screen (never started here).
-        void startRef.current({ input: i, output: o, masking: record.masking, ai: 'notAllowed', ...(record.tryAnyway ? { tryAnyway: true } : {}) });
+        void startRef.current({ input: i, output: o, masking: record.masking, columnChoices: choices, ai: 'notAllowed', ...(record.tryAnyway ? { tryAnyway: true } : {}) });
       } else if (record.deepAnalysis && i && o && meRef.current.user) {
         // "Learn with AI" from a visitor, now signed in: the learn they asked for starts by itself, and the Result screen goes on with the AI step
         // when fields are missing (`deepAnalysis`). Not signed in after all (declined, failed): the files are back and nothing starts.
         resuming.current = true;
         setDeepAnalysis(true);
-        void startRef.current({ input: i, output: o, masking: record.masking, ai: 'notAllowed' });
+        void startRef.current({ input: i, output: o, masking: record.masking, columnChoices: choices, ai: 'notAllowed' });
       } else {
         restored();
       }
@@ -266,8 +306,28 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   }, [restoring, status, doneResult, restored]);
 
   const value = useMemo<LearnSession>(
-    () => ({ flow, completion, input, output, masking, deepAnalysis, setInput, setOutput, setMasking, begin, finishWithAi, completeWithAi, startOver, restoring }),
-    [flow, completion, input, output, masking, deepAnalysis, begin, finishWithAi, completeWithAi, startOver, restoring],
+    () => ({
+      flow,
+      completion,
+      input,
+      output,
+      masking,
+      columnChoices,
+      deepAnalysis,
+      setInput: chooseInput,
+      setOutput: chooseOutput,
+      setMasking,
+      setColumnChoices,
+      begin,
+      finishWithAi,
+      completeWithAi,
+      startOver,
+      saved,
+      markSaved,
+      clearIfSaved,
+      restoring,
+    }),
+    [flow, completion, input, output, masking, columnChoices, deepAnalysis, chooseInput, chooseOutput, begin, finishWithAi, completeWithAi, startOver, saved, markSaved, clearIfSaved, restoring],
   );
   return <LearnSessionContext.Provider value={value}>{children}</LearnSessionContext.Provider>;
 }

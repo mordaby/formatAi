@@ -40,7 +40,9 @@ describe('Home', () => {
   it('shows what WILL be sent before a learn, and what was sent once there is a payload', () => {
     renderApp();
     fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
-    const panel = screen.getByRole('region', { name: 'See what we send' });
+    // (a dialog since 2026-10-07: with no files yet it says what WILL go, and that the files show the exact rows)
+    const panel = screen.getByRole('dialog', { name: 'See what we send' });
+    expect(panel.textContent).toContain('Choose your two files to see the exact rows we would send');
     expect(panel.textContent).toContain(`Up to ${limits.payload.maxPairs} sample rows. Names, identifier numbers and other text are replaced with look-alike values first.`);
     fireEvent.click(screen.getByRole('switch', { name: 'Masking' }));
     expect(panel.textContent).toContain(`Up to ${limits.payload.maxPairs} sample rows, exactly as they are.`);

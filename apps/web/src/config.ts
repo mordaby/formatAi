@@ -29,6 +29,8 @@ export const webConfig = {
     columnGaps: 10_000,
     convertWithDecisions: 60_000,
     batch: 120_000,
+    /** "See what we send" before the learn: the pair analysis (as long as a learn's, the first time), then the request built from it. */
+    sendPreview: 120_000,
   },
   /** SPEC 15 "Enforce a maximum file size": the free tier's size until the session says otherwise. */
   maxFileBytes: tiers.anonymous.maxFileBytes,

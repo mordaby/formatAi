@@ -14,7 +14,9 @@ import type {
   OutputSheet,
   RunError,
   RunSummary,
+  SendPreview,
   SentColumn,
+  UserColumnChoices,
 } from '@formatai/engine';
 import type {
   BatchArgs,
@@ -68,6 +70,8 @@ export interface LearnArgs {
   complete?: CompleteOptions;
   /** Completion mode: the id of the example the Result screen's live check already uses; the worker keeps the example under it instead of a new id. */
   keepExampleId?: string;
+  /** "See what we send" (owner, 2026-10-07): the user's choice per column, hidden or sent as it is - for every request of this learn. */
+  columnChoices?: UserColumnChoices;
 }
 
 /** Real progress from the worker. `reading` runs until the first analysis event; `learning`/`verifying` only happen on the LLM path. */
@@ -133,6 +137,34 @@ export interface LearnHost {
   callStep(payload: LearnPayload, rounds: CheckRound[]): Promise<LearnCallResult>;
 }
 
+// ---------- "See what we send" before the learn (owner, 2026-10-07) ----------
+
+/**
+ * The request the AI step would get for the two files, built in the worker by the learn's own code (engine `sendPreview`) with the
+ * session's masking key - the rows shown are the rows that go. The first call reads and analyzes the files (with progress); the worker
+ * keeps that analysis under `previewId`, and a switch flipped later sends the id only.
+ */
+export interface SendPreviewArgs {
+  /** The example files: on the first call, and again when the worker no longer holds the example (`reason: 'gone'`). */
+  input?: FileBytes;
+  output?: FileBytes;
+  /** The example the worker holds for the preview (an earlier result's `previewId`). */
+  previewId?: string;
+  masking: boolean;
+  tier: Tier;
+  choices?: UserColumnChoices;
+}
+
+export type SendPreviewOutput =
+  | ({ ok: true; previewId: string } & SendPreview)
+  /** `gone`: no files were given and the worker does not hold that example (it restarted, or another example came since). */
+  | { ok: false; reason: 'gone' | 'analysisFailed' };
+
+export interface SendPreviewProgress {
+  stage: AnalysisStage;
+  fraction: number;
+}
+
 // ---------- convert ----------
 
 export interface ConvertArgs {
@@ -173,6 +205,7 @@ export type InspectOutput =
 
 export interface EngineMethodMap {
   learn: { args: LearnArgs; result: LearnOutput; progress: LearnProgress };
+  sendPreview: { args: SendPreviewArgs; result: SendPreviewOutput; progress: SendPreviewProgress };
   inspect: { args: InspectArgs; result: InspectOutput; progress: never };
   convert: { args: ConvertArgs; result: ConvertOutput; progress: never };
   loadExample: { args: LoadExampleArgs; result: LoadExampleOutput; progress: never };

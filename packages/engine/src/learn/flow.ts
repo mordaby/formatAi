@@ -29,18 +29,19 @@ import { fillParams, type FillAmbiguity, type FillResult, type FillSummary } fro
 import { copiedLists, listRetryProblems, oneTimeQuestions, questionedPositions, type OneTimeOptions, type OneTimeResult } from './oneTimers';
 import { sniffDelimitedText } from '../io/detectFileSpec';
 import { readWorkbook } from '../io/read';
-import type { AnalysisProgress, AnalyzeOptions, PairAnalysis } from './analyze';
+import type { AnalysisProgress, AnalyzeOptions, PairAnalysis, UserColumnChoices } from './analyze';
 import { analyzePair } from './analyze';
 import { checkFixedLock, type FixedProblem } from '../registry/checkFixedLock';
 import { restoreFixed } from '../registry/restoreFixed';
 import { columnsWithRule, completionProduced, isCompletable, learnResultOf, type CompleteOptions } from './complete';
 import { fastPath } from './fastPath';
 import { loopCaps, loopStep, startLoop, wrongCount, type LoopRound, type LoopSummary } from './loop';
-import { createMasker, unmaskRules, type Masker } from './mask';
+import { unmaskRules, type Masker } from './mask';
 import { maskFixedRules } from './maskFixed';
 import { partialRules, type PartialRulesResult } from './partial';
 import { preflight, type PreflightResult } from './preflight';
-import { aiReadiness, type AiReadiness } from './readiness';
+import type { AiReadiness } from './readiness';
+import { aiRequestOf } from './sendPreview';
 import { OVERFIT_REASON, overfitFindings, overfitProblems, withOverfitFallback } from './overfit';
 import { exampleTable, verifyAgainstExample, type VerifyResult, type WrongRow } from './verify';
 
@@ -137,6 +138,12 @@ export interface LearnFromExamplesOptions<Call = unknown> {
    * real) only when code confirms it; it never loosens an identifier. Every path that masks reads it through the analysis.
    */
   columnHints?: ColumnClassHints;
+  /**
+   * "See what we send" (owner, 2026-10-07): the user's choice per column, hidden or sent as it is (`learn/classify.ts`, applied last). Kept
+   * on the analysis, so every request of the learn - the first call, the checks' answers, the loop's rows and problems, a completion's
+   * fixed rules - masks by it.
+   */
+  userColumnChoices?: UserColumnChoices;
   onProgress?: (p: AnalysisProgress) => void;
   /**
    * Called once with the successful pair analysis, before pre-flight. The web worker keeps it
@@ -368,6 +375,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // format's own, not re-detected from this particular example.
   if (opts.target) analysisOpts.outputFileSpec = opts.target.output.file;
   if (opts.columnHints) analysisOpts.columnHints = opts.columnHints;
+  if (opts.userColumnChoices) analysisOpts.userColumnChoices = opts.userColumnChoices;
 
   const analysis = analyzePair(inputWb, outputWb, analysisOpts);
   if (analysis.ok) opts.onAnalysis?.(analysis);
@@ -415,15 +423,10 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // ---- SPEC 21 v5 item 4: the AI readiness gate, before any payload or LLM call. It also builds the
   // (optionally masked, SPEC 7.2) payload, which the learn call below then uses as it is. ----
   const ai = opts.ai ?? 'allowed';
-  const masker: Masker | undefined = opts.masking ? createMasker(opts.key!) : undefined;
   // (The local partial result is only for a caller that may not use the AI step.)
   const partial = complete || ai !== 'notAllowed' ? null : localPartial(analysis, pf);
-  const readiness = aiReadiness(analysis, pf, {
-    ...(masker ? { masker } : {}),
-    ...(opts.target ? { target: opts.target } : {}),
-    ...(complete ? { complete } : {}),
-    ...(opts.patternHints === false ? { patternHints: false } : {}),
-  });
+  // The masker and the payload: the same function "See what we send" previews them with (`sendPreview.ts`).
+  const { masker, readiness } = aiRequestOf(analysis, pf, { masking: opts.masking, key: opts.key, target: opts.target, complete, patternHints: opts.patternHints });
   stages.readinessChecked = true;
   const shownReadiness: AiReadiness = readiness.ready ? { ready: true } : readiness;
 

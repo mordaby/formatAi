@@ -47,6 +47,12 @@ export default function Home() {
   const steps = useStepHistory(state);
   const progressVisible = useProgressVisible(state);
 
+  // After a save the learn page starts empty, before it is painted (owner, 2026-10-07): the saved files did their job. Left without
+  // saving, the files stay for another try. (Once, when the page shows.)
+  const clearIfSaved = useRef(session.clearIfSaved);
+  clearIfSaved.current = session.clearIfSaved;
+  useLayoutEffect(() => clearIfSaved.current(), []);
+
   // Go to the result only when the learn finishes while we are here (not when someone comes
   // back to Home with the browser's Back button and the old result is still in memory).
   const previous = useRef<LearnFlowStatus>(state.status);

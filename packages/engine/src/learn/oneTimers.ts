@@ -72,7 +72,7 @@ import type { PairAnalysis } from './analyze';
 import { probeCellValue, probeKeyText, probeTruthy, runWithProbes, valueListOf, type ProbedRun, type RunProbe } from './fillParams';
 import { atomsOf, casesOf, comparesPosition, keyColumnsOf, overfitFindings, positionColumns, type OverfitFinding } from './overfit';
 import { cellMatchesExample, exampleCellAt } from './verify';
-import { inputClass } from './classify';
+import { codeColumnClasses } from './classify';
 
 /** What singles the one row out: an ID (a key column of the example), an exact amount or date no other row has, its position in the file. */
 export type OneTimeBy = 'id' | 'amount' | 'date' | 'position';
@@ -704,8 +704,9 @@ export function copiedLists(rules: LearnResult, analysis: PairAnalysis, opts: On
   const fixed = opts.fixed;
   const tables = new Map((rules.transform.tables ?? []).map((t) => [t.name, t] as const));
   const src = mapHeaders(rules.input.columns, analysis.input.headers).src;
-  /** The key column is an identifier (the column classification, `classify.ts`). */
-  const identifier = (index: number): boolean => inputClass(analysis, src[index] ?? -1) === 'identifier';
+  /** The key column is an identifier (the column classification, `classify.ts`: code's own - what the user chose to send or hide changes no question). */
+  const keyClasses = codeColumnClasses(analysis).input;
+  const identifier = (index: number): boolean => keyClasses[src[index] ?? -1] === 'identifier';
   const theirs = (s: Extract<Site, { kind: 'lookup' | 'valueMap' }>): boolean => {
     if (!fixed) return false;
     if (s.kind === 'valueMap') return fixed.transform.valueMaps.some((m) => m.column === s.column);
