@@ -84,7 +84,7 @@ the start check that lists everything at once). Behind a proxy or load balancer 
 `TRUST_PROXY` (number of hops, or `true`) so per-IP limits see the real client address. With no
 `MONGODB_URI`, limits, budgets and the cache are kept in memory (the registry needs the database).
 
-## Deployment (M4, SPEC 21 v13; the owner's checklist is `docs/deploy.md`)
+## Deployment (M4, SPEC 4 "Deployment"; the owner's checklist is `docs/deploy.md`)
 
 One service, one origin: in production (or when `WEB_DIST` is set) the API also serves the built web app (`src/web.ts`):
 static files with a year's cache for the hashed `/assets` and `no-cache` for `index.html`, pre-compressed `.br`/`.gz`

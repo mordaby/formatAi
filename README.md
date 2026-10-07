@@ -2,7 +2,7 @@
 
 Learns a company's file formats from examples and converts incoming files (supplier price lists, partner reports, client exports, other systems' reports) into them — including exact system load files (csv / delimited text). A format has many sources; each source is taught once from an example pair, then a deterministic engine converts every future file. Files never leave the browser; an LLM only writes a small rules file, once. Domain-neutral by design.
 
-- Product/build spec: [SPEC.md](SPEC.md)
+- Product/build spec, current state: [SPEC.md](SPEC.md); its dated history (decisions, amendments, why): [docs/spec-history.md](docs/spec-history.md)
 - The learn-call prompt: [LEARN_PROMPT.md](LEARN_PROMPT.md)
 - Task tracking: GitHub issues, grouped by milestone (M0–M4)
 

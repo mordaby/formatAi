@@ -88,7 +88,7 @@ two workbooks is about 9 s of it) and converts in 4.7-12.6 s with xlsx in and ou
 
 ## Results (2026-10-06, branch column-classification)
 
-The column classification (SPEC 21, its amendment) and every script masked. The same seeds as above:
+The column classification (SPEC 7.2; docs/spec-history.md, 2026-10-06) and every script masked. The same seeds as above:
 
 | Run | Cases | New failures | Open findings reproduced | Learn p50 / p95 / max | Convert p50 / p95 / max |
 |---|---|---|---|---|---|

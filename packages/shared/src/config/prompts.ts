@@ -5,7 +5,7 @@
 /**
  * The prompt versions the code can send (the eval's `--prompt` compares them on the same code): learn-v7 (the default, below) and learn-v9.
  * learn-v8, learn-v8.1 and their "-noE1" variants (the prompt audit's, docs/proposals/prompt-audit-learn-v7.md) were measured against
- * learn-v7 and rejected (2026-10-05), and their code was removed (2026-10-07; SPEC.md "Amendment (2026-10-07): learn-v8 removed"). A rules
+ * learn-v7 and rejected (2026-10-05), and their code was removed (2026-10-07; docs/spec-history.md, 2026-10-07 "learn-v8 removed"). A rules
  * file or ledger entry that names one still reads: `promptVersion` is stored as plain text.
  *
  * learn-v9 (docs/proposals/ai-code-checks.md, owner decision 2026-10-05): learn-v7 plus one section, "Checking with code" - the AI step may
