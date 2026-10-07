@@ -8,6 +8,7 @@ export * from './rules/copiedList';
 export * from './rules/savedContents';
 export * from './identifiers';
 export * from './format';
+export * from './formatMatch';
 export * from './source';
 export * from './sourceName';
 
