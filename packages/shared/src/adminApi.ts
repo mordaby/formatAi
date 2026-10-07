@@ -54,8 +54,11 @@ export interface AdminOverview {
     aiErrored: number;
     /** Learns answered from the owner's structure cache (no model, no cost). */
     cache: number;
-    /** Learns solved in the browser: only known from `learn_completed {path: local}` events; null when none were recorded (n/a, not zero). */
-    local: number | null;
+    /**
+     * Learns solved in the browser: NOT TRACKED YET. They leave no ledger row, and no code writes the `learn_completed` event SPEC 13
+     * describes (audit 2026-10-07), so the overview says "not tracked yet" - never a 0 it cannot know.
+     */
+    local: null;
   };
   /** Saved formats and how much they are run. The run count is not dated (the conversion keeps `runCount` and `lastRunAt`). */
   conversions: {
