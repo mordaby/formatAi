@@ -39,6 +39,27 @@ export interface RegisterAuthOptions extends AuthOptions {
   warn?: (message: string) => void;
 }
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** A URL on this machine: a loopback name, or a `*.localhost` one. */
+function isLocalUrl(raw: string): boolean {
+  try {
+    const host = new URL(raw).hostname;
+    return LOCAL_HOSTS.has(host) || host.endsWith('.localhost');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether `POST /api/dev/session` may exist in this (non-production) process: the web app and the API both on this machine (`WEB_ORIGIN`, the
+ * API's public URL - the development defaults), or the developer's explicit `DEV_SIGN_IN=true` (a phone on the LAN, a tunnel).
+ */
+export function devSignInAllowed(env: Pick<Env, 'WEB_ORIGIN' | 'DEV_SIGN_IN'>, apiBase: string): boolean {
+  if (/^(true|1|yes)$/i.test((env.DEV_SIGN_IN ?? '').trim())) return true;
+  return isLocalUrl(env.WEB_ORIGIN) && isLocalUrl(apiBase);
+}
+
 /**
  * Registers the session hook (which makes `identityOf` see signed-in users) and the auth routes.
  * Call after `@fastify/cookie` and `registerAnonId`. In production this throws (so the process refuses to
@@ -99,8 +120,9 @@ export function registerAuth(app: FastifyInstance, opts: RegisterAuthOptions): v
   });
 
   // DEVELOPMENT ONLY: a throw-away signed-in session, so the signed-in screens can be tried without a real provider.
-  // The route does not exist in a production process.
-  if (!production) {
+  // The route does not exist in a production process - nor (API audit 2026-10-07) in any process the browser reaches at a public origin,
+  // unless the developer asks for it (`DEV_SIGN_IN=true`): a deploy that forgot NODE_ENV=production must not let anyone sign in.
+  if (!production && devSignInAllowed(env, apiBase)) {
     registerDevSessionRoute(app, {
       store,
       sessions,

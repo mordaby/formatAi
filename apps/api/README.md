@@ -173,7 +173,7 @@ code in `src/auth/`. A provider is offered when its `<PREFIX>_CLIENT_ID` and `_C
 | `PATCH /api/me` | `{ uiLanguage: 'he' \| 'en' }` and nothing else |
 | `POST /api/me/link/:provider/start` | `{ url }` to navigate to; links a second provider to the signed-in user |
 | `GET /api/learn/quota` | `{ quota: { remaining, period, limit } }` - what is left of the signed-in user's AI learns, and their own limit (the plan's or an admin's override; null when unlimited) (403 `signInForAi` otherwise); the account menu shows it. Every answer that carries `quota` carries the same, and so does a 429 `limitHit` `aiLearns` |
-| `POST /api/dev/session` | **development only** (the route does not exist when `NODE_ENV=production`): creates a throw-away signed-in test user (`{ name?, tier?: "registered" or "paid" }`, email under `@example.test`) and sets the session cookie, so the signed-in screens can be tried without a real provider; the Origin must be the web app's (any loopback name) |
+| `POST /api/dev/session` | **development only** (the route does not exist when `NODE_ENV=production`, nor when the web app or the API is not on this machine - `WEB_ORIGIN` / `API_PUBLIC_URL` on localhost - unless `DEV_SIGN_IN=true`): creates a throw-away signed-in test user (`{ name?, tier?: "registered" or "paid" }`, email under `@example.test`) and sets the session cookie, so the signed-in screens can be tried without a real provider; the Origin must be the web app's (any loopback name) |
 
 Identity is provider + subject (Microsoft: `tid` + `oid`) - never the email; the same email at another provider is another
 user. Sessions are stateful (`sessions` collection, TTL, only SHA-256 of the id stored; the cookie is `<id>.<HMAC>`), rotated at
