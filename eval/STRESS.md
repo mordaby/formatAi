@@ -24,7 +24,7 @@ the repro of a seed with findings only; `--out <dir>` (default `eval/reports/str
 Keep each command short: a 100-seed `mixed` chunk takes 1-2 minutes, a `timing` case 20-60 s (most of it generating the files).
 Run 500 seeds as five chunks (`--seed 1`, `101`, ...).
 
-The eval tests run a fixed set: the first 30 seeds of the small profile and the 18 seeds that found the bugs fixed so far, about
+The eval tests run a fixed set: the first 30 seeds of the small profile and the 20 seeds that found the bugs fixed so far, about
 8 s (`pnpm --filter ./eval test`).
 
 ## What a case is
@@ -32,7 +32,7 @@ The eval tests run a fixed set: the first 30 seeds of the small profile and the 
 From a seed: a language (Hebrew, English, mixed), columns of 18 kinds (names, companies, cities, categories, free and long text,
 text and numeric IDs, Israeli IDs as text or numbers that lost their leading zero, codes, phones, emails, multi-value cells, cells
 that start like a formula, integers, decimals, money with currency signs and grouping, real dates, text dates in five formats, bare
-serials), mess (empties, stray and non-breaking spaces, direction marks, emoji, other scripts, injected `= + - @` cells), a layout
+serials), mess (empties, stray and non-breaking spaces, direction marks, emoji, other scripts - a few cells, or a whole name column of a few names -, injected `= + - @` cells), a layout
 (xlsx / csv / txt, encodings and delimiters, title rows, a totals row, duplicate rows), and reference rules built from the rules
 language's real operations (copy, rename, template, concat, substr, split, case changes, padLeft, value maps, bands, number and
 date formats, date parts, arithmetic, group totals, filters, sort, dedupe, title and summary rows, groups, csv / txt output with or
@@ -99,6 +99,26 @@ O1 is gone (it was on 14 mixed and 10 small cases). Paths (mixed) are unchanged:
 (mixed): partialMismatchReported 29, fakeEqualsReal 20, idNumberSentReal 17 (was 26), localNotVerified 7, holdoutAssumed 5. Every
 `idNumberSentReal` is now an "Order No" / "מספר הזמנה" column - no identifier word in the name, so a measure, sent real (the documented
 limit); "Customer No" / "מספר לקוח" and the Israeli ID columns are identifiers by their names and masked.
+
+## Results (2026-10-07, branch audit-engine-privacy)
+
+The engine audit's fixes (SPEC, amendment "engine audit fixes"), with the extended mask check (every payload field that can hold cell
+text, `shape` included) and the generator's other-script name columns (`scriptPool`, its own random stream: the other draws of a case
+are unchanged). The same seeds as above:
+
+| Run | Cases | New failures | Open findings reproduced | Learn p50 / p95 / max | Convert p50 / p95 / max |
+|---|---|---|---|---|---|
+| mixed, seeds 1-500 (five chunks of 100) | 500 (2-19,960 rows, 2-40 columns) | 1 (`slow`, mixed 134: does not reproduce, see below) | O4 on 1 (mixed 286) | 33-54 / 802-1,628 / 17,740 ms | 10-17 / 182-683 / 7,111 ms |
+| small, seeds 1-500 | 500 | 0 | none | 12 / 46 / 118 ms | 7 / 29 / 69 ms |
+
+(Mixed timings are per chunk: the lowest and highest chunk's p50 and p95.) O2 and O3 are closed; with the shape check the old engine
+failed small 23 and 128 (`maskLeakScript` in `input.columns[].shape`). Paths (mixed): partial 288, local 108, blocked 104 (was 286 /
+111 / 103; the generator's new columns change the cases that have them). Findings (mixed):
+partialMismatchReported 23, fakeEqualsReal 20, localNotVerified 6, holdoutAssumed 4; `idNumberSentReal` is gone ("Order No" is an
+identifier by its name since 2026-10-07). Small: partialMismatchReported 12, localNotVerified 6, holdoutAssumed 4, fakeEqualsReal 1.
+
+Mixed 134 (15,122 x 18, txt -> csv) took 17.7 s to learn in its chunk (the limit is 10 s). Alone it learns in 6.2-7.8 s on this branch
+and in 7.9-9.1 s with main's engine (same seed, `--no-mask`, the same machine): load on a shared machine, not a regression.
 
 ## Open findings
 
