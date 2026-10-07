@@ -165,7 +165,7 @@ describe('LearnFlow', () => {
     expect(state(flow).sent[1]).toMatchObject({ kind: 'repair', fresh: true });
   });
 
-  it('"see what we send" is exactly what left: each record is the body the API client posted (the fresh learn in a loop round: the payload, noCache, rulesNow - nothing else)', async () => {
+  it('"see what we send" is exactly what left: each record is the body the API client posted (the fresh learn in a loop round: the payload, noCache, rulesNow - nothing else; a list round: its rounds of checks)', async () => {
     const bodies: { path: string; body: Record<string, unknown> }[] = [];
     let learns = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -183,11 +183,18 @@ describe('LearnFlow', () => {
     });
     const api = createApi({ baseUrl: 'https://api.test', fetch: fetchMock as unknown as typeof fetch });
     const STEP_ROUND = { checks: [{ check: 'values', column: 'A' }], answers: [{ rows: 3, distinct: 2, empty: 0, top: [] }] } as unknown as CheckRound;
+    // The round for a list, sent again with its round of checks answered: the masked rows and the top values code found leave in `rounds`.
+    const LIST_ROUND = {
+      checks: [{ check: 'values', column: 'B' }],
+      answers: [{ rows: 3, distinct: 2, empty: 0, top: [{ value: 'w1 w2', count: 2 }], examples: [{ in: ['m-1', 'w3'] }] }],
+    } as unknown as CheckRound;
+    const LIST = [{ kind: 'list' as const, out: 1, message: 'Column "B" is a list of 30 fixed values, one per A.' }];
     const { engine } = fakeEngine(async (_a, host) => {
       await host.callLearn(PAYLOAD);
       await host.callRepair(PAYLOAD, PREV_RULES, [{ kind: 'layout', message: 'r1' }], ROUND1); // -> a fresh learn
       await host.callRepair(PAYLOAD, PREV_RULES, [{ kind: 'layout', message: 'r2' }], { ...ROUND2, overfitRepaired: true }); // -> a repair of L2
       await host.callStep(PAYLOAD, [STEP_ROUND]);
+      await host.callRepair(PAYLOAD, PREV_RULES, LIST, { round: 3, maxRounds: 3, rows: ROUND2.rows, newRows: 0, list: true, checks: [LIST_ROUND] }); // -> the list's round, with its checks
       return result({ path: 'llm' });
     });
     const { flow, start } = makeFlow(engine, api);
@@ -195,7 +202,7 @@ describe('LearnFlow', () => {
 
     const sent = state(flow).sent;
     const posted = bodies.filter((b) => !b.path.endsWith('/outcome'));
-    expect(posted.map((b) => b.path)).toEqual(['/api/learn', '/api/learn', '/api/learn/repair', '/api/learn/step']);
+    expect(posted.map((b) => b.path)).toEqual(['/api/learn', '/api/learn', '/api/learn/repair', '/api/learn/step', '/api/learn/repair']);
     expect(sent).toHaveLength(posted.length);
     // The fresh learn: exactly its body - no previous rules, no problems, no rows.
     expect(sent[1]).toMatchObject({ kind: 'repair', fresh: true, round: { n: 1, of: 3 } });
@@ -208,6 +215,9 @@ describe('LearnFlow', () => {
     expect(sent.map(sentBody)).toEqual(posted.map((b) => withoutId(b.body)));
     expect(posted[2]!.body).toMatchObject({ learnId: 'L2', rows: [ROW_B], overfitRepaired: true });
     expect(posted[3]!.body).toMatchObject({ token: 'L2' });
+    // The list's round: its checks' answers left the browser - and "See what we send" shows them.
+    expect(posted[4]!.body).toMatchObject({ learnId: 'L2', rounds: [LIST_ROUND] });
+    expect(sentBody(sent[4]!)).toMatchObject({ rounds: [LIST_ROUND] });
   });
 
   describe('the learning loop (SPEC 9.3): rounds of repairs, each with every row sent so far', () => {

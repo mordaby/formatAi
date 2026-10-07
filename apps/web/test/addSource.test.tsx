@@ -202,6 +202,22 @@ describe('the Add a source screen', () => {
     expect(screen.getByRole('button', { name: 'Add source' })).toBeTruthy();
   });
 
+  it('"See what we send" is there with the result too: the learn request it sent, as JSON (SPEC 15)', async () => {
+    setup();
+    await screen.findByTestId('add-format-columns');
+    await drop('Example input', csv('supplier-b.csv'));
+    await drop('Example output', xlsx('load.xlsx'));
+    await waitFor(() => expect(learnButton().disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(learnButton());
+    });
+    await screen.findByTestId('rules-map');
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    const records = await screen.findAllByTestId('send-record');
+    expect(records).toHaveLength(1);
+    expect(records[0]!.textContent).toContain('"payload"');
+  });
+
   it('saving POSTs a new conversion of the format with the source\'s name, and does not download the file', async () => {
     const { api } = setup();
     await screen.findByTestId('add-format-columns');

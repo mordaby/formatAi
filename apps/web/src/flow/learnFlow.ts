@@ -16,6 +16,7 @@
 import { limits, payloadBytes, stepBytes, withRows, type AiLearnQuotaState, type CheckRound, type Format, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type RepairResponse, type Sample, type Tier } from '@formatai/shared';
 import type { AnalysisStage, CompleteOptions, LearnCallResult, PreflightIssue } from '@formatai/engine';
 import type { Api } from '../api';
+import { learnRequest, repairRequest, stepRequest, type LearnRequestOptions, type RepairRequestOptions } from '../api/learnRequests';
 import { webConfig } from '../config';
 import type { EngineClient } from '../worker/engineClient';
 import type { CheckRoundInfo, LearnArgs, LearnHost, LearnOutput, LearnProgress, LoopRoundInfo, SentColumns } from '../worker/engineApi';
@@ -284,26 +285,15 @@ export class LearnFlow {
         // AI step must answer with the rules (learn-v9's "answer with the rules now"), never ask checks the loop has no way to answer.
         if (fresh) rowsBeforeLearnId = round.rows.length;
         const rows = fresh ? [] : round.rows.slice(rowsBeforeLearnId);
+        // What the repair carries besides the payload, the rules and the problems - recorded and sent as one (`sentBody` builds the same body).
+        // (the round for a list, learn-v9: sent again with its rounds of checks answered - `LoopRound.checks`)
+        const opts: RepairRequestOptions = { rows, overfitRepaired: round.overfitRepaired, rounds: round.checks };
         try {
           const n = { n: round.round, of: round.maxRounds };
-          await record(
-            fresh
-              ? { kind: 'repair', fresh: true, payload, round: n }
-              : {
-                  kind: 'repair',
-                  payload,
-                  previousRules,
-                  problems,
-                  round: n,
-                  ...(rows.length > 0 ? { rows } : {}),
-                  ...(round.overfitRepaired ? { overfitRepaired: true } : {}),
-                  ...(round.checks && round.checks.length > 0 ? { rounds: round.checks } : {}),
-                },
-          );
-          // (the round for a list, learn-v9: sent again with its rounds of checks answered - `LoopRound.checks`)
+          await record(fresh ? { kind: 'repair', fresh: true, payload, round: n } : { kind: 'repair', payload, previousRules, problems, round: n, ...recordedRepair(opts) });
           const res = fresh
-            ? await this.deps.api.learn(payload, { turnstileToken: await token(), noCache: true, rulesNow: true, signal: abort.signal })
-            : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, rows, overfitRepaired: round.overfitRepaired, rounds: round.checks });
+            ? await this.deps.api.learn(payload, { turnstileToken: await token(), ...FRESH_LEARN, signal: abort.signal })
+            : await this.deps.api.repair(learnId!, payload, previousRules, problems, { signal: abort.signal, ...opts });
           lastProblems = res.problems;
           // (the next round repairs the fresh learn, under its own learnId)
           if (fresh) learnId = (res as LearnResponse).learnId;
@@ -394,26 +384,36 @@ export class LearnFlow {
   }
 }
 
+/** The fresh learn that stands in for a round of the learning loop: uncached, and it must answer with the rules (learn-v9). */
+const FRESH_LEARN: LearnRequestOptions = { noCache: true, rulesNow: true };
+
+/** What a repair's record keeps of its options (only what is there): exactly what `sentBody` gives back to the request builder. */
+function recordedRepair(opts: RepairRequestOptions): Pick<SentRecord, 'rows' | 'overfitRepaired' | 'rounds'> {
+  return {
+    ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}),
+    ...(opts.overfitRepaired ? { overfitRepaired: true } : {}),
+    ...(opts.rounds && opts.rounds.length > 0 ? { rounds: opts.rounds } : {}),
+  };
+}
+
 /**
- * The JSON body of the request a record stands for, exactly as `Api` sends it ("See what we send" shows it) - apart from the learn's id (a
- * repair's `learnId`, a step's `token`) and the Turnstile token, which carry nothing from the files. A fresh learn in a loop round is a learn:
- * the payload, `noCache` and `rulesNow`, nothing else.
+ * The JSON body of the request a record stands for, exactly as `Api` sends it ("See what we send" shows it): built by the same request builders
+ * the API client uses (api/learnRequests.ts), so the two cannot drift - apart from the learn's id (a repair's `learnId`, a step's `token`) and
+ * the Turnstile token, which carry nothing from the files. A fresh learn in a loop round is a learn: the payload, `noCache` and `rulesNow`.
  */
 export function sentBody(rec: SentRecord): object {
   switch (rec.kind) {
     case 'learn':
-      return { payload: rec.payload };
-    case 'step':
-      return { payload: rec.payload, rounds: rec.rounds ?? [] };
-    case 'repair':
-      if (rec.fresh) return { payload: rec.payload, noCache: true, rulesNow: true };
-      return {
-        payload: rec.payload,
-        previousRules: rec.previousRules,
-        problems: rec.problems,
-        ...(rec.rows && rec.rows.length > 0 ? { rows: rec.rows } : {}),
-        ...(rec.overfitRepaired ? { overfitRepaired: true } : {}),
-      };
+      return learnRequest(rec.payload);
+    case 'step': {
+      const { token: _token, ...body } = stepRequest('', rec.payload, rec.rounds ?? []);
+      return body;
+    }
+    case 'repair': {
+      if (rec.fresh) return learnRequest(rec.payload, FRESH_LEARN);
+      const { learnId: _learnId, ...body } = repairRequest('', rec.payload, rec.previousRules!, rec.problems ?? [], { rows: rec.rows, overfitRepaired: rec.overfitRepaired, rounds: rec.rounds });
+      return body;
+    }
   }
 }
 

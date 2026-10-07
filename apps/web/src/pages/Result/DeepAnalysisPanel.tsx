@@ -4,14 +4,12 @@
 // completes the ticked fields when it can and runs the whole learn when it can't (`runDeep` in the Result screen: there is no second AI button).
 // While it runs the panel shows the progress; afterwards what the AI solved and what still needs the user's input (an honest "could not
 // produce" stays "needs your input").
-// It also carries "See what we send" (SPEC 15) for the call it made, and the plain-words reasons a run was not used.
+// It also carries the plain-words reasons a run was not used. ("See what we send" for every call of the screen is the Result screen's own.)
 import { aiReadinessMessages, aiStepPartMessages, type AiColumnNote, type AiLearnQuotaState, type AiStepPartCode } from '@formatai/shared';
-import { useId, useState, type ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { AiLimitNotice, isAiQuotaHit, useAiLimit } from '../../app/AiLimit';
 import { aiUsesLabel, includedLabel, noAiLeft } from '../../app/aiQuota';
 import { errorView } from '../../app/messages';
-import { useLearnSession } from '../../app/LearnSession';
-import { SendPanel } from '../../app/SendPanel';
 import { Cell } from '../../components/Cell';
 import { localize, useI18n } from '../../i18n';
 import { Button, Icon, Spinner } from '../../ui';
@@ -66,11 +64,7 @@ export interface DeepAnalysisPanelProps {
 export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
   const i18n = useI18n();
   const { t, lang } = i18n;
-  const session = useLearnSession();
   const aiLimit = useAiLimit();
-  const sent = session.completion.state.sent;
-  const [sendOpen, setSendOpen] = useState(false);
-  const sendId = useId();
   const titleId = useId();
   const { completion } = p;
   const { running, outcome, exhausted } = completion;
@@ -288,15 +282,6 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
       ) : null}
 
       {final ? null : deliver}
-
-      {sent.length > 0 && (
-        <p className="privacy__line">
-          <Button variant="link" aria-expanded={sendOpen} aria-controls={sendOpen ? sendId : undefined} onClick={() => setSendOpen((o) => !o)}>
-            {t('sendPanel.title')}
-          </Button>
-        </p>
-      )}
-      {sendOpen && sent.length > 0 && <SendPanel id={sendId} sent={sent} masking={session.masking} onClose={() => setSendOpen(false)} />}
     </section>
   );
 }

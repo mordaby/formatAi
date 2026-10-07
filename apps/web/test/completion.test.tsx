@@ -549,6 +549,22 @@ describe('"Finish with AI" is the whole learn when it cannot complete, and asks 
     expect((learn.mock.calls[1]![0] as CompletionArgs).complete).toBeUndefined();
   });
 
+  it('the whole learn\'s requests are in "See what we send" on the result it gives (not only a completion\'s)', async () => {
+    const { engine } = engineWith(async (_args, host) => {
+      await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: true, output: { columns: [{ i: 0, header: 'whole-learn-marker' }] }, samples: [] });
+      return learnResult({ path: 'llm' });
+    }, covered);
+    await start(engine);
+    expect(screen.queryByRole('button', { name: 'See what we send' })).toBeNull(); // (the free learn sent nothing)
+    await act(async () => void fireEvent.click(finishButton()));
+    await screen.findByTestId('rules-map');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'See what we send' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'See what we send' }));
+    const records = await screen.findAllByTestId('send-record');
+    expect(records).toHaveLength(1);
+    expect(records[0]!.textContent).toContain('whole-learn-marker');
+  });
+
   it('with edits it asks "This replaces your current rules"; "Keep my rules" changes nothing', async () => {
     const { engine, learn } = engineWith(async () => learnResult({ path: 'llm' }), covered);
     await start(engine);

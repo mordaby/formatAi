@@ -5,11 +5,12 @@
 //
 // SPEC 2/15: the only bodies ever sent are JSON (the learn payload, rules, problems).
 // There is deliberately no method that takes a File or a Blob.
-import type { CheckRound, LearnPayload, LearnRequest, LearnResponse, LearnResult, RepairProblem, RepairRequest, RepairResponse, Sample, SessionResponse, StepRequest, StepResponse } from '@formatai/shared';
+import type { CheckRound, LearnPayload, LearnResponse, LearnResult, RepairProblem, RepairResponse, Sample, SessionResponse, StepResponse } from '@formatai/shared';
 import { createAdminApi, type AdminApi } from './api/admin';
 import { createAuthApi, type AuthApi } from './api/auth';
 import { createContactApi, type ContactApi } from './api/contact';
 import { createHttp, type CreateHttpOptions } from './api/http';
+import { learnRequest, repairRequest, stepRequest } from './api/learnRequests';
 import { createRegistryApi, type RegistryApi } from './api/registry';
 
 export { ApiError, isApiError, toApiError, type ApiFailureCode, type ClientErrorCode } from './api/http';
@@ -58,31 +59,11 @@ export function createApi(options: CreateApiOptions = {}): Api {
 
   return {
     session: (signal) => request<SessionResponse>('GET', '/api/session', undefined, signal),
-    learn: (payload, opts = {}) => {
-      const req: LearnRequest = {
-        payload,
-        ...(opts.turnstileToken ? { turnstileToken: opts.turnstileToken } : {}),
-        ...(opts.noCache ? { noCache: true } : {}),
-        ...(opts.rulesNow ? { rulesNow: true } : {}),
-      };
-      return request<LearnResponse>('POST', '/api/learn', req, opts.signal);
-    },
-    repair: (learnId, payload, previousRules, problems, opts = {}) => {
-      const req: RepairRequest = {
-        payload,
-        previousRules,
-        problems,
-        learnId,
-        ...(opts.rows && opts.rows.length > 0 ? { rows: opts.rows } : {}),
-        ...(opts.overfitRepaired ? { overfitRepaired: true } : {}),
-        ...(opts.rounds && opts.rounds.length > 0 ? { rounds: opts.rounds } : {}),
-      };
-      return request<RepairResponse>('POST', '/api/learn/repair', req, opts.signal);
-    },
-    step: (token, payload, rounds, opts = {}) => {
-      const req: StepRequest = { token, payload, rounds };
-      return request<StepResponse>('POST', '/api/learn/step', req, opts.signal);
-    },
+    // (the bodies come from the one builder "See what we send" shows them with: ./api/learnRequests.ts)
+    learn: (payload, opts = {}) => request<LearnResponse>('POST', '/api/learn', learnRequest(payload, opts), opts.signal),
+    repair: (learnId, payload, previousRules, problems, opts = {}) =>
+      request<RepairResponse>('POST', '/api/learn/repair', repairRequest(learnId, payload, previousRules, problems, opts), opts.signal),
+    step: (token, payload, rounds, opts = {}) => request<StepResponse>('POST', '/api/learn/step', stepRequest(token, payload, rounds), opts.signal),
     auth: createAuthApi(request),
     registry: createRegistryApi(request),
     admin: createAdminApi(request),

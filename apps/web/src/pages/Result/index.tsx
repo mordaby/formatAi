@@ -11,9 +11,10 @@ import { LeaveDialog } from '../../app/LeaveGuard';
 import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
 import { copiedListsOf, findingsToConfirm, lineIds } from '../../editor';
+import { SentLink } from '../../app/SendPanel';
 import { useSignIn } from '../../app/SignIn';
 import { Cell } from '../../components/Cell';
-import type { AiInfo } from '../../flow/learnFlow';
+import type { AiInfo, SentRecord } from '../../flow/learnFlow';
 import type { UseLearnFlow } from '../../flow/useLearnFlow';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
@@ -41,10 +42,11 @@ export type ResultPageProps = UseLearnFlow;
 
 export function ResultPage({ state }: ResultPageProps) {
   if (state.status !== 'done' || !state.result.rules) return null;
-  return <ResultScreen result={state.result} ai={state.ai} />;
+  return <ResultScreen result={state.result} ai={state.ai} sent={state.sent} />;
 }
 
-function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefined }) {
+/** `sent`: what the learn of this result sent (a learn with the AI step: "See what we send" shows it, with every "Finish with AI" after it). */
+function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | undefined; sent: readonly SentRecord[] }) {
   const { t } = useI18n();
   const { api } = useServices();
   const session = useLearnSession();
@@ -71,6 +73,9 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // learn-v7: the notes of an applied answer go into the session (never into the rules): see `ResultSession.aiNotes`.
   const completion = useCompletion(kept, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
   const completed = completion.completed;
+  // "See what we send" (SPEC 15) for every request this result took: its learn's (a whole learn with the AI step), then its "Finish with AI".
+  const completionSent = kept.completion ? session.completion.state.sent : undefined;
+  const allSent = useMemo(() => (completionSent ? [...sent, ...completionSent] : sent), [sent, completionSent]);
   // A list copied from the example (owner decision 2026-10-06), and an identifier-shaped value (docs/proposals/saved-format-contents.md section
   // 6): never asked on screen - the rules are used as they are - but at Save, before the rules are stored, in one popup (`CopiedListSave`):
   // the completion's answer's lists, then the learn's.
@@ -385,6 +390,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
           downloading={download.status === 'busy'}
         />
       )}
+      <SentLink sent={allSent} masking={session.masking} />
       {/* ... and the rows the user called a one-time change (SPEC 21 v12 item 20), until the first save. */}
       {(unfinished || (!source && (info.live?.oneTime?.length ?? 0) > 0)) && (
         <UnfinishedRows

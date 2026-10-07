@@ -12,13 +12,13 @@ import { useLearnSession } from '../../app/LearnSession';
 import { LinkButton } from '../../app/LinkButton';
 import { useMe } from '../../app/Me';
 import { RequireSignIn } from '../../app/RequireSignIn';
-import { SendPanel } from '../../app/SendPanel';
+import { SendPanel, SentLink } from '../../app/SendPanel';
 import { useSignIn } from '../../app/SignIn';
 import { useFileInfo } from '../../app/useFileInfo';
 import { useLoad } from '../../app/useLoad';
 import { webConfig } from '../../config';
 import { copiedListsOf, EditorStore, findingsToConfirm } from '../../editor';
-import type { AiInfo } from '../../flow/learnFlow';
+import type { AiInfo, SentRecord } from '../../flow/learnFlow';
 import { useLearnFlow } from '../../flow/useLearnFlow';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
@@ -240,6 +240,7 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
         key="result"
         result={state.result}
         ai={state.ai}
+        sent={state.sent}
         format={format}
         target={target}
         sourceCount={sourceCount}
@@ -379,6 +380,8 @@ export function MismatchList({ mismatches }: { mismatches: OutputMismatch[] }) {
 interface AttachResultProps {
   result: LearnOutput;
   ai: AiInfo | undefined;
+  /** What the learn sent ("See what we send", SPEC 15): shown with the result too. */
+  sent: readonly SentRecord[];
   format: FormatDetail;
   target: Format;
   sourceCount: number;
@@ -390,7 +393,7 @@ interface AttachResultProps {
 }
 
 /** The learned source, in the same map and editor as any result; saving adds it to the format (the format lock is checked live and by the server). */
-function AttachResult({ result, ai, format, target, sourceName, input, masking, onChangeFiles }: AttachResultProps) {
+function AttachResult({ result, ai, sent, format, target, sourceName, input, masking, onChangeFiles }: AttachResultProps) {
   const { t } = useI18n();
   const { api } = useServices();
   const me = useMe();
@@ -497,6 +500,7 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
       )}
       {failure && <SaveFailureMessage failure={failure} onSignIn={() => undefined} {...(problemsTitle ? { problemsTitle } : {})} />}
       {download.status === 'failed' && <InlineMessage tone="warn">{t('result.downloadFailed')}</InlineMessage>}
+      <SentLink sent={sent} masking={masking} />
     </>
   );
 
