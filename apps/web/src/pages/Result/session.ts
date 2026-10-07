@@ -4,6 +4,7 @@
 import type { AiColumnNote } from '@formatai/shared';
 import { EditorStore, withOpenQuestion, type EditableRules } from '../../editor';
 import type { LearnOutput } from '../../worker/engineApi';
+import type { CompletionRecord } from './useCompletion';
 
 /** Where a learn was saved (SPEC 8.12): from then on the screen is the editor of that source, and its address is the source's own. */
 export interface SavedSource {
@@ -32,6 +33,12 @@ export interface ResultSession {
   aiNotes?: AiColumnNote[] | undefined;
   /** The deep analysis with AI has been started for this result (by the user, or by Home's "Learn with AI"): it is never started by itself twice. */
   deepRun?: boolean | undefined;
+  /**
+   * "Finish with AI" on this result (`useCompletion`): what it was asked, the rules and the editor's revision when it started, whether its
+   * answer has been dealt with, what it came to and the answer that was applied. Here, not in the screen: the run itself lives in the learn
+   * session, so leaving the screen while it works (or after) and coming back must not lose it - nor re-apply, nor discard, an answer.
+   */
+  completion?: CompletionRecord | undefined;
 }
 
 const sessions = new WeakMap<LearnOutput, ResultSession>();

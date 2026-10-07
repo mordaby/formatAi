@@ -33,13 +33,29 @@ interface HostWaiter {
   reject(error: Error): void;
 }
 
+/** What a host call of a cancelled call is answered with (the method sees a normal rejection and ends). */
+function cancelled(): Error {
+  return Object.assign(new Error('The call was cancelled'), { name: 'AbortError', code: 'cancelled' });
+}
+
 export function serveMethods(scope: WorkerScopeLike, methods: MethodMap): void {
   const post = (message: WorkerToMain, transfer?: Transferable[]): void => scope.postMessage(message, transfer);
-  const waiting = new Map<string, HostWaiter>();
+  const waiting = new Map<string, HostWaiter & { id: number }>();
+  /** Calls the caller gave up on, until they end: what they still ask of the main thread is refused at once. */
+  const gone = new Set<number>();
   let nextCb = 1;
 
   scope.addEventListener('message', (ev) => {
     const msg = ev.data as MainToWorker;
+    if (msg.type === 'cancel') {
+      gone.add(msg.id);
+      for (const [key, w] of waiting) {
+        if (w.id !== msg.id) continue;
+        waiting.delete(key);
+        w.reject(cancelled());
+      }
+      return;
+    }
     if (msg.type === 'hostResult') {
       const key = `${msg.id}:${msg.cbId}`;
       const w = waiting.get(key);
@@ -52,6 +68,8 @@ export function serveMethods(scope: WorkerScopeLike, methods: MethodMap): void {
     if (msg.type !== 'call') return;
 
     const { id, method } = msg;
+    // The worker begins this call now: its timeout counts from here (it may have waited behind a long call).
+    post({ type: 'started', id });
     const fn = methods[method];
     if (!fn) {
       post({ type: 'error', id, error: { name: 'Error', message: `Unknown method "${method}"`, code: 'unknownMethod' } });
@@ -61,8 +79,12 @@ export function serveMethods(scope: WorkerScopeLike, methods: MethodMap): void {
       progress: (progress) => post({ type: 'progress', id, progress }),
       host: (name, ...args) =>
         new Promise((resolve, reject) => {
+          if (gone.has(id)) {
+            reject(cancelled());
+            return;
+          }
           const cbId = nextCb++;
-          waiting.set(`${id}:${cbId}`, { resolve: resolve as (v: unknown) => void, reject });
+          waiting.set(`${id}:${cbId}`, { id, resolve: resolve as (v: unknown) => void, reject });
           post({ type: 'host', id, cbId, name, args });
         }),
     };
@@ -71,10 +93,14 @@ export function serveMethods(scope: WorkerScopeLike, methods: MethodMap): void {
       .then(() => fn(msg.args, ctx))
       .then(
         (out) => {
+          gone.delete(id);
           if (out instanceof Transfer) post({ type: 'result', id, value: out.value }, out.transfer);
           else post({ type: 'result', id, value: out });
         },
-        (err: unknown) => post({ type: 'error', id, error: serializeError(err) }),
+        (err: unknown) => {
+          gone.delete(id);
+          post({ type: 'error', id, error: serializeError(err) });
+        },
       );
   });
 }

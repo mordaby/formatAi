@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MainToWorker, WorkerToMain } from '../src/worker/protocol';
 import { Transfer } from '../src/worker/runtime';
-import { loopback } from './helpers/loopback';
+import { loopback, loopbackWorker } from './helpers/loopback';
 import {
   RpcAbortedError,
   RpcClient,
@@ -213,6 +213,7 @@ describe('RpcClient protocol', () => {
       const caught = p.catch((e: unknown) => e);
       const w = workers[0]!;
       const id = w.calls[0]!.id;
+      w.emit({ type: 'started', id });
 
       await vi.advanceTimersByTimeAsync(600); // worker busy for 600 ms
       w.emit({ type: 'host', id, cbId: 1, name: 'callLearn', args: [] });
@@ -237,6 +238,7 @@ describe('RpcClient protocol', () => {
       const caught = client.call('learn', null, { extraTimeOn, onProgress }).catch((e: unknown) => e);
       const w = workers[0]!;
       const id = w.calls[0]!.id;
+      w.emit({ type: 'started', id });
 
       await vi.advanceTimersByTimeAsync(600);
       w.emit({ type: 'progress', id, progress: { grant: 2000 } }); // 400 left + 2000
@@ -258,6 +260,7 @@ describe('RpcClient protocol', () => {
         .catch((e: unknown) => e);
       const w = workers[0]!;
       const id = w.calls[0]!.id;
+      w.emit({ type: 'started', id });
       await vi.advanceTimersByTimeAsync(800);
       w.emit({ type: 'host', id, cbId: 1, name: 'callLearn', args: [] });
       w.emit({ type: 'progress', id, progress: { grant: 1000 } });
@@ -268,20 +271,95 @@ describe('RpcClient protocol', () => {
       await vi.advanceTimersByTimeAsync(200);
       expect(await caught).toBeInstanceOf(RpcTimeoutError);
     });
+
+    // The audit's case (C4): a round of AI code checks keeps the worker busy (it grants the learn its time), and a live check posted meanwhile
+    // waits behind it - its timer must not run while it waits, or it "times out" and the restart kills the learn and the screen's example.
+    it('a call\'s busy time counts from when the worker begins it: one queued behind a long call does not time out while it waits', async () => {
+      const { client, workers } = setup(1000);
+      const learn = client.call<string>('learn', null, { timeoutMs: 30_000 });
+      const live = client.call<string>('liveCheck', null, { timeoutMs: 100 });
+      const w = workers[0]!;
+      const [learnId, liveId] = w.calls.map((c) => c.id);
+      w.emit({ type: 'started', id: learnId! });
+      await vi.advanceTimersByTimeAsync(20_000); // the learn works; the live check waits
+      expect(w.terminated).toBe(false);
+      w.emit({ type: 'result', id: learnId!, value: 'learned' });
+      await expect(learn).resolves.toBe('learned');
+      w.emit({ type: 'started', id: liveId! });
+      await vi.advanceTimersByTimeAsync(50);
+      w.emit({ type: 'result', id: liveId!, value: 'checked' });
+      await expect(live).resolves.toBe('checked');
+      expect(w.terminated).toBe(false);
+    });
+
+    it('... and once begun it has its own timeout: a call that hangs after it began is still caught', async () => {
+      const { client, workers } = setup(1000);
+      const caught = client.call('liveCheck', null, { timeoutMs: 100 }).catch((e: unknown) => e);
+      const w = workers[0]!;
+      await vi.advanceTimersByTimeAsync(60);
+      w.emit({ type: 'started', id: w.calls[0]!.id });
+      await vi.advanceTimersByTimeAsync(90); // 150 since posted, 90 since begun
+      expect(w.terminated).toBe(false);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await caught).toBeInstanceOf(RpcTimeoutError);
+      expect(w.terminated).toBe(true);
+    });
+
+    it('a cancelled call that the worker never ends is caught by its timeout too (a hang is a hang)', async () => {
+      const { client, workers } = setup(1000);
+      const ac = new AbortController();
+      const caught = client.call('convert', null, { signal: ac.signal, timeoutMs: 500 }).catch((e: unknown) => e);
+      const w = workers[0]!;
+      w.emit({ type: 'started', id: w.calls[0]!.id });
+      ac.abort();
+      expect(await caught).toBeInstanceOf(RpcAbortedError);
+      expect(w.terminated).toBe(false);
+      await vi.advanceTimersByTimeAsync(501);
+      expect(w.terminated).toBe(true);
+    });
   });
 
-  it('abort: rejects with RpcAbortedError, terminates the worker, and works again afterwards', async () => {
-    const { client, workers } = setup();
-    const ac = new AbortController();
-    const caught = client.call('learn', null, { signal: ac.signal }).catch((e: unknown) => e);
-    ac.abort();
-    expect(await caught).toBeInstanceOf(RpcAbortedError);
-    expect(workers[0]!.terminated).toBe(true);
+  describe('cancel (C5): giving up on one call never restarts the shared worker - what it holds for other screens stays', () => {
+    it('a call the worker has not begun: rejects at once, the worker is left alone, and the call before it still answers', async () => {
+      const { client, workers } = setup();
+      const ac = new AbortController();
+      const first = client.call<string>('liveCheck', null);
+      const caught = client.call('learn', null, { signal: ac.signal }).catch((e: unknown) => e);
+      const w = workers[0]!;
+      w.emit({ type: 'started', id: w.calls[0]!.id });
+      ac.abort();
+      expect(await caught).toBeInstanceOf(RpcAbortedError);
+      expect(w.terminated).toBe(false);
+      w.emit({ type: 'result', id: w.calls[0]!.id, value: 'ok' });
+      await expect(first).resolves.toBe('ok');
+    });
 
-    const p = client.call<number>('convert', null);
-    expect(workers).toHaveLength(2);
-    workers[1]!.emit({ type: 'result', id: workers[1]!.calls[0]!.id, value: 5 });
-    await expect(p).resolves.toBe(5);
+    it('a call it has begun: rejects at once, the worker is told (`cancel`) and not restarted; what the call still asks of the main thread is refused, and its late answer goes nowhere', async () => {
+      const { client, workers } = setup();
+      const ac = new AbortController();
+      const callLearn = vi.fn(async () => 'answer');
+      const onProgress = vi.fn();
+      const caught = client.call('learn', null, { signal: ac.signal, host: { callLearn }, onProgress }).catch((e: unknown) => e);
+      const w = workers[0]!;
+      const id = w.calls[0]!.id;
+      w.emit({ type: 'started', id });
+      ac.abort();
+      expect(await caught).toBeInstanceOf(RpcAbortedError);
+      expect(w.terminated).toBe(false);
+      expect(w.posted.map((p) => p.message)).toContainEqual({ type: 'cancel', id });
+      w.emit({ type: 'progress', id, progress: { phase: 'verifying' } });
+      w.emit({ type: 'host', id, cbId: 1, name: 'callLearn', args: [] });
+      await vi.waitFor(() => expect(w.hostResults).toHaveLength(1));
+      expect(callLearn).not.toHaveBeenCalled();
+      expect(onProgress).not.toHaveBeenCalled();
+      expect(w.hostResults[0]).toMatchObject({ ok: false, error: { code: 'cancelled' } });
+      w.emit({ type: 'error', id, error: { name: 'AbortError', message: 'The call was cancelled', code: 'cancelled' } });
+      // The same worker serves the next call.
+      const next = client.call<number>('liveCheck', null);
+      expect(workers).toHaveLength(1);
+      w.emit({ type: 'result', id: w.calls[1]!.id, value: 7 });
+      await expect(next).resolves.toBe(7);
+    });
   });
 
   it('an already-aborted signal rejects without touching the worker', async () => {
@@ -315,6 +393,47 @@ describe('RpcClient protocol', () => {
 });
 
 describe('worker runtime <-> client (loopback with structured clone)', () => {
+  it('the worker says when it begins a call, before anything else of it', async () => {
+    const seen: string[] = [];
+    const handle = loopbackWorker({ m: async (_: unknown, ctx) => void ctx.progress('p') });
+    const client = new RpcClient({
+      createWorker: () => ({
+        ...handle,
+        listen: (h) => handle.listen({ ...h, message: (data) => (seen.push(data.type), h.message(data)) }),
+      }),
+      defaultTimeoutMs: 5000,
+    });
+    await client.call('m', null);
+    expect(seen).toEqual(['started', 'progress', 'result']);
+  });
+
+  it('a cancelled call\'s wait on the main thread is refused in the worker, so the method ends (and nothing else of it is asked)', async () => {
+    let ended: unknown;
+    const client = loopback({
+      learnLike: async (_: unknown, ctx) => {
+        try {
+          await ctx.host('callLearn');
+        } catch (e) {
+          ended = e;
+          // (a later ask is refused at once)
+          await ctx.host('callLearn').catch((again: unknown) => (ended = [e, again]));
+        }
+        return 'ended';
+      },
+    });
+    const ac = new AbortController();
+    let release!: () => void;
+    const callLearn = vi.fn(() => new Promise<void>((r) => (release = r)));
+    const caught = client.call('learnLike', null, { signal: ac.signal, host: { callLearn } }).catch((e: unknown) => e);
+    await vi.waitFor(() => expect(callLearn).toHaveBeenCalledTimes(1));
+    ac.abort();
+    expect(await caught).toBeInstanceOf(RpcAbortedError);
+    await vi.waitFor(() => expect(Array.isArray(ended)).toBe(true));
+    expect(ended).toMatchObject([{ code: 'cancelled' }, { code: 'cancelled' }]);
+    expect(callLearn).toHaveBeenCalledTimes(1);
+    release();
+  });
+
   it('runs a method, streams progress, and returns the result', async () => {
     const client = loopback({
       count: async (n: number, ctx) => {

@@ -285,6 +285,32 @@ describe("the learn's timeout: the worker's time answering a round of checks is 
     expect(await done).toBeInstanceOf(RpcTimeoutError);
   });
 
+  it('the round for a list has its own rounds of checks, and each gets the allowance too - also after the first try had rounds of its own (C4)', async () => {
+    const repairRound = (checkRound?: number): LearnProgress => ({
+      phase: 'learning',
+      attempt: 'repair',
+      round: { n: 1, of: 3, rows: 0, list: true },
+      ...(checkRound ? { checkRound: { n: checkRound, of: 3 } } : {}),
+    });
+    const learn = async (_args: unknown, ctx: MethodContext) => {
+      await ctx.host('callLearn', {});
+      ctx.progress(round(1)); // the first try: one round of checks
+      await busy(500);
+      await ctx.host('callStep', {}, []);
+      ctx.progress(repairRound()); // the list's round
+      await ctx.host('callRepair', {}, {}, [], {});
+      ctx.progress(repairRound(1)); // ... answered with checks: code answers them on every row now
+      await busy(6000);
+      await ctx.host('callRepair', {}, {}, [], {});
+      return { path: 'llm', rules: null };
+    };
+    const engine = createEngineClient({ createWorker: () => loopbackWorker({ learn }), timeouts: { learn: TIMEOUT }, checkRoundAllowanceMs: ALLOWANCE });
+    const answer = async () => ({ rules: null, problems: [], calls: [] });
+    const done = engine.learn({ input: bytes(), output: bytes(), masking: false, tier: 'paid' }, { callLearn: answer, callRepair: answer, callStep: answer }).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(await done).toMatchObject({ path: 'llm' });
+  });
+
   it('the allowance of a round is every check of it at its time budget', () => {
     expect(CHECK_ROUND_ALLOWANCE_MS).toBe(limits.learn.checks.timeBudgetMs * limits.learn.checks.maxChecksPerRound);
   });

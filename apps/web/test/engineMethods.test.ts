@@ -1,11 +1,11 @@
-// The real engine methods (the worker's `learn` / `convert` / `verify`) run through the real
+// The real engine methods (the worker's `learn` / `convert` / `loadExample`) run through the real
 // RPC runtime and client, in-process. This is not a substitute for the browser check (the
 // bundling of ExcelJS/SheetJS for a real Worker), but it pins the behaviour of the methods:
 // progress, the masking key, host calls, and the transfer of bytes.
 import { completionPlan, formulaRulesFromWire } from '@formatai/engine';
 import { fromWire, LearnResultSchema, type LearnPayload, type LearnResult } from '@formatai/shared';
 import { describe, expect, it, vi } from 'vitest';
-import type { ConvertOutput, LearnOutput, LearnProgress, LoadExampleOutput, VerifyOutput } from '../src/worker/engineApi';
+import type { ConvertOutput, LearnOutput, LearnProgress, LoadExampleOutput } from '../src/worker/engineApi';
 import { engineMethods } from '../src/worker/engineMethods';
 import { RpcRemoteError } from '../src/worker/rpcClient';
 import { loopback } from './helpers/loopback';
@@ -351,16 +351,5 @@ describe('engine methods, through the worker RPC', () => {
     if (out.ok) return;
     expect(out.error.code).toBe('missingRequiredColumns');
     expect(out.error.missing).toContain('Customer ID');
-  });
-
-  it('verify: re-checks rules against the example pair (for the editor)', async () => {
-    const client = loopback(engineMethods);
-    const learn = learnArgs(renamePair(), true);
-    const learned = await client.call<LearnOutput>('learn', learn.args, { transfer: learn.transfer });
-
-    const again = learnArgs(renamePair(), true);
-    const out = await client.call<VerifyOutput>('verify', { input: again.args.input, output: again.args.output, rules: learned.rules as LearnResult }, { transfer: again.transfer });
-    expect(out.ok).toBe(true);
-    if (out.ok) expect(out.verification.verified).toBe(true);
   });
 });

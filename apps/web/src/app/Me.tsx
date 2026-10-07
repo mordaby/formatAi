@@ -28,6 +28,8 @@ export interface Me {
   providers: AuthProviderId[] | null;
   /** What is left of the AI learns (null when unknown, or not signed in). */
   quota: AiLearnQuotaState | null;
+  /** Nobody is signed in because the user signed out here (not because a session ended by itself). Until someone signs in again. */
+  signedOut: boolean;
   notice: AuthNotice | null;
   /** How many formats the signed-in user has saved (null: not signed in, or not known yet). Home offers "Run a format" first when there are some. */
   formatCount: number | null;
@@ -71,6 +73,7 @@ export function MeProvider({ children }: { children: ReactNode }) {
   const [quota, setQuotaState] = useState<AiLearnQuotaState | null>(null);
   const [notice, setNotice] = useState<AuthNotice | null>(null);
   const [formatCount, setFormatCount] = useState<number | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
 
   const alive = useRef(true);
   useEffect(() => {
@@ -88,7 +91,10 @@ export function MeProvider({ children }: { children: ReactNode }) {
     try {
       const next = await auth.me();
       // (the same person again is not a change: nothing that reads `user` needs to run for it)
-      if (alive.current) setUser((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      if (alive.current) {
+        setUser((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+        if (next) setSignedOut(false);
+      }
     } catch {
       // The server is unreachable: keep what we know (anonymous, at the start).
     } finally {
@@ -216,6 +222,7 @@ export function MeProvider({ children }: { children: ReactNode }) {
       return false;
     }
     if (alive.current) {
+      setSignedOut(true);
       setUser(null);
       setQuotaState(null);
       setFormatCount(null);
@@ -243,8 +250,8 @@ export function MeProvider({ children }: { children: ReactNode }) {
   const dismissNotice = useCallback(() => setNotice(null), []);
 
   const value = useMemo<Me>(
-    () => ({ status, user, tier: user?.tier ?? 'anonymous', providers, quota, notice, formatCount, refreshFormats, setFormatCount, refresh, signOut, setQuota, dismissNotice, linkProvider }),
-    [status, user, providers, quota, notice, formatCount, refreshFormats, setFormatCount, refresh, signOut, setQuota, dismissNotice, linkProvider],
+    () => ({ status, user, tier: user?.tier ?? 'anonymous', providers, quota, signedOut, notice, formatCount, refreshFormats, setFormatCount, refresh, signOut, setQuota, dismissNotice, linkProvider }),
+    [status, user, providers, quota, signedOut, notice, formatCount, refreshFormats, setFormatCount, refresh, signOut, setQuota, dismissNotice, linkProvider],
   );
   return <MeContext.Provider value={value}>{children}</MeContext.Provider>;
 }

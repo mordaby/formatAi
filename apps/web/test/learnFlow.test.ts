@@ -46,7 +46,7 @@ type LearnImpl = (args: LearnArgs, host: LearnHost, opts: EngineCallOptions<Lear
 
 function fakeEngine(impl: LearnImpl) {
   const learn = vi.fn((args: LearnArgs, host: LearnHost, opts: EngineCallOptions<LearnProgress> = {}) => impl(args, host, opts));
-  const engine = { learn, convert: vi.fn(), verify: vi.fn(), terminate: vi.fn() } as unknown as EngineClient;
+  const engine = { learn, convert: vi.fn(), terminate: vi.fn() } as unknown as EngineClient;
   return { engine, learn };
 }
 
@@ -121,13 +121,11 @@ describe('LearnFlow', () => {
       return result({ path: 'llm', rules: r.rules });
     });
     const api = fakeApi();
-    const token = vi.fn(async () => 'turnstile-token');
-    const { flow, statuses, start } = makeFlow(engine, api, { getTurnstileToken: token });
+    const { flow, statuses, start } = makeFlow(engine, api);
     await start();
     expect(statuses).toEqual(['reading', 'checking', 'learning', 'verifying', 'done']);
     expect(api.learn).toHaveBeenCalledTimes(1);
     expect(api.learn.mock.calls[0]![0]).toBe(PAYLOAD);
-    expect(api.learn.mock.calls[0]![1]).toMatchObject({ turnstileToken: 'turnstile-token' });
     const s = state(flow);
     expect(s.sent).toHaveLength(1);
     expect(s.sent[0]).toMatchObject({ kind: 'learn', payload: PAYLOAD });
@@ -165,7 +163,7 @@ describe('LearnFlow', () => {
     expect(state(flow).sent[1]).toMatchObject({ kind: 'repair', fresh: true });
   });
 
-  it('"see what we send" is exactly what left: each record is the body the API client posted (the fresh learn in a loop round: the payload, noCache, rulesNow - nothing else)', async () => {
+  it('"see what we send" is exactly what left: each record is the body the API client posted (the fresh learn in a loop round: the payload, noCache, rulesNow - nothing else; a list round: its rounds of checks)', async () => {
     const bodies: { path: string; body: Record<string, unknown> }[] = [];
     let learns = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -183,11 +181,18 @@ describe('LearnFlow', () => {
     });
     const api = createApi({ baseUrl: 'https://api.test', fetch: fetchMock as unknown as typeof fetch });
     const STEP_ROUND = { checks: [{ check: 'values', column: 'A' }], answers: [{ rows: 3, distinct: 2, empty: 0, top: [] }] } as unknown as CheckRound;
+    // The round for a list, sent again with its round of checks answered: the masked rows and the top values code found leave in `rounds`.
+    const LIST_ROUND = {
+      checks: [{ check: 'values', column: 'B' }],
+      answers: [{ rows: 3, distinct: 2, empty: 0, top: [{ value: 'w1 w2', count: 2 }], examples: [{ in: ['m-1', 'w3'] }] }],
+    } as unknown as CheckRound;
+    const LIST = [{ kind: 'list' as const, out: 1, message: 'Column "B" is a list of 30 fixed values, one per A.' }];
     const { engine } = fakeEngine(async (_a, host) => {
       await host.callLearn(PAYLOAD);
       await host.callRepair(PAYLOAD, PREV_RULES, [{ kind: 'layout', message: 'r1' }], ROUND1); // -> a fresh learn
       await host.callRepair(PAYLOAD, PREV_RULES, [{ kind: 'layout', message: 'r2' }], { ...ROUND2, overfitRepaired: true }); // -> a repair of L2
       await host.callStep(PAYLOAD, [STEP_ROUND]);
+      await host.callRepair(PAYLOAD, PREV_RULES, LIST, { round: 3, maxRounds: 3, rows: ROUND2.rows, newRows: 0, list: true, checks: [LIST_ROUND] }); // -> the list's round, with its checks
       return result({ path: 'llm' });
     });
     const { flow, start } = makeFlow(engine, api);
@@ -195,7 +200,7 @@ describe('LearnFlow', () => {
 
     const sent = state(flow).sent;
     const posted = bodies.filter((b) => !b.path.endsWith('/outcome'));
-    expect(posted.map((b) => b.path)).toEqual(['/api/learn', '/api/learn', '/api/learn/repair', '/api/learn/step']);
+    expect(posted.map((b) => b.path)).toEqual(['/api/learn', '/api/learn', '/api/learn/repair', '/api/learn/step', '/api/learn/repair']);
     expect(sent).toHaveLength(posted.length);
     // The fresh learn: exactly its body - no previous rules, no problems, no rows.
     expect(sent[1]).toMatchObject({ kind: 'repair', fresh: true, round: { n: 1, of: 3 } });
@@ -208,6 +213,9 @@ describe('LearnFlow', () => {
     expect(sent.map(sentBody)).toEqual(posted.map((b) => withoutId(b.body)));
     expect(posted[2]!.body).toMatchObject({ learnId: 'L2', rows: [ROW_B], overfitRepaired: true });
     expect(posted[3]!.body).toMatchObject({ token: 'L2' });
+    // The list's round: its checks' answers left the browser - and "See what we send" shows them.
+    expect(posted[4]!.body).toMatchObject({ learnId: 'L2', rounds: [LIST_ROUND] });
+    expect(sentBody(sent[4]!)).toMatchObject({ rounds: [LIST_ROUND] });
   });
 
   describe('the learning loop (SPEC 9.3): rounds of repairs, each with every row sent so far', () => {
@@ -558,33 +566,28 @@ describe('LearnFlow', () => {
 });
 
 describe('LearnFlow: who is signed in is known before a learn is decided (the owner\'s bug)', () => {
-  it('waits for `ready`, THEN reads the tier and the AI choice - a learn started early is not run as a visitor\'s', async () => {
+  it('waits for `ready`, THEN reads the tier - a learn started early is not run as a visitor\'s', async () => {
     let signedIn = false;
     let open!: () => void;
     const ready = () => new Promise<void>((resolve) => (open = resolve));
     const { engine, learn } = fakeEngine(async () => result({ path: 'local' }));
-    const { start } = makeFlow(engine, fakeApi(), {
-      ready,
-      getTier: () => (signedIn ? 'registered' : 'anonymous'),
-      getAi: () => (signedIn ? 'allowed' : 'notAllowed'),
-    });
+    const { start } = makeFlow(engine, fakeApi(), { ready, getTier: () => (signedIn ? 'registered' : 'anonymous') });
     const running = start();
     await new Promise((r) => setTimeout(r, 10));
     expect(learn).not.toHaveBeenCalled(); // still waiting
     signedIn = true; // /api/me answered
     open();
     await running;
-    expect(learn.mock.calls[0]![0]).toMatchObject({ tier: 'registered', ai: 'allowed' });
+    expect(learn.mock.calls[0]![0]).toMatchObject({ tier: 'registered' });
   });
 
-  it('an explicit `ai` wins over getAi; with neither the field is left out (the engine\'s default is allowed)', async () => {
+  it('the AI step is the caller\'s explicit choice: a learn that does not say is the free engine only (`ai: notAllowed`)', async () => {
     const { engine, learn } = fakeEngine(async () => result({ path: 'local' }));
-    const a = makeFlow(engine, fakeApi(), { getAi: () => 'allowed' });
-    await a.flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'notAllowed' });
+    const { flow, start } = makeFlow(engine, fakeApi());
+    await start();
     expect(learn.mock.calls[0]![0].ai).toBe('notAllowed');
-    const b = makeFlow(engine, fakeApi());
-    await b.start();
-    expect('ai' in learn.mock.calls[1]![0]).toBe(false);
+    await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'allowed' });
+    expect(learn.mock.calls[1]![0].ai).toBe('allowed');
   });
 
   it('`ready` that rejects does not stop the learn (not knowing is the same as nobody signed in)', async () => {
@@ -626,24 +629,18 @@ describe('LearnFlow: completion mode (complete)', () => {
     expect(state(flow).status).toBe('done');
   });
 
-  it('reports the learn as verified only when the lock held, the answer matched and something was produced', async () => {
-    const cases: [string, Record<string, unknown>, string][] = [
-      ['all good', GOOD, 'verified'],
-      ['a fixed element changed', { ...GOOD, fixedProblems: [{ kind: 'fixedMismatch', path: 'x', message: 'y' }] }, 'failed'],
-      ['it did not match', { ...GOOD, matches: false }, 'failed'],
-      ['it produced nothing', { ...GOOD, produced: { columns: 0, parts: 0 } }, 'failed'],
-    ];
-    for (const [, completion, outcome] of cases) {
-      const { engine } = fakeEngine(async (_a, host) => {
-        await host.callLearn(PAYLOAD);
-        return result({ path: 'llm', completion });
-      });
-      const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const, limit: null }, failedAttempts: 0, exhausted: false }));
-      const api = fakeApi({ registry: { learnOutcome } } as unknown as Partial<Api>);
-      const { flow } = makeFlow(engine, api);
-      await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'allowed', complete: COMPLETE });
-      await vi.waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', outcome));
-    }
+  it('never reports how a completion ended: whether its answer is used is the caller\'s decision (useCompletion reports it after deciding)', async () => {
+    const { engine } = fakeEngine(async (_a, host) => {
+      await host.callLearn(PAYLOAD);
+      return result({ path: 'llm', completion: GOOD });
+    });
+    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const, limit: null }, failedAttempts: 0, exhausted: false }));
+    const api = fakeApi({ registry: { learnOutcome } } as unknown as Partial<Api>);
+    const { flow } = makeFlow(engine, api);
+    await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'allowed', complete: COMPLETE });
+    expect(flow.getState()).toMatchObject({ status: 'done', ai: { learnId: 'L1' } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(learnOutcome).not.toHaveBeenCalled();
   });
 
   it('tryAnyway: passes it on, and the done state remembers that the learn was continued past the warning', async () => {

@@ -70,6 +70,15 @@
   outline: none;
 }
 
+/* The session ended over a screen that keeps its work (RequireSignIn): said above it, with the way to sign in again. */
+.session-expired {
+  inline-size: 100%;
+  max-inline-size: var(--page);
+  margin-inline: auto;
+  padding-block-start: var(--s-5);
+  padding-inline: var(--s-5);
+}
+
 .tool {
   display: flex;
   flex-direction: column;

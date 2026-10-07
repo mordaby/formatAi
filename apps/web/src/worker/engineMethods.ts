@@ -14,12 +14,11 @@ import {
   readWorkbook,
   sentColumns,
   sniffDelimitedText,
-  verifyAgainstExample,
   type LearnCallResult,
 } from '@formatai/engine';
 import { limits } from '@formatai/shared';
 import type { AnalysisProgress, PairAnalysis } from '@formatai/engine';
-import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress, VerifyArgs, VerifyOutput } from './engineApi';
+import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress } from './engineApi';
 import type { LiveCheckArgs, LiveCheckResult, LoadExampleArgs, LoadExampleOutput, StaticChecksArgs, StaticProblem } from './editorApi';
 import { checkExample, exampleInputOf, getExample, rememberExample, runStaticChecks } from './liveCheck';
 import { convertMethods } from './convertMethods';
@@ -95,9 +94,13 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     },
     callRepair: async (payload, previousRules, problems, round) => {
       // The learning loop: which round, and how many rows the rules got wrong it sends (the rows themselves go to the main thread with it).
-      emit({ phase: 'learning', attempt: 'repair', round: { n: round.round, of: round.maxRounds, rows: round.newRows, ...(round.list ? { list: true as const } : {}) } });
+      const info = { n: round.round, of: round.maxRounds, rows: round.newRows, ...(round.list ? { list: true as const } : {}) };
+      emit({ phase: 'learning', attempt: 'repair', round: info });
       const out = await ctx.host<LearnCallResult>('callRepair', payload, previousRules, problems, round);
-      emit({ phase: 'verifying' });
+      // The round for a list (learn-v9) may be answered with checks: code answers them on every row now, like the learn's own rounds - said
+      // with the round of checks it is, which also grants the call the time a round of checks takes (`checkRoundAllowance`).
+      const asked = round.checks?.length ?? 0;
+      emit(round.list && asksChecks(out) && asked < maxCheckRounds ? { phase: 'learning', attempt: 'repair', round: info, checkRound: { n: asked + 1, of: maxCheckRounds } } : { phase: 'verifying' });
       return out;
     },
   });
@@ -137,16 +140,6 @@ async function convert(args: ConvertArgs): Promise<Transfer<ConvertOutput> | Con
     totalRows: res.sheet.rows.length,
   };
   return new Transfer(out, [bytes]);
-}
-
-async function verify(args: VerifyArgs): Promise<VerifyOutput> {
-  const inputWb = await readWorkbook(new Uint8Array(args.input.bytes), args.input.name);
-  const outputWb = await readWorkbook(new Uint8Array(args.output.bytes), args.output.name);
-  const outputSniff =
-    outputWb.fileType === 'csv' || outputWb.fileType === 'txt' ? sniffDelimitedText(new Uint8Array(args.output.bytes)) : undefined;
-  const analysis = analyzePair(inputWb, outputWb, outputSniff ? { outputSniff } : {});
-  if (!analysis.ok) return { ok: false, reason: 'analysisFailed' };
-  return { ok: true, verification: verifyAgainstExample(args.rules, analysis, args.exceptions ? { exceptions: args.exceptions } : {}) };
 }
 
 /**
@@ -217,4 +210,4 @@ function staticChecks(args: StaticChecksArgs): StaticProblem[] {
   return runStaticChecks(args.rules, { tier: args.tier, ...(args.format ? { format: args.format } : {}) });
 }
 
-export const engineMethods = { learn, convert, verify, inspect, loadExample, liveCheck, fullCheck, staticChecks, ...convertMethods } satisfies MethodMap;
+export const engineMethods = { learn, convert, inspect, loadExample, liveCheck, fullCheck, staticChecks, ...convertMethods } satisfies MethodMap;

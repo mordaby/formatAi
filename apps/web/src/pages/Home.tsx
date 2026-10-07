@@ -70,10 +70,10 @@ export default function Home() {
       />
     );
   } else if (state.status === 'notReady') {
-    view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.reset} />;
+    view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.cancel} />;
   } else if (state.status === 'error' && !isAiQuotaHit(state.error)) {
     // (a learn refused for the AI quota is no error screen: the form comes back with the out-of-AI-formats dialog, see AiLimitProvider)
-    view = <LearningError key="error" error={state.error} onRetry={session.begin} onChangeFiles={flow.reset} onSignIn={() => signIn.open('keepGoing')} />;
+    view = <LearningError key="error" error={state.error} onRetry={session.begin} onChangeFiles={flow.cancel} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (progressVisible && (isRunning(state) || state.status === 'done')) {
     view = (
       <LearningProgress

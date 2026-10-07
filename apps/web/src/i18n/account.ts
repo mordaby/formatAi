@@ -44,6 +44,9 @@ export const accountEn = {
   'signIn.going': 'Taking you to {provider}…',
   'signIn.keptLocal': 'It is kept in this browser only, for an hour, and is never sent to us.',
   'signIn.failed': "We couldn't start the sign-in. Try again.",
+  'signIn.expired': 'Your sign-in has ended. Sign in again to save - everything on this page stays as it is.',
+  'signIn.newTab': 'Signing in opens a new tab. When you are done there, come back to this tab: your work is here.',
+  'signIn.newTab.opened': 'Sign in in the new tab, then come back here.',
 
   // ----- the local result, before the AI step (SPEC 21 v5 item 1) -----
   'partial.popup.title': 'Sign in to finish',
@@ -143,18 +146,15 @@ export const accountEn = {
   'upgrade.contact': 'Contact us',
   'aiExhausted.title': 'We stopped after {n} tries',
   'aiExhausted.todo': 'Change something in the example files, then start again.',
-  'aiLeft.note': 'AI formats left: {n}',
   'ai.attempt': "The AI step got this far, but not every row matches your example (try {n} of {max}). Fix the rest in the map, or start again with corrected files.",
 
   // ----- saving (SPEC 5 A step 8, 8.11 "Saving") -----
   'save.differences.one': 'Save with 1 difference',
   'save.differences.other': 'Save with {n} differences',
-  'save.saving': 'Saving…',
   'save.done': 'Saved. "{name}" is in My formats.',
   'save.viewFormats': 'Open My formats',
   'save.failed': "We couldn't save the format. Try again in a moment.",
   'save.problems': 'What stopped the save:',
-  'save.signInToSave': 'Sign in to save',
 
   // ----- flow A: "this looks like your format X" (SPEC 5 A2) -----
   'match.title': 'This looks like your format "{name}"',
@@ -199,6 +199,9 @@ export const accountHe: Record<keyof typeof accountEn, string> = {
   'signIn.going': 'מעבירים אתכם אל {provider}…',
   'signIn.keptLocal': 'זה נשמר בדפדפן הזה בלבד, לשעה אחת, ולא נשלח אלינו.',
   'signIn.failed': 'לא הצלחנו להתחיל את ההתחברות. נסו שוב.',
+  'signIn.expired': 'החיבור שלכם הסתיים. התחברו שוב כדי לשמור - כל מה שבעמוד הזה נשאר כפי שהוא.',
+  'signIn.newTab': 'ההתחברות נפתחת בכרטיסייה חדשה. כשתסיימו שם, חזרו לכרטיסייה הזו: העבודה שלכם כאן.',
+  'signIn.newTab.opened': 'התחברו בכרטיסייה החדשה, ואז חזרו לכאן.',
 
   'partial.popup.title': 'התחברו כדי להשלים',
   'partial.popup.one':
@@ -291,17 +294,14 @@ export const accountHe: Record<keyof typeof accountEn, string> = {
   'upgrade.contact': 'יצירת קשר',
   'aiExhausted.title': 'עצרנו אחרי {n} ניסיונות',
   'aiExhausted.todo': 'שנו משהו בקבצי הדוגמה והתחילו מחדש.',
-  'aiLeft.note': 'פורמטים עם AI שנותרו: {n}',
   'ai.attempt': 'שלב ה-AI התקדם עד כאן, אבל לא כל שורה תואמת לדוגמה שלכם (ניסיון {n} מתוך {max}). תקנו את השאר במפה, או התחילו מחדש עם קבצים מתוקנים.',
 
   'save.differences.one': 'שמירה עם הבדל אחד',
   'save.differences.other': 'שמירה עם {n} הבדלים',
-  'save.saving': 'שומרים…',
   'save.done': 'נשמר. "{name}" נמצא עכשיו ברשימת הפורמטים שלכם.',
   'save.viewFormats': 'פתיחת הפורמטים שלי',
   'save.failed': 'לא הצלחנו לשמור את הפורמט. נסו שוב בעוד רגע.',
   'save.problems': 'מה עצר את השמירה:',
-  'save.signInToSave': 'התחברו כדי לשמור',
 
   'match.title': 'זה נראה כמו הפורמט שלכם "{name}"',
   'match.text': 'להוסיף את הקובץ הזה כמקור חדש שלו?',

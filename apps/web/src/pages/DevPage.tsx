@@ -111,7 +111,8 @@ export default function DevPage() {
             type="button"
             data-testid="run-learn"
             disabled={!input || !output || running}
-            onClick={() => input && output && void flow.start({ input, output, masking })}
+            // (the debug page runs the whole flow, AI step included - `beforeSend` above holds the send itself)
+            onClick={() => input && output && void flow.start({ input, output, masking, ai: 'allowed' })}
           >
             Run learn
           </button>{' '}

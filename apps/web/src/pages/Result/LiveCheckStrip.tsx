@@ -2,11 +2,48 @@
 // change, with what differs in the layout and the problems the static checks found, in plain words. When the number changes
 // the strip is highlighted for a moment, so a change is seen to have landed; and a check that only saw a sample of a big
 // example says so and offers to check all rows.
+//
+// The static checks' problems are said in the UI's language (`problemText`); only the checker's own words a sentence quotes stay English, and
+// are marked so. They are listed as they were until the checks have answered for the newest edit (no flicker), and a polite live region
+// that is always there says them - so a screen reader hears the list when it CHANGES, not again after every edit (C9).
 import type { LayoutProblemCode } from '@formatai/engine';
-import { useEffect, useRef, useState } from 'react';
-import type { UseLiveCheck } from '../../editor';
-import { useI18n, type MessageKey } from '../../i18n';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import type { ExplainedProblem, UseLiveCheck } from '../../editor';
+import { useI18n, type I18n, type MessageKey } from '../../i18n';
 import { Button, Icon, Spinner } from '../../ui';
+
+/** Where `detail` goes in a sentence, so the checker's (English) words can be marked as such. */
+const DETAIL = '\u0000';
+
+/**
+ * A static-check problem in the UI's language: the place, then the sentence. The checker's own words a sentence quotes (English) come back
+ * marked `lang="en"`; `plain` gives the same as one string (for the live region).
+ */
+export function problemText(i18n: Pick<I18n, 't'>, p: ExplainedProblem): { node: ReactNode; plain: string } {
+  const { t } = i18n;
+  const words = (w: ExplainedProblem['place']): Record<string, string | number> => ({
+    ...w.params,
+    ...Object.fromEntries(Object.entries(w.terms ?? {}).map(([k, key]) => [k, t(key)])),
+  });
+  const where = t(p.place.key, words(p.place));
+  const detail = p.message.detail;
+  const text = t(p.message.key, { ...words(p.message), where, ...(detail !== undefined ? { detail: DETAIL } : {}) });
+  if (detail === undefined) return { node: text, plain: text };
+  const parts = text.split(DETAIL);
+  return {
+    node: parts.map((part, i) => (
+      <Fragment key={i}>
+        {i > 0 ? (
+          <span lang="en" dir="ltr">
+            {detail}
+          </span>
+        ) : null}
+        {part}
+      </Fragment>
+    )),
+    plain: parts.join(detail),
+  };
+}
 
 const LAYOUT_TEXT: Record<LayoutProblemCode, MessageKey> = {
   runFailed: 'check.layout.runFailed',
@@ -39,7 +76,14 @@ function useChangeFlash(key: string | null): boolean {
 }
 
 export function LiveCheckStrip({ check, noExampleText }: { check: UseLiveCheck; /** What to say when there is no example (default: it is not in memory any more). */ noExampleText?: string | undefined }) {
-  const { t, lang } = useI18n();
+  const i18n = useI18n();
+  const { t, lang } = i18n;
+  // The problems as the static checks last answered them: an edit does not empty the list while its checks run.
+  const held = useRef<ExplainedProblem[]>([]);
+  if (check.problemsChecked) held.current = check.problems;
+  const problems = held.current.map((p) => problemText(i18n, p));
+  // What the live region says (it changes only when the list does: an unchanged list is not said again).
+  const announced = problems.length > 0 ? [t('check.problems', { n: problems.length }), ...problems.map((p) => p.plain)].join(' ') : '';
   const s = check.state;
   const live = s.live;
   const number = (n: number): string => n.toLocaleString(lang === 'he' ? 'he-IL' : 'en-US');
@@ -99,19 +143,22 @@ export function LiveCheckStrip({ check, noExampleText }: { check: UseLiveCheck; 
           {more > 0 && <li className="muted">{t('check.moreLayout', { n: more })}</li>}
         </ul>
       )}
-      {check.problems.length > 0 && (
-        <div className="strip__problems" role="alert">
-          <p className="strip__problemsTitle">{t('check.problems', { n: check.problems.length })}</p>
+      {problems.length > 0 && (
+        <div className="strip__problems" data-testid="check-problems">
+          <p className="strip__problemsTitle">{t('check.problems', { n: problems.length })}</p>
           <ul className="strip__list">
-            {check.problems.map((p, i) => (
-              <li key={i} lang="en" dir="ltr">
+            {problems.map((p, i) => (
+              <li key={i}>
                 <Icon name="alert" size={14} />
-                <span>{p.text}</span>
+                <span>{p.node}</span>
               </li>
             ))}
           </ul>
         </div>
       )}
+      <p className="visually-hidden" aria-live="polite" data-testid="check-problems-live">
+        {announced}
+      </p>
     </section>
   );
 }

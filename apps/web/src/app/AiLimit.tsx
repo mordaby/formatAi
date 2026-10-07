@@ -3,7 +3,7 @@
 // the paid waitlist. Nothing changes for whoever still has AI formats left: no extra step, the quiet hint stays.
 import { tiers, type AiLearnPeriod } from '@formatai/shared';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { FlowError } from '../flow/errors';
+import { isAiQuotaHit, type FlowError } from '../flow/errors';
 import { useI18n } from '../i18n';
 import { Button, Dialog, InlineMessage } from '../ui';
 import { aiOutLine, aiPlanLine } from './aiQuota';
@@ -11,10 +11,7 @@ import { useLearnSession } from './LearnSession';
 import { useMe } from './Me';
 import { UpgradeBody, UpgradeButton } from './Upgrade';
 
-/** The API refused the AI step because the period's AI formats are used up (429 `limitHit { limit: 'aiLearns', period }`). */
-export function isAiQuotaHit(error: FlowError | undefined): error is FlowError & { kind: 'api' } {
-  return error?.kind === 'api' && error.code === 'limitHit' && error.limit === 'aiLearns';
-}
+export { isAiQuotaHit };
 
 export interface AiLimitApi {
   /**
@@ -26,6 +23,26 @@ export interface AiLimitApi {
 
 const AiLimitContext = createContext<AiLimitApi | null>(null);
 
+/**
+ * A flow's refusal for the quota, said the one way (the Home learn, "Finish with AI", Add a source): the out-of-AI-formats dialog, once per
+ * refusal, in the period the server counted (or the one known); `then` is what the flow does next (go back to its form, the files kept).
+ * (The known quota is 0 already: the flow's `onAi` said so.)
+ */
+export function useQuotaRefusal(error: FlowError | undefined, open: AiLimitApi['open'], opts: { learnFree?: boolean; then?: () => void } = {}): void {
+  const me = useMe();
+  const period = me.quota?.period;
+  const handled = useRef<object | null>(null);
+  const then = useRef(opts.then);
+  then.current = opts.then;
+  const learnFree = opts.learnFree === true;
+  useEffect(() => {
+    if (!isAiQuotaHit(error) || handled.current === error) return;
+    handled.current = error;
+    then.current?.();
+    open({ learnFree, period: error.period ?? period });
+  }, [error, open, learnFree, period]);
+}
+
 export function useAiLimit(): AiLimitApi {
   const ctx = useContext(AiLimitContext);
   if (!ctx) throw new Error('useAiLimit must be used inside <AiLimitProvider>');
@@ -34,9 +51,9 @@ export function useAiLimit(): AiLimitApi {
 
 /**
  * Owns the dialog, and turns a refusal for the quota into it (a race: the AI formats were used up elsewhere since this page last read what
- * is left). The known quota becomes 0, so the screens show the notice too. A whole learn refused that way (the main flow) goes back to Home's
- * form - the files kept - instead of an error screen, with "Learn without AI" offered; a refused "Finish with AI" (the completion flow) leaves
- * the Result screen as it was.
+ * is left). The known quota becomes 0 (the flows' `onAi` does that, see app/aiReport.ts), so the screens show the notice too. A whole learn
+ * refused that way (the main flow) goes back to Home's form - the files kept - instead of an error screen, with "Learn without AI" offered; a
+ * refused "Finish with AI" (the completion flow) leaves the Result screen as it was.
  */
 export function AiLimitProvider({ children }: { children: ReactNode }) {
   const me = useMe();
@@ -48,20 +65,10 @@ export function AiLimitProvider({ children }: { children: ReactNode }) {
   }, []);
   const close = useCallback(() => setState((s) => ({ ...s, open: false })), []);
 
-  const { setQuota } = me;
-  const handled = useRef<object | null>(null);
   const mainError = session.flow.state.status === 'error' ? session.flow.state.error : undefined;
   const completionError = session.completion.state.status === 'error' ? session.completion.state.error : undefined;
-  const { reset } = session.flow;
-  useEffect(() => {
-    const error = isAiQuotaHit(mainError) ? mainError : isAiQuotaHit(completionError) ? completionError : undefined;
-    if (!error || handled.current === error) return;
-    handled.current = error;
-    const period = error.period ?? me.quota?.period;
-    if (period) setQuota({ remaining: 0, period });
-    if (error === mainError) reset();
-    open({ learnFree: error === mainError, period });
-  }, [mainError, completionError, reset, setQuota, open, me.quota?.period]);
+  useQuotaRefusal(mainError, open, { learnFree: true, then: session.flow.cancel });
+  useQuotaRefusal(completionError, open);
 
   const value = useMemo<AiLimitApi>(() => ({ open }), [open]);
   return (
