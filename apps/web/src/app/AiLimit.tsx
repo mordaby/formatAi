@@ -3,7 +3,7 @@
 // the paid waitlist. Nothing changes for whoever still has AI formats left: no extra step, the quiet hint stays.
 import { tiers, type AiLearnPeriod } from '@formatai/shared';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { isAiQuotaHit } from '../flow/errors';
+import { isAiQuotaHit, type FlowError } from '../flow/errors';
 import { useI18n } from '../i18n';
 import { Button, Dialog, InlineMessage } from '../ui';
 import { aiOutLine, aiPlanLine } from './aiQuota';
@@ -22,6 +22,26 @@ export interface AiLimitApi {
 }
 
 const AiLimitContext = createContext<AiLimitApi | null>(null);
+
+/**
+ * A flow's refusal for the quota, said the one way (the Home learn, "Finish with AI", Add a source): the out-of-AI-formats dialog, once per
+ * refusal, in the period the server counted (or the one known); `then` is what the flow does next (go back to its form, the files kept).
+ * (The known quota is 0 already: the flow's `onAi` said so.)
+ */
+export function useQuotaRefusal(error: FlowError | undefined, open: AiLimitApi['open'], opts: { learnFree?: boolean; then?: () => void } = {}): void {
+  const me = useMe();
+  const period = me.quota?.period;
+  const handled = useRef<object | null>(null);
+  const then = useRef(opts.then);
+  then.current = opts.then;
+  const learnFree = opts.learnFree === true;
+  useEffect(() => {
+    if (!isAiQuotaHit(error) || handled.current === error) return;
+    handled.current = error;
+    then.current?.();
+    open({ learnFree, period: error.period ?? period });
+  }, [error, open, learnFree, period]);
+}
 
 export function useAiLimit(): AiLimitApi {
   const ctx = useContext(AiLimitContext);
@@ -45,17 +65,10 @@ export function AiLimitProvider({ children }: { children: ReactNode }) {
   }, []);
   const close = useCallback(() => setState((s) => ({ ...s, open: false })), []);
 
-  const handled = useRef<object | null>(null);
   const mainError = session.flow.state.status === 'error' ? session.flow.state.error : undefined;
   const completionError = session.completion.state.status === 'error' ? session.completion.state.error : undefined;
-  const { cancel: reset } = session.flow;
-  useEffect(() => {
-    const error = isAiQuotaHit(mainError) ? mainError : isAiQuotaHit(completionError) ? completionError : undefined;
-    if (!error || handled.current === error) return;
-    handled.current = error;
-    if (error === mainError) reset();
-    open({ learnFree: error === mainError, period: error.period ?? me.quota?.period });
-  }, [mainError, completionError, reset, open, me.quota?.period]);
+  useQuotaRefusal(mainError, open, { learnFree: true, then: session.flow.cancel });
+  useQuotaRefusal(completionError, open);
 
   const value = useMemo<AiLimitApi>(() => ({ open }), [open]);
   return (

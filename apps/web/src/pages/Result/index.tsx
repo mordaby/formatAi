@@ -7,7 +7,6 @@ import { completionPlan, fixedColumnShare, isCompletable } from '@formatai/share
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useOnAi } from '../../app/aiReport';
-import { aiLeftLabel } from '../../app/aiQuota';
 import { LeaveDialog } from '../../app/LeaveGuard';
 import { useLearnSession } from '../../app/LearnSession';
 import { useMe } from '../../app/Me';
@@ -23,6 +22,7 @@ import { Button, Dialog, InlineMessage } from '../../ui';
 import type { LearnOutput } from '../../worker/engineApi';
 import { SaveChangesActions, SourceMessages, useSourceSave } from '../Format/sourceSave';
 import { Versions } from '../Format/Versions';
+import { AiNote } from './AiNote';
 import { useCopiedListGate } from './CopiedListSave';
 import { columnKey, DeepAnalysisPanel, partKey, type MissingColumn } from './DeepAnalysisPanel';
 import { filledNote } from './filledNote';
@@ -527,27 +527,6 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
         <PartialSignInDialog open={popupOpen} partial={partial} totalColumns={rules.output.columns.length} onClose={() => setPopupOpen(false)} />
       )}
     </>
-  );
-}
-
-/** What the AI step reported: how many AI formats are left, and - when the result did not match every row - which try this was. */
-function AiNote({ ai, verified }: { ai: AiInfo; verified: boolean }) {
-  const i18n = useI18n();
-  const { t, code } = i18n;
-  const max = limits.learn.maxFailedAiAttempts;
-  const tried = ai.failedAttempts ?? 0;
-  if (!ai.quota && (verified || tried === 0)) return null;
-  return (
-    <div className="ai-note" data-testid="ai-note">
-      {ai.exhausted ? (
-        <InlineMessage tone="warn" title={t('aiExhausted.title', { n: max })} todo={t('aiExhausted.todo')}>
-          {code({ kind: 'apiError', code: 'aiAttemptsExhausted', counted: ai.counted === true })}
-        </InlineMessage>
-      ) : !verified && tried > 0 ? (
-        <InlineMessage tone="info">{t('ai.attempt', { n: tried, max })}</InlineMessage>
-      ) : null}
-      {ai.quota ? <p className="muted tabular">{aiLeftLabel(i18n, ai.quota)}</p> : null}
-    </div>
   );
 }
 

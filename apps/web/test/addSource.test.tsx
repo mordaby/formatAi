@@ -3,7 +3,7 @@
 // same editor, and saving adds a conversion (a refusal by the format lock is shown with its problems). In flow A, an example
 // output that matches a saved format is offered as "add it as a new source". Which Source object the file belongs to (SPEC 8.15) is automatic
 // and silent: there is no chooser and no note. A fake API and a fake worker.
-import { promptVersion } from '@formatai/shared';
+import { limits, promptVersion } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
@@ -339,6 +339,27 @@ describe('the Add a source screen', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Account menu for Dana Levi' }));
     const panel = await screen.findByRole('group', { name: 'Account' });
     await waitFor(() => expect(panel.textContent).toContain('AI formats left this month: 2'));
+  });
+
+  it('what the AI step reported is said by the same note as on the Result screen: AI formats left, and which try this was', async () => {
+    setup({
+      apiLearn: async () =>
+        ({ rules: RULES, verified: false, problems: [], learnId: 'L1', cached: false, counted: false, failedAttempts: 1, quota: { remaining: 2, period: 'month' as const } }) as never,
+      // (the browser reports its own verification: it did not match, so this is a failed try, 1 so far)
+      registry: { learnOutcome: vi.fn(async () => ({ counted: false, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 1, exhausted: false })) },
+      learn: async (host: LearnHost) => {
+        await host.callLearn({ masking: true } as never);
+        return learnResult({ path: 'llm', verification: { verified: false, matched: 2, total: 3, mismatches: [], layoutProblems: [], layoutIssues: [], repairProblems: [] } });
+      },
+    });
+    await screen.findByTestId('add-format-columns');
+    await drop('Example input', csv('supplier-b.csv'));
+    await drop('Example output', xlsx('load.xlsx'));
+    await waitFor(() => expect(learnButton().disabled).toBe(false));
+    await act(async () => void fireEvent.click(learnButton()));
+    const note = await screen.findByTestId('ai-note');
+    expect(note.textContent).toContain('AI formats left this month: 2');
+    expect(note.textContent).toContain(`try 1 of ${limits.learn.maxFailedAiAttempts}`);
   });
 
   it('a learn refused because the session is gone reads who is signed in again (so "Sign in" works)', async () => {

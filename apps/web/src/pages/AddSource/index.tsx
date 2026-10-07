@@ -4,10 +4,10 @@
 // learn runs in attach mode - the format is the `target`, the AI only decides how THIS input produces the format's columns - and
 // the result opens in the same map and editor, ready to save as a new conversion of the format (a link from the source to it).
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
-import { defaultSourceName, limits, promptVersion } from '@formatai/shared';
+import { defaultSourceName, promptVersion } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { isAiQuotaHit, useAiLimit } from '../../app/AiLimit';
+import { isAiQuotaHit, useAiLimit, useQuotaRefusal } from '../../app/AiLimit';
 import { useOnAi } from '../../app/aiReport';
 import { useLearnSession } from '../../app/LearnSession';
 import { LinkButton } from '../../app/LinkButton';
@@ -31,6 +31,7 @@ import { LearningNotReady } from '../LearningNotReady';
 import { LearningPreflight } from '../LearningPreflight';
 import { LearningProgress } from '../LearningProgress';
 import { isRunning, useProgressVisible, useStepHistory } from '../learningSteps';
+import { AiNote } from '../Result/AiNote';
 import { TextField } from '../Result/fields';
 import { useCopiedListGate } from '../Result/CopiedListSave';
 import { compareOutput, fileTypeOfName, type OutputMismatch, type OutputFileType } from '../Result/matchFormat';
@@ -218,15 +219,10 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   };
 
   // The AI step was refused for the quota: the out-of-AI-formats dialog says so (and when they come back) over the form, the files kept -
-  // not an error screen. (The known quota is 0 from here on: `onAi` said so.)
+  // not an error screen - the way every flow says it.
   const aiLimit = useAiLimit();
   const quotaError = state.status === 'error' && isAiQuotaHit(state.error) ? state.error : undefined;
-  const { cancel: reset } = flow;
-  useEffect(() => {
-    if (!quotaError) return;
-    reset();
-    aiLimit.open({ period: quotaError.period });
-  }, [quotaError, reset, aiLimit]);
+  useQuotaRefusal(quotaError, aiLimit.open, { then: flow.cancel });
 
   let view;
   if (state.status === 'warn' || state.status === 'blocked') {
@@ -496,11 +492,7 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
 
   const banners = () => (
     <>
-      {ai?.exhausted || ((ai?.failedAttempts ?? 0) > 0 && result.verification?.verified !== true) ? (
-        <InlineMessage tone={ai?.exhausted ? 'warn' : 'info'} {...(ai?.exhausted ? { title: t('aiExhausted.title', { n: limits.learn.maxFailedAiAttempts }) } : {})}>
-          {ai?.exhausted ? t('aiExhausted.todo') : t('ai.attempt', { n: ai?.failedAttempts ?? 0, max: limits.learn.maxFailedAiAttempts })}
-        </InlineMessage>
-      ) : null}
+      {ai ? <AiNote ai={ai} verified={result.verification?.verified === true} /> : null}
       {save.state.status === 'saved' && (
         <InlineMessage tone="info" actions={<Link to={`/formats/${format.id}`}>{t('save.viewFormats')}</Link>}>
           {/* the name is the server's word: it chose it when nothing was typed */}
