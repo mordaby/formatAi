@@ -311,7 +311,7 @@ describe('runChecks: the system prompt\'s own example answer passes every check 
       const prompt = learnPromptOf(version);
       const payload = JSON.parse(between(prompt.system, 'example_payload')) as LearnPayload;
       const answer = JSON.parse(between(prompt.system, 'example_result')) as unknown;
-      const { problems, rules } = runChecks(answer, payload, { tier: 'registered', alternatives: prompt.alternatives });
+      const { problems, rules } = runChecks(answer, payload, { tier: 'registered' });
       expect(problems).toEqual([]);
       expect(rules).not.toBeNull();
     });

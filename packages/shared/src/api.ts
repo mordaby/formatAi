@@ -5,7 +5,7 @@ import type { ApiErrorCode, LimitCode } from './codes';
 import type { PromptVersion } from './config/prompts';
 import type { AiLearnPeriod, TierLimits } from './config/tiers';
 import type { LearnPayload, RepairProblem, Sample } from './payload';
-import type { LearnAlternative, LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, Validation } from './rules/schema';
+import type { LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, Validation } from './rules/schema';
 import type { SourceColumn, SourceInputReading, SourceInputSignature, SourceLockProblem } from './source';
 
 /** What an error's `problems` may hold: what the checks found in a rules file, or what the source lock found (SPEC 8.15). */
@@ -59,12 +59,6 @@ export interface LearnResponse {
   rules: LearnResult | null;
   verified: boolean;
   problems: RepairProblem[];
-  /**
-   * learn-v8: the second rules the answer gave for some of its columns, each checked like the answer (formula, references, types,
-   * limits) - an invalid one is not here. In the answer's own vocabulary (masked when masking is on), like `rules`; the browser tests each
-   * on every row of the example. Never cached and never part of `rules`. Absent when there are none.
-   */
-  alternatives?: LearnAlternative[];
   /** Present on an LLM learn; required (once) for /api/learn/repair. Absent on a cache hit. */
   learnId?: string;
   /** True when saved rules for this exact structure were returned without an LLM call. */

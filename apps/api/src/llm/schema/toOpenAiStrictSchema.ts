@@ -3,7 +3,7 @@
 // (`learnResultWireJsonSchema`, packages/shared/src/rules/wire.ts) does about each - every change keeps the schema's meaning exactly, and
 // `stripOpenAiNulls` maps the answer back so it parses with the same zod schema:
 //   1. "All fields must be required"; an optional field is emulated "by using a union type with null". The wire schema has optional fields
-//      (47; 48 with `alternatives`): each is listed in `required` and becomes `anyOf: [original, { type: "null" }]` (the guide's own
+//      (47): each is listed in `required` and becomes `anyOf: [original, { type: "null" }]` (the guide's own
 //      recursive example uses this form). `stripOpenAiNulls` drops those nulls again.
 //   2. "additionalProperties: false must always be set in objects": the wire schema already has it on every object (its open dictionaries
 //      are `{ key, value }` pair lists on the wire). The API-side `learnResultJsonSchema` still has open dictionaries; this transform passes

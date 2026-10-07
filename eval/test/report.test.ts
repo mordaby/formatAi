@@ -359,10 +359,10 @@ describe('token usage and cost (our own estimate)', () => {
   });
 
   it('callsOf: counts from the call records and the kept answer only - never a message or a value', () => {
-    const call = (outcome: string, counts: Record<string, number>) => ({ outcome, problemCounts: { formula: 0, diff: 0, unsupportedDespiteEvidence: 0, truncated: 0, invalidAlternative: 0, ...counts } });
+    const call = (outcome: string, counts: Record<string, number>) => ({ outcome, problemCounts: { formula: 0, diff: 0, unsupportedDespiteEvidence: 0, truncated: 0, ...counts } });
     const result = {
       path: 'llm' as const,
-      calls: [call('needsRepair', { diff: 3, unsupportedDespiteEvidence: 1, invalidAlternative: 2 }), call('truncated', { truncated: 1 }), call('error:timeout', { schema: 1 }), call('verified', {})],
+      calls: [call('needsRepair', { diff: 3, unsupportedDespiteEvidence: 1 }), call('truncated', { truncated: 1 }), call('error:timeout', { schema: 1 }), call('verified', {})],
       rules: { unsupported: [{ outputColumn: 'A', reasonCode: 'externalData' }, { outputColumn: 'B', reasonCode: 'hiddenByMasking' }, { outputColumn: 'C', reasonCode: 'externalData' }], assumptions: [{ reasonCode: 'overfitSuspected' }, { reasonCode: 'filterGuessed' }] },
     };
     expect(callsOf(result as never)).toEqual({
@@ -377,7 +377,7 @@ describe('token usage and cost (our own estimate)', () => {
     });
     expect(callsOf({ path: 'local', calls: [], rules: null } as never)).toEqual({ unsupportedDespiteEvidence: 0, unsupportedReasons: '', problemsByKind: '', truncatedCalls: 0, callFailures: '', overfitSuspected: 0, overfitFound: 0, overfitFellBack: 0 });
     // The overfitting guards: the overfit problems over every call, the kept answer's columns code reported; the fallbacks themselves
-    // (a count beside the problem kinds, like the dropped alternatives) are not a problem kind.
+    // (a count beside the problem kinds) are not a problem kind.
     const guarded = {
       path: 'llm' as const,
       calls: [call('needsRepair', { overfit: 1 }), call('verified', { overfitFallback: 1 })],

@@ -628,8 +628,8 @@ export function callsOf(
   const kinds = new Map<string, number>();
   const failures = new Map<string, number>();
   for (const c of calls) {
-    // (Counts beside the problem kinds - the dropped alternatives, the columns code reported - are not problems.)
-    for (const [kind, n] of Object.entries(c.problemCounts)) if (kind !== 'invalidAlternative' && kind !== 'overfitFallback') kinds.set(kind, (kinds.get(kind) ?? 0) + n);
+    // (A count beside the problem kinds - the columns code reported - is not a problem.)
+    for (const [kind, n] of Object.entries(c.problemCounts)) if (kind !== 'overfitFallback') kinds.set(kind, (kinds.get(kind) ?? 0) + n);
     if (c.outcome === 'truncated' || c.outcome.startsWith('error:')) failures.set(c.outcome, (failures.get(c.outcome) ?? 0) + 1);
   }
   const rules = result.path === 'llm' ? result.rules : null;

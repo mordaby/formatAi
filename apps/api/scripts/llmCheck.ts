@@ -142,7 +142,7 @@ function errorOf(err: unknown, secrets: readonly (string | undefined)[]): NonNul
 export async function runLlmCheck(env: Env, args: LlmCheckArgs, payload: LearnPayload, provider?: LlmProvider): Promise<LlmCheckReport> {
   const model = checkModelOf(env, args);
   const prompt = learnPromptOf();
-  const schema = learnResultWireJsonSchema({ alternatives: prompt.alternatives });
+  const schema = learnResultWireJsonSchema();
   const secrets = [env.ANTHROPIC_API_KEY, env.OPENAI_API_KEY];
   const base = { provider: args.provider, model, payloadBytes: new TextEncoder().encode(JSON.stringify(payload)).length, masking: payload.masking };
   provider ??= createProvider(env, args.provider, { timeoutMs: 120_000, maxRetries: 0 });
@@ -160,7 +160,7 @@ export async function runLlmCheck(env: Env, args: LlmCheckArgs, payload: LearnPa
   }
   const served = { model: result.model, latencyMs: result.latencyMs, usage: result.usage, costUsd: result.costUsd, truncated: result.truncated === true };
   if (result.truncated) return { ...base, result: served, verified: null, problems: { truncated: 1 } };
-  const checked = runChecks(result.json, payload, { tier: 'registered', alternatives: prompt.alternatives });
+  const checked = runChecks(result.json, payload, { tier: 'registered' });
   const problems: LlmCheckReport['problems'] = {};
   for (const p of checked.problems) problems[p.kind] = (problems[p.kind] ?? 0) + 1;
   return { ...base, result: served, verified: checked.problems.length === 0, problems };

@@ -228,9 +228,8 @@ export interface LlmCallDoc {
   cacheHit: boolean;
   /** SPEC 9.2: counts only, never formula text or any other payload/response content -
    * so the product can track things like "how often models write invalid formulas"
-   * straight from the ledger. learn-v8: `invalidAlternative`, the alternatives an answer gave that the checks dropped (absent on documents
-   * written before it existed). */
-  problemCounts: Record<RepairProblem['kind'], number> & { invalidAlternative?: number };
+   * straight from the ledger. */
+  problemCounts: Record<RepairProblem['kind'], number>;
   /** A `check` call (AI code checks): how many checks it asked that the API kept, and how many it dropped. Counts only; absent on every other call. */
   checks?: { asked: number; dropped: number };
 }
