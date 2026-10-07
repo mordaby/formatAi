@@ -542,9 +542,14 @@ describe('leaving the Result screen and coming back keeps "Finish with AI" as it
   it('an applied answer is not applied twice, and after leaving and coming back Save still asks about its copied list and saves it as the AI\'s', async () => {
     // The answer keeps a list copied from the example (the supplier codes): the Save popup must ask about it, whatever screens came between.
     const supplierList = { kind: 'copiedList' as const, out: 1, header: 'Supplier', keyColumn: 'Supplier', entries: 2, list: { kind: 'valueMap' as const, column: 'supplier' } };
-    const { engine, learn } = engineWith(async (args) => completionOutput(args, { oneTimers: { questions: [supplierList], handedOff: [] } }));
+    // (the AI step answers through the API, which says the prompt version it learned with: the save must carry THAT one - API audit)
+    const { engine, learn } = engineWith(async (args, host) => {
+      await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: false, output: { columns: [] }, samples: [], skipColumns: [] });
+      return completionOutput(args, { oneTimers: { questions: [supplierList], handedOff: [] } });
+    });
     const createFormat = vi.fn(async () => createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1', version: 1 }) }));
-    const { router } = await startRouted(engine, fakeApi({ user: USER, registry: { createFormat } }));
+    const apiLearn = vi.fn(async () => ({ rules: null, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 1, period: 'month' as const, limit: null }, promptVersion: 'learn-v9' as const }));
+    const { router } = await startRouted(engine, fakeApi({ user: USER, learn: apiLearn, registry: { createFormat } }));
     fireEvent.click(finishButton());
     await screen.findByTestId('completion-done');
     await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
@@ -561,7 +566,8 @@ describe('leaving the Result screen and coming back keeps "Finish with AI" as it
     expect(createFormat).not.toHaveBeenCalled();
     await act(async () => void fireEvent.click(within(box).getByRole('button', { name: 'Keep it' })));
     await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
-    expect((createFormat.mock.calls[0] as unknown as [{ learnPath: string; promptVersion?: string }])[0]).toMatchObject({ learnPath: 'llm', promptVersion });
+    expect((createFormat.mock.calls[0] as unknown as [{ learnPath: string; promptVersion?: string }])[0]).toMatchObject({ learnPath: 'llm', promptVersion: 'learn-v9' });
+    expect(promptVersion).not.toBe('learn-v9'); // the server's version, kept with the applied answer in the session - never the browser's constant
   });
 });
 
