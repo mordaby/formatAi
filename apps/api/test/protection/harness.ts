@@ -24,6 +24,10 @@ export interface StoreHandle {
   ledger(): Promise<LlmCallDoc[]>;
   /** A usage counter's current value (0 when absent). */
   counter(key: string): Promise<number>;
+  /** A usage counter's `expiresAt` (undefined when absent, or when it has none). */
+  counterExpiry(key: string): Promise<Date | undefined>;
+  /** The keys of the counters stored without a Date `expiresAt` - always none (owner decision 2026-10-07). */
+  countersWithoutExpiry(): Promise<string[]>;
   cacheEntryCount(): Promise<number>;
   /** Every cached rules entry (the JSON strings), for "never in the cache" assertions. */
   cacheRules(): Promise<string[]>;
@@ -48,6 +52,8 @@ export const memoryKit: StoreKit = {
       store,
       ledger: async () => store.ledger,
       counter: async (key) => store.counter(key),
+      counterExpiry: async (key) => store.counterExpiry(key),
+      countersWithoutExpiry: async () => store.counterKeys().filter((k) => !(store.counterExpiry(k) instanceof Date)),
       cacheEntryCount: async () => store.cacheEntries.size,
       cacheRules: async () => [...store.cacheEntries.values()].map((d) => d.rules),
       functionRequests: async () => [...store.functionRequests.values()].map((d) => structuredClone(d)),
@@ -87,6 +93,9 @@ export function mongoKit(): StoreKit {
         store,
         ledger: () => db.llmCalls.find({}, { projection: { _id: 0 } }).toArray() as Promise<LlmCallDoc[]>,
         counter: async (key) => (await db.usageCounters.findOne({ key }))?.count ?? 0,
+        counterExpiry: async (key) => (await db.usageCounters.findOne({ key }))?.expiresAt,
+        countersWithoutExpiry: async () =>
+          (await db.usageCounters.find({ expiresAt: { $not: { $type: 'date' } } }).toArray()).map((d) => d.key),
         cacheEntryCount: () => db.learnCache.countDocuments(),
         cacheRules: async () => (await db.learnCache.find({}).toArray()).map((d) => d.rules),
         functionRequests: () => db.functionRequests.find({}, { projection: { _id: 0 } }).toArray() as Promise<FunctionRequestDoc[]>,
@@ -271,7 +280,12 @@ export async function createHarness(kit: StoreKit, opts: HarnessOptions = {}): P
     get: (url, o = {}) => inject('GET', url, undefined, o),
     learn: (body = {}, o = {}) =>
       inject('POST', '/api/learn', { payload: basicPayload(), ...body }, o),
-    close: () => app.close(),
+    async close() {
+      await app.close();
+      // Owner decision 2026-10-07: no counter is ever written without `expiresAt` - checked after every test that ran the routes.
+      const bare = await handle.countersWithoutExpiry();
+      if (bare.length > 0) throw new Error(`usage counters written without expiresAt: ${bare.join(', ')}`);
+    },
   };
 }
 

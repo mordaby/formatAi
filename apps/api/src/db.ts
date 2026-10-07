@@ -1,6 +1,7 @@
-import { limits } from '@formatai/shared';
-import { MongoClient, type Collection, type Db, type UpdateFilter } from 'mongodb';
+import { limits, retentionSeconds } from '@formatai/shared';
+import { MongoClient, type Collection, type Db, type Document, type UpdateFilter } from 'mongodb';
 import type { Env } from './env.js';
+import { counterExpiryOfKey } from './protection/expiry.js';
 import type {
   AdminAuditDoc,
   BudgetDoc,
@@ -71,8 +72,44 @@ export async function connectDb(env: Env): Promise<AppDb | null> {
   };
 }
 
-/** Creates every index listed in SPEC.md section 13. Safe to call on every boot (idempotent). */
+/** MongoDB's answer when an index of that name exists with other options (85 IndexOptionsConflict; 86 IndexKeySpecsConflict for safety). */
+const INDEX_CONFLICT = new Set([85, 86]);
+
+/**
+ * Creates a TTL index (`expireAfterSeconds` on one date field), or, when an index of that name and key already exists with another expiry
+ * or none (a deploy from before 2026-10-07 made `llm_calls_ts`, `events_ts`, `leads_createdAt` and `feedback_createdAt` without one), sets
+ * its expiry in place with `collMod` - which since MongoDB 5.1 also turns a plain single-field index into a TTL one, with no rebuild. Safe
+ * on every boot: once the index is right, `createIndex` finds the same index and does nothing. The TTL monitor then removes, about once a
+ * minute, every document whose date is older than the expiry - the old ones included, as soon as the index has it.
+ */
+async function ensureTtlIndex<T extends Document>(
+  appDb: AppDb,
+  collection: Collection<T>,
+  key: Record<string, 1 | -1>,
+  name: string,
+  expireAfterSeconds: number,
+): Promise<void> {
+  try {
+    await collection.createIndex(key, { name, expireAfterSeconds });
+  } catch (err) {
+    const code = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined;
+    if (typeof code !== 'number' || !INDEX_CONFLICT.has(code)) throw err;
+    await appDb.db.command({ collMod: collection.collectionName, index: { name, expireAfterSeconds } });
+  }
+}
+
+/**
+ * Creates every index listed in SPEC.md section 13. Safe to call on every boot (idempotent).
+ *
+ * Retention (owner decision 2026-10-07: the privacy page's promise is what the code does): `llm_calls`, `events`, `leads` and `feedback`
+ * are TTL-expired by their own timestamp after `limits.retention` (the same numbers the page shows); `usage_counters` by their `expiresAt`
+ * (the end of their period plus `limits.protection.counterGraceHours`); `learn_cache` after `limits.cache.ttlDays`; `sessions` at their
+ * `expiresAt` (`limits.auth.sessionDays` after the last use). Every insert into the four record collections sets its timestamp as a Date,
+ * so their TTL indexes cover the existing documents too; counters are the one place an old document may lack the field
+ * (`backfillCounterExpiry`).
+ */
 export async function ensureIndexes(appDb: AppDb): Promise<void> {
+  const { retention } = limits;
   await Promise.all([
     appDb.users.createIndex(
       { 'identities.provider': 1, 'identities.subject': 1 },
@@ -89,11 +126,11 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
     appDb.conversions.createIndex({ ownerId: 1, sourceId: 1 }, { name: 'conversions_ownerId_sourceId' }),
     appDb.sources.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'sources_ownerId_createdAt' }),
     appDb.sources.createIndex({ ownerId: 1, nameKey: 1 }, { unique: true, name: 'sources_ownerId_nameKey_unique' }),
-    appDb.events.createIndex({ ts: 1 }, { name: 'events_ts' }),
+    ensureTtlIndex(appDb, appDb.events, { ts: 1 }, 'events_ts', retentionSeconds(retention.eventsMonths)),
     appDb.events.createIndex({ type: 1, ts: 1 }, { name: 'events_type_ts' }),
     appDb.events.createIndex({ userId: 1 }, { name: 'events_userId' }),
     appDb.events.createIndex({ anonId: 1 }, { name: 'events_anonId' }),
-    appDb.llmCalls.createIndex({ ts: 1 }, { name: 'llm_calls_ts' }),
+    ensureTtlIndex(appDb, appDb.llmCalls, { ts: 1 }, 'llm_calls_ts', retentionSeconds(retention.aiCallRecordsMonths)),
     appDb.llmCalls.createIndex({ learnId: 1 }, { name: 'llm_calls_learnId' }),
     appDb.usageCounters.createIndex({ key: 1 }, { unique: true, name: 'usage_counters_key_unique' }),
     appDb.usageCounters.createIndex(
@@ -114,26 +151,52 @@ export async function ensureIndexes(appDb: AppDb): Promise<void> {
     // SPEC 13 / 14.2: the admin audit log is read newest first.
     appDb.adminAudit.createIndex({ ts: -1 }, { name: 'admin_audit_ts' }),
     // SPEC 13 (v13): public forms. `leads` holds both kinds (`lead`, `waitlist`); the admin lists the newest first, per kind.
-    appDb.leads.createIndex({ createdAt: -1 }, { name: 'leads_createdAt' }),
+    ensureTtlIndex(appDb, appDb.leads, { createdAt: -1 }, 'leads_createdAt', retentionSeconds(retention.formsMonths)),
     appDb.leads.createIndex({ kind: 1, createdAt: -1 }, { name: 'leads_kind_createdAt' }),
-    appDb.feedback.createIndex({ createdAt: -1 }, { name: 'feedback_createdAt' }),
+    ensureTtlIndex(appDb, appDb.feedback, { createdAt: -1 }, 'feedback_createdAt', retentionSeconds(retention.formsMonths)),
   ]);
 }
 
 /**
- * Atomically increments a usage counter (SPEC 13: `usage_counters`), creating it if needed.
- * Pass `expiresAt` for anon/ip keys (TTL-expired); omit it for user keys, which never expire.
- * Returns the counter's new total.
+ * The one-time step for counters written before every counter had an expiry (owner decision 2026-10-07): until then the monthly AI-learn,
+ * new-format and function-request counters (and a `lifetime` one) were written without `expiresAt`, and the TTL index skips a document
+ * without it. Each such counter gets the expiry it would get today, read from its key (`counterExpiryOfKey`). Runs on every boot after
+ * `ensureIndexes`: once every counter has an expiry it finds nothing and writes nothing. Returns how many it set.
+ */
+export async function backfillCounterExpiry(appDb: AppDb, now: Date = new Date()): Promise<number> {
+  const bare = await appDb.usageCounters.find({ expiresAt: { $exists: false } }, { projection: { key: 1 } }).toArray();
+  if (bare.length === 0) return 0;
+  const res = await appDb.usageCounters.bulkWrite(
+    bare.map((d) => ({
+      updateOne: { filter: { _id: d._id, expiresAt: { $exists: false } }, update: { $set: { expiresAt: counterExpiryOfKey(d.key, now) } } },
+    })),
+    { ordered: false },
+  );
+  return res.modifiedCount;
+}
+
+/** How a counter write treats the expiry of a counter that exists already. */
+export interface CounterWriteOptions {
+  /** Keep the expiry the counter has (a take-back inside a window); `expiresAt` is used only when it has none. */
+  keepExpiry?: boolean;
+}
+
+/**
+ * Atomically increments a usage counter (SPEC 13: `usage_counters`), creating it if needed, and returns its new total.
+ * Every counter carries `expiresAt` (owner decision 2026-10-07: the TTL index removes each one at the end of its period plus
+ * `limits.protection.counterGraceHours`, or at the end of its own window): it is set on every write, or - with `keepExpiry` - kept,
+ * and set only on a counter that has none.
  */
 export async function incrementCounter(
   appDb: AppDb,
   key: string,
   by: number,
-  expiresAt?: Date,
+  expiresAt: Date,
+  opts: CounterWriteOptions = {},
 ): Promise<number> {
-  const update: UpdateFilter<UsageCounterDoc> = expiresAt
-    ? { $inc: { count: by }, $set: { expiresAt } }
-    : { $inc: { count: by } };
+  const update: UpdateFilter<UsageCounterDoc> | Document[] = opts.keepExpiry
+    ? [{ $set: { count: { $add: [{ $ifNull: ['$count', 0] }, by] }, expiresAt: { $ifNull: ['$expiresAt', expiresAt] } } }]
+    : { $inc: { count: by }, $set: { expiresAt } };
 
   const doc = await appDb.usageCounters.findOneAndUpdate({ key }, update, {
     upsert: true,

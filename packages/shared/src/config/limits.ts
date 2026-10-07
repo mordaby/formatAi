@@ -97,8 +97,12 @@ export const limits = {
     turnstileTimeoutMs: 5_000,
     /** SPEC 9.3: how long after its learn a browser-triggered repair (a loop round, at most `llm.browserRepairCalls`) is accepted. */
     learnIdTtlMinutes: 60,
-    /** Daily `anon:` / `ip:` usage counters are kept this long after their UTC day ends, then TTL-expired. */
-    dailyCounterGraceHours: 24,
+    /**
+     * Every usage counter (`usage_counters`) is TTL-expired this long after the end of the period it counts: a daily one after its UTC
+     * day, a monthly one after its UTC month (owner decision 2026-10-07: "the end of its period plus about 2 days"). The privacy page
+     * says the same number (`counterGraceDays` in apps/web/src/pages/Legal/params.ts).
+     */
+    counterGraceHours: 48,
     /** Lifetime of the first-party `anonId` cookie (SPEC 12). */
     anonCookieMaxAgeDays: 365,
     /**
@@ -147,6 +151,21 @@ export const limits = {
   /** SPEC 9.5 "Cache": saved rules for a structure the same owner already learned. */
   cache: {
     ttlDays: 30,
+  },
+  /**
+   * How long records are kept (owner decision 2026-10-07: the privacy page's promise is what the code does). The privacy page reads these
+   * numbers (apps/web/src/pages/Legal/params.ts) and the API's TTL indexes are built from them (`ensureIndexes`, apps/api/src/db.ts), so
+   * the two can never say different things. A month is counted as `daysPerMonth` days: a record goes a little before the page's "up to N
+   * months", never after. DECISION: the numbers are the owner's proposals (12 and 24 months); change them here only.
+   */
+  retention: {
+    /** `llm_calls`: the AI call records (when, which model, tokens, cost, outcome - never content). */
+    aiCallRecordsMonths: 12,
+    /** `leads` (the business contact form and the paid waitlist) and `feedback`. */
+    formsMonths: 24,
+    /** `events` (sign-in and sign-up records: when, which provider). DECISION: the AI-record period, as the owner decided. */
+    eventsMonths: 12,
+    daysPerMonth: 30,
   },
   /** SPEC 12: sign-in. DECISION: placeholder numbers (SPEC 20.4). */
   auth: {
@@ -520,3 +539,8 @@ export const limits = {
 } as const;
 
 export type Limits = typeof limits;
+
+/** A retention period of `months` (`limits.retention`), in seconds: the `expireAfterSeconds` of a TTL index. */
+export function retentionSeconds(months: number): number {
+  return months * limits.retention.daysPerMonth * 24 * 60 * 60;
+}

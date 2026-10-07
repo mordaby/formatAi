@@ -2,7 +2,7 @@
 // the per-tier quota with its periods, count-on-success (server checks or the browser's report), the
 // idempotent outcome route, and the stop after 3 failed attempts on the same example pair.
 // Every suite runs against the in-memory store, and against a real local MongoDB when MONGODB_URI is set.
-import { limits, tiers, type AiLearnQuota } from '@formatai/shared';
+import { limits, retentionSeconds, tiers, type AiLearnQuota } from '@formatai/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CompleteFn } from '../../src/learn/index.js';
 import type { CompleteRequest } from '../../src/llm/index.js';
@@ -122,17 +122,22 @@ function defineQuotaSuite(kit: StoreKit): void {
       expect(await used(h, other)).toBe(1);
     });
 
-    it('lifetime: never resets, and its counter has no date part', async () => {
+    it('lifetime: does not reset with a month, its counter has no date part, and it is kept for the AI-record period (an expiry, 2026-10-07)', async () => {
       tiers.registered.aiLearns = { count: 2, period: 'lifetime' } satisfies AiLearnQuota;
       const h = await setup(makeComplete().fn);
       await h.learn({ noCache: true });
       await h.learn({ noCache: true });
+      const lastChange = new Date(h.clock.current);
       const third = await h.learn({ noCache: true });
       expect(third.statusCode).toBe(429);
       expect(third.json()).toEqual({ error: 'limitHit', limit: 'aiLearns', period: 'lifetime', quota: { remaining: 0, period: 'lifetime', limit: 2 } });
       expect(await used(h, TEST_USER, 'lifetime')).toBe(2);
+      // Owner decision 2026-10-07: no counter is kept for ever - a lifetime one goes with the AI records, that long after its last change.
+      const keptMs = retentionSeconds(limits.retention.aiCallRecordsMonths) * 1000;
+      expect(await h.handle.counterExpiry(aiLearnsKey(TEST_USER, 'lifetime', lastChange))).toEqual(new Date(lastChange.getTime() + keptMs));
 
-      h.clock.current = new Date(h.clock.current.getTime() + 400 * DAY_MS);
+      // months later, still the same allowance
+      h.clock.current = new Date(lastChange.getTime() + 100 * DAY_MS);
       expect((await h.learn({ noCache: true })).statusCode).toBe(429);
     });
 
