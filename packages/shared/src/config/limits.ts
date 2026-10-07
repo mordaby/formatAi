@@ -454,7 +454,8 @@ export const limits = {
       /**
        * Who gets learn-v9 in the app: `off` - nobody (learn-v7, as before); `admin` - the admin accounts only (`ADMIN_EMAILS` /
        * `MICROSOFT_ADMIN_OIDS`); `all` - every AI learn. The API's `LEARN_CHECKS` env var overrides it (`off|admin|all`). The eval turns it
-       * on with `--prompt learn-v9`. DECISION (owner, 2026-10-05): off until the eval passes, then admin first.
+       * on with `--prompt learn-v9`. DECISION (owner, 2026-10-05): off until the eval passes, then admin first. Owner decision
+       * (2026-10-07): the code stays, switched off; re-evaluated by 2026-11-15, after the beta with real testers' files.
        */
       mode: 'off',
     },

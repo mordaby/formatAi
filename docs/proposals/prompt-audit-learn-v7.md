@@ -1,6 +1,6 @@
 # Prompt audit: learn-v7, after the learning loop (v12)
 
-Status: **proposal, not built** (2026-10-04). An audit of the learn prompt against the system as it is now (SPEC 21 v12, `docs/proposals/learning-loop.md` sections 3 and 7), with a learn-v8 draft and the eval that would decide it. No code, prompt or schema file is changed by this document.
+Status: **built as learn-v8, measured and rejected (2026-10-05); its code was removed (2026-10-07).** learn-v8 (with its noE1 arm) was built from this audit and measured against learn-v7 on the eval (26 cases, both modes): it fitted every row at any cost, so learn-v7 stayed the default (2026-10-05). learn-v8.1, which took back the edits that invited this, never became the default either. The owner had the experiment removed from the code on 2026-10-07 (SPEC.md "Amendment (2026-10-07): learn-v8 removed"). Two of its fixes, F2 (no `type` validation rule) and F5 (the four dictionaries in the wire's pair form), are recorded for the next prompt version in `LEARN_PROMPT.md` ("For the next prompt version"). Written 2026-10-04 as a proposal: an audit of the learn prompt against the system as it is now (SPEC 21 v12, `docs/proposals/learning-loop.md` sections 3 and 7), with a learn-v8 draft and the eval that would decide it. No code, prompt or schema file is changed by this document.
 
 ## 0. Scope and assumptions
 
