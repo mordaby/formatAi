@@ -427,16 +427,15 @@ export function sentBody(rec: SentRecord): object {
 }
 
 /**
- * What the engine's learn needs of an answer: the rules, the problems, (learn-v8) the alternatives, which it tests on every row, and (learn-v9)
- * the checks the AI step asked instead of answering - present, even empty with `droppedChecks`, it is a checks answer the engine answers.
+ * What the engine's learn needs of an answer: the rules, the problems, and (learn-v9) the checks the AI step asked instead of answering -
+ * present, even empty with `droppedChecks`, it is a checks answer the engine answers.
  */
 function asCallResult(res: RepairResponse): LearnCallResult {
-  const { rules, problems, alternatives, overfitRepaired, checks, droppedChecks } = res;
+  const { rules, problems, overfitRepaired, checks, droppedChecks } = res;
   return {
     rules,
     problems,
     calls: [],
-    ...(alternatives && alternatives.length > 0 ? { alternatives } : {}),
     ...(overfitRepaired ? { overfitRepaired: true } : {}),
     ...(checks ? { checks } : {}),
     ...(checks && droppedChecks && droppedChecks.length > 0 ? { droppedChecks } : {}),

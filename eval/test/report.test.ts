@@ -37,9 +37,7 @@ function record(overrides: Partial<RunRecord> = {}): RunRecord {
     checksAsked: 0,
     filledByCode: '',
     ambiguities: '',
-    prompt: 'learn-v8',
-    alternativesProposed: 0,
-    alternatives: '',
+    prompt: 'learn-v7',
     unsupportedDespiteEvidence: 0,
     unsupportedReasons: '',
     problemsByKind: '',
@@ -308,14 +306,14 @@ describe('token usage and cost (our own estimate)', () => {
   it('lists every AI learn with its calls, loop rounds, rows sent and how the loop ended, tokens, cost, latency, verification and hold-out', () => {
     const md = buildMarkdownReport([aiLearn({ case: 'orders-priority', holdOut: 'fail', classification: 'notVerified', loopRounds: 3, loopRowsSent: 24, loopEnd: 'roundCap' }), record({ case: 'free' })], '2025-01-01T00:00:00.000Z');
     expect(md).toContain('### Per learn');
-    expect(md).toContain('| orders-priority | haiku | off | 1 | 2 | 3 | 24 | roundCap | - | - | - | 3000 | 10000 | 10000 | 1500 | 0.0400 | 12.0 | no | fail |');
+    expect(md).toContain('| orders-priority | haiku | off | 1 | 2 | 3 | 24 | roundCap | - | - | 3000 | 10000 | 10000 | 1500 | 0.0400 | 12.0 | no | fail |');
     expect(md).not.toContain('| free | haiku | off | 1 |');
   });
 
   it('says per learn what code filled from every row and what the example could not settle (kinds and counts), and puts both in the CSV', () => {
     const learn = aiLearn({ case: 'branch-lookup-50', filledByCode: 'lookup 47, cutoff 1, 1 check', ambiguities: 'dayMonthOrder' });
     const md = buildMarkdownReport([learn], '2025-01-01T00:00:00.000Z');
-    expect(md).toContain('| branch-lookup-50 | haiku | off | 1 | 2 | 1 | 8 | verified | lookup 47, cutoff 1, 1 check | dayMonthOrder | - | 3000 |');
+    expect(md).toContain('| branch-lookup-50 | haiku | off | 1 | 2 | 1 | 8 | verified | lookup 47, cutoff 1, 1 check | dayMonthOrder | 3000 |');
     const [head, row] = buildCsvReport([learn]).trim().split('\n');
     const cols = head!.split(',');
     expect(cols.slice(cols.indexOf('loopEnd') + 1, cols.indexOf('loopEnd') + 3)).toEqual(['filledByCode', 'ambiguities']);
@@ -331,7 +329,7 @@ describe('token usage and cost (our own estimate)', () => {
     expect(md).toContain('| 100% | 100% | 1.00 | 0.50 |');
     const [head, row] = buildCsvReport([learn]).trim().split('\n');
     const cols = head!.split(',');
-    const at = cols.indexOf('alternatives');
+    const at = cols.indexOf('prompt');
     expect(cols.slice(at + 1, at + 9)).toEqual(['unsupportedDespiteEvidence', 'unsupportedReasons', 'problemsByKind', 'truncatedCalls', 'callFailures', 'overfitSuspected', 'overfitFound', 'overfitFellBack']);
     expect(row).toContain(',2,ambiguous 1,"diff 4, unsupportedDespiteEvidence 2",1,truncated 1,1,0,0,');
   });
@@ -438,35 +436,14 @@ describe('expected outcomes in words', () => {
   });
 });
 
-describe('learn-v8: the alternatives of each learn, and the prompt version', () => {
+describe('the prompt version of each learn', () => {
   const aiLearn = (over: Partial<RunRecord> = {}) => record({ path: 'llm', fastPath: false, classification: 'verified', llmCalls: 2, latencyMs: 12_000, estInTokens: 3000, estCachedTokens: 10_000, estCacheWriteTokens: 10_000, estOutTokens: 1500, estCostUsd: 0.04, loopRounds: 1, loopRowsSent: 8, loopEnd: 'verified', ...over });
-  it('per learn: the alternatives and their outcomes; the CSV has the prompt, the number proposed and the outcomes; the header says the prompt', () => {
-    const learn = aiLearn({ case: 'orders-priority', alternativesProposed: 3, alternatives: 'Priority bothPass, Tag alternativeOnly, invalid 1' });
-    const md = buildMarkdownReport([learn], '2025-01-01T00:00:00.000Z');
-    expect(md).toContain('Prompt: learn-v8');
-    expect(md).toContain('| verified | - | - | Priority bothPass, Tag alternativeOnly, invalid 1 | 3000 |');
+  it('the header says the prompt; the CSV has it after the ambiguities', () => {
+    const learn = aiLearn({ case: 'orders-priority', prompt: 'learn-v9' });
+    expect(buildMarkdownReport([learn], '2025-01-01T00:00:00.000Z')).toContain('Prompt: learn-v9');
     const [head, row] = buildCsvReport([learn]).trim().split('\n');
     const cols = head!.split(',');
-    expect(cols.slice(cols.indexOf('ambiguities') + 1, cols.indexOf('ambiguities') + 4)).toEqual(['prompt', 'alternativesProposed', 'alternatives']);
-    expect(row).toContain('learn-v8,3,"Priority bothPass, Tag alternativeOnly, invalid 1"');
-  });
-
-  it('the stdout summary counts the outcomes across the learns', () => {
-    const lines: string[] = [];
-    printSummary(
-      [
-        aiLearn({ case: 'a', alternativesProposed: 2, alternatives: 'Priority bothPass, invalid 1' }),
-        aiLearn({ case: 'b', alternativesProposed: 1, alternatives: 'Tag alternativeOnly' }),
-        aiLearn({ case: 'c' }),
-      ],
-      (l) => lines.push(l),
-    );
-    expect(lines.find((l) => l.includes('alternatives:'))).toBe('    alternatives: 3 proposed in 2 learn(s) - bothPass 1, alternativeOnly 1, invalid 1');
-  });
-
-  it('says nothing about alternatives when no learn had any', () => {
-    const lines: string[] = [];
-    printSummary([aiLearn({ case: 'a' })], (l) => lines.push(l));
-    expect(lines.some((l) => l.includes('alternatives:'))).toBe(false);
+    expect(cols[cols.indexOf('ambiguities') + 1]).toBe('prompt');
+    expect(row!.split(',')[cols.indexOf('prompt')]).toBe('learn-v9');
   });
 });

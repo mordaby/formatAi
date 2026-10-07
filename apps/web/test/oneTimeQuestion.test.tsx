@@ -215,7 +215,7 @@ describe('a one-time edit or a rule?', () => {
     await screen.findByTestId('one-time-unsure');
     const line = [...document.querySelectorAll('[data-section="checks"] [data-line-id]')].find((e) => /one row only/.test(e.textContent ?? '')) as HTMLElement;
     fireEvent.click(within(line).getAllByRole('button').find((b) => b.classList.contains('map-line__main'))!);
-    // (the editor says the rule without the part as a formula, as it says an alternative's)
+    // (the editor says the rule without the part as a formula)
     expect((await screen.findByText(/you weren't sure whether it is a rule/)).textContent).toContain('(round(amount * 0.1, 2)) is flagged');
     fireEvent.click(await screen.findByRole('button', { name: 'Remove this check' }));
     await waitFor(() => expect(lastCall(liveCheck).rules.validations).toEqual([]));

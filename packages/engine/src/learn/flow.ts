@@ -22,10 +22,9 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import { aiNotesOf, isCodeCheck, limits, payloadRowCount, stepBytes, stripAiNotes, unsupportedDespiteEvidence, withRows, type AiColumnNote, type AiStepPartCode, type Check, type CheckAnswer, type CheckRound, type ColumnClassHints, type Format, type LearnAlternative, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
+import { aiNotesOf, isCodeCheck, limits, payloadRowCount, stepBytes, stripAiNotes, unsupportedDespiteEvidence, withRows, type AiColumnNote, type AiStepPartCode, type Check, type CheckAnswer, type CheckRound, type ColumnClassHints, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
 import { answerChecks, checkSummaryOf, withoutRows, type CheckSummary } from './checks';
 import { deepEqual } from '../registry/deepEqual';
-import { columnVerifier, resolveAlternatives, type AlternativeResult } from './alternatives';
 import { fillParams, type FillAmbiguity, type FillResult, type FillSummary } from './fillParams';
 import { copiedLists, listRetryProblems, oneTimeQuestions, questionedPositions, type OneTimeOptions, type OneTimeResult } from './oneTimers';
 import { sniffDelimitedText } from '../io/detectFileSpec';
@@ -35,7 +34,7 @@ import { analyzePair } from './analyze';
 import { checkFixedLock, type FixedProblem } from '../registry/checkFixedLock';
 import { restoreFixed } from '../registry/restoreFixed';
 import { columnsWithRule, completionProduced, isCompletable, learnResultOf, type CompleteOptions } from './complete';
-import { ambiguousColumns, fastPath } from './fastPath';
+import { fastPath } from './fastPath';
 import { loopCaps, loopStep, startLoop, wrongCount, type LoopRound, type LoopSummary } from './loop';
 import { createMasker, unmaskRules, type Masker } from './mask';
 import { maskFixedRules } from './maskFixed';
@@ -55,8 +54,6 @@ export interface LearnCallResult<Call = unknown> {
   /** Wire-decoded but NOT unmasked: exactly what the LLM produced (fake vocabulary
    * when masking is on). `learnFromExamples` unmasks it itself before verifying. */
   rules: LearnResult | null;
-  /** learn-v8: a second rule for some columns (`LearnResponse.alternatives`), in the same vocabulary as `rules`; tested on every row in `judge`. */
-  alternatives?: LearnAlternative[];
   problems: RepairProblem[];
   calls: Call[];
   /**
@@ -148,7 +145,7 @@ export interface LearnFromExamplesOptions<Call = unknown> {
    */
   onAnalysis?: (analysis: PairAnalysis) => void;
   /**
-   * Engine audit (2026-10-07): the time budget for code's work on one AI answer (fill, guards, verification, alternatives), default
+   * Engine audit (2026-10-07): the time budget for code's work on one AI answer (fill, guards, verification), default
    * `limits.learn.judge.timeBudgetMs`; see `LearnFromExamplesResult.timeBudget`. `now` is the clock it is read with (tests).
    */
   judgeBudgetMs?: number;
@@ -274,13 +271,6 @@ export interface LearnFromExamplesResult<Call = unknown> {
    */
   filled?: FillSummary;
   /**
-   * Path 'llm' with rules, learn-v8: what code found for each alternative the kept answer gave (`learn/alternatives.ts`) - per column,
-   * both rules fit every row (`bothPass`: the user is asked; `question` is the ambiguity question, and `rules` carry its check until they
-   * answer), only the answer's (`answerOnly`), only the alternative's (`alternativeOnly`: it is the rule now), or neither (`bothFail`).
-   * Absent when the answer gave none.
-   */
-  alternatives?: AlternativeResult[];
-  /**
    * Path 'llm' with rules: what the example could not settle, for the ambiguity question (proposal 7.2). Today one kind:
    * `{ kind: 'dayMonthOrder', column, format, other }` - every date text of the input column `column` reads both ways, so the rules keep
    * the AI's `format`; answering "the other way" is `swapDayMonth(rules, ambiguity)`. Absent when there is none.
@@ -298,7 +288,7 @@ export interface LearnFromExamplesResult<Call = unknown> {
   /**
    * Engine audit (2026-10-07; `limits.learn.judge`): present when code's work on an AI answer took longer than the budget - the learn
    * stopped there (loop end `timeBudget`) with the best answer so far. `skipped` says what was not done: `fill` (conditions left as the AI
-   * wrote them), `alternatives` (not tried), `rounds` (no further repair round), `listRound` (the list's one round not made). The answer is
+   * wrote them), `rounds` (no further repair round), `listRound` (the list's one round not made). The answer is
    * verified only when every row matched; otherwise its differences are the user's ("needs your input"). Counts and names only.
    */
   timeBudget?: TimeBudgetSummary;
@@ -309,7 +299,7 @@ export interface TimeBudgetSummary {
   budgetMs: number;
   /** The longest answer's time (ms). */
   answerMs: number;
-  skipped: ('fill' | 'alternatives' | 'rounds' | 'listRound')[];
+  skipped: ('fill' | 'rounds' | 'listRound')[];
 }
 
 /** How the one round for the kept answer's lists went (`LearnFromExamplesResult.listRetry`). Headers and counts only. */
@@ -560,22 +550,16 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     wrong: number;
     /** What code filled in it (kinds and counts) and what the example could not settle. */
     fill: { summary: FillSummary; ambiguities: FillAmbiguity[] };
-    /** learn-v8: what each of its alternatives turned out to be on every row. */
-    alternatives: AlternativeResult[];
     /** The overfitting guards (SPEC 9.2 layer 6): the problems for a rule that copies rows, while the learn's one repair for it is unused. */
     overfit: RepairProblem[];
-    /** What it was judged from, so the kept answer can be judged again with the fallback (`judge(answer, alternatives, true)`). */
-    source: { answer: LearnResult; alternatives: readonly LearnAlternative[] };
+    /** What it was judged from, so the kept answer can be judged again with the fallback (`judge(answer, true)`). */
+    source: LearnResult;
     /** Engine audit (2026-10-07): the time code took on it (ms), and what the time budget left undone (`limits.learn.judge`). */
     ms: number;
-    overBudget: ('fill' | 'alternatives')[] | null;
+    overBudget: 'fill'[] | null;
   }
   const now = opts.now ?? Date.now;
   const judgeBudgetMs = opts.judgeBudgetMs ?? limits.learn.judge.timeBudgetMs;
-  // The columns the free engine already asks about (a constant the input could write too): an alternative adds no second question there.
-  let codeAsked: Set<string> | undefined;
-  const askedByCode = (): Set<string> => (codeAsked ??= new Set(ambiguousColumns(analysis).map((q) => q.header)));
-  const verifyColumn = columnVerifier(analysis, masker);
   // The overfitting guards (SPEC 9.2 layer 6, `learn/overfit.ts`): ONE repair per learn for a rule that copies rows of the example - asked by
   // the API's checks or by a round of this loop - and from then on the honest fallback: the column is reported as unsupported by code.
   let overfitRepaired = learned.overfitRepaired === true;
@@ -589,7 +573,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     : null;
   /** How much a rule that copies rows weighs when answers are compared: every row of its column wrong (it holds for none but these). */
   const copyWeight = Math.max(1, analysis.alignment.rows.length);
-  const judge = (answer: LearnResult, alternatives: readonly LearnAlternative[] = [], fallBack = false): Judged => {
+  const judge = (answer: LearnResult, fallBack = false): Judged => {
     // Engine audit (2026-10-07): code's work on one answer has a time budget (`limits.learn.judge`), read between its steps.
     const started = now();
     const deadline = started + judgeBudgetMs;
@@ -636,18 +620,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     rules = filled.rules;
     fixedProblems = fixedLock(rules);
     const fill = { summary: { filled: filled.filled, checks: filled.checks, ...(filled.stopped ? { stopped: true as const } : {}) }, ambiguities: filled.ambiguities };
-    let verification = verifyAnswer(rules);
-    // learn-v8: each alternative the answer gave is tested on every row - one more run of the rules, only its column compared - and the
-    // outcome applied (`learn/alternatives.ts`): a question when both fit, the alternative as the rule when only it fits. No alternative:
-    // nothing here runs. (Past the time budget none is tried: the answer's own rule stands.)
-    let results: AlternativeResult[] = [];
-    const overBudget: ('fill' | 'alternatives')[] = filled.stopped ? ['fill'] : [];
-    if (alternatives.length > 0 && now() > deadline) overBudget.push('alternatives');
-    else if (alternatives.length > 0) {
-      const resolved = resolveAlternatives({ rules, masked, verification, alternatives, masker, verifyColumn, asked: askedByCode() });
-      ({ rules, masked, verification, results } = resolved);
-      fixedProblems = fixedLock(rules);
-    }
+    const verification = verifyAnswer(rules);
+    const overBudget: 'fill'[] = filled.stopped ? ['fill'] : [];
     const sendFixed = fixedProblems.length > 0 && masker && asked && maskedFixed ? checkFixedLock(masked, maskedFixed, asked) : fixedProblems;
     const b = blamed(verification, rules);
     // DECISION: a rule that copies rows - one still to repair, or one code reported - never passes, and counts as wrong on every row of its
@@ -665,9 +639,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
       wrongRows: b.rows,
       wrong: wrongCount(b.rows, b.layout) + fixedProblems.length + copied * copyWeight,
       fill,
-      alternatives: results,
       overfit,
-      source: { answer, alternatives },
+      source: answer,
       ms: now() - started,
       // (Over the budget also when every step ran but took longer: the next answer would too.)
       overBudget: overBudget.length > 0 || now() > deadline ? overBudget : null,
@@ -680,7 +653,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
    */
   const otherProblems = (j: Judged): RepairProblem[] => [...j.sendFixed.slice(0, MAX_FIXED_PROBLEMS), ...j.verification.repairProblems.filter((p) => p.kind !== 'diff'), ...j.overfit];
 
-  const first = judge(learned.rules, learned.alternatives);
+  const first = judge(learned.rules);
   // DECISION (an honest unsupported is not a mismatch, with one exception): a column the answer gives up on although the pair analysis found how
   // it is built (the payload carries a hint for it) is a problem for the first round - one call to write the rule. It is that round's trigger
   // and no more: a model that stands by "unsupported" after it is accepted (the column stays "needs your input"). (Asked of the answer as it
@@ -721,7 +694,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     const repaired = await opts.callRepair(payload, previous.masked, step.problems, { round: step.round, maxRounds: caps.maxRounds, rows: loop.sent.map((r) => r.sample), newRows: step.rows.length + step.namedOnly.length, overfitRepaired });
     calls.push(...repaired.calls);
     if (repaired.overfitRepaired) overfitRepaired = true;
-    const judged = repaired.rules ? judge(repaired.rules, repaired.alternatives) : null;
+    const judged = repaired.rules ? judge(repaired.rules) : null;
     answers.push(judged);
     if (judged) {
       budget.ms = Math.max(budget.ms, judged.ms);
@@ -742,7 +715,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // The answer kept is the loop's best (the fewest wrong rows; ties keep the earliest). One that still has a rule that copies rows - no round
   // could repair it - is judged again with the honest fallback: never counted as verified by a copy of the example.
   const best = answers[loop.best] ?? first;
-  let kept = best.overfit.length > 0 ? judge(best.source.answer, best.source.alternatives, true) : best;
+  let kept = best.overfit.length > 0 ? judge(best.source, true) : best;
 
   // ---- Logic first (docs/proposals/saved-format-contents.md section 4): the kept answer's list columns get ONE automatic round, a round of
   // the loop (its caps, the API's repair calls), never more than one per learn. (Completion mode: the asked columns only, never a list of the
@@ -785,8 +758,8 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     if (repaired.overfitRepaired) overfitRepaired = true;
     // Code checks the answer on every row, as always: it replaces the kept one only when it is no worse (ties: a passing one over one that
     // does not pass). An answer that still copies rows is judged with the honest fallback, like the loop's kept answer.
-    const judged = repaired.rules ? judge(repaired.rules, repaired.alternatives) : null;
-    const candidate = judged && judged.overfit.length > 0 ? judge(judged.source.answer, judged.source.alternatives, true) : judged;
+    const judged = repaired.rules ? judge(repaired.rules) : null;
+    const candidate = judged && judged.overfit.length > 0 ? judge(judged.source, true) : judged;
     const columns = lists.map((q) => q.header);
     let outcome: ListRetrySummary['outcome'] = 'noAnswer';
     if (candidate) {
@@ -810,7 +783,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     rowsSent: loop.sent.length + loop.named.length - unmade.rows,
     end: budget.skipped.has('rounds') ? 'timeBudget' : decided.step.kind === 'stop' ? decided.step.reason : 'verified',
   };
-  const timeBudget: TimeBudgetSummary | undefined = budget.hit ? { budgetMs: judgeBudgetMs, answerMs: budget.ms, skipped: (['fill', 'alternatives', 'rounds', 'listRound'] as const).filter((s) => budget.skipped.has(s)) } : undefined;
+  const timeBudget: TimeBudgetSummary | undefined = budget.hit ? { budgetMs: judgeBudgetMs, answerMs: budget.ms, skipped: (['fill', 'rounds', 'listRound'] as const).filter((s) => budget.skipped.has(s)) } : undefined;
 
   // A one-time edit or a rule? (SPEC 21 v12 item 20): the parts of the kept answer that explain one row of the example only, for the user -
   // and (owner amendment, 2026-10-06; docs/proposals/saved-format-contents.md section 3) the lists of fixed values the kept answer still has,
@@ -839,7 +812,6 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
     ...checkSummary,
     filled: kept.fill.summary,
     ...(kept.fill.ambiguities.length > 0 ? { ambiguities: kept.fill.ambiguities } : {}),
-    ...(kept.alternatives.length > 0 ? { alternatives: kept.alternatives } : {}),
     ...(oneTimers.questions.length > 0 || oneTimers.handedOff.length > 0 ? { oneTimers } : {}),
     ...(aiNotes.length > 0 ? { aiNotes } : {}),
     ...(timeBudget ? { timeBudget } : {}),

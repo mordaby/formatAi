@@ -108,11 +108,9 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
   // Its input's columns come with it: the editor offers the ones no rule uses yet (headers only; the file stays here).
   if (!analysis || !result.rules) return result;
   // The columns the example fits more than one rule for are a question for the user, whatever path built the rules (the free engine's, or the AI step's):
-  // a constant the input could write too, and - after an AI answer - a second rule the AI step gave that also fits every row (learn-v8, SPEC 21 v12
-  // item 17; its check is already in the rules) and the day/month order of a text date that no value settles (SPEC 21 v12 item 16).
-  // A column asks one question: the first one stands (the engine adds no alternative question on a column the free engine asks about).
-  const alternatives = (result.alternatives ?? []).flatMap((a) => (a.question ? [a.question] : []));
-  const ambiguous = [...ambiguousColumns(analysis), ...alternatives, ...dayMonthQuestions(result.rules, result.ambiguities ?? [])].filter((q, i, all) => all.findIndex((x) => x.header === q.header) === i);
+  // a constant the input could write too, and the day/month order of a text date that no value settles (SPEC 21 v12 item 16).
+  // A column asks one question: the first one stands.
+  const ambiguous = [...ambiguousColumns(analysis), ...dayMonthQuestions(result.rules, result.ambiguities ?? [])].filter((q, i, all) => all.findIndex((x) => x.header === q.header) === i);
   return {
     ...result,
     exampleId: rememberExample(analysis, args.keepExampleId),

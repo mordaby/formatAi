@@ -16,7 +16,6 @@ export * from './checks';
 export * from './fillParams';
 export * from './overfit';
 export * from './oneTimers';
-export * from './alternatives';
 export * from './flow';
 export * from './partial';
 export * from './complete';
