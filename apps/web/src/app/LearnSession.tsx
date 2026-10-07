@@ -58,6 +58,14 @@ export interface LearnSession {
   completion: UseLearnFlow;
   /** Forget the files and the result: back to an empty Home. */
   startOver(): void;
+  /**
+   * The learned result of these files has been saved (the Result screen's Save, Save changes; Add to a format from them). The next time the
+   * learn page shows, it starts empty (owner, 2026-10-07): `clearIfSaved`. Leaving without saving keeps the files.
+   */
+  saved: boolean;
+  markSaved(): void;
+  /** The learn page shows: after a save it starts empty (`startOver`); otherwise nothing changes. */
+  clearIfSaved(): void;
   /** A kept learn is being put back after a sign-in (the Result screen waits for it instead of going home). */
   restoring: boolean;
 }
@@ -108,6 +116,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const [output, setOutput] = useState<File | null>(null);
   const [masking, setMasking] = useState(true);
   const [columnChoices, setColumnChoices] = useState<UserColumnChoices>(NO_CHOICES);
+  const [saved, setSaved] = useState(false);
   const [deepAnalysis, setDeepAnalysis] = useState(false);
   const [restoring, setRestoring] = useState(true);
   // The latest of everything a callback below needs to read at the moment it runs (not when it was made).
@@ -122,7 +131,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
     setOutput(file);
     setColumnChoices(NO_CHOICES);
   }, []);
-
+  const markSaved = useCallback(() => setSaved(true), []);
 
   const { start, cancel: reset } = flow;
   const { start: startCompletion, cancel: resetCompletion } = completion;
@@ -162,8 +171,12 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
     setInput(null);
     setOutput(null);
     setColumnChoices(NO_CHOICES);
+    setSaved(false);
     setDeepAnalysis(false);
   }, [reset, resetCompletion]);
+  const clearIfSaved = useCallback(() => {
+    if (saved) startOver();
+  }, [saved, startOver]);
 
   // ---- keeping what has been learned across the trip to the provider (SPEC 5 E) ----
   // ... for an hour at most, as the privacy page says: dropped on its hour while a tab is open, and at once on a page load past it.
@@ -309,9 +322,12 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       finishWithAi,
       completeWithAi,
       startOver,
+      saved,
+      markSaved,
+      clearIfSaved,
       restoring,
     }),
-    [flow, completion, input, output, masking, columnChoices, deepAnalysis, chooseInput, chooseOutput, begin, finishWithAi, completeWithAi, startOver, restoring],
+    [flow, completion, input, output, masking, columnChoices, deepAnalysis, chooseInput, chooseOutput, begin, finishWithAi, completeWithAi, startOver, saved, markSaved, clearIfSaved, restoring],
   );
   return <LearnSessionContext.Provider value={value}>{children}</LearnSessionContext.Provider>;
 }

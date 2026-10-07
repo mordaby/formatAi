@@ -1,4 +1,5 @@
-/* "See what we send" before the learn (owner, 2026-10-07): the large dialog with the sample rows as they go, and a switch per column. Logical properties only (RTL and LTR alike); colors from the tokens (both themes). */
+/* "See what we send" before the learn (owner, 2026-10-07): the large dialog with the sample rows as they go, a switch per column, and
+   Home's "Clear" link. Logical properties only (RTL and LTR alike); colors from the tokens (both themes). */
 
 /* ---------- the large dialog: wide on a desk, a full-screen sheet on a phone ---------- */
 .dialog--large {
@@ -151,4 +152,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
+}
+
+/* ---------- Home: "Clear", next to the chosen files ---------- */
+.zones__clear {
+  display: flex;
+  justify-content: flex-end;
+  margin-block-start: calc(-1 * var(--s-2));
+  font-size: var(--fs-small);
 }

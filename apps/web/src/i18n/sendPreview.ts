@@ -1,5 +1,5 @@
 // UI strings of "See what we send" before the learn (owner, 2026-10-07): the dialog with the sample rows as they will go and a switch
-// per column (Hidden / Sent as is). Merged into `en` and `he` in dictionaries.ts, where a missing Hebrew string
+// per column (Hidden / Sent as is), and Home's "Clear" link. Merged into `en` and `he` in dictionaries.ts, where a missing Hebrew string
 // is caught by the compiler.
 //
 // Tone (SPEC 16.3): plain words, no jargon. Hebrew is the primary language; the plural imperative is the house voice.
@@ -36,6 +36,13 @@ export const sendPreviewEn = {
   'sendPreview.also': 'What else is sent',
   'sendPreview.choicesNote': 'Your choices hold for every request of this learn. Choosing another file clears them.',
   'sendPreview.sentSoFar': 'Sent so far',
+
+  'home.clear': 'Clear',
+  'home.clear.label': 'Clear the chosen files',
+  'home.clear.confirm.title': 'Clear the files?',
+  'home.clear.confirm.body': 'The format you learned from them is not saved. Clearing the files throws it away.',
+  'home.clear.confirm.yes': 'Clear',
+  'home.clear.confirm.no': 'Keep them',
 } as const satisfies Record<string, string>;
 
 export const sendPreviewHe: Record<keyof typeof sendPreviewEn, string> = {
@@ -69,4 +76,11 @@ export const sendPreviewHe: Record<keyof typeof sendPreviewEn, string> = {
   'sendPreview.also': 'מה עוד נשלח',
   'sendPreview.choicesNote': 'הבחירות שלכם חלות על כל בקשה בלמידה הזו. בחירת קובץ אחר מאפסת אותן.',
   'sendPreview.sentSoFar': 'מה שנשלח עד כה',
+
+  'home.clear': 'ניקוי',
+  'home.clear.label': 'ניקוי הקבצים שנבחרו',
+  'home.clear.confirm.title': 'לנקות את הקבצים?',
+  'home.clear.confirm.body': 'הפורמט שלמדתם מהם לא נשמר. ניקוי הקבצים ימחק אותו.',
+  'home.clear.confirm.yes': 'ניקוי',
+  'home.clear.confirm.no': 'להשאיר אותם',
 };

@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { AiLimitNotice, useAiLimit } from '../app/AiLimit';
 import { aiUsesLabel, includedLabel, noAiLeft } from '../app/aiQuota';
 import { SendPreviewDialog } from '../app/SendPreviewDialog';
@@ -8,7 +8,7 @@ import { useSignIn } from '../app/SignIn';
 import { useFileInfo } from '../app/useFileInfo';
 import { webConfig } from '../config';
 import { useI18n } from '../i18n';
-import { Button, DropZone, Icon } from '../ui';
+import { Button, Dialog, DropZone, Icon } from '../ui';
 import { HomeMasking } from './HomeMasking';
 
 export interface HomeFormProps {
@@ -27,6 +27,8 @@ export function HomeForm({ busy }: HomeFormProps) {
   const inputInfo = useFileInfo(input, 'input');
   const outputInfo = useFileInfo(output, 'output');
   const [sendOpen, setSendOpen] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const zones = useRef<HTMLDivElement>(null);
   const hintId = useId();
   const aiHintId = useId();
 
@@ -39,6 +41,15 @@ export function HomeForm({ busy }: HomeFormProps) {
   const noneLeft = me.user !== null && noAiLeft(me.quota);
   const aiHint = me.user ? aiUsesLabel(t, me.quota) : t('home.learnAi.guest', { included: includedLabel(t) });
 
+  // "Clear" (owner, 2026-10-07): one click back to an empty form. Only a learned result that is not saved yet is worth a question - it
+  // would be lost; then it is asked once. Focus goes to the first drop zone (the link itself is gone).
+  const unsavedResult = session.flow.state.status === 'done' && session.flow.state.result.rules !== null && !session.saved;
+  const clear = (): void => {
+    setConfirmClear(false);
+    session.startOver();
+    requestAnimationFrame(() => zones.current?.querySelector<HTMLElement>('input')?.focus());
+  };
+
   return (
     <div className="view">
       <header className="tool__head">
@@ -46,7 +57,7 @@ export function HomeForm({ busy }: HomeFormProps) {
         <p className="lead">{t('home.lead')}</p>
       </header>
 
-      <div className="zones">
+      <div className="zones" ref={zones}>
         <DropZone
           label={t('home.input.title')}
           caption={t('home.input.caption')}
@@ -72,6 +83,14 @@ export function HomeForm({ busy }: HomeFormProps) {
         />
       </div>
 
+      {input !== null || output !== null ? (
+        <p className="zones__clear">
+          <Button variant="link" disabled={busy} aria-label={t('home.clear.label')} onClick={() => (unsavedResult ? setConfirmClear(true) : clear())}>
+            {t('home.clear')}
+          </Button>
+        </p>
+      ) : null}
+
       <HomeMasking masking={masking} onChange={session.setMasking} disabled={busy} />
 
       <div className="privacy">
@@ -84,7 +103,17 @@ export function HomeForm({ busy }: HomeFormProps) {
         </p>
         <SendPreviewDialog open={sendOpen} onClose={() => setSendOpen(false)} />
       </div>
-
+      <Dialog open={confirmClear} onClose={() => setConfirmClear(false)} title={t('home.clear.confirm.title')}>
+        <p>{t('home.clear.confirm.body')}</p>
+        <div className="dialog__actions">
+          <Button variant="primary" onClick={() => setConfirmClear(false)}>
+            {t('home.clear.confirm.no')}
+          </Button>
+          <Button variant="secondary" onClick={clear}>
+            {t('home.clear.confirm.yes')}
+          </Button>
+        </div>
+      </Dialog>
 
       <div className="learn">
         <div className="learn-row">
