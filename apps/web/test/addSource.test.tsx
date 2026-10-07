@@ -59,7 +59,7 @@ function setup(over: { registry?: Record<string, unknown>; learn?: Parameters<ty
   const api = fakeApi({
     user: USER,
     registry: { getFormat: vi.fn(async () => format), attachSource: vi.fn(async () => ({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' }), source: { id: 'S2', name: 'Supplier B', formats: 1 } })), ...over.registry },
-    learn: over.apiLearn ?? vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const }, promptVersion: 'learn-v9' as const })),
+    learn: over.apiLearn ?? vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const, limit: null }, promptVersion: 'learn-v9' as const })),
   });
   const { engine, learn } = fakeEngine(
     over.learn ??

@@ -1,6 +1,7 @@
 import { limits, tiers } from '@formatai/shared';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Identity } from '../../src/protection/identity.js';
+import type { FastifyRequest } from 'fastify';
+import { identityOf, type Identity } from '../../src/protection/identity.js';
 import {
   aiFailKey,
   aiLearnStateKey,
@@ -86,6 +87,14 @@ describe('aiQuotaOf (SPEC 11, 21 v5: AI learns per tier, config only)', () => {
 
   it('honours a per-user override of the count (users.limitOverrides.aiLearns)', () => {
     expect(aiQuotaOf(registered({ learnLimitOverride: 99 }), noon).spec!.limit).toBe(99);
+  });
+
+  it('API audit P2: reads `aiLearns` only - the legacy `learnsToLlm` key is no override any more', () => {
+    const req = (limitOverrides: Record<string, number>) =>
+      ({ anonId: 'AAAAAAAAAAAAAAAA', authUser: { userId: 'u1', tier: 'registered', isAdmin: false, limitOverrides } }) as unknown as FastifyRequest;
+    expect(identityOf(req({ aiLearns: 7 }))).toMatchObject({ learnLimitOverride: 7 });
+    expect(identityOf(req({ learnsToLlm: 9 }))).not.toHaveProperty('learnLimitOverride');
+    expect(identityOf(req({ aiLearns: 7 }))).not.toHaveProperty('limitOverrides');
   });
 
   it('gives an anonymous visitor none: a limit of 0 (it never reaches the AI)', () => {

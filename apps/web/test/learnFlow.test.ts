@@ -213,7 +213,7 @@ describe('LearnFlow', () => {
   describe('the learning loop (SPEC 9.3): rounds of repairs, each with every row sent so far', () => {
     const NOT_VERIFIED = { ...VERIFIED, verified: false, matched: 2 };
     const outcomeApi = () => ({
-      learnOutcome: vi.fn(async (_id: string, outcome: string) => ({ counted: outcome === 'verified', quota: { remaining: 2, period: 'month' }, failedAttempts: outcome === 'verified' ? 0 : 1, exhausted: false })),
+      learnOutcome: vi.fn(async (_id: string, outcome: string) => ({ counted: outcome === 'verified', quota: { remaining: 2, period: 'month', limit: null }, failedAttempts: outcome === 'verified' ? 0 : 1, exhausted: false })),
     });
 
     it('passes the overfit repair on (SPEC 9.2 layer 6): the learn\'s answer says it was made, a round says so to the API', async () => {
@@ -639,7 +639,7 @@ describe('LearnFlow: completion mode (complete)', () => {
         await host.callLearn(PAYLOAD);
         return result({ path: 'llm', completion });
       });
-      const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
+      const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const, limit: null }, failedAttempts: 0, exhausted: false }));
       const api = fakeApi({ registry: { learnOutcome } } as unknown as Partial<Api>);
       const { flow } = makeFlow(engine, api);
       await flow.start({ input: file('in.csv'), output: file('out.csv'), masking: true, ai: 'allowed', complete: COMPLETE });

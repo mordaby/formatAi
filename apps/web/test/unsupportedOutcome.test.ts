@@ -41,7 +41,7 @@ const EXTERNAL = { outputColumn: 'Warehouse', reasonCode: 'externalData' as cons
 
 async function run(answer: LearnResult) {
   const engine = engineOf();
-  const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
+  const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const, limit: null }, failedAttempts: 0, exhausted: false }));
   const api = {
     session: vi.fn(),
     // The server's own checks passed (it excludes the unsupported column from its sample diff): the answer comes back as it is.

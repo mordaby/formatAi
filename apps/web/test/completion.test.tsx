@@ -403,7 +403,7 @@ describe('"Finish with AI" completes only what is missing', () => {
   });
 
   it('the learn outcome is reported on the answer\'s own learn id (verified only when lock, match and production all hold)', async () => {
-    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
+    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const, limit: null }, failedAttempts: 0, exhausted: false }));
     const api = fakeApi({ user: USER, registry: { learnOutcome } });
     const { engine } = engineWith(async (args, host) => {
       await (host as { callLearn(p: unknown): Promise<unknown> }).callLearn({ masking: false, output: { columns: [] }, samples: [], skipColumns: [] });

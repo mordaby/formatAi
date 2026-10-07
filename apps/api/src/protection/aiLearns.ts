@@ -92,11 +92,14 @@ export async function pairExhausted(store: ProtectionStore, owner: string, group
   return (await failedAttemptsOf(store, owner, group)) >= failureCap();
 }
 
-/** What is left of the quota (`null` remaining = unlimited). */
+/**
+ * What is left of the quota (`null` remaining = unlimited), and (API audit P2, 2026-10-07) the user's own limit for the period: the plan's,
+ * or the admin's override (`aiQuotaOf`) - so the browser never says the plan's number to someone whose account has another.
+ */
 export async function quotaState(store: ProtectionStore, quota: AiQuota): Promise<AiLearnQuotaState> {
-  if (!quota.spec) return { remaining: null, period: quota.period };
+  if (!quota.spec) return { remaining: null, period: quota.period, limit: null };
   const used = await store.getCounter(quota.spec.key);
-  return { remaining: Math.max(0, quota.spec.limit - used), period: quota.period };
+  return { remaining: Math.max(0, quota.spec.limit - used), period: quota.period, limit: quota.spec.limit };
 }
 
 async function charge(ctx: AiLearnCtx, by: 1 | -1): Promise<void> {

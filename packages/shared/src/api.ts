@@ -19,6 +19,8 @@ export interface ApiErrorBody {
   period?: AiLearnPeriod;
   /** `aiAttemptsExhausted`: true when this very answer counted the pair as one AI learn (SPEC 21 v5). */
   counted?: boolean;
+  /** `limitHit { limit: 'aiLearns' }` (API audit P2): the caller's quota as it stands - none left, and their own limit. */
+  quota?: AiLearnQuotaState;
   /** `invalidRules` / `formatMismatch` / `sourceMismatch` (registry): what failed, in the same shape a repair call takes. */
   problems?: ApiProblem[];
 }
@@ -117,6 +119,11 @@ export interface AiLearnQuotaState {
   /** AI learns still available in the period; `null` for an unlimited quota. */
   remaining: number | null;
   period: AiLearnPeriod;
+  /**
+   * API audit P2 (2026-10-07): how many AI learns THIS user has in the period - the plan's (`tiers[tier].aiLearns.count`), or the admin's
+   * override of it (`users.limitOverrides.aiLearns`); `null` for an unlimited quota.
+   */
+  limit: number | null;
 }
 
 /** GET /api/learn/quota (signed-in only): what is left of the caller's AI learns, before any learn was made. */

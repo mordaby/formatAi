@@ -413,7 +413,9 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     const reservation = await reserveLearn(store, [aiRequestsSpec(identity, now), ...(reserved ? [quota.spec!] : [])]);
     if (!reservation.ok) {
       const limit = reservation.limitCode;
-      return refuse({ status: 429, body: { error: 'limitHit', limit, ...(limit === 'aiLearns' ? { period: quota.period } : {}) } });
+      // (aiLearns: the period, and - API audit P2 - the quota as it stands, the user's own limit included)
+      if (limit === 'aiLearns') return refuse({ status: 429, body: { error: 'limitHit', limit, period: quota.period, quota: await quotaState(store, quota) } });
+      return refuse({ status: 429, body: { error: 'limitHit', limit } });
     }
 
     if (followUp?.ok) return { identity, owner, now, payload, learnId: spec.followUp!.learnId as string, ctx: ctxOf(identity, now, followUp), reserved, prompt };

@@ -8,7 +8,7 @@ import { tiers, type Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
-import { aiLeftLabel, aiRenewsAt, aiRenewText } from '../src/app/aiQuota';
+import { aiLeftLabel, aiPlanLine, aiRenewsAt, aiRenewText } from '../src/app/aiQuota';
 import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLearn';
 import { ordersRules } from '../src/editor/testkit';
 import { translate } from '../src/i18n';
@@ -73,7 +73,7 @@ function engineWith(first: () => LearnOutput | Promise<LearnOutput> = () => part
   return fake;
 }
 
-const noneLeft = (period: 'month' | 'day' | 'lifetime' = 'month') => ({ quota: vi.fn(async () => ({ remaining: 0, period })) });
+const noneLeft = (period: 'month' | 'day' | 'lifetime' = 'month', limit: number | null = null) => ({ quota: vi.fn(async () => ({ remaining: 0, period, limit })) });
 const quotaRefused = (period: 'month' | 'day' | 'lifetime' = 'month') => vi.fn(async () => Promise.reject(new ApiError('limitHit', 429, { limit: 'aiLearns', period })));
 
 async function dropFiles(lang: 'en' | 'he' = 'en') {
@@ -133,10 +133,10 @@ describe('when the AI formats come back: the next period as the server counts it
 
   it('"AI formats left" adds the date only when none are left', () => {
     const i18n = { lang: 'en' as const, t: (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate('en', key, params) };
-    expect(aiLeftLabel(i18n, { remaining: 2, period: 'month' }, NOW)).toBe('AI formats left this month: 2');
-    expect(aiLeftLabel(i18n, { remaining: 0, period: 'month' }, NOW)).toBe('AI formats left this month: 0 · back on 1 November');
-    expect(aiLeftLabel(i18n, { remaining: 0, period: 'lifetime' }, NOW)).toBe('AI formats left: 0');
-    expect(aiLeftLabel(i18n, { remaining: null, period: 'unlimited' }, NOW)).toBe('AI formats: no limit');
+    expect(aiLeftLabel(i18n, { remaining: 2, period: 'month', limit: null }, NOW)).toBe('AI formats left this month: 2');
+    expect(aiLeftLabel(i18n, { remaining: 0, period: 'month', limit: null }, NOW)).toBe('AI formats left this month: 0 · back on 1 November');
+    expect(aiLeftLabel(i18n, { remaining: 0, period: 'lifetime', limit: null }, NOW)).toBe('AI formats left: 0');
+    expect(aiLeftLabel(i18n, { remaining: null, period: 'unlimited', limit: null }, NOW)).toBe('AI formats: no limit');
   });
 });
 
@@ -348,6 +348,42 @@ describe('a 429 limitHit aiLearns at learn time (the quota was used up elsewhere
     await screen.findByTestId('rules-map');
     expect(fake.learn).toHaveBeenCalledTimes(2);
     expect(fake.learn.mock.calls[1]![0]).toMatchObject({ ai: 'notAllowed' });
+  });
+});
+
+describe("API audit P2: the user's own limit, as the server says it", () => {
+  it("an account whose limit is not the plan's (an admin's override) is told its own number", async () => {
+    await homeWithNoneLeft({ api: fakeApi({ user: USER, auth: noneLeft('month', 10) }) });
+    await act(async () => void fireEvent.click(learnAiButton()));
+    const dialog = await dialogNamed(OUT_TITLE);
+    expect(within(dialog).getByText('Your account includes 10 AI formats a month. They come back on 1 November.')).toBeTruthy();
+  });
+
+  it('the plan number is still "your plan"', async () => {
+    await homeWithNoneLeft({ api: fakeApi({ user: USER, auth: noneLeft('month', REG_AI) }) });
+    await act(async () => void fireEvent.click(learnAiButton()));
+    const dialog = await dialogNamed(OUT_TITLE);
+    expect(within(dialog).getByText(`Your plan includes ${REG_AI} AI formats a month. They come back on 1 November.`)).toBeTruthy();
+  });
+
+  it('a refusal at learn time keeps the known limit (the quota is merged, not replaced)', async () => {
+    const api = fakeApi({ user: USER, auth: { quota: vi.fn(async () => ({ remaining: 2, period: 'month' as const, limit: 10 })) }, learn: quotaRefused() });
+    const fake = fakeEngine(undefined, undefined, { convert: vi.fn(async () => converted()) });
+    fake.learn.mockImplementation(async (_args: unknown, host: LearnHost) => {
+      await host.callLearn({ masking: true } as never);
+      return learnResult({ path: 'local' });
+    });
+    renderApp({ engine: fake.engine, api });
+    await dropFiles();
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: /Learn the format/ })));
+    const dialog = await dialogNamed(OUT_TITLE);
+    expect(within(dialog).getByText('Your account includes 10 AI formats a month. They come back on 1 November.')).toBeTruthy();
+  });
+
+  it('says it in Hebrew too', () => {
+    const he = { lang: 'he' as const, t: (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate('he', key, params) };
+    expect(aiPlanLine(he, 'registered', 'lifetime', NOW, 10)).toBe('החשבון שלכם כולל 10 פורמטים עם AI.');
+    expect(aiPlanLine(he, 'registered', 'lifetime', NOW, null)).toBe(`התוכנית שלכם כוללת ${REG_AI} פורמטים עם AI.`);
   });
 });
 

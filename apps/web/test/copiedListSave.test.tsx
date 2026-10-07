@@ -421,7 +421,7 @@ describe('Add a source', () => {
     const api = fakeApi({
       user: USER,
       registry: { getFormat: vi.fn(async () => format), attachSource },
-      learn: vi.fn(async () => ({ rules: result.rules, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const } })),
+      learn: vi.fn(async () => ({ rules: result.rules, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const, limit: null } })),
     });
     const liveCheck = vi.fn(async (_id: string, r: LearnResult | Rules) => live(r));
     const { engine } = fakeEngine(

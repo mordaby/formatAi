@@ -38,7 +38,7 @@ const llmResponse = (over: Partial<LearnResponse> = {}): LearnResponse => ({
   cached: false,
   counted: true,
   failedAttempts: 0,
-  quota: { remaining: 2, period: 'month' },
+  quota: { remaining: 2, period: 'month', limit: null },
   // (API audit 2026-10-07: the version the server learned with - not the browser's constant - is what a save stores)
   promptVersion: 'learn-v9',
   ...over,
@@ -108,7 +108,7 @@ describe('the AI quota', () => {
   });
 
   it('shows what is left after an AI learn, from the answer', async () => {
-    const api = fakeApi({ user: USER, learn: vi.fn(async () => llmResponse({ quota: { remaining: 1, period: 'month' } })) });
+    const api = fakeApi({ user: USER, learn: vi.fn(async () => llmResponse({ quota: { remaining: 1, period: 'month', limit: null } })) });
     await learnWithAi({ api, result: { verification: VERIFIED } });
     await screen.findByTestId('rules-map');
     expect(await screen.findByTestId('ai-note')).toBeTruthy();
@@ -143,7 +143,7 @@ describe('learn-v8: the alternatives of an answer', () => {
 
 describe('the outcome the browser reports (SPEC 21 v5 item 3)', () => {
   it('a learn that verified against the example is reported "verified", and the quota shown follows the answer', async () => {
-    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 1, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
+    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 1, period: 'month' as const, limit: null }, failedAttempts: 0, exhausted: false }));
     const api = fakeApi({ user: USER, learn: vi.fn(async () => llmResponse()), registry: { learnOutcome } });
     await learnWithAi({ api, result: { verification: VERIFIED } });
     await screen.findByTestId('rules-map');
@@ -152,7 +152,7 @@ describe('the outcome the browser reports (SPEC 21 v5 item 3)', () => {
   });
 
   it('a learn that did not match is reported "failed", and says which try it was', async () => {
-    const learnOutcome = vi.fn(async () => ({ counted: false, quota: { remaining: 3, period: 'month' as const }, failedAttempts: 1, exhausted: false }));
+    const learnOutcome = vi.fn(async () => ({ counted: false, quota: { remaining: 3, period: 'month' as const, limit: null }, failedAttempts: 1, exhausted: false }));
     const api = fakeApi({ user: USER, learn: vi.fn(async () => llmResponse({ counted: false, failedAttempts: 0 })), registry: { learnOutcome } });
     await learnWithAi({ api, result: { verification: NOT_VERIFIED } });
     await screen.findByTestId('rules-map');
@@ -161,7 +161,7 @@ describe('the outcome the browser reports (SPEC 21 v5 item 3)', () => {
   });
 
   it('the third failed try says it stopped, and that it counted', async () => {
-    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 3, exhausted: true }));
+    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const, limit: null }, failedAttempts: 3, exhausted: true }));
     const api = fakeApi({ user: USER, learn: vi.fn(async () => llmResponse({ counted: false, failedAttempts: 2 })), registry: { learnOutcome } });
     await learnWithAi({ api, result: { verification: NOT_VERIFIED } });
     await screen.findByTestId('rules-map');
@@ -317,7 +317,7 @@ describe('Save format (signed in)', () => {
 
   it('"Save with N differences": status differencesAccepted with the count, and the AI learn is reported "accepted"', async () => {
     const createFormat = vi.fn(async () => created);
-    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const }, failedAttempts: 0, exhausted: false }));
+    const learnOutcome = vi.fn(async () => ({ counted: true, quota: { remaining: 2, period: 'month' as const, limit: null }, failedAttempts: 0, exhausted: false }));
     const api = fakeApi({ user: USER, registry: { createFormat, learnOutcome }, learn: vi.fn(async () => llmResponse({ counted: false, failedAttempts: 0 })) });
     const differing = liveResult({ verified: false, matched: 1, total: 4, differences: 3 });
     const { engine } = fakeEngine(

@@ -60,7 +60,7 @@ describe('settleLearn', () => {
     const s = await settleLearn(ctx, { answered: true, verified: true });
     expect(s).toMatchObject({ state: LEARN_STATE.charged, counted: true, failedAttempts: 0, exhausted: false });
     expect(store.counter(QUOTA_KEY)).toBe(1);
-    expect(await quotaState(store, quota)).toEqual({ remaining: 9, period: 'month' });
+    expect(await quotaState(store, quota)).toEqual({ remaining: 9, period: 'month', limit: 10 });
   });
 
   it('puts the unit back for a failed attempt and records the failure on the pair', async () => {
