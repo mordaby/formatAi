@@ -212,7 +212,7 @@ Shown when an anonymous user tries to download the full output, save a format, r
 
 ## 6. Intake, pair analysis and pre-flight
 
-Everything in this section runs in the browser, on the real data, and costs no tokens.
+Everything in this section runs in the browser, on the real data, and costs no tokens. The thresholds quoted here and in 7.1 (the 15-row header search, 2,000 sample rows, 0.9 coverage, 50 value-map entries, 5 breakpoints, the 200-shuffle chance test, the 95% Israeli ID share and the like) live in config, `limits.analysis` (`packages/shared/src/config/limits.ts`), not in code (section 2, item 8); a test pins the values quoted.
 
 ### 6.1 File checks
 Accepted types: .xlsx, .xls, .csv, and .txt (delimited). The maximum size depends on the tier. Formulas are read as their last calculated values, and macros are ignored.
@@ -1249,12 +1249,12 @@ M0 to M4 are built (2026-10-07); the product is in its beta with real testers. T
 
 The decisions still open, each with the default the code uses now. They keep their numbers, because code comments cite them ("SPEC 20.4", "DECISION 9", "DECISION 10"). The resolved ones - 20.1 the stack, 20.2 storing user files, 20.3 batch for registered users, 20.7 hosting - and the old "Settled in this version" list are in [docs/spec-history.md](docs/spec-history.md) (2026-10-07, "SPEC split").
 
-- **20.4 Tier numbers and other placeholder limits.** Default: **the placeholders in config** (`tiers.ts`, `limits.ts`: rows, files, formats, AI learns, daily AI requests, budgets, rate limits, form caps), to be tuned from real use. The `limit_hit` event is not written yet (14.1): the waitlist's triggers and the ledger are the data today.
+- **20.4 Tier numbers and other placeholder limits.** Default: **the placeholders in config** (`tiers.ts`, `limits.ts`: rows, files, formats, AI learns, daily AI requests, budgets, rate limits, form caps), to be tuned from real use once usage events are recorded. They are not recorded yet (14.1; `limit_hit` is not written): the waitlist's triggers and the ledger are the data today.
 - **20.5 Server repair rounds.** Default: **1** (`limits.llm.serverRepairRounds`); 0 makes exactly one LLM call per learn.
 - **20.6 Domain.** The product is **formatAI**. It runs on Render's default `onrender.com` address; no custom domain is chosen yet.
 - **20.8 Encoding of text outputs (DECISION 8).** Default: **reproduce the example's encoding.** Which encoding each ERP load screen really needs must be confirmed with real load files from design partners before any templates are built.
 - **20.9 Paid format limit (DECISION 9).** Default: **50 new formats per calendar month** (`newSavedFormatsPerMonth`), as stated in the business model. The alternative is 50 saved in total. Sources per format are counted separately (11).
-- **20.10 Auto-match threshold (DECISION 10).** Default: **score ≥ 0.9 with a 0.1 margin** (`limits.matching`), to be tuned from real matches (the `file_matched` event is not written yet).
+- **20.10 Auto-match threshold (DECISION 10).** Default: **score ≥ 0.9 with a 0.1 margin** (`limits.matching`), to be tuned from real matches once usage events are recorded; the `file_matched` event is not recorded yet (14.1).
 - **20.11 Hideable dates and yes/no values** (issue #71, parked 2026-10-07). Today the masker always sends dates and booleans as they are, so their switch in "See what we send" is disabled, and a birth date cannot be hidden. A change needs a date masker that keeps what rules need (format, order, ranges, month and weekday names) - for example one secret shift per column and session - unmasked in rule constants, and a decision on what the AI can still learn from a hidden date column. Default: **not hideable**.
 - **20.12 Short-value look-alikes** (issue #72, parked 2026-10-07). A hidden value of 1-2 digits often gets itself as its look-alike (few fakes of that length keep the shape), so hiding a column of small numbers can look as if it did nothing. Options: say so in the dialog, widen the fake for short values (at the cost of the shape rule), or accept it. Default: **as is**.
 - **20.13 Add a source: AI only on the user's click** (parked 2026-10-07). Today Add a source runs the AI step on whatever the free engine leaves (5 A2). Making it wait for the user's own click, as on Home and the Result screen, is held until source behaviour is settled. Default: **as today**.
