@@ -1,8 +1,9 @@
 // Adding a source to a format (SPEC 5 A2, 8.12): the output must match the format - same headers in order, same file type - or the
 // screen says which columns differ; then the learn runs in attach mode (the format is the `target`), the result opens in the
-// same editor, and saving adds a conversion (a refusal by the format lock is shown with its problems). In flow A, an example
-// output that matches a saved format is offered as "add it as a new source". Which Source object the file belongs to (SPEC 8.15) is automatic
-// and silent: there is no chooser and no note. A fake API and a fake worker.
+// same editor, and saving adds a conversion (a refusal by the format lock is shown with its problems). The learn is the free engine first,
+// and "Finish with AI" is offered only for what it left (owner decision 2026-10-07). The Result screen's Save sends a result with fields left
+// here ("Add as a source", formatMatchSave.test.tsx). Which Source object the file belongs to (SPEC 8.15) is automatic and silent: there is
+// no chooser and no note. A fake API and a fake worker (most tests' worker ignores `ai`: they test the screen after an AI learn).
 import { limits, promptVersion } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +12,7 @@ import { createMemoryPendingStore, setPendingStore } from '../src/app/pendingLea
 import { compareOutput } from '../src/pages/Result/matchFormat';
 import type { LearnHost } from '../src/worker/engineApi';
 import { conversionSummary, formatSummary, getFormatResponse, sourceSummary } from './helpers/registryKit';
+import { rules as fixtureRules } from '../src/rulesText/fixtures';
 import { csv, fakeApi, fakeEngine, learnResult, RULES, renderApp, USER } from './helpers/renderApp';
 
 const { downloaded, openInNewTab } = vi.hoisted(() => ({ downloaded: vi.fn(), openInNewTab: vi.fn() }));
@@ -56,9 +58,10 @@ const converted = (): unknown => ({
   totalRows: 3,
 });
 
-function setup(over: { registry?: Record<string, unknown>; learn?: Parameters<typeof fakeEngine>[0]; engine?: Record<string, unknown>; apiLearn?: () => Promise<never> } = {}) {
+function setup(over: { registry?: Record<string, unknown>; learn?: Parameters<typeof fakeEngine>[0]; engine?: Record<string, unknown>; apiLearn?: () => Promise<never>; auth?: Record<string, unknown>; lang?: 'en' | 'he' } = {}) {
   const api = fakeApi({
     user: USER,
+    ...(over.auth ? { auth: over.auth } : {}),
     registry: { getFormat: vi.fn(async () => format), attachSource: vi.fn(async () => ({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' }), source: { id: 'S2', name: 'Supplier B', formats: 1 } })), ...over.registry },
     learn: over.apiLearn ?? vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const, limit: null }, promptVersion: 'learn-v9' as const })),
   });
@@ -75,9 +78,34 @@ function setup(over: { registry?: Record<string, unknown>; learn?: Parameters<ty
       ...over.engine,
     },
   );
-  renderApp({ api, engine, route: ROUTE });
+  renderApp({ api, engine, route: ROUTE, ...(over.lang ? { lang: over.lang } : {}) });
   return { api, engine, learn };
 }
+
+/** The free engine's own result for this source: Item Code and Unit Price built, Description and Category left for the AI step. */
+function partialAttach(): ReturnType<typeof learnResult> {
+  return learnResult({
+    path: 'partial',
+    rules: fixtureRules({
+      output: {
+        columns: [
+          { header: 'Item Code', from: 'c_name' },
+          { header: 'Description', from: null },
+          { header: 'Unit Price', from: 'c_name' },
+          { header: 'Category', from: null },
+        ],
+      },
+    }),
+    partial: { reason: 'aiNotAllowed', solved: ['Item Code', 'Unit Price'], needsAi: ['Description', 'Category'], external: [], solvedColumns: [0, 2], needsAiParts: [] },
+  });
+}
+
+/** A worker that answers as the engine does: the free engine (here a partial result) unless the AI step is allowed - then the AI step. */
+const freeThenAi = async (host: LearnHost, args: { ai?: string }) => {
+  if (args.ai !== 'allowed') return partialAttach();
+  await host.callLearn({ masking: true } as never);
+  return learnResult({ path: 'llm' });
+};
 
 const drop = async (label: 'Example input' | 'Example output', file: File): Promise<void> => {
   fireEvent.change(await screen.findByLabelText(label), { target: { files: [file] } });
@@ -190,7 +218,8 @@ describe('the Add a source screen', () => {
     });
     await screen.findByTestId('rules-map');
     const args = learn.mock.calls[0]![0] as { target: { output: { columns: { header: string }[] } }; ai: string; tier: string; masking: boolean };
-    expect(args.ai).toBe('allowed');
+    // The free engine first (owner decision 2026-10-07): the AI step is not allowed until the user presses "Finish with AI".
+    expect(args.ai).toBe('notAllowed');
     expect(args.tier).toBe('registered');
     expect(args.masking).toBe(true);
     expect(args.target.output.columns.map((c) => c.header)).toEqual(HEADERS);
@@ -311,7 +340,7 @@ describe('the Add a source screen', () => {
 
   it('the AI step refused for the quota (429 limitHit aiLearns): the out-of-AI-formats dialog over the form, the files kept - not an error screen', async () => {
     const apiLearn = vi.fn(async () => Promise.reject(new ApiError('limitHit', 429, { limit: 'aiLearns', period: 'month' })));
-    setup({ apiLearn });
+    setup({ apiLearn, learn: freeThenAi });
     await screen.findByTestId('add-format-columns');
     await drop('Example input', csv('supplier-b.csv'));
     await drop('Example output', xlsx('load.xlsx'));
@@ -319,6 +348,8 @@ describe('the Add a source screen', () => {
     await act(async () => {
       fireEvent.click(learnButton());
     });
+    // The free engine first; the AI step only on the click (the account said 3 were left: the server knew better).
+    await act(async () => void fireEvent.click(await screen.findByRole('button', { name: 'Finish with AI' })));
     const dialog = await screen.findByRole('dialog', { name: "You've used your AI formats for this month" });
     expect(within(dialog).getByText(/^Your plan includes 3 AI formats a month\. They come back on /)).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Join the paid waitlist' })).toBeTruthy();
@@ -631,56 +662,150 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
   });
 });
 
-describe('flow A: "This looks like your format X"', () => {
-  const NAMES = formatSummary({ id: 'F7', name: 'Names list', outputHeaders: ['Name'], fileType: 'xlsx', outputColumns: 1 });
+// ---------------------------------------------------------------------------
+// The free engine first; the AI step only on the user's click (owner decision 2026-10-07, point 6). The learn starts with the AI step not
+// allowed; the result shows what the free engine solved and what is left, and "Finish with AI" - the Result screen's own panel, its quota
+// line and its out-of-AI-formats dialog - is offered only when something is left. The format lock stays.
+// ---------------------------------------------------------------------------
 
-  async function learnLocally(api: ReturnType<typeof fakeApi>) {
+describe('Add a source: the free engine first, the AI step only on the click', () => {
+  async function learnFree(): Promise<void> {
+    await screen.findByTestId('add-format-columns');
+    await drop('Example input', csv('supplier-b.csv'));
+    await drop('Example output', xlsx('load.xlsx'));
+    await waitFor(() => expect(learnButton().disabled).toBe(false));
+    await act(async () => void fireEvent.click(learnButton()));
+    await screen.findByTestId('rules-map');
+  }
+
+  it('a free result with something left: no AI call, the panel says what is left and offers "Finish with AI" with its quota line', async () => {
+    const { api, learn, engine } = setup({ learn: freeThenAi });
+    await learnFree();
+    expect(learn).toHaveBeenCalledTimes(1);
+    expect((learn.mock.calls[0]![0] as { ai: string }).ai).toBe('notAllowed');
+    expect(api.learn).not.toHaveBeenCalled();
+    const panel = screen.getByTestId('deep-panel');
+    expect(within(panel).getByRole('heading').textContent).toBe('The free engine solved 2 of 4 fields.');
+    expect([...within(panel).getByTestId('deep-fields').querySelectorAll('li')].map((li) => li.getAttribute('data-field'))).toEqual(['col:Description', 'col:Category']);
+    expect(within(panel).getByText(/For a source of a format, the deep analysis starts again from your two files/)).toBeTruthy();
+    expect(within(panel).getByTestId('deep-uses').textContent).toBe('Uses 1 AI format (3 left this month), and only if it succeeds.');
+    // The format lock stays on the free result as on any other.
+    await waitFor(() => expect(engine.staticChecks).toHaveBeenCalled());
+    const asked = (engine.staticChecks as ReturnType<typeof vi.fn>).mock.calls as unknown as [unknown, { format?: { output: unknown } }][];
+    expect(asked.every(([, options]) => options.format?.output !== undefined)).toBe(true);
+    // (the panel's run is the one primary action; Save is there too - with the fields left as "needs your input")
+    expect(screen.getByRole('button', { name: 'Add source' }).className).not.toContain('primary');
+  });
+
+  it('"Finish with AI" runs the whole learn against the format, with the AI step allowed - once, on the click', async () => {
+    const { api, learn } = setup({ learn: freeThenAi });
+    await learnFree();
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Finish with AI' })));
+    await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
+    const args = learn.mock.calls[1]![0] as { ai: string; target: { output: { columns: { header: string }[] } } };
+    expect(args.ai).toBe('allowed');
+    expect(args.target.output.columns.map((c) => c.header)).toEqual(HEADERS);
+    await waitFor(() => expect(api.learn).toHaveBeenCalledTimes(1));
+    // The AI step's answer replaces the free result: nothing is left, so the panel is gone; what was sent can be seen.
+    await screen.findByTestId('ai-note');
+    expect(screen.queryByTestId('deep-panel')).toBeNull();
+    expect(screen.getByRole('button', { name: 'See what we send' })).toBeTruthy();
+  });
+
+  it('with edits on the free result, "Finish with AI" asks before replacing them', async () => {
+    const { learn } = setup({ learn: freeThenAi });
+    await learnFree();
+    const row = document.querySelector('[data-line-id="col:Item Code"]') as HTMLElement;
+    fireEvent.click(within(row).getAllByRole('button').find((b) => b.classList.contains('map-line__main'))!);
+    fireEvent.change(screen.getByLabelText('Column name'), { target: { value: 'Item code' } });
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Finish with AI' })));
+    const ask = await screen.findByRole('dialog', { name: 'Start the AI step over?' });
+    await act(async () => void fireEvent.click(within(ask).getByRole('button', { name: 'Keep my rules' })));
+    expect(learn).toHaveBeenCalledTimes(1);
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Finish with AI' })));
+    await act(async () => void fireEvent.click(within(await screen.findByRole('dialog', { name: 'Start the AI step over?' })).getByRole('button', { name: 'Replace my rules' })));
+    await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
+  });
+
+  it('none left: the panel says so (the amber notice, with the waitlist) instead of offering a run, and the result is delivered as it is', async () => {
+    const { api, learn } = setup({ learn: freeThenAi, auth: { quota: vi.fn(async () => ({ remaining: 0, period: 'month' })) } });
+    await learnFree();
+    const panel = screen.getByTestId('deep-panel');
+    await waitFor(() => expect(within(panel).getByText(/No AI formats left this month/)).toBeTruthy());
+    expect(within(panel).queryByRole('button', { name: 'Finish with AI' })).toBeNull();
+    expect(within(panel).getByRole('button', { name: 'Download with these fields empty' })).toBeTruthy();
+    expect(learn).toHaveBeenCalledTimes(1);
+    expect(api.learn).not.toHaveBeenCalled();
+  });
+
+  it('a free result with nothing left: no panel, no AI button - it is saved at once', async () => {
+    const { api } = setup({ learn: async () => learnResult({ path: 'local' }) });
+    await learnFree();
+    expect(screen.queryByTestId('deep-panel')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Finish with AI' })).toBeNull();
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add source' }) as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Add source' })));
+    await waitFor(() => expect(api.registry.attachSource).toHaveBeenCalledTimes(1));
+    expect((api.registry.attachSource.mock.calls[0] as unknown as [string, { learnPath: string }])[1].learnPath).toBe('local');
+    expect(api.learn).not.toHaveBeenCalled();
+  });
+
+  it('says it in Hebrew', async () => {
+    setup({ learn: freeThenAi, lang: 'he' });
+    await screen.findByTestId('add-format-columns');
+    fireEvent.change(await screen.findByLabelText('דוגמת קלט'), { target: { files: [csv('supplier-b.csv')] } });
+    fireEvent.change(await screen.findByLabelText('דוגמת פלט'), { target: { files: [xlsx('load.xlsx')] } });
+    const learnHe = (): HTMLButtonElement => screen.getByRole('button', { name: /ללמוד את המקור הזה/ }) as HTMLButtonElement;
+    await waitFor(() => expect(learnHe().disabled).toBe(false));
+    await act(async () => void fireEvent.click(learnHe()));
+    const panel = await screen.findByTestId('deep-panel');
+    expect(within(panel).getByRole('heading').textContent).toBe('המנוע החינמי פתר 2 מתוך 4 שדות.');
+    expect(within(panel).getByRole('button', { name: 'השלמה עם AI' })).toBeTruthy();
+    expect(within(panel).getByText(/עבור מקור של פורמט, הניתוח המעמיק מתחיל מחדש/)).toBeTruthy();
+  });
+});
+
+describe('from the Result screen\'s Save ("Add as a source" of a result with fields left)', () => {
+  it('the Result screen shows no "looks like your format" banner: the question is asked at Save', async () => {
+    const NAMES = formatSummary({ id: 'F7', name: 'Names list', outputHeaders: ['Name'], fileType: 'xlsx', outputColumns: 1 });
+    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [NAMES]) } });
     const { engine } = fakeEngine(async () => learnResult({ path: 'local' }));
     renderApp({ engine, api });
     fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });
     fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('Orders report.csv')] } });
     await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Learn the format/ }));
-    });
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: /Learn the format/ })));
     await screen.findByTestId('rules-map');
-  }
-
-  it('offers to add the file as a new source when the example output matches a saved format, and carries the files over', async () => {
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [NAMES]), getFormat: vi.fn(async () => getFormatResponse({ id: 'F7', name: 'Names list', sources: [], detail: { outputHeaders: ['Name'], fileType: 'xlsx' } })) } });
-    await learnLocally(api);
-    expect(await screen.findByText('This looks like your format "Names list"')).toBeTruthy();
-    expect(screen.getByText('Add this file as a new source for it?')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add as a new source' }));
-    expect(await screen.findByRole('heading', { name: 'Add a source to "Names list"' })).toBeTruthy();
-    expect(screen.getByText('We filled in the files from the format you just learned.')).toBeTruthy();
-    expect(screen.getByText('orders.csv')).toBeTruthy();
-    expect(screen.getByText('Orders report.csv')).toBeTruthy();
-  });
-
-  it('"No, save it as a new format" dismisses the offer', async () => {
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [NAMES]) } });
-    await learnLocally(api);
-    fireEvent.click(await screen.findByRole('button', { name: 'No, save it as a new format' }));
-    expect(screen.queryByText('This looks like your format "Names list"')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Save format' })).toBeTruthy();
-  });
-
-  it('does not offer a format whose headers or file type differ', async () => {
-    const other = formatSummary({ id: 'F8', name: 'Other', outputHeaders: ['Name', 'Extra'], outputColumns: 2 });
-    const csvFormat = formatSummary({ id: 'F9', name: 'A csv', outputHeaders: ['Name'], fileType: 'csv', outputColumns: 1 });
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [other, csvFormat]) } });
-    await learnLocally(api);
     await waitFor(() => expect(api.registry.listFormats).toHaveBeenCalled());
-    await act(async () => {});
-    expect(screen.queryByText(/This looks like your format/)).toBeNull();
+    expect(screen.queryByText(/looks like your format/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add as a source' })).toBeNull();
   });
 
-  it('does not offer anything to a visitor (there are no saved formats to look at)', async () => {
-    const api = fakeApi({ registry: { listFormats: vi.fn(async () => [NAMES]) } });
-    await learnLocally(api);
-    await act(async () => {});
-    expect(screen.queryByText(/This looks like your format/)).toBeNull();
+  it('opens Add a source with the same files, and the free learn starts by itself', async () => {
+    const NAMES = formatSummary({ id: 'F1', name: 'Supplier price list', outputHeaders: HEADERS, fileType: 'xlsx', outputColumns: 4 });
+    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [NAMES]), getFormat: vi.fn(async () => format), signatures: vi.fn(async () => []) } });
+    const { engine, learn } = fakeEngine(async () => partialAttach(), undefined, {
+      readHeaders: vi.fn(async ({ file }: { file: { name: string } }) => ({ ok: true, headers: file.name === 'load.xlsx' ? HEADERS : ['Code', 'Name', 'Price'], sheetName: 'S', direction: 'ltr', rows: 3 })),
+    });
+    renderApp({ engine, api });
+    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('supplier-b.csv')] } });
+    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [xlsx('load.xlsx')] } });
+    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: /Learn the format/ })));
+    await screen.findByTestId('rules-map');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save format' }) as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Save format' })));
+    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(within(box).getByTestId('format-match-question').textContent).toBe('This looks like your format Supplier price list. Add this file as a new source of it?');
+    await act(async () => void fireEvent.click(within(box).getByRole('button', { name: 'Add as a source' })));
+    // Add a source, with the session's files, learning against the format - the free engine, by itself.
+    await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
+    const args = learn.mock.calls[1]![0] as { ai: string; target?: unknown };
+    expect(args.ai).toBe('notAllowed');
+    expect(args.target).toBeDefined();
+    await screen.findByTestId('deep-panel');
+    expect(api.learn).not.toHaveBeenCalled();
+    expect(api.registry.attachSource).not.toHaveBeenCalled();
   });
 });
+

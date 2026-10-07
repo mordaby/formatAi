@@ -1,11 +1,13 @@
 // Add a source to an existing format (SPEC 5 A2, 8.12, 8.15): optionally name it, drop its input file and an output made from it by hand;
 // which Source object it belongs to is automatic and silent (SPEC 8.15: there is no source UI in the MVP);
 // the output must match the format (same headers in order, same file type) or the screen says which columns differ. Then the
-// learn runs in attach mode - the format is the `target`, the AI only decides how THIS input produces the format's columns - and
-// the result opens in the same map and editor, ready to save as a new conversion of the format (a link from the source to it).
+// learn runs in attach mode - the format is the `target` - with the FREE engine first (owner decision 2026-10-07): the format's output
+// side is taken from the format, and what code cannot build for this input is left. The result opens in the same map and editor; when
+// something is left, the Result screen's deep-analysis panel offers "Finish with AI" (the AI step only decides how THIS input produces the
+// format's columns, and is never run without that click). Saving makes a new conversion of the format (a link from the source to it).
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
 import { defaultSourceName } from '@formatai/shared';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { isAiQuotaHit, useAiLimit, useQuotaRefusal } from '../../app/AiLimit';
 import { useOnAi } from '../../app/aiReport';
@@ -24,7 +26,7 @@ import { useLearnFlow } from '../../flow/useLearnFlow';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
-import { Button, DropZone, Icon, InlineMessage, Spinner } from '../../ui';
+import { Button, Dialog, DropZone, Icon, InlineMessage, Spinner } from '../../ui';
 import { HomeMasking } from '../HomeMasking';
 import { LearningError } from '../LearningError';
 import { LearningNotReady } from '../LearningNotReady';
@@ -34,6 +36,9 @@ import { isRunning, useProgressVisible, useStepHistory } from '../learningSteps'
 import { AiNote } from '../Result/AiNote';
 import { TextField } from '../Result/fields';
 import { useCopiedListGate } from '../Result/CopiedListSave';
+import { DeepAnalysisPanel } from '../Result/DeepAnalysisPanel';
+import { missingFields } from '../Result/missingFields';
+import type { UseCompletion } from '../Result/useCompletion';
 import { compareOutput, fileTypeOfName, type OutputMismatch, type OutputFileType } from '../Result/matchFormat';
 import { SaveFailureMessage } from '../Result/SaveMessages';
 import { defaultFormatName } from '../Result/session';
@@ -213,12 +218,24 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
     outputRead?.status === 'ready' &&
     mismatches.length === 0;
 
-  const begin = (): void => {
+  // The free engine first (owner decision 2026-10-07): the AI step runs only when the user presses "Finish with AI" on the result, for what the
+  // free engine left (`ai: 'allowed'`, the whole learn against the format - completion mode is not combined with a format target).
+  const lastAi = useRef<'notAllowed' | 'allowed'>('notAllowed');
+  const begin = (ai: 'notAllowed' | 'allowed' = 'notAllowed'): void => {
     if (!ready || !input || !output) return;
-    // The session's own files ("Add to this format" from the Result screen): the user's choices of what is sent go with them.
+    // The session's own files (the Result screen's Save: "Add as a source"): the user's choices of what is sent go with them.
     const sameFiles = input === session.input && output === session.output;
-    void flow.start({ input, output, masking, ai: 'allowed', target, ...(sameFiles ? { columnChoices: session.columnChoices } : {}) });
+    lastAi.current = ai;
+    void flow.start({ input, output, masking, ai, target, ...(sameFiles ? { columnChoices: session.columnChoices } : {}) });
   };
+  // Sent here by the Result screen's Save ("Add as a source" of a result with fields missing): the files are the session's, and the free learn
+  // starts by itself as soon as they have been read - one click less.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!fromSession || autoStarted.current || !ready || state.status !== 'idle') return;
+    autoStarted.current = true;
+    begin();
+  });
 
   // The AI step was refused for the quota: the out-of-AI-formats dialog says so (and when they come back) over the form, the files kept -
   // not an error screen - the way every flow says it.
@@ -232,7 +249,7 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   } else if (state.status === 'notReady') {
     view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.cancel} />;
   } else if (state.status === 'error' && !quotaError) {
-    view = <LearningError key="error" error={state.error} onRetry={begin} onChangeFiles={flow.cancel} onSignIn={() => signIn.open('keepGoing')} />;
+    view = <LearningError key="error" error={state.error} onRetry={() => begin(lastAi.current)} onChangeFiles={flow.cancel} onSignIn={() => signIn.open('keepGoing')} />;
   } else if (state.status === 'done' && state.result.rules) {
     view = (
       <AttachResult
@@ -247,6 +264,7 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
         input={input}
         masking={masking}
         onChangeFiles={flow.cancel}
+        onFinishWithAi={() => begin('allowed')}
       />
     );
   } else if (progressVisible && isRunning(state)) {
@@ -333,7 +351,7 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
         </div>
 
         <div className="learn-row">
-          <Button variant="primary" iconEnd="arrow" disabled={!ready} loading={isRunning(state)} onClick={begin}>
+          <Button variant="primary" iconEnd="arrow" disabled={!ready} loading={isRunning(state)} onClick={() => begin()}>
             {t('add.learn')}
           </Button>
           {!ready && mismatches.length === 0 && <p className="learn-row__hint">{t('add.needFiles')}</p>}
@@ -389,10 +407,26 @@ interface AttachResultProps {
   input: File | null;
   masking: boolean;
   onChangeFiles(): void;
+  /** "Finish with AI": the whole learn of this source against the format, with the AI step allowed. It replaces this result. */
+  onFinishWithAi(): void;
 }
 
+/** The deep analysis here is always the whole learn again (`onFinishWithAi`): nothing of the Result screen's completion runs. */
+const NO_COMPLETION: UseCompletion = {
+  running: false,
+  round: null,
+  checkRound: null,
+  columnsAsked: 0,
+  asked: null,
+  outcome: null,
+  completed: null,
+  exhausted: false,
+  start: () => undefined,
+};
+const NO_TICKS: ReadonlySet<string> = new Set();
+
 /** The learned source, in the same map and editor as any result; saving adds it to the format (the format lock is checked live and by the server). */
-function AttachResult({ result, ai, sent, format, target, sourceName, input, masking, onChangeFiles }: AttachResultProps) {
+function AttachResult({ result, ai, sent, format, target, sourceName, input, masking, onChangeFiles, onFinishWithAi }: AttachResultProps) {
   const { t } = useI18n();
   const { api } = useServices();
   const me = useMe();
@@ -453,6 +487,25 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
     });
   };
 
+  // The free engine's own result (owner decision 2026-10-07: Add a source starts with it). What it left - columns with no rule, layout parts
+  // (a title, a sort, a grouping the format has that code could not build for this file) - is what "Finish with AI" is offered for, and only
+  // then; the AI step is the whole learn against the format, so the format lock holds for its answer as for any other.
+  const partial = result.path === 'partial' && result.partial?.reason === 'aiNotAllowed' ? result.partial : undefined;
+  const liveRules = useSyncExternalStore(store.subscribe, () => store.getState().rules);
+  const missing = useMemo(() => missingFields(liveRules, partial, result.exampleOutputColumns), [liveRules, partial, result.exampleOutputColumns]);
+  const offerAi = partial !== undefined && missing.any && save.state.status !== 'saved';
+  const [confirmWhole, setConfirmWhole] = useState(false);
+  const finish = (): void => {
+    // The user said the rules may go: the new learn replaces this result, and leaving it is not "leaving with unsaved changes".
+    store.markSaved();
+    onFinishWithAi();
+  };
+  const runAi = (): void => {
+    const s = store.getState();
+    if (s.dirty || s.edited.size > 0) setConfirmWhole(true);
+    else finish();
+  };
+
   const failure = save.state.status === 'error' ? save.state.error : undefined;
   const problemsTitle =
     failure?.kind !== 'api' ? undefined : failure.code === 'formatMismatch' ? t('add.saveMismatch.title') : failure.code === 'sourceMismatch' ? t('add.saveSourceMismatch.title') : undefined;
@@ -482,7 +535,8 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
       <>
         <div className="result-head__buttons">
           <Button
-            variant="primary"
+            // (while the panel offers "Finish with AI", that is the one primary action)
+            variant={offerAi ? 'secondary' : 'primary'}
             loading={save.state.status === 'saving' || gate.waiting}
             disabled={info.metaStatus === null}
             onClick={() => gate.save(info, findingsToConfirm(info.rules, copied), doSave)}
@@ -498,6 +552,29 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
 
   const banners = () => (
     <>
+      {/* The free engine left something (owner decision 2026-10-07): the same panel as the Result screen, with its one AI button. */}
+      {offerAi && (
+        <DeepAnalysisPanel
+          free
+          total={liveRules.output.columns.length}
+          columns={missing.columns}
+          parts={missing.parts}
+          who={me.status === 'loading' ? 'checking' : me.user ? 'user' : 'guest'}
+          quota={me.quota}
+          completion={NO_COMPLETION}
+          unticked={NO_TICKS}
+          onToggle={() => undefined}
+          whole
+          wholeNote={t('add.deep.whole')}
+          primary
+          onRun={runAi}
+          onSignIn={signInAgain}
+          onDownload={() => {
+            if (input) download.run(input, store.getState().rules);
+          }}
+          downloading={download.status === 'busy'}
+        />
+      )}
       {ai ? <AiNote ai={ai} verified={result.verification?.verified === true} /> : null}
       {save.state.status === 'saved' && (
         <InlineMessage tone="info" actions={<Link to={`/formats/${format.id}`}>{t('save.viewFormats')}</Link>}>
@@ -512,29 +589,50 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
   );
 
   return (
-    <Workbench
-      store={store}
-      trackUnsaved={save.state.status !== 'saved'}
-      exampleId={result.exampleId}
-      exampleInput={result.exampleInput}
-      inputFile={input}
-      tier={me.tier}
-      format={target}
-      // DECISION: no source lock in the browser: which Source object this becomes is decided by the server when it is saved (SPEC 8.15).
-      verification={result.verification}
-      name={shownName}
-      learnedNote={t('edit.note', { format: format.name })}
-      previewLimit={null}
-      onSignIn={signInAgain}
-      actions={actions}
-      banners={banners}
-      footer={
-        <div>
-          <Button variant="ghost" size="sm" onClick={onChangeFiles}>
-            {t('add.changeFiles')}
+    <>
+      <Workbench
+        store={store}
+        trackUnsaved={save.state.status !== 'saved'}
+        exampleId={result.exampleId}
+        exampleInput={result.exampleInput}
+        inputFile={input}
+        tier={me.tier}
+        format={target}
+        // DECISION: no source lock in the browser: which Source object this becomes is decided by the server when it is saved (SPEC 8.15).
+        // The free engine's own result: the columns it could not build are marked, and only the built ones are compared with the example.
+        partial={partial}
+        verification={result.verification}
+        name={shownName}
+        learnedNote={t('edit.note', { format: format.name })}
+        previewLimit={null}
+        onSignIn={signInAgain}
+        actions={actions}
+        banners={banners}
+        footer={
+          <div>
+            <Button variant="ghost" size="sm" onClick={onChangeFiles}>
+              {t('add.changeFiles')}
+            </Button>
+          </div>
+        }
+      />
+      <Dialog open={confirmWhole} onClose={() => setConfirmWhole(false)} title={t('partial.whole.title')}>
+        <p>{t('partial.whole.body')}</p>
+        <div className="dialog__actions">
+          <Button variant="primary" onClick={() => setConfirmWhole(false)}>
+            {t('partial.whole.keep')}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setConfirmWhole(false);
+              finish();
+            }}
+          >
+            {t('partial.whole.confirm')}
           </Button>
         </div>
-      }
-    />
+      </Dialog>
+    </>
   );
 }

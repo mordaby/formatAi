@@ -52,6 +52,8 @@ export interface DeepAnalysisPanelProps {
   onToggle(key: string, ticked: boolean): void;
   /** A whole learn will run (too little solved for a completion): the choice is fixed, all ticked. */
   whole: boolean;
+  /** What is said about the whole learn (default: too little was solved for a completion). Add a source says its own. */
+  wholeNote?: string | undefined;
   /** The run is the way forward (the result can't be saved without it): the primary button; otherwise a secondary one. */
   primary: boolean;
   onRun(): void;
@@ -199,13 +201,13 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
       <div className="deep__best" data-testid="deep-best">
         <p className="deep__lead">{t(p.columns.length === 1 ? 'deep.best.one' : 'deep.best.other', { n: p.columns.length })}</p>
         {list}
-        {choosing && p.whole ? <p className="deep__note">{t('deep.whole')}</p> : null}
+        {choosing && p.whole ? <p className="deep__note">{p.wholeNote ?? t('deep.whole')}</p> : null}
       </div>
     ) : (
       <div className="deep__list">
         <p className="deep__lead">{choosing ? t('deep.choose') : t('deep.missing')}</p>
         {list}
-        {choosing && p.whole ? <p className="deep__note">{t('deep.whole')}</p> : null}
+        {choosing && p.whole ? <p className="deep__note">{p.wholeNote ?? t('deep.whole')}</p> : null}
       </div>
     );
   // The way out with what is solved so far, whatever else happens: download it as it is (a visitor signs in first).
