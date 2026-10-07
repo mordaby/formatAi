@@ -15,9 +15,14 @@
 // DECISION (owner): no guess from how values are used or repeat - an integer column with no identifier word in its name is a measure, sent
 // real (a customer number named "Ref" included): a name the lists miss is what the external classification will add.
 //
+// Amendment 2026-10-07 (owner, "See what we send"): the user's choice per column (`UserColumnChoices`, on the analysis like the hints) is
+// applied last and wins: 'sent' loosens anything, 'hidden' tightens anything masking can hide (not a date or a yes/no column: the masker
+// sends those as they are). A copy keeps one class, so a choice on one column of a copy moves the columns it links (`applyChoices`).
+// `codeColumnClasses` is the classification without them: the switches' presets, and what a decision about the rules reads.
+//
 // Every path that sends cells reads it here, so a value gets the same fake everywhere: the payload's samples, dropped rows and hint values
 // (`payload.ts`), the learning loop's rows (`loop.ts`), the AI code checks' answers (`checks.ts`), the repair problems (`verify.ts`) and the
-// completion call's constants. Pure, synchronous; cached per analysis.
+// completion call's constants (`maskFixed.ts`). Pure, synchronous; cached per analysis.
 
 import {
   columnClassification,
@@ -32,16 +37,18 @@ import {
 } from '@formatai/shared';
 import type { RawCell } from '../types';
 import { normalizeText } from '../values/text';
-import type { ColumnProfile, PairAnalysis } from './analyze';
+import type { ColumnChoice, ColumnProfile, PairAnalysis, UserColumnChoices } from './analyze';
 
-/** What decided a column's class (for tests and the docs; masking reads the class only). */
-export type ClassSource = 'shape' | 'name' | 'profile' | 'hint' | 'copy';
+/** What decided a column's class (for tests and the docs; masking reads the class only). `user`: the user's choice ("See what we send"). */
+export type ClassSource = 'shape' | 'name' | 'profile' | 'hint' | 'copy' | 'user';
 
 export interface ClassifiedColumn {
   class: ColumnClass;
   by: ClassSource;
   /** `by: 'shape'`: the identifier shape most cells have. */
   shape?: IdentifierKind;
+  /** `by: 'user'`: the class code gave the column before the user's choice. */
+  was?: ColumnClass;
 }
 
 export interface ColumnClasses {
@@ -195,11 +202,34 @@ function keptInputs(analysis: PairAnalysis): { out: number; in: number; way: 'bo
 }
 
 const CACHE = new WeakMap<PairAnalysis, ColumnClasses>();
+const CODE_CACHE = new WeakMap<PairAnalysis, ColumnClasses>();
 
-/** The class of every column of the example (see the file header). Cached: the analysis (its `columnHints` included) does not change. */
+/**
+ * The class of every column of the example (see the file header), the user's choices included (`userColumnChoices`, applied last: see
+ * `applyChoices`). Cached: the analysis (its `columnHints` and choices included) does not change.
+ */
 export function classifyColumns(analysis: PairAnalysis): ColumnClasses {
   const cached = CACHE.get(analysis);
   if (cached) return cached;
+  const choices = analysis.userColumnChoices;
+  const classes = choices && hasChoices(choices) ? classify(analysis, choices) : codeColumnClasses(analysis);
+  CACHE.set(analysis, classes);
+  return classes;
+}
+
+/**
+ * The classes code gives, without the user's choices: what "See what we send" presets each switch to (and why), and what a decision about
+ * the rules - not about what is sent - reads (a list keyed on an identifier, `oneTimers.ts`): hiding a column never changes what is learned.
+ */
+export function codeColumnClasses(analysis: PairAnalysis): ColumnClasses {
+  const cached = CODE_CACHE.get(analysis);
+  if (cached) return cached;
+  const classes = classify(analysis, undefined);
+  CODE_CACHE.set(analysis, classes);
+  return classes;
+}
+
+function classify(analysis: PairAnalysis, choices: UserColumnChoices | undefined): ColumnClasses {
   const hints = new Map(Object.entries(analysis.columnHints ?? {}).map(([h, hint]) => [normalizeColumnName(h), hint] as const));
   const one = (p: ColumnProfile | undefined, header: string, cells: Cells): ClassifiedColumn => {
     const code = classifyOne(p, cells);
@@ -211,23 +241,101 @@ export function classifyColumns(analysis: PairAnalysis): ColumnClasses {
   const outRows = analysis.output.dataRows;
   const outSheet = analysis.output.sheet.rows;
   const output = analysis.output.headers.map((h, o) => one(analysis.output.profile[o], h, { n: outRows.length, at: (k) => outSheet[outRows[k]!]?.[o] }));
-  // (Until nothing changes: an output that becomes an identifier through one input passes it back to another it copies.)
   const kept = keptInputs(analysis);
+  // The user's choices (owner, 2026-10-07), before the copies are made to agree: a column the user chose to send stays sent (`pinned`).
+  const pinned = choices ? applyChoices(analysis, { input, output }, kept, choices) : { input: new Set<number>(), output: new Set<number>() };
+  // (Until nothing changes: an output that becomes an identifier through one input passes it back to another it copies.)
   for (let changed = true; changed; ) {
     changed = false;
     for (const { out: o, in: i, way } of kept) {
       const a = input[i];
       const b = output[o];
       if (!a || !b || (a.class === 'identifier') === (b.class === 'identifier')) continue;
-      if (a.class === 'identifier') output[o] = { class: 'identifier', by: 'copy' };
-      else if (way === 'both') input[i] = { class: 'identifier', by: 'copy' };
+      if (a.class === 'identifier') {
+        if (pinned.output.has(o)) continue;
+        output[o] = { class: 'identifier', by: 'copy' };
+      } else if (way === 'both' && !pinned.input.has(i)) input[i] = { class: 'identifier', by: 'copy' };
       else continue;
       changed = true;
     }
   }
-  const classes: ColumnClasses = { input: input.map((c) => c.class), output: output.map((c) => c.class), detail: { input, output } };
-  CACHE.set(analysis, classes);
-  return classes;
+  return { input: input.map((c) => c.class), output: output.map((c) => c.class), detail: { input, output } };
+}
+
+// ---------------------------------------------------------------------------
+// The user's choices ("See what we send", owner 2026-10-07)
+// ---------------------------------------------------------------------------
+
+function hasChoices(choices: UserColumnChoices): boolean {
+  return Object.keys(choices.input ?? {}).length > 0 || Object.keys(choices.output ?? {}).length > 0;
+}
+
+/**
+ * Whether masking can hide a column's values: not a date column, nor a yes/no column - the masker sends dates and booleans as they are
+ * whatever the class (SPEC 7.2), so a switch there would hide nothing.
+ */
+export function canHideColumn(c: ColumnClass, p: ColumnProfile | undefined): boolean {
+  return c !== 'date' && p?.type !== 'boolean';
+}
+
+/** A column the user chose to send: the class that sends its values as they are (a number column a measure, anything else a category). */
+function sentClassOf(p: ColumnProfile | undefined): ColumnClass {
+  if (p?.type === 'date') return 'date';
+  return p && NUMERIC.has(p.type) ? 'measure' : 'category';
+}
+
+/**
+ * Applies the user's choices to code's classes, in place (see `UserColumnChoices`): 'hidden' tightens what masking can hide (a column sent
+ * real becomes an identifier, the class that hides numbers too), 'sent' loosens anything (an identifier or a text column becomes a measure
+ * or a category). The user's choice wins, as with the masking switch itself. A copy keeps one class as always (`keptInputs`, `both`): a
+ * choice on one column of a copy is the choice for every column it links, on both sides; when two of them disagree, hidden wins. Returns
+ * the columns chosen 'sent', which a copy may then not make identifiers again.
+ */
+function applyChoices(
+  analysis: PairAnalysis,
+  classes: { input: ClassifiedColumn[]; output: ClassifiedColumn[] },
+  kept: readonly { out: number; in: number; way: 'both' | 'toOutput' }[],
+  choices: UserColumnChoices,
+): { input: Set<number>; output: Set<number> } {
+  const nIn = classes.input.length;
+  const nOut = classes.output.length;
+  // The columns a copy links, as groups (input i is node i, output o is node nIn + o).
+  const parent = Array.from({ length: nIn + nOut }, (_, k) => k);
+  const find = (k: number): number => {
+    let root = k;
+    while (parent[root] !== root) root = parent[root]!;
+    return root;
+  };
+  for (const { out, in: i, way } of kept) if (way === 'both' && out < nOut && i < nIn) parent[find(nIn + out)] = find(i);
+  const chosen = new Map<number, ColumnChoice>();
+  const choose = (node: number, choice: ColumnChoice | undefined): void => {
+    if (choice !== 'hidden' && choice !== 'sent') return;
+    const root = find(node);
+    if (chosen.get(root) !== 'hidden') chosen.set(root, choice);
+  };
+  for (const [k, choice] of Object.entries(choices.input ?? {})) if (Number(k) >= 0 && Number(k) < nIn) choose(Number(k), choice);
+  for (const [k, choice] of Object.entries(choices.output ?? {})) if (Number(k) >= 0 && Number(k) < nOut) choose(nIn + Number(k), choice);
+
+  const pinned = { input: new Set<number>(), output: new Set<number>() };
+  const apply = (list: ClassifiedColumn[], profiles: readonly ColumnProfile[], offset: number, pins: Set<number>): void => {
+    list.forEach((code, k) => {
+      const choice = chosen.get(find(offset + k));
+      if (choice === 'hidden' && !isMasked(code.class) && canHideColumn(code.class, profiles[k])) list[k] = { class: 'identifier', by: 'user', was: code.class };
+      else if (choice === 'sent') {
+        pins.add(k);
+        if (isMasked(code.class)) list[k] = { class: sentClassOf(profiles[k]), by: 'user', was: code.class };
+      }
+    });
+  };
+  apply(classes.input, analysis.input.profile, 0, pinned.input);
+  apply(classes.output, analysis.output.profile, nIn, pinned.output);
+  return pinned;
+}
+
+/** The analysis with the user's choices on it (none: without any), for `classifyColumns` - and so for every path that masks. */
+export function withColumnChoices(analysis: PairAnalysis, choices: UserColumnChoices | undefined): PairAnalysis {
+  const { userColumnChoices: _old, ...rest } = analysis;
+  return choices && hasChoices(choices) ? { ...rest, userColumnChoices: choices } : rest;
 }
 
 /** The class of input column `i` ('text' for a column the analysis does not know: masked, as the payload always did). */
@@ -251,4 +359,39 @@ export function sentColumns(analysis: PairAnalysis, masking: boolean): { input: 
   const side = (headers: readonly string[], classes: readonly ColumnClass[]): SentColumn[] =>
     headers.map((header, k) => ({ header, hidden: masking && isMasked(classes[k] ?? 'text') }));
   return { input: side(analysis.input.headers, c.input), output: side(analysis.output.headers, c.output) };
+}
+
+/**
+ * "See what we send" before the learn (owner, 2026-10-07): a column with what its switch needs - hidden now (the user's choice included),
+ * hidden by code's own classification (the preset), why code calls it an identifier (the warning when it is un-hidden), whether masking can
+ * hide it at all, and code's class (a measure: hiding it may keep the AI from rules on its real numbers). Headers and classes only.
+ */
+export interface SendColumn extends SentColumn {
+  hiddenByDefault: boolean;
+  /** Code's class, before the user's choice. */
+  class: ColumnClass;
+  /** Code found it an identifier: what said so (`shape`: the shape most cells have). */
+  identifier?: { by: ClassSource; shape?: IdentifierKind };
+  canHide: boolean;
+}
+
+export function sendColumns(analysis: PairAnalysis, masking: boolean): { input: SendColumn[]; output: SendColumn[] } {
+  const now = classifyColumns(analysis);
+  const code = codeColumnClasses(analysis);
+  const side = (headers: readonly string[], profiles: readonly ColumnProfile[], nowSide: readonly ColumnClass[], codeSide: readonly ClassifiedColumn[]): SendColumn[] =>
+    headers.map((header, k) => {
+      const c: ClassifiedColumn = codeSide[k] ?? { class: 'text', by: 'profile' };
+      return {
+        header,
+        hidden: masking && isMasked(nowSide[k] ?? c.class),
+        hiddenByDefault: masking && isMasked(c.class),
+        class: c.class,
+        ...(c.class === 'identifier' ? { identifier: { by: c.by, ...(c.shape ? { shape: c.shape } : {}) } } : {}),
+        canHide: canHideColumn(c.class, profiles[k]),
+      };
+    });
+  return {
+    input: side(analysis.input.headers, analysis.input.profile, now.input, code.detail.input),
+    output: side(analysis.output.headers, analysis.output.profile, now.output, code.detail.output),
+  };
 }
