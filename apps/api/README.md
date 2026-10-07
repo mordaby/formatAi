@@ -1,8 +1,10 @@
 # @formatai/api
 
-Fastify API for formatAI. M0 skeleton: no sign-in and no LLM calls yet (see `SPEC.md`
-milestones). It has no file-upload endpoint and accepts only small JSON bodies
-(256 KB max) - user files never leave the browser.
+The formatAI server: a Fastify API that also serves the built web app (one service, one origin). It has the learn routes (the AI
+step, for signed-in users), the registry (formats, sources, conversions), sign-in (Google and Microsoft), the admin view and the
+public contact forms. It keeps its data in MongoDB and calls the LLM providers (Anthropic or OpenAI) with a fallback from one to
+the other. It has no file-upload endpoint and accepts only small JSON bodies (256 KB max) - user files never leave the browser.
+The design is in `SPEC.md` (4, 9, 12-14); how to deploy it is in `docs/deploy.md`.
 
 ## Run
 

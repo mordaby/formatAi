@@ -30,7 +30,7 @@ export interface SessionResponse {
   /** True once the API has set (or seen) the visitor's httpOnly `anonId` cookie. The id itself
    * is never exposed to scripts. */
   anonId: boolean;
-  /** `free` = not signed in (`tiers.anonymous`). Signed-in tiers arrive in M3. */
+  /** `free` = not signed in (`tiers.anonymous`); a signed-in user's tier comes from `GET /api/me`. */
   tier: 'free';
   /** The tier's limits: the client-enforced ones (rows, columns, preview) and the rest, for display. */
   limits: TierLimits;
