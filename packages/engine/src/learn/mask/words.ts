@@ -159,6 +159,48 @@ export function buildWordFromBytes(chars: readonly string[], bytes: Uint8Array):
   return out;
 }
 
+/** The alphabet the character at position `i` of a word of `n` characters is replaced from (`buildWordFromBytes`), or null: kept. */
+function alphabetAt(ch: string, i: number, n: number): string | null {
+  const cls = classifyChar(ch);
+  if (cls === 'other') return null;
+  return cls === 'hebrew' ? (i === n - 1 ? HEBREW_END : HEBREW_MID) : ALPHABET[cls];
+}
+
+/**
+ * Every word of the shape of `chars` (each character from the alphabet `buildWordFromBytes` replaces it from), each once, in an order
+ * `seed` sets; then every word of that shape widened by one more character (of the class of its last letter or digit), and so on: an
+ * endless sequence in which no word repeats. Amendment 2026-10-07 (engine audit): the masker's fallback when its random tries collide,
+ * so two real values never share a fake - "Floor 1" .. "Floor 9" leave no room for luck (9 one-digit fakes for 9 one-digit values).
+ * A shape larger than 2^53 words is never exhausted (only a handful of fakes are ever taken).
+ */
+export function* wordsOfShape(chars: readonly string[], seed: Uint8Array): Generator<string> {
+  let last = 'a';
+  for (const ch of chars) if (classifyChar(ch) !== 'other') last = ch;
+  for (let extra = 0; ; extra++) {
+    const shape = extra === 0 ? chars : [...chars, ...new Array<string>(extra).fill(last)];
+    const n = shape.length;
+    const alphabets = shape.map((ch, i) => alphabetAt(ch, i, n));
+    let total = 1;
+    for (const a of alphabets) if (a !== null) total = Math.min(total * a.length, Number.MAX_SAFE_INTEGER);
+    for (let k = 0; k < total; k++) {
+      let rest = k;
+      const out = new Array<string>(n);
+      // (k's digits fill the word from its END, each shifted by the seed: the first words differ in the last characters only)
+      for (let i = n - 1; i >= 0; i--) {
+        const a = alphabets[i];
+        if (a === null || a === undefined) {
+          out[i] = shape[i]!;
+          continue;
+        }
+        const d = rest % a.length;
+        rest = Math.floor(rest / a.length);
+        out[i] = a[(d + (seed[i % Math.max(1, seed.length)] ?? 0)) % a.length]!;
+      }
+      yield out.join('');
+    }
+  }
+}
+
 // ---------- Deterministic byte stream from the key ----------
 
 const utf8Encoder = new TextEncoder();
