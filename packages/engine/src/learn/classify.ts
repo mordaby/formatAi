@@ -299,14 +299,7 @@ function applyChoices(
 ): { input: Set<number>; output: Set<number> } {
   const nIn = classes.input.length;
   const nOut = classes.output.length;
-  // The columns a copy links, as groups (input i is node i, output o is node nIn + o).
-  const parent = Array.from({ length: nIn + nOut }, (_, k) => k);
-  const find = (k: number): number => {
-    let root = k;
-    while (parent[root] !== root) root = parent[root]!;
-    return root;
-  };
-  for (const { out, in: i, way } of kept) if (way === 'both' && out < nOut && i < nIn) parent[find(nIn + out)] = find(i);
+  const find = copyGroupsOf(nIn, nOut, kept);
   const chosen = new Map<number, ColumnChoice>();
   const choose = (node: number, choice: ColumnChoice | undefined): void => {
     if (choice !== 'hidden' && choice !== 'sent') return;
@@ -330,6 +323,27 @@ function applyChoices(
   apply(classes.input, analysis.input.profile, 0, pinned.input);
   apply(classes.output, analysis.output.profile, nIn, pinned.output);
   return pinned;
+}
+
+/**
+ * The columns a copy links (`keptInputs`, `both`), as groups: the group of input column i is `find(i)`, of output column o `find(nIn + o)`.
+ * A choice on one column of a group is the choice for all of them.
+ */
+function copyGroupsOf(nIn: number, nOut: number, kept: readonly { out: number; in: number; way: 'both' | 'toOutput' }[]): (node: number) => number {
+  const parent = Array.from({ length: nIn + nOut }, (_, k) => k);
+  const find = (k: number): number => {
+    let root = k;
+    while (parent[root] !== root) root = parent[root]!;
+    return root;
+  };
+  for (const { out, in: i, way } of kept) {
+    if (way !== 'both' || out >= nOut || i >= nIn) continue;
+    const a = find(i);
+    const b = find(nIn + out);
+    // (the smaller node is the root: a group's id is its first column, input before output)
+    if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
+  }
+  return find;
 }
 
 /** The analysis with the user's choices on it (none: without any), for `classifyColumns` - and so for every path that masks. */
@@ -373,12 +387,19 @@ export interface SendColumn extends SentColumn {
   /** Code found it an identifier: what said so (`shape`: the shape most cells have). */
   identifier?: { by: ClassSource; shape?: IdentifierKind };
   canHide: boolean;
+  /**
+   * The columns a copy links share a group (an id: the same number on both sides): a choice is made for the whole group, as the
+   * classification applies it.
+   */
+  group: number;
 }
 
 export function sendColumns(analysis: PairAnalysis, masking: boolean): { input: SendColumn[]; output: SendColumn[] } {
   const now = classifyColumns(analysis);
   const code = codeColumnClasses(analysis);
-  const side = (headers: readonly string[], profiles: readonly ColumnProfile[], nowSide: readonly ColumnClass[], codeSide: readonly ClassifiedColumn[]): SendColumn[] =>
+  const nIn = analysis.input.headers.length;
+  const group = copyGroupsOf(nIn, analysis.output.headers.length, keptInputs(analysis));
+  const side = (headers: readonly string[], profiles: readonly ColumnProfile[], nowSide: readonly ColumnClass[], codeSide: readonly ClassifiedColumn[], offset: number): SendColumn[] =>
     headers.map((header, k) => {
       const c: ClassifiedColumn = codeSide[k] ?? { class: 'text', by: 'profile' };
       return {
@@ -388,10 +409,11 @@ export function sendColumns(analysis: PairAnalysis, masking: boolean): { input: 
         class: c.class,
         ...(c.class === 'identifier' ? { identifier: { by: c.by, ...(c.shape ? { shape: c.shape } : {}) } } : {}),
         canHide: canHideColumn(c.class, profiles[k]),
+        group: group(offset + k),
       };
     });
   return {
-    input: side(analysis.input.headers, analysis.input.profile, now.input, code.detail.input),
-    output: side(analysis.output.headers, analysis.output.profile, now.output, code.detail.output),
+    input: side(analysis.input.headers, analysis.input.profile, now.input, code.detail.input, 0),
+    output: side(analysis.output.headers, analysis.output.profile, now.output, code.detail.output, nIn),
   };
 }

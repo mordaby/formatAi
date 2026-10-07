@@ -82,6 +82,10 @@ describe('the classification: the user\'s choice is applied last', () => {
     expect(cols[0]).toMatchObject({ header: 'ID', hidden: false, hiddenByDefault: true, class: 'identifier', identifier: { by: 'shape', shape: 'israeliId' } });
     expect(cols[2]).toMatchObject({ header: 'Amount', hidden: true, hiddenByDefault: false, class: 'measure' });
     expect(cols[2]!.identifier).toBeUndefined();
+    // A copy's columns share a group (a switch moves them together); the Note, copied from nothing, has its own.
+    const out = sendColumns(chosen, true).output;
+    expect(cols.map((c) => c.group)).toEqual(out.slice(0, 5).map((c) => c.group));
+    expect(new Set([...cols.map((c) => c.group), out[5]!.group]).size).toBe(6);
     // Masking off: nothing is hidden, whatever was chosen.
     expect(sendColumns(chosen, false).input.every((s) => !s.hidden && !s.hiddenByDefault)).toBe(true);
   });
