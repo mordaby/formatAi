@@ -151,6 +151,27 @@ describe('markSucceeded', () => {
     await markSucceeded(ctx);
     expect(await failedAttemptsOf(store, 'user:u1', ctx.group)).toBe(0);
   });
+
+  it('API audit: a take-back after the window ended never re-creates the counter, and never writes one without an expiry', async () => {
+    let clock = now;
+    const store = createMemoryStore(() => clock);
+    const writes: { key: string; by: number; expiresAt: Date | undefined }[] = [];
+    const recording = { ...store, incrementCounter: (key: string, by: number, expiresAt?: Date) => (writes.push({ key, by, expiresAt }), store.incrementCounter(key, by, expiresAt)) };
+    const quota: AiQuota = { period: 'month', spec: { key: QUOTA_KEY, limit: 10, limitCode: 'aiLearns' } };
+    const ctx: AiLearnCtx = { store: recording, owner: 'user:u1', quota, group: groupOf('b'.repeat(64)), uuid: 'learn-x', learnExpiresAt: new Date(now.getTime() + 72 * 60 * 60_000), now };
+    expect((await reserveLearn(recording, [quota.spec!])).ok).toBe(true);
+    await settleLearn(ctx, { answered: true, verified: false }); // a failure recorded, with its window
+    const failKey = `aiFail:user:u1:${ctx.group}`;
+    expect(writes.filter((w) => w.key === failKey).every((w) => w.expiresAt !== undefined)).toBe(true);
+
+    // The window is over: the failure is gone. The learn then succeeds (a loop round passed) - nothing is taken back, nothing re-created.
+    clock = new Date(now.getTime() + (limits.learn.failedAttemptsWindowHours + 1) * 60 * 60_000);
+    writes.length = 0;
+    const after = await markSucceeded({ ...ctx, now: clock });
+    expect(after).toMatchObject({ state: LEARN_STATE.charged, counted: true }); // (the failed-to-charged move, the one that takes a failure back)
+    expect(writes.filter((w) => w.key === failKey)).toEqual([]);
+    expect(store.counter(failKey)).toBe(0);
+  });
 });
 
 describe('markFailed', () => {
