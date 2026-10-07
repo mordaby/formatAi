@@ -7,11 +7,20 @@
 // - Worker errors arrive as plain objects and are rethrown as `RpcRemoteError`.
 // - Timeout: if a call is still running after `timeoutMs` of worker-busy time, the
 //   worker is terminated and re-created on the next call, and the call rejects with
-//   `RpcTimeoutError`. The timer is paused while a host callback is in flight, so a
-//   slow LLM response is never mistaken for a hung parser. A progress event may grant
-//   the call more busy time (`opts.extraTimeOn`): work the caller knows is coming and
-//   bounded (the learn's rounds of AI code checks) is not mistaken for a hang either.
-// - `opts.signal` aborts the same way (terminate + restart).
+//   `RpcTimeoutError`. Busy time counts from when the worker BEGINS the call (its
+//   `started` message), not from when it was posted: the worker runs one thing at a
+//   time, and a call queued behind a long one (a live check behind a round of AI code
+//   checks) is waiting, not hung. The timer is paused while a host callback is in
+//   flight, so a slow LLM response is never mistaken for a hung parser. A progress
+//   event may grant the call more busy time (`opts.extraTimeOn`): work the caller knows
+//   is coming and bounded (the learn's rounds of AI code checks) is not mistaken for a
+//   hang either. A worker that begins nothing at all for that long, with nothing else
+//   holding it, does not answer (it never loaded, or it hangs): it is restarted.
+// - `opts.signal` aborts the call: it rejects at once with `RpcAbortedError`, and the
+//   worker is NOT restarted for it - it holds what other screens use (the example the
+//   Result screen's live check runs on). It is told (`cancel`): the host calls the call
+//   waits on are refused, so it ends; until it has, its busy time still counts, and one
+//   that hangs is caught by its timeout like any other.
 //
 // The worker is created lazily through `createWorker`, so tests can pass a fake and
 // nothing spawns a real Worker until the first call.
@@ -106,6 +115,10 @@ interface Pending {
   reject(error: Error): void;
   opts: CallOptions;
   timeoutMs: number;
+  /** The worker has begun it (`started`, or any other message of it): its busy time counts. */
+  started: boolean;
+  /** The caller gave up on it (it has been answered with `RpcAbortedError`); it is kept until the worker has ended it. */
+  cancelled: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
   /** Busy time still available, valid while the timer is paused. */
   remainingMs: number;
@@ -118,6 +131,8 @@ export class RpcClient {
   private worker: WorkerHandle | null = null;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
+  /** Armed while calls wait for the worker to begin them and no begun call holds it (see `watch`). */
+  private watchdog: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly options: RpcClientOptions) {}
 
@@ -130,7 +145,7 @@ export class RpcClient {
       const worker = this.ensureWorker();
       const id = this.nextId++;
       const timeoutMs = opts.timeoutMs ?? this.options.defaultTimeoutMs;
-      const onAbort = (): void => this.failCall(id, new RpcAbortedError(method));
+      const onAbort = (): void => this.cancelCall(id);
       const p: Pending = {
         id,
         method,
@@ -138,6 +153,8 @@ export class RpcClient {
         reject,
         opts,
         timeoutMs,
+        started: false,
+        cancelled: false,
         timer: undefined,
         remainingMs: timeoutMs,
         armedAt: 0,
@@ -146,13 +163,13 @@ export class RpcClient {
       };
       this.pending.set(id, p);
       opts.signal?.addEventListener('abort', onAbort, { once: true });
-      this.arm(p, timeoutMs);
       try {
         worker.post({ type: 'call', id, method, args }, opts.transfer);
       } catch (e) {
         this.settle(p);
         reject(e instanceof Error ? e : new Error(String(e)));
       }
+      this.watch();
     });
   }
 
@@ -181,25 +198,36 @@ export class RpcClient {
   private onMessage(msg: WorkerToMain): void {
     const p = this.pending.get(msg.id);
     if (!p) return;
+    // Whatever the worker says about a call, it has begun it.
+    this.begin(p);
     switch (msg.type) {
+      case 'started':
+        break;
       case 'progress': {
         const extra = p.opts.extraTimeOn?.(msg.progress) ?? 0;
         if (extra > 0) this.extend(p, extra);
-        p.opts.onProgress?.(msg.progress);
-        return;
+        if (!p.cancelled) p.opts.onProgress?.(msg.progress);
+        break;
       }
       case 'result':
         this.settle(p);
         p.resolve(msg.value);
-        return;
+        break;
       case 'error':
         this.settle(p);
         p.reject(new RpcRemoteError(msg.error));
-        return;
+        break;
       case 'host':
         void this.runHost(p, msg.cbId, msg.name, msg.args);
-        return;
+        break;
     }
+    this.watch();
+  }
+
+  private begin(p: Pending): void {
+    if (p.started) return;
+    p.started = true;
+    this.arm(p, p.timeoutMs);
   }
 
   private async runHost(p: Pending, cbId: number, name: string, args: unknown[]): Promise<void> {
@@ -207,6 +235,8 @@ export class RpcClient {
     p.hostInFlight++;
     let reply: MainToWorker;
     try {
+      // (a call the caller gave up on asks for nothing more: refused at once, so it ends)
+      if (p.cancelled) throw Object.assign(new Error('The call was cancelled'), { name: 'AbortError', code: 'cancelled' });
       const fn = p.opts.host?.[name];
       if (!fn) throw Object.assign(new Error(`No host function "${name}"`), { code: 'unknownHost' });
       const value = await (fn as (...a: unknown[]) => unknown)(...args);
@@ -230,9 +260,11 @@ export class RpcClient {
     p.hostInFlight--;
     if (p.hostInFlight === 0) this.arm(p, p.remainingMs);
     this.worker?.post(reply);
+    this.watch();
   }
 
   private arm(p: Pending, ms: number): void {
+    if (p.timer !== undefined) clearTimeout(p.timer);
     p.remainingMs = ms;
     p.armedAt = Date.now();
     p.timer = setTimeout(() => this.failCall(p.id, new RpcTimeoutError(p.method, p.timeoutMs)), ms);
@@ -262,6 +294,25 @@ export class RpcClient {
     this.pending.delete(p.id);
   }
 
+  /**
+   * The caller gave up on a call (its signal aborted). It rejects now. The worker is not restarted: a call it has not begun is simply never
+   * answered to anyone, and one it has begun is told to end (`cancel`) and kept - not reported to the caller - until it has, its busy time
+   * still counting (a call that hangs still restarts the worker when its time is up).
+   */
+  private cancelCall(id: number): void {
+    const p = this.pending.get(id);
+    if (!p || p.cancelled) return;
+    p.cancelled = true;
+    p.cleanup();
+    p.reject(new RpcAbortedError(p.method));
+    try {
+      this.worker?.post({ type: 'cancel', id });
+    } catch {
+      // (a worker that cannot be told is caught by the call's timeout)
+    }
+    this.watch();
+  }
+
   /** Reject one call and treat the worker as stuck: terminate it and drop the other pending calls. */
   private failCall(id: number, error: Error): void {
     const p = this.pending.get(id);
@@ -269,6 +320,34 @@ export class RpcClient {
     this.settle(p);
     p.reject(error);
     this.restartWorker(new RpcWorkerError('Worker was restarted while this call was running'));
+  }
+
+  /**
+   * Calls the worker has not begun have no timer of their own: while a begun call holds the worker, its own timer catches a hang. With none,
+   * the worker should begin the next call at once - when it begins none of them for as long as the longest of their timeouts, it does not
+   * answer (it never loaded, or it is stuck): each waiting call times out and the worker is restarted.
+   */
+  private watch(): void {
+    const all = [...this.pending.values()];
+    const waiting = all.filter((p) => !p.started);
+    const held = all.some((p) => p.started && p.timer !== undefined);
+    if (waiting.length === 0 || held) {
+      if (this.watchdog !== undefined) clearTimeout(this.watchdog);
+      this.watchdog = undefined;
+      return;
+    }
+    if (this.watchdog !== undefined) return;
+    const ms = Math.max(...waiting.map((p) => p.timeoutMs));
+    this.watchdog = setTimeout(() => {
+      this.watchdog = undefined;
+      const stuck = [...this.pending.values()].filter((p) => !p.started);
+      if (stuck.length === 0) return;
+      for (const p of stuck) {
+        this.settle(p);
+        p.reject(new RpcTimeoutError(p.method, p.timeoutMs));
+      }
+      this.restartWorker(new RpcWorkerError('Worker did not answer and was restarted'));
+    }, ms);
   }
 
   private restartWorker(reason: RpcWorkerError): void {
@@ -279,5 +358,7 @@ export class RpcClient {
       this.settle(p);
       p.reject(reason);
     }
+    if (this.watchdog !== undefined) clearTimeout(this.watchdog);
+    this.watchdog = undefined;
   }
 }

@@ -199,7 +199,7 @@ export class LearnFlow {
     if (this.lastParams) void this.run(this.lastParams, true);
   }
 
-  /** Stop whatever is running (the worker is restarted) and go back to idle. */
+  /** Stop whatever is running and go back to idle (the worker is told to drop the call; it is not restarted, so what it holds for other screens stays). */
   cancel(): void {
     this.runId++;
     this.abort?.abort();

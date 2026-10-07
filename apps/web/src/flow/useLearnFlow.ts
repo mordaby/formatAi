@@ -44,7 +44,7 @@ export function useLearnFlow(options: UseLearnFlowOptions = {}): UseLearnFlow {
     () => new LearnFlow({ engine, api, tier, ...(getTier ? { getTier } : {}), ...(ready ? { ready } : {}), ...(getAi ? { getAi } : {}), ...(getTurnstileToken ? { getTurnstileToken } : {}), ...(beforeSend ? { beforeSend } : {}) }),
     [engine, api, tier, getTier, ready, getAi, getTurnstileToken, beforeSend],
   );
-  // Leaving the screen stops a run in progress (and restarts the worker, dropping its memory).
+  // Leaving the screen stops a run in progress (the worker drops the call; it keeps what it holds for other screens).
   useEffect(() => () => flow.cancel(), [flow]);
 
   const state = useSyncExternalStore(flow.subscribe, flow.getState, flow.getState);

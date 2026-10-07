@@ -95,9 +95,13 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     },
     callRepair: async (payload, previousRules, problems, round) => {
       // The learning loop: which round, and how many rows the rules got wrong it sends (the rows themselves go to the main thread with it).
-      emit({ phase: 'learning', attempt: 'repair', round: { n: round.round, of: round.maxRounds, rows: round.newRows, ...(round.list ? { list: true as const } : {}) } });
+      const info = { n: round.round, of: round.maxRounds, rows: round.newRows, ...(round.list ? { list: true as const } : {}) };
+      emit({ phase: 'learning', attempt: 'repair', round: info });
       const out = await ctx.host<LearnCallResult>('callRepair', payload, previousRules, problems, round);
-      emit({ phase: 'verifying' });
+      // The round for a list (learn-v9) may be answered with checks: code answers them on every row now, like the learn's own rounds - said
+      // with the round of checks it is, which also grants the call the time a round of checks takes (`checkRoundAllowance`).
+      const asked = round.checks?.length ?? 0;
+      emit(round.list && asksChecks(out) && asked < maxCheckRounds ? { phase: 'learning', attempt: 'repair', round: info, checkRound: { n: asked + 1, of: maxCheckRounds } } : { phase: 'verifying' });
       return out;
     },
   });

@@ -98,18 +98,20 @@ export interface CreateEngineClientOptions {
  * AI code checks (learn-v9, SPEC 21 v14): the worker answers each round of checks on every row of the example, between two host calls, so
  * that time would count toward the learn's timeout like the analysis does. DECISION: each round grants the learn this much more busy time,
  * once, when it starts (the worker's progress `checkRound` with a new round number) - the most a round may take by its own caps, every check
- * of the round at its time budget. A hung worker still times out: the allowance is bounded, and nothing else extends the learn.
+ * of the round at its time budget. The learn's first try and the round for a list (a repair) each have their own rounds of checks, each
+ * granted. A hung worker still times out: the allowance is bounded, and nothing else extends the learn.
  */
 export const CHECK_ROUND_ALLOWANCE_MS = limits.learn.checks.timeBudgetMs * limits.learn.checks.maxChecksPerRound;
 
-/** The busy time a learn's progress event grants: the allowance, once for each new round of AI code checks. */
+/** The busy time a learn's progress event grants: the allowance, once for each new round of AI code checks (of the first try, of a list's round). */
 function checkRoundAllowance(allowanceMs: number): (progress: unknown) => number {
-  let granted = 0;
+  const granted = new Map<string, number>();
   return (progress) => {
     const p = progress as LearnProgress;
-    const n = p.phase === 'learning' ? (p.checkRound?.n ?? 0) : 0;
-    if (n <= granted) return 0;
-    granted = n;
+    if (p.phase !== 'learning' || !p.checkRound) return 0;
+    const n = p.checkRound.n;
+    if (n <= (granted.get(p.attempt) ?? 0)) return 0;
+    granted.set(p.attempt, n);
     return allowanceMs;
   };
 }
