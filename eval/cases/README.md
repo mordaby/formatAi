@@ -195,7 +195,7 @@ Decisions worth knowing (the DECISION comments in `buildAdversarial.ts` have the
 ### The four saved-contents cases (what a saved format keeps)
 
 Built by `buildContents.ts` (called from `build.ts`, wired like `buildAdversarial.ts`), `difficulty: "stress"`, feature tag `savedContents`
-(docs/proposals/saved-format-contents.md; SPEC 21 v15). Each has a `reference.rules.json` that reproduces both outputs byte for byte and a
+(docs/proposals/saved-format-contents.md; SPEC 8.11 "Saving"). Each has a `reference.rules.json` that reproduces both outputs byte for byte and a
 next-month pair. The run record says what a save would ask: `listRetry` (the one automatic round for a list column: its columns, how it ended,
 its calls) and `savedIdentifiers` (the identifier-shaped values the saved rules keep, by column and kind - never the value); the report's
 "Saved contents" column and `results.csv` carry both.
