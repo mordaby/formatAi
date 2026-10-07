@@ -13,6 +13,7 @@ import { createMemoryStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
 import { makeEnv, mongoUri, stubIdentify, testUserId } from '../protection/harness.js';
 import { edited, makeCaller, saveBody, sourceOne, sourceTwo, TEST_USER } from './helpers.js';
+import { dropTestDb } from '../setup/testDbs.js';
 
 const OTHER_USER = testUserId(2);
 
@@ -32,9 +33,7 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
   });
 
   afterAll(async () => {
-    await app?.close();
-    await appDb.db.dropDatabase();
-    await appDb.client.close();
+    await dropTestDb(appDb, app);
   });
 
   beforeEach(async () => {

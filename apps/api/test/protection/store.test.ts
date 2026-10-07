@@ -5,6 +5,7 @@ import { limits } from '@formatai/shared';
 import { describe, expect, it } from 'vitest';
 import { connectDb, ensureIndexes } from '../../src/db.js';
 import { loadEnv } from '../../src/env.js';
+import { dropTestDb } from '../setup/testDbs.js';
 import { memoryKit, mongoKit, mongoUri, useKit, type StoreHandle, type StoreKit } from './harness.js';
 
 function defineStoreContract(kit: StoreKit): void {
@@ -156,8 +157,7 @@ describe.skipIf(!mongoUri)('MongoDB indexes for the protections (SPEC 13)', () =
       await appDb.learnCache.insertOne({ ...doc });
       await expect(appDb.learnCache.insertOne({ ...doc })).rejects.toThrow(/duplicate key/);
     } finally {
-      await appDb.db.dropDatabase();
-      await appDb.client.close();
+      await dropTestDb(appDb);
     }
   });
 });

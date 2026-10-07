@@ -14,6 +14,7 @@ import { dayKey } from '../../src/protection/keys.js';
 import { createMemoryStore, createMongoStore, type ProtectionStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
 import { anonCookie, makeEnv, makeTurnstileFetch, nextIp, stubIdentify, testUserId, type TurnstileCall } from '../protection/harness.js';
+import { dropTestDb } from '../setup/testDbs.js';
 
 const mongoUri = process.env.MONGODB_URI;
 const SECRET = 'contact-test-secret';
@@ -64,10 +65,9 @@ function mongoKit(): Kit {
       await ensureIndexes(appDb);
     },
     async teardown() {
-      if (!appDb) return;
-      await appDb.db.dropDatabase();
-      await appDb.client.close();
+      const db = appDb;
       appDb = null;
+      await dropTestDb(db);
     },
     async make() {
       const db = appDb!;
@@ -442,8 +442,7 @@ describe.skipIf(!mongoUri)('MongoDB indexes for the public forms (SPEC 13)', () 
       expect(leadIndexes).toEqual(expect.arrayContaining(['leads_createdAt', 'leads_kind_createdAt']));
       expect((await db!.feedback.indexes()).map((i) => i.name)).toContain('feedback_createdAt');
     } finally {
-      await db!.db.dropDatabase();
-      await db!.client.close();
+      await dropTestDb(db);
     }
   });
 });

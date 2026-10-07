@@ -14,6 +14,7 @@ import { createMemoryStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
 import { makeEnv, mongoUri, stubIdentify } from '../protection/harness.js';
 import { edited, makeCaller, saveBody, sourceOne, sourceTwo } from './helpers.js';
+import { dropTestDb } from '../setup/testDbs.js';
 
 /** Over the value-map cap: 501 entries on the ID column (shown as ID). */
 const bigMap = (r: LearnResult | Rules): void => {
@@ -74,9 +75,7 @@ describe.skipIf(!mongoUri)('every route that stores rules refuses rules over a c
   });
 
   afterAll(async () => {
-    await app?.close();
-    await appDb.db.dropDatabase();
-    await appDb.client.close();
+    await dropTestDb(appDb, app);
   });
 
   beforeEach(async () => {

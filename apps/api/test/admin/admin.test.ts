@@ -16,6 +16,7 @@ import { aiLearnsKey } from '../../src/protection/keys.js';
 import { createMemoryStore } from '../../src/protection/store.js';
 import { buildServer } from '../../src/server.js';
 import { makeEnv, mongoUri, nextIp, testUserId } from '../protection/harness.js';
+import { dropTestDb } from '../setup/testDbs.js';
 
 const NOW = new Date('2026-10-05T12:00:00.000Z');
 const at = (iso: string): Date => new Date(iso);
@@ -81,9 +82,7 @@ describe.skipIf(!mongoUri)('admin API (MongoDB)', () => {
   });
 
   afterAll(async () => {
-    await app?.close();
-    await db.db.dropDatabase();
-    await db.client.close();
+    await dropTestDb(db, app);
   });
 
   // ---------------------------------------------------------------- seeds

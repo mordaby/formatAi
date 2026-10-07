@@ -14,6 +14,7 @@ import { createMemoryStore, createMongoStore, type ProtectionStore } from '../..
 import { buildServer } from '../../src/server.js';
 import { makeEnv } from '../protection/harness.js';
 import { startFakeIssuer, type FakeIssuer } from './fakeIssuer.js';
+import { dropTestDb } from '../setup/testDbs.js';
 
 export const mongoUri = process.env.MONGODB_URI;
 
@@ -92,10 +93,9 @@ export function mongoKit(): AuthKit {
       await ensureIndexes(appDb);
     },
     async teardown() {
-      if (!appDb) return;
-      await appDb.db.dropDatabase();
-      await appDb.client.close();
+      const db = appDb;
       appDb = null;
+      await dropTestDb(db);
     },
     async make(now) {
       const db = appDb!;
