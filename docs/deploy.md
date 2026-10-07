@@ -179,7 +179,7 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 | `WEB_ORIGIN`, `API_PUBLIC_URL` | optional | The web origin (CORS, redirects after sign-in) and the API's public URL (the OIDC redirect URIs). Both default to the public origin above; set only to split them |
 | `WEB_DIST` | optional | Folder of the built web app; default `apps/web/dist` |
 | `TURNSTILE_DISABLED` | you, first deploy only (3.2) | `true` turns Turnstile off on purpose until the widget exists (the start log warns). Delete it in step 5 |
-| `LEARN_CHECKS` | optional, not set | AI code checks (SPEC 21 v14): `off`, `admin` (admin accounts only) or `all`. Unset = `off`. Any other value stops the start. Listed, commented, in `render.yaml` |
+| `LEARN_CHECKS` | optional, not set | AI code checks (SPEC 21 v14): `off`, `admin` (admin accounts only) or `all`. Unset = `off`. Any other value stops the start. Keep it off: the checks are re-evaluated by 2026-11-15, after the beta (SPEC amendment 2026-10-07 "learn-v8 removed"). Listed, commented, in `render.yaml` |
 | `LLM_MODEL_FIRST_TRY`, `LLM_MODEL_ESCALATION` | optional | Override the models in `packages/shared/src/config/models.ts` without a code change. The model must have a price in `packages/shared/src/config/prices.ts` (the same for `LLM_FALLBACK_MODEL_*`): a production start stops on one that has none, and an unpriced model is counted at the highest configured price |
 | `LLM_FALLBACK_MODEL_FIRST_TRY`, `LLM_FALLBACK_MODEL_ESCALATION` | optional | The same for the fallback provider's two slots (default `gpt-5-mini`, `gpt-5`) |
 | `VITE_TURNSTILE_SITE_KEY` | development only | The older name of `TURNSTILE_SITE_KEY` (read when that one is not set); not needed on Render |
