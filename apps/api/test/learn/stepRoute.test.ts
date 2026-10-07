@@ -83,6 +83,36 @@ describe('who gets learn-v9 (LEARN_CHECKS)', () => {
   });
 });
 
+describe('API audit: the prompt version actually sent is the one recorded', () => {
+  it('a learn-v9 learn says learn-v9 in its answer, its cache entry and its cache hit - and a learn-v7 learn of the same pair never gets it', async () => {
+    const store = createMemoryStore();
+    const fake = createFakeProvider();
+    const serve = async (learnChecks: string | undefined) => {
+      await app?.close();
+      app = await buildServer({ env: envWith(learnChecks), db: null, logger: false, store, identify: asUser(true), complete: (req: CompleteRequest) => fake.complete(req) });
+      return app;
+    };
+    const masked = { payload: basicPayload({ masking: true }) }; // (masking on: cacheable)
+
+    let a = await serve('admin');
+    fake.enqueue(answersRules());
+    const learned = await post(a, '/api/learn', masked);
+    expect(learned.json()).toMatchObject({ verified: true, cached: false, promptVersion: 'learn-v9' });
+    expect([...store.cacheEntries.values()].map((e) => e.promptVersion)).toEqual(['learn-v9']);
+    const hit = await post(a, '/api/learn', masked);
+    expect(hit.json()).toMatchObject({ cached: true, promptVersion: 'learn-v9' });
+    expect(store.ledger.at(-1)).toMatchObject({ model: 'cache', cacheHit: true, promptVersion: 'learn-v9' });
+
+    // LEARN_CHECKS off: the same pair is a learn-v7 learn - a miss, its own entry, its own version.
+    a = await serve(undefined);
+    fake.enqueue({ json: correctRulesWireJson() });
+    const v7 = await post(a, '/api/learn', masked);
+    expect(v7.json()).toMatchObject({ cached: false, promptVersion: 'learn-v7' });
+    expect(fake.calls).toHaveLength(2);
+    expect([...store.cacheEntries.values()].map((e) => e.promptVersion).sort()).toEqual(['learn-v7', 'learn-v9']);
+  });
+});
+
 describe('POST /api/learn answering with checks, then POST /api/learn/step', () => {
   it('checks: no rules, nothing counted, the learnId to step with; the step brings the rules and the learn counts once', async () => {
     const { app: a, fake, store } = await start('all');

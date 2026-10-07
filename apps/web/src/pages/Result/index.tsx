@@ -2,7 +2,7 @@
 // the local result before the AI step (SPEC 21 v5), the AI quota, "this looks like your format X" (SPEC 5 A2), and saving.
 // Once the learn is saved (a format and its first source) the SAME screen becomes the editor of that source: its address is the
 // source's own, the example files stay in the worker for the live check, and every further save is a new version of the source.
-import { defaultSourceName, limits, promptVersion, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
+import { defaultSourceName, limits, tiers, type CreateFormatRequest, type CreateFormatResponse, type UpdateConversionResponse } from '@formatai/shared';
 import { completionPlan, fixedColumnShare, isCompletable } from '@formatai/shared';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -200,7 +200,8 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
       masking: session.masking,
       ...(suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
-      ...(learnPath === 'local' ? {} : { promptVersion }),
+      // (API audit 2026-10-07: the prompt version the server says it learned with - learn-v9 for an admin under LEARN_CHECKS - never a constant.)
+      ...(learnPath !== 'local' && aiInfo?.promptVersion ? { promptVersion: aiInfo.promptVersion } : {}),
     };
     void save.run({
       persist: () => api.registry.createFormat(body),

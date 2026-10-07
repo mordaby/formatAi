@@ -39,6 +39,8 @@ const llmResponse = (over: Partial<LearnResponse> = {}): LearnResponse => ({
   counted: true,
   failedAttempts: 0,
   quota: { remaining: 2, period: 'month' },
+  // (API audit 2026-10-07: the version the server learned with - not the browser's constant - is what a save stores)
+  promptVersion: 'learn-v9',
   ...over,
 });
 
@@ -339,7 +341,8 @@ describe('Save format (signed in)', () => {
     await waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', 'failed'));
     fireEvent.click(save);
     await waitFor(() => expect(createFormat).toHaveBeenCalled());
-    expect((createFormat.mock.calls[0] as unknown as [Record<string, unknown>])[0]).toMatchObject({ status: 'differencesAccepted', acceptedDifferences: 3, learnPath: 'llm', promptVersion });
+    expect((createFormat.mock.calls[0] as unknown as [Record<string, unknown>])[0]).toMatchObject({ status: 'differencesAccepted', acceptedDifferences: 3, learnPath: 'llm', promptVersion: 'learn-v9' });
+    expect(promptVersion).not.toBe('learn-v9'); // the server's, not the browser's constant
     await waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', 'accepted'));
   });
 

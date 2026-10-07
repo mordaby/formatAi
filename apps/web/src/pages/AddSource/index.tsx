@@ -4,7 +4,7 @@
 // learn runs in attach mode - the format is the `target`, the AI only decides how THIS input produces the format's columns - and
 // the result opens in the same map and editor, ready to save as a new conversion of the format (a link from the source to it).
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
-import { defaultSourceName, limits, promptVersion } from '@formatai/shared';
+import { defaultSourceName, limits } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { isAiQuotaHit, useAiLimit } from '../../app/AiLimit';
@@ -422,7 +422,8 @@ function AttachResult({ result, ai, format, target, sourceName, input, masking, 
       // (SPEC 21 v11 item 9), and the server makes it unique. Nothing when no name is left of it ("Source N").
       ...(sourceName !== '' ? { sourceName } : suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
-      ...(learnPath === 'local' ? {} : { promptVersion }),
+      // (API audit 2026-10-07: the prompt version the server says it learned with - learn-v9 for an admin under LEARN_CHECKS - never a constant.)
+      ...(learnPath !== 'local' && ai?.promptVersion ? { promptVersion: ai.promptVersion } : {}),
     };
     void save.run({
       persist: () => api.registry.attachSource(format.id, body),

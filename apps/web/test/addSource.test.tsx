@@ -59,7 +59,7 @@ function setup(over: { registry?: Record<string, unknown>; learn?: Parameters<ty
   const api = fakeApi({
     user: USER,
     registry: { getFormat: vi.fn(async () => format), attachSource: vi.fn(async () => ({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' }), source: { id: 'S2', name: 'Supplier B', formats: 1 } })), ...over.registry },
-    learn: over.apiLearn ?? vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const } })),
+    learn: over.apiLearn ?? vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false, counted: true, failedAttempts: 0, quota: { remaining: 2, period: 'month' as const }, promptVersion: 'learn-v9' as const })),
   });
   const { engine, learn } = fakeEngine(
     over.learn ??
@@ -220,7 +220,8 @@ describe('the Add a source screen', () => {
     await waitFor(() => expect(attachSource).toHaveBeenCalledTimes(1));
     const [formatId, body] = attachSource.mock.calls[0] as unknown as [string, Record<string, unknown>];
     expect(formatId).toBe('F1');
-    expect(body).toMatchObject({ sourceName: 'Supplier B', status: 'verified', acceptedDifferences: 0, exampleExceptions: [], learnPath: 'llm', masking: true, promptVersion });
+    expect(body).toMatchObject({ sourceName: 'Supplier B', status: 'verified', acceptedDifferences: 0, exampleExceptions: [], learnPath: 'llm', masking: true, promptVersion: 'learn-v9' });
+    expect(promptVersion).not.toBe('learn-v9'); // API audit 2026-10-07: the version the server learned with, never the browser's constant
     expect(body.rules).toEqual(RULES);
     expect(await screen.findByText('Added "Supplier B" to "Supplier price list".')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Open My formats' })).toBeTruthy();

@@ -147,7 +147,7 @@ interface AdmitSpec {
    */
   followUp?: { learnId: unknown; count: (check: { uuid: string; expiresAt: Date }) => Promise<Refusal | null> };
   /** /api/learn: the structure cache, asked before the pair cap and the budgets (a hit costs nothing) - the answer to send, or null. */
-  cacheHit?: (payload: LearnPayload, identity: UserIdentity, now: Date) => Promise<LearnResponse | null>;
+  cacheHit?: (payload: LearnPayload, identity: UserIdentity, now: Date, prompt: PromptVersion) => Promise<LearnResponse | null>;
   /** Reserve one unit of the user's AI-learn quota for the call (/api/learn and /step; a loop round is part of its learn and does not). */
   reserve: boolean;
 }
@@ -163,6 +163,8 @@ interface Admitted {
   ctx: AiLearnCtx;
   /** A quota unit was reserved for this call: it goes back if the call throws (`callAi`). */
   reserved: boolean;
+  /** The prompt version this request goes out with (`promptFor`): its cache key, its ledger entries and its answer's `promptVersion`. */
+  prompt: PromptVersion;
 }
 
 function fail(reply: FastifyReply, status: number, body: ApiErrorBody): FastifyReply {
@@ -204,14 +206,15 @@ function ledgerDocs(learnId: string, identity: Identity, calls: readonly LlmCall
 }
 
 /** The ledger entry for a structure-cache hit: no model, no tokens, no cost, outcome `cacheHit`. */
-function cacheHitLedgerDoc(learnId: string, identity: Identity, payload: LearnPayload, now: Date, latencyMs: number): LlmCallDoc {
+function cacheHitLedgerDoc(learnId: string, identity: Identity, payload: LearnPayload, now: Date, latencyMs: number, version: PromptVersion): LlmCallDoc {
   return {
     ts: now,
     ...whoOf(identity),
     learnId,
     purpose: 'learn',
     model: 'cache',
-    promptVersion,
+    // (API audit 2026-10-07: the version of the learn the entry was stored for - its key's - never the default whatever was used)
+    promptVersion: version,
     masking: payload.masking,
     tokensIn: 0,
     tokensOut: 0,
@@ -373,6 +376,9 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     const owner = ownerOf(identity);
     const now = protection.now();
+    // The prompt version this request goes out with: part of the example pair's key (`learnCacheKey`), so of the cache entry and the learnId.
+    const prompt = promptFor(identity);
+    const pairKey = learnCacheKey(payload, prompt);
 
     // SPEC 9.3: a follow-up belongs to a learn this owner really ran (signed, owner-bound, unexpired).
     const followUp = spec.followUp ? verifyLearnId(secret, owner, spec.followUp.learnId, now) : null;
@@ -380,14 +386,14 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     // API audit C2 (2026-10-07): ... and to the example pair it was issued for - the payload's structure must be the one the learnId
     // carries (the web sends the learn's own payload object again). Otherwise one learn's id would buy rounds and steps for any other
     // pair, whose failed-attempt cap and cache entry the follow-up never touches.
-    if (followUp?.ok && groupOf(learnCacheKey(payload)) !== followUp.group) return refuse({ status: 400, body: { error: 'invalidLearnId' } });
+    if (followUp?.ok && groupOf(pairKey) !== followUp.group) return refuse({ status: 400, body: { error: 'invalidLearnId' } });
 
-    const hit = await spec.cacheHit?.(payload, identity, now);
+    const hit = await spec.cacheHit?.(payload, identity, now, prompt);
     if (hit) return { done: reply.send(hit) };
 
     // SPEC 21 v5 item 3: the same example pair already failed as often as the cap allows - no more AI for it
     // (the answer that reached the cap already counted it once).
-    const group = followUp?.ok ? followUp.group : groupOf(learnCacheKey(payload));
+    const group = followUp?.ok ? followUp.group : groupOf(pairKey);
     if (await pairExhausted(store, owner, group)) return refuse({ status: 409, body: { error: 'aiAttemptsExhausted', counted: false } });
 
     // SPEC 9.5 budgets, then the user's AI-learn quota - both BEFORE any LLM call.
@@ -410,12 +416,12 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       return refuse({ status: 429, body: { error: 'limitHit', limit, ...(limit === 'aiLearns' ? { period: quota.period } : {}) } });
     }
 
-    if (followUp?.ok) return { identity, owner, now, payload, learnId: spec.followUp!.learnId as string, ctx: ctxOf(identity, now, followUp), reserved };
+    if (followUp?.ok) return { identity, owner, now, payload, learnId: spec.followUp!.learnId as string, ctx: ctxOf(identity, now, followUp), reserved, prompt };
     // /api/learn: the learn's signed id, issued once everything above let it through.
     const learnId = issueLearnId(secret, owner, now, limits.protection.learnIdTtlMinutes, group);
     const check = verifyLearnId(secret, owner, learnId, now);
     if (!check.ok) throw new Error('issued a learnId that does not verify'); // unreachable: signed just above
-    return { identity, owner, now, payload, learnId, ctx: ctxOf(identity, now, check), reserved };
+    return { identity, owner, now, payload, learnId, ctx: ctxOf(identity, now, check), reserved, prompt };
   };
 
   /**
@@ -451,6 +457,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
         problems: [],
         ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
         ...extra,
+        promptVersion: a.prompt,
         counted: false,
         failedAttempts: (await stateOf(a.ctx)).failedAttempts,
         quota: await quotaState(store, a.ctx.quota),
@@ -469,6 +476,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       problems: outcome.problems,
       ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
       ...extra,
+      promptVersion: a.prompt,
       counted: settled.counted,
       failedAttempts: settled.failedAttempts,
       quota: await quotaState(store, a.ctx.quota),
@@ -484,30 +492,30 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       // SPEC 9.5 cache: a hit costs no learn and no LLM call - so it is served even when limits or budgets
       // are spent. `noCache` lets the browser insist on a fresh learn (e.g. its verification rejected a hit).
       // (Never in completion mode: see the file header.)
-      cacheHit: async (payload, identity, now) => {
+      cacheHit: async (payload, identity, now, prompt) => {
         if (body?.noCache === true || payload.complete !== undefined) return null;
         const started = Date.now();
         const notBefore = new Date(now.getTime() - limits.cache.ttlDays * DAY_MS);
-        const saved = LearnResultSchema.safeParse(await store.getCachedRules(ownerOf(identity), learnCacheKey(payload), notBefore));
+        const saved = LearnResultSchema.safeParse(await store.getCachedRules(ownerOf(identity), learnCacheKey(payload, prompt), notBefore));
         // Re-checked on read too: an entry written under another masking rule set must not be served.
         if (!saved.success || !isCacheable(stripAiNotes(saved.data as LearnResult), payload.masking)) return null;
         try {
-          await store.insertLlmCalls([cacheHitLedgerDoc(randomUUID(), identity, payload, now, Date.now() - started)]);
+          await store.insertLlmCalls([cacheHitLedgerDoc(randomUUID(), identity, payload, now, Date.now() - started, prompt)]);
         } catch (err) {
           logFailure('failed to write the llm_calls ledger', err);
         }
-        return { rules: stripAiNotes(saved.data as LearnResult), verified: true, problems: [], cached: true };
+        return { rules: stripAiNotes(saved.data as LearnResult), verified: true, problems: [], cached: true, promptVersion: prompt };
       },
     });
     if ('done' in a) return a.done;
 
-    const prompt = promptFor(a.identity);
+    const prompt = a.prompt;
     // (`rulesNow`: the browser's fresh learn in a round of the learning loop answers with the rules - loop rounds carry no checks.)
     const outcome = await callAi(a, () =>
       learn(a.payload, { tier: tierOf(a.identity), env, complete, prompt, ...(body?.rulesNow === true ? { rulesNow: true } : {}) }),
     );
     // (An answer with checks has no rules: nothing is stored.)
-    await saveToCache(a.owner, learnCacheKey(a.payload), a.payload, outcome, a.now, prompt);
+    await saveToCache(a.owner, learnCacheKey(a.payload, prompt), a.payload, outcome, a.now, prompt);
     return settleAndAnswer(reply, a, outcome, { learnId: a.learnId, cached: false });
   });
 
@@ -544,7 +552,8 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
     });
     if ('done' in a) return a.done;
 
-    const outcome = await callAi(a, () => learn(a.payload, { tier: tierOf(a.identity), env, complete, prompt: 'learn-v9', rounds }));
+    // (`allow` let only a learn-v9 learn through: `a.prompt` is learn-v9.)
+    const outcome = await callAi(a, () => learn(a.payload, { tier: tierOf(a.identity), env, complete, prompt: a.prompt, rounds }));
     // (Never the structure cache: a learn whose rounds are non-empty is not stored there - see the file header.)
     return settleAndAnswer(reply, a, outcome, {});
   });
@@ -603,7 +612,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     // (The rows are values of the user's own files too: a function request is filtered against them like against the samples.)
     // (A learn-v9 learn's rounds are repaired with learn-v9 too: the same system prompt and schema, so the cached prefix still hits.)
-    const prompt = promptFor(a.identity);
+    const prompt = a.prompt;
     const outcome = await callAi(
       a,
       () =>
@@ -624,7 +633,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
 
     // The repaired rules replace the owner's entry for this structure, so a later cache hit returns
     // the better version rather than the one the browser had to repair. (Not an answer made after rounds of checks: like a step's, never cached.)
-    if (rounds.length === 0) await saveToCache(a.owner, learnCacheKey(a.payload), a.payload, outcome, a.now, prompt);
+    if (rounds.length === 0) await saveToCache(a.owner, learnCacheKey(a.payload, prompt), a.payload, outcome, a.now, prompt);
 
     // A round whose answer passes the server checks makes the learn a success (a round never counts on its own, and however many rounds a
     // learn takes it counts once: `markSucceeded` is idempotent); one that does not changes nothing - the learn's failure was recorded when
@@ -639,6 +648,7 @@ export function registerLearnRoutes(app: FastifyInstance, opts: RegisterLearnRou
       verified: outcome.verified,
       problems: outcome.problems,
       ...(outcome.overfitRepaired ? { overfitRepaired: true } : {}),
+      promptVersion: prompt,
       counted: settled.counted,
       failedAttempts: settled.failedAttempts,
       quota: await quotaState(store, a.ctx.quota),

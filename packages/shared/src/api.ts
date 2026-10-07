@@ -2,6 +2,7 @@
 // browser bundle can import them freely. The server's source of truth is `apps/api/src/routes`.
 import type { Check, CheckRound } from './checks';
 import type { ApiErrorCode, LimitCode } from './codes';
+import type { PromptVersion } from './config/prompts';
 import type { AiLearnPeriod, TierLimits } from './config/tiers';
 import type { LearnPayload, RepairProblem, Sample } from './payload';
 import type { LearnAlternative, LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, Validation } from './rules/schema';
@@ -66,6 +67,12 @@ export interface LearnResponse {
   learnId?: string;
   /** True when saved rules for this exact structure were returned without an LLM call. */
   cached: boolean;
+  /**
+   * API audit (2026-10-07): the prompt version this answer was learned with - learn-v9 for the learns `LEARN_CHECKS` gives it to, the
+   * default otherwise; a cache hit's is the version its entry was stored for. The browser saves THIS with the format (`promptVersion`), never
+   * its own constant. (On every answer of the API; optional for an older one.)
+   */
+  promptVersion?: PromptVersion;
   /** SPEC 21 v5: the caller's AI-learn quota after this answer (absent on a cache hit, which costs nothing). */
   quota?: AiLearnQuotaState;
   /** True when this answer counted as one AI learn (it verified on the server). A learn that only failed the
