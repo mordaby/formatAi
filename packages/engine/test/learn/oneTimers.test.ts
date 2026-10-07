@@ -347,12 +347,17 @@ describe('every kept rules file of the measurement (learn-v7 and learn-v8, both 
     // (docs/proposals/saved-format-contents.md section 3) And every kept answer of branch-lookup-50: its branch table, 50 fixed values keyed
     // on the branch code - more than a small vocabulary's 12, nobody can deduce them, and a saved format keeps them: a list, asked at Save.
     const branches = (source: string): unknown[] => [source, 'Branch Name', 'Branch Code', 50, 'lookup'];
+    // (Engine audit, 2026-10-07: a key is judged by the input columns its value is made of. learn-v8's full-mode answers keyed the same table
+    // on the branch code joined with the channel - 89 fixed values, a list like the others - which the plain-column rule let through.)
+    const joined = (source: string): unknown[] => [source, 'Branch Name', 'Branch Code + Channel', 89, 'lookup'];
     expect(lists).toEqual([
       branches('cmp-learn-v7/branch-lookup-50.complete'),
       branches('cmp-learn-v7/branch-lookup-50.full'),
+      joined('cmp-learn-v8-full/branch-lookup-50.full'),
       ['cmp-learn-v8-full/stock-count-warehouse-report.full', 'מקט', 'מקט', 27, 'lookup'],
       branches('cmp-learn-v8-complete/branch-lookup-50.complete'),
       branches('cmp-learn-v8-noE1/branch-lookup-50.complete'),
+      joined('cmp-learn-v8-noE1/branch-lookup-50.full'),
       branches('mvp-2026-10-04/branch-lookup-50.complete'),
       branches('mvp-2026-10-04/branch-lookup-50.full'),
     ]);

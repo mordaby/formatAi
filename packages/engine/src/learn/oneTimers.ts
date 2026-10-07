@@ -70,7 +70,7 @@ import type { OutCell } from '../types';
 import { isoOfSerial } from './analyze/cells';
 import type { PairAnalysis } from './analyze';
 import { probeCellValue, probeKeyText, probeTruthy, runWithProbes, valueListOf, type ProbedRun, type RunProbe } from './fillParams';
-import { atomsOf, casesOf, comparesPosition, overfitFindings, positionColumns, type OverfitFinding } from './overfit';
+import { atomsOf, casesOf, comparesPosition, keyColumnsOf, overfitFindings, positionColumns, type OverfitFinding } from './overfit';
 import { cellMatchesExample, exampleCellAt } from './verify';
 import { inputClass } from './classify';
 
@@ -314,6 +314,24 @@ interface Counter {
   holders: Set<number>;
   /** The expression whose value singles a row out (a list's argument, a lookup's key, the mapped column). */
   keyExpr?: Expr;
+}
+
+/**
+ * The key of a list (amendment 2026-10-07, engine audit): the input columns its value is made of (`keyColumnsOf`: `trim(account)`, a value map
+ * on a computed copy of a column - not only a plain column), named together in the question ("Account", "Region + Code"), their positions in
+ * the rules' input columns, and whether one is an amount (a decimal, currency or percent column, or a computed one of such a type): that list is
+ * the guards' (`measureKey`). Undefined for a key made of no input column.
+ */
+function keyOf(rules: LearnResult, e: Expr): { header: string; indices: number[]; measure: boolean } | undefined {
+  const { inputs, via } = keyColumnsOf(rules, e);
+  if (inputs.length === 0) return undefined;
+  const indices = inputs.map((id) => rules.input.columns.findIndex((c) => c.id === id));
+  const types = [...indices.map((i) => rules.input.columns[i]?.type), ...via.map((id) => rules.transform.computed.find((c) => c.id === id)?.type)];
+  return {
+    header: indices.map((i) => rules.input.columns[i]?.header ?? '').join(' + '),
+    indices,
+    measure: types.some((t) => t !== undefined && MEASURES.has(t)),
+  };
 }
 
 /** The input column an expression is (a plain `col` of a declared input column), or undefined. */
@@ -664,9 +682,11 @@ export function questionedPositions(rules: LearnResult, analysis: PairAnalysis, 
  * per column at most (its list with the most entries), in output order.
  *
  * DECISIONS (conservative: code asks only what it can say plainly):
- *  - the key is a plain input column of the rules (the question names it); a key worked out by an expression is not asked about;
- *  - a lookup or a value map keyed on an amount (a decimal, currency or percent column) is the guards' (`measureKey`: one repair, then "needs
- *    your input"); a chain on an amount column is no guard's, and is asked like any other;
+ *  - the key is judged by the input columns its value is made of (amendment 2026-10-07, engine audit: `keyColumnsOf` - `trim(account)` and
+ *    a value map on a computed copy of Account are keyed on Account; it was a plain input column only, so they escaped); the question names
+ *    them ("Account", "Region + Code");
+ *  - a lookup or a value map keyed on an amount (a decimal, currency or percent column, or made of one) is the guards' (`measureKey`: one
+ *    repair, then "needs your input"); a chain on an amount column is no guard's, and is asked like any other;
  *  - a chain's else is a constant (#55): a chain whose else is a rule is that rule with exceptions - the one-time edits' and the guards';
  *  - completion mode: only the columns the AI step was asked for (`columns`), and never a lookup or a value map the user wrote (`fixed`: the
  *    same computed column, a table of the same name, a value map on the same column);
@@ -697,8 +717,8 @@ export function copiedLists(rules: LearnResult, analysis: PairAnalysis, opts: On
     const header = rules.output.columns[s.out]?.header ?? '';
     if (opts.columns !== undefined && !opts.columns.has(header)) return [];
     const keyExpr: Expr = s.kind === 'lookup' ? s.key : { col: s.column };
-    const key = inputColumnOf(rules, keyExpr);
-    if (!key || MEASURES.has(key.type) || theirs(s)) return [];
+    const key = keyOf(rules, keyExpr);
+    if (!key || key.measure || theirs(s)) return [];
     // The keys the list holds, as the engine compares them (a value-map entry that writes the value it reads changes nothing: no entry).
     const entries = new Set<string>();
     if (s.kind === 'lookup') {
@@ -745,10 +765,10 @@ export function copiedLists(rules: LearnResult, analysis: PairAnalysis, opts: On
 
   const best = new Map<number, CopiedListQuestion>();
   /** A list with `rows` (per entry the example uses: the rows it gives their value) - unless it is too short or a small vocabulary. */
-  const consider = (out: number, header: string, key: { header: string; index: number }, rows: ReadonlyMap<unknown, number>, list: CopiedListRule): void => {
+  const consider = (out: number, header: string, key: { header: string; indices: readonly number[] }, rows: ReadonlyMap<unknown, number>, list: CopiedListRule): void => {
     const entries = rows.size;
     if (entries < min) return;
-    const small = entries <= vocabulary.maxEntries && [...rows.values()].every((n) => n >= vocabulary.minRowsPerEntry) && !identifier(key.index);
+    const small = entries <= vocabulary.maxEntries && [...rows.values()].every((n) => n >= vocabulary.minRowsPerEntry) && !key.indices.some(identifier);
     if (small) return;
     const known = best.get(out);
     if (!known || known.entries < entries) best.set(out, { kind: 'copiedList', out, header, keyColumn: key.header, entries, list });
@@ -771,7 +791,7 @@ export function copiedLists(rules: LearnResult, analysis: PairAnalysis, opts: On
       if (typeof at !== 'number' || at < 1 || at > c.atoms.length || !cellMatchesExample(analysis, k, c.out, row.cells[c.out])) return;
       rows.set(at - 1, (rows.get(at - 1) ?? 0) + 1);
     });
-    consider(c.out, c.header, c.column, rows, { kind: 'cases', computed: c.computed, column: c.column.id });
+    consider(c.out, c.header, { header: c.column.header, indices: [c.column.index] }, rows, { kind: 'cases', computed: c.computed, column: c.column.id });
   }
   return [...best.values()].sort((a, b) => a.out - b.out);
 }
