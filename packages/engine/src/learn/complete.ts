@@ -6,7 +6,9 @@
 import type { AiStepPartCode, CompletePayload, LearnResult, Rules } from '@formatai/shared';
 import { learnResultOf, toWire } from '@formatai/shared';
 import { formulaRulesToWire } from '../formula';
+import type { PairAnalysis } from './analyze';
 import { maskRules, type Masker } from './mask';
+import { maskFixedRules, withoutListEntries } from './maskFixed';
 
 export {
   columnsReportedUnsupported,
@@ -32,10 +34,14 @@ export interface CompleteOptions {
  * The `complete` field of the learn payload. `fixed` is the rules in wire form (formula text, `{ key, value }` pairs):
  * with a masker the constants are masked FIRST (on the real Expr trees, where a constant is a `{ const }` leaf),
  * then printed - masking formula text directly would turn every function name into a fake word.
+ *
+ * Amendment 2026-10-07 (engine audit): each constant is masked the way its column is (`maskFixedRules`, the column classification, given
+ * the example's `analysis`; without one every constant is masked, `maskRules`), and every lookup table and value map goes with its shape
+ * only, no entry (`withoutListEntries`: nothing filled is ever sent).
  */
-export function completePayloadOf(options: CompleteOptions, masker?: Masker): CompletePayload {
-  const plain = learnResultOf(options.fixedRules);
-  const masked = masker ? maskRules(plain, masker) : plain;
+export function completePayloadOf(options: CompleteOptions, masker?: Masker, analysis?: PairAnalysis): CompletePayload {
+  const plain = withoutListEntries(learnResultOf(options.fixedRules));
+  const masked = masker ? (analysis ? maskFixedRules(plain, masker, analysis) : maskRules(plain, masker)) : plain;
   return {
     fixed: toWire(formulaRulesToWire(masked) as unknown as LearnResult) as unknown as Record<string, unknown>,
     columns: [...options.columns],

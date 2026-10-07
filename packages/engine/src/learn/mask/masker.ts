@@ -22,7 +22,7 @@ import { MONTH_NAMES, WEEKDAY_NAMES, monthOfName } from '../../values/dates';
 import { isValidIsraeliId, makeValidIsraeliId } from '../../values/israeliId';
 import { normalizeText } from '../../values/text';
 import { readsAsDate } from '../analyze/dateReadings';
-import { buildWordFromBytes, deriveBytes, splitWords } from './words';
+import { buildWordFromBytes, deriveBytes, splitWords, wordsOfShape } from './words';
 
 // ---------- Vocabulary that is never masked (SPEC 7.2: dates are sent real; learning-loop proposal 7.5) ----------
 
@@ -70,11 +70,10 @@ function vocabularyWords(tokens: readonly { isWord: boolean; text: string }[]): 
   return keep;
 }
 
-// DECISION: a small, bounded number of retries when a freshly derived fake
-// word collides with something it shouldn't (see pickCandidate below). This
-// keeps generation synchronous and deterministic; if every attempt collides
-// (astronomically unlikely for realistic word lengths) the last candidate is
-// used as-is rather than looping forever.
+// DECISION: a small, bounded number of random retries when a freshly derived fake word collides with something it shouldn't (see
+// pickCandidate below). Amendment 2026-10-07 (engine audit): when all of them collide, a deterministic walk over every fake of the same
+// shape, then of a wider one (`wordsOfShape`), takes the first that no other real value has: two real values never share a fake. (The
+// last candidate used to be taken as it was: "Floor 1" .. "Floor 9" gave two digits one fake.)
 const MAX_COLLISION_ATTEMPTS = 8;
 
 /** A word or cell of digits only (ASCII digits: the runs `maskDigits` masks; a digit of another script is masked like a letter, `buildWordFromBytes`). */
@@ -121,6 +120,12 @@ export interface Masker {
    */
   readonly fakeToReal: ReadonlyMap<string, string>;
   /**
+   * Amendment 2026-10-07 (engine audit): the real value behind a WHOLE masked value - a cell, a hint's or a rule's constant exactly as
+   * `maskText` / `maskIdLike` returned it - else undefined. `unmaskRules` restores such a constant whole (see `unmaskString`). A function,
+   * not a map, so nothing that serializes the masker can carry it.
+   */
+  realOfWhole(fake: string): string | undefined;
+  /**
    * Amendment 2026-10-06: the real number behind a NUMBER constant the AI wrote, when `n` is the fake of a whole ID made of digits (a
    * number in an ID column, or digit text in one) of at least `maskingIdentifiers.minUnmaskDigits` digits; else undefined. Only those:
    * a short number in a rule (a rate, a threshold, `round`'s digits) is far more likely a real constant than a short fake ID.
@@ -151,6 +156,12 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
   // included), both ways - the only fakes a NUMBER constant is unmasked from (`realNumberOf`), and the reals `maskRules` masks.
   const idDigitsFakeToReal = new Map<string, string>();
   const idDigitsRealToFake = new Map<string, string>();
+  // Amendment 2026-10-07: whole masked values, fake -> real (the first real value that gave a fake keeps it).
+  const wholeFakeToReal = new Map<string, string>();
+  const recordWhole = (real: string, fake: string): string => {
+    if (fake !== real && !wholeFakeToReal.has(fake)) wholeFakeToReal.set(fake, real);
+    return fake;
+  };
 
   if (opts?.labelWords) {
     for (const w of opts.labelWords) labelWords.add(normalizeText(w));
@@ -164,20 +175,23 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
    *
    * DECISION: (b) can only be checked against words seen so far, not ones the
    * masker will encounter later; SPEC 7.2 asks to avoid this "when feasible",
-   * not to guarantee it. (a) is a hard guarantee within one masker instance.
+   * not to guarantee it. (a) is a hard guarantee within one masker instance:
+   * when every random try fails, `fallback` (an endless sequence of distinct
+   * candidates, `wordsOfShape`) gives the first that keeps (a) and (c)
+   * (amendment 2026-10-07, engine audit).
    */
-  function pickCandidate(realKey: string, makeCandidate: (attempt: number) => string): string {
-    let last = '';
+  function pickCandidate(realKey: string, makeCandidate: (attempt: number) => string, fallback: () => Iterable<string>): string {
+    const free = (candidate: string): boolean => {
+      const existingReal = fakeToReal.get(candidate);
+      return (existingReal === undefined || existingReal === realKey) && keepsLeadingDigit(realKey, candidate);
+    };
     for (let attempt = 0; attempt < MAX_COLLISION_ATTEMPTS; attempt++) {
       const candidate = makeCandidate(attempt);
-      last = candidate;
-      const existingReal = fakeToReal.get(candidate);
-      if (existingReal !== undefined && existingReal !== realKey) continue;
       if (seenReal.has(candidate) && candidate !== realKey) continue;
-      if (!keepsLeadingDigit(realKey, candidate)) continue;
-      return candidate;
+      if (free(candidate)) return candidate;
     }
-    return last;
+    for (const candidate of fallback()) if (free(candidate)) return candidate;
+    throw new Error('masker: no free fake'); // (unreachable: the fallback never ends)
   }
 
   /**
@@ -214,11 +228,15 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
     const cached = realToFake.get(cachedNamespacedKey);
     if (cached !== undefined) return cached;
     const chars = Array.from(word);
-    const fake = pickCandidate(key, (attempt) => {
-      const label = `word:${key}${attempt > 0 ? `:retry${attempt}` : ''}`;
-      const bytes = deriveBytes(hmacKey, label, chars.length);
-      return buildWordFromBytes(chars, bytes);
-    });
+    const fake = pickCandidate(
+      key,
+      (attempt) => {
+        const label = `word:${key}${attempt > 0 ? `:retry${attempt}` : ''}`;
+        const bytes = deriveBytes(hmacKey, label, chars.length);
+        return buildWordFromBytes(chars, bytes);
+      },
+      () => wordsOfShape(chars, deriveBytes(hmacKey, `word:${key}:all`, chars.length)),
+    );
 
     realToFake.set(cachedNamespacedKey, fake);
     fakeToReal.set(fake, key);
@@ -277,19 +295,34 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
     const forcedZeros = 9 - length;
     const randomDigitCount = 8 - forcedZeros; // = length - 1
 
-    const fake = pickCandidate(real, (attempt) => {
-      const label = `id:${real}${attempt > 0 ? `:retry${attempt}` : ''}`;
-      const bytes = deriveBytes(hmacKey, label, randomDigitCount);
-      let seed8 = '0'.repeat(forcedZeros);
-      for (let i = 0; i < randomDigitCount; i++) seed8 += String(bytes[i]! % 10);
+    const idOf = (free: string): string => {
       // seed8 is always exactly 8 digits: forcedZeros + randomDigitCount = 9 - length + length - 1 = 8.
-      const fullId = makeValidIsraeliId(seed8);
+      const fullId = makeValidIsraeliId('0'.repeat(forcedZeros) + free);
       // Slicing off the forced leading zeros recovers exactly `length`
       // characters, and padStart(9, '0') on that result reconstructs fullId
       // (which is valid by construction) — so the shorter form is itself
       // "another valid Israeli ID after padding", per SPEC 7.2.
       return fullId.slice(forcedZeros);
-    });
+    };
+    const fake = pickCandidate(
+      real,
+      (attempt) => {
+        const label = `id:${real}${attempt > 0 ? `:retry${attempt}` : ''}`;
+        const bytes = deriveBytes(hmacKey, label, randomDigitCount);
+        let free = '';
+        for (let i = 0; i < randomDigitCount; i++) free += String(bytes[i]! % 10);
+        return idOf(free);
+      },
+      // Every valid ID of the same length, then (only when each is taken) plain digits of the same shape and wider.
+      function* () {
+        const seed = deriveBytes(hmacKey, `id:${real}:all`, Math.max(1, randomDigitCount));
+        for (const free of wordsOfShape(Array.from('0'.repeat(randomDigitCount)), seed)) {
+          if (free.length > randomDigitCount) break;
+          yield idOf(free);
+        }
+        yield* wordsOfShape(Array.from(real), seed);
+      },
+    );
 
     realToFake.set(cachedNamespacedKey, fake);
     fakeToReal.set(fake, real);
@@ -303,7 +336,7 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
     if (NO_VALUE.has(placeholderKey(s)) || readsAsDate(s)) return s;
     const tokens = splitWords(s);
     const keep = vocabularyWords(tokens);
-    return tokens.map((t, i) => (t.isWord && !keep.has(i) ? maskWord(t.text) : t.text)).join('');
+    return recordWhole(s, tokens.map((t, i) => (t.isWord && !keep.has(i) ? maskWord(t.text) : t.text)).join(''));
   }
 
   function maskIdLike(s: string): string {
@@ -320,7 +353,7 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
       idDigitsFakeToReal.set(fakeSignificant, significant);
       idDigitsRealToFake.set(significant, fakeSignificant);
     }
-    return fake;
+    return recordWhole(s, fake);
   }
 
   /** Amendment 2026-10-06: a number in an ID column, masked as its digits and sent as a number again (see `Masker.maskCell`). */
@@ -370,5 +403,6 @@ export function createMasker(hmacKey: Uint8Array, opts?: CreateMaskerOptions): M
     fakeToReal,
     realNumberOf,
     fakeNumberOf,
+    realOfWhole: (fake: string): string | undefined => wholeFakeToReal.get(fake),
   };
 }

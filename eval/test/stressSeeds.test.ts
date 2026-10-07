@@ -8,13 +8,14 @@ import { buildCase, type SizeProfile } from '../stress/gen';
 import { newFailures } from '../stress/open';
 
 const FIRST: [SizeProfile, number][] = Array.from({ length: 30 }, (_, i) => ['small', i + 1]);
-/** Seeds whose failure a fix (or a fair hold-out rule) took away: see eval/STRESS.md "Fixed" (O1's: small 10, 23 - in the first 30 - 73, mixed 5, 68). */
+/** Seeds whose failure a fix (or a fair hold-out rule) took away: see eval/STRESS.md "Fixed" (O1's: small 10, 23 - in the first 30 - 73, mixed 5, 68; the shape leak's: small 23, 128). */
 const REGRESSIONS: [SizeProfile, number][] = [
   ['small', 41],
   ['small', 60],
   ['small', 73],
   ['small', 102],
   ['small', 125],
+  ['small', 128],
   ['small', 184],
   ['small', 193],
   ['small', 220],
@@ -27,6 +28,7 @@ const REGRESSIONS: [SizeProfile, number][] = [
   ['small', 500],
   ['mixed', 5],
   ['mixed', 68],
+  ['mixed', 69],
   ['mixed', 153],
 ];
 

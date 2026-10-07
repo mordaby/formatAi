@@ -24,7 +24,7 @@ import type {
 } from '@formatai/shared';
 import { limits } from '@formatai/shared';
 import type { RawCell } from '../types';
-import { toPayloadColumn } from './analyze';
+import { isSafeShape, toPayloadColumn } from './analyze';
 import type { ColumnProfile, Family, PairAnalysis, SummaryRowAnalysis, TitleRowAnalysis } from './analyze';
 import { isoOfSerial } from './analyze/cells';
 import { completePayloadOf, fixedLabelTexts, type CompleteOptions } from './complete';
@@ -446,8 +446,11 @@ function maskColumnHintValue(h: ColumnHint, analysis: PairAnalysis, masker: Mask
   if (h.rel === 'bands') {
     // The thresholds are numbers or ISO dates (sent real, SPEC 7.2); the band values are output cells, masked like samples.
     // Bands on a computed output column (`onOut`) are no different: the thresholds are numbers of that column, the values cells of `out`.
+    // Amendment 2026-10-07 (engine audit): bands on an IDENTIFIER column have no thresholds - a cut-off is a value of the column (`hi`
+    // when no rounder number fits), an ID the samples mask - like its `stats.range`. The hint still says the column decides by ranges.
     const outType = outputClass(analysis, h.out);
-    const bands: Band[] = h.bands.map((band) => ({ ...band, value: masker.maskCell(band.value, outType) }));
+    const onIdentifier = (h.onOut !== undefined ? outputClass(analysis, h.onOut) : inputClass(analysis, h.in[0] ?? -1)) === 'identifier';
+    const bands: Band[] = h.bands.map(({ lt, gte, value }) => ({ ...(onIdentifier ? {} : { ...(lt !== undefined ? { lt } : {}), ...(gte !== undefined ? { gte } : {}) }), value: masker.maskCell(value, outType) }));
     return { ...h, bands };
   }
   return h;
@@ -459,6 +462,9 @@ function maskRowHintValue(h: RowHint, analysis: PairAnalysis, masker: Masker): R
   const out: RowHint = { ...h };
   if (h.keptValues) out.keptValues = h.keptValues.map((v) => masker.maskCell(v, inType));
   if (h.droppedValues) out.droppedValues = h.droppedValues.map((v) => masker.maskCell(v, inType));
+  // Amendment 2026-10-07 (engine audit): a cut-off on an identifier column is one of its IDs (the edge value of the gap when no rounder
+  // number fits): the hint keeps the comparison, not the value - like the column's `stats.range`.
+  if (h.droppedWhen?.value !== undefined && inType === 'identifier') out.droppedWhen = { op: h.droppedWhen.op };
   return out;
 }
 
@@ -475,7 +481,7 @@ function maskHintList(hints: readonly HintCandidate[], analysis: PairAnalysis, m
 
 /**
  * Completion mode (amendment 2026-10-06): a number constant of the rules to keep that is a value of a column masked as an ID is masked
- * here once, like that column's cells, so `maskRules` sends its fake (`Masker.fakeNumberOf`) - even when no row this payload sends holds it.
+ * here once, like that column's cells, so `maskFixedRules` sends its fake (`Masker.fakeNumberOf`) - even when no row this payload sends holds it.
  */
 function registerIdConstants(analysis: PairAnalysis, rules: LearnResult | Rules, masker: Masker): void {
   const wanted = new Set<number>();
@@ -644,12 +650,14 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
     });
 
     // With masking on, an identifier column (amendment 2026-10-06) does not carry its real smallest and largest values (`stats.range`):
-    // they are two of the IDs the samples mask.
+    // they are two of the IDs the samples mask. A masked column's `shape` (amendment 2026-10-07: script-agnostic, `shapeOf`) is sent only
+    // when it holds nothing but shape letters, `D` and separators - never a letter or digit of a value.
     const types = masker ? classifyColumns(analysis) : null;
     const columnOf = (p: ColumnProfile, cls: ColumnClass | undefined): PayloadColumn => {
       const col = toPayloadColumn(p);
       if (!includeStats) delete col.stats;
       else if (cls === 'identifier') delete col.stats?.range;
+      if (cls !== undefined && isMasked(cls) && col.shape !== undefined && !isSafeShape(col.shape)) delete col.shape;
       return col;
     };
     const inputColumns = analysis.input.profile.map((p, i) => columnOf(p, types?.input[i]));
@@ -674,7 +682,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
     if (droppedBuilt.length > 0) payload.dropped = droppedBuilt;
     if (preflight.skipColumns.length > 0) payload.skipColumns = preflight.skipColumns;
     if (opts.target) payload.target = buildTargetPayload(opts.target, masker);
-    if (opts.complete) payload.complete = completePayloadOf(opts.complete, masker);
+    if (opts.complete) payload.complete = completePayloadOf(opts.complete, masker, analysis);
 
     return { payload, sampleRows: samplesBuilt.sampleRows, droppedRows: [...droppedPriority] };
   };

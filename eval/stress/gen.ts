@@ -6,7 +6,7 @@ import { checkLimits, convertFile, makeValidIsraeliId, typeCheck, type ConvertRe
 import { checkRules, RulesSchema, type Computed, type Expr, type InputColumn, type OutputColumnRule, type RowFilter, type Rules, type SummaryRow, type TitleRow } from '@formatai/shared';
 import { chance, makeRng, pick, randInt, shuffle, type Rng } from '../cases/lib/prng';
 import { EN_STATUS as CAT_EN_STATUS } from '../catalogue/data';
-import { cellValue, DATE_KINDS, makeColumns, newValueState, NUMBER_KINDS, TEXT_KINDS, type GenCell, type InCol, type Lang, type ValueState } from './data';
+import { cellValue, DATE_KINDS, makeColumns, newValueState, NUMBER_KINDS, scriptPoolOf, TEXT_KINDS, type GenCell, type InCol, type Lang, type ValueState } from './data';
 import { delimitedText, encodableIn1255, writeInput, type FileArtifact, type InputLayout } from './files';
 
 export type SizeProfile = 'small' | 'mixed' | 'large' | 'timing';
@@ -637,6 +637,15 @@ export async function buildCase(seed: number, opts: BuildOptions = {}): Promise<
   const lang: Lang | 'mixed' = pick(rng, ['he', 'en', 'mixed'] as const);
   const colOpts = { lang, inject: chance(rng, 0.4), mess: chance(rng, 0.5), empties: chance(rng, 0.5), otherScripts: chance(rng, 0.15), emoji: chance(rng, 0.2) };
   const cols = makeColumns(rng, size.cols, colOpts);
+  // Engine audit (2026-10-07): half the name columns that allow other scripts hold only a few such names (its own random stream, so no
+  // other draw of the case changes).
+  const scriptRng = makeRng(`stress#${seed}:scriptPool`);
+  for (const c of cols) {
+    if (c.otherScripts && chance(scriptRng, 0.5)) {
+      c.scriptPool = scriptPoolOf(scriptRng);
+      features.add('mess:scriptPool');
+    }
+  }
   const layout = chooseLayout(rng, lang, features);
   features.add(`lang:${lang}`);
   for (const [k, on] of Object.entries(colOpts)) if (on && k !== 'lang') features.add(`mess:${k}`);

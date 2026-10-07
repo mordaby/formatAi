@@ -6,6 +6,7 @@
 // summary-row field, ...) is unmasked automatically as long as it isn't a
 // structural reference, with no change needed here.
 
+import { maskingIdentifiers } from '@formatai/shared';
 import type { Masker } from './masker';
 import { splitWords } from './words';
 
@@ -91,14 +92,27 @@ const STRUCTURAL_SUBTREE_KEY = 'cells';
  * the schema is keyed by a synthetic id/column name. */
 const OPEN_WORD_DICTIONARY_KEY = 'map';
 
-function unmaskString(s: string, fakeToReal: ReadonlyMap<string, string>): string {
+/** A short number written as digits (no leading zero, fewer than `maskingIdentifiers.minUnmaskDigits`): see `unmaskString`. */
+function isShortNumber(token: string): boolean {
+  return /^[1-9][0-9]*$/.test(token) && token.length < maskingIdentifiers.minUnmaskDigits;
+}
+
+/**
+ * One constant the AI wrote, unmasked. Amendment 2026-10-07 (engine audit) - THE RULE:
+ *  1. a constant that is a WHOLE masked value (a cell or a constant exactly as the masker returned it, `Masker.realOfWhole`) is that
+ *     value: restored whole;
+ *  2. otherwise token by token: a word the masker produced as a fake (`fakeToReal`) is restored - except a short number (1-3 digits, no
+ *     leading zero; the same threshold as a number constant, `Masker.realNumberOf`), which is kept as written: the AI's own "1" or "12"
+ *     is far more likely than a short fake, and with few digits a fake takes nearly every value ("Floor 1" .. "Floor 9" make every digit
+ *     a fake, and the AI's constant "1" came back as "9"). A run with leading zeros ("073") is a fake's: a fake keeps the real zeros.
+ * Anything else (label words, punctuation, words never masked) stays as it is.
+ */
+function unmaskString(s: string, fakeToReal: ReadonlyMap<string, string>, realOfWhole?: (fake: string) => string | undefined): string {
   if (s === '') return s;
-  // A constant can mix label words (already real) and fake words (SPEC "Masked
-  // values"): replace token-by-token, leaving anything not in the map as-is —
-  // that covers real words, punctuation/separators, and anything that was
-  // never masked in the first place.
+  const whole = realOfWhole?.(s);
+  if (whole !== undefined) return whole;
   return splitWords(s)
-    .map((t) => (t.isWord ? (fakeToReal.get(t.text) ?? t.text) : t.text))
+    .map((t) => (t.isWord && !isShortNumber(t.text) ? (fakeToReal.get(t.text) ?? t.text) : t.text))
     .join('');
 }
 
@@ -159,33 +173,32 @@ export function mapRuleConstants<T>(rules: T, fn: (s: string) => string, numberF
  * number - or written by the AI as a number for an ID it saw as digits - is unmasked too (`Masker.realNumberOf`: only fakes of whole
  * IDs of 4+ digits; any other number is left as it is).
  */
-export function unmaskRules<T>(rules: T, masker: Pick<Masker, 'fakeToReal'> & Partial<Pick<Masker, 'realNumberOf'>>): T {
+export function unmaskRules<T>(rules: T, masker: Pick<Masker, 'fakeToReal'> & Partial<Pick<Masker, 'realNumberOf' | 'realOfWhole'>>): T {
   const realNumberOf = masker.realNumberOf;
   return mapRuleConstants(
     rules,
-    (s) => unmaskString(s, masker.fakeToReal),
+    (s) => unmaskString(s, masker.fakeToReal, masker.realOfWhole),
     realNumberOf ? (n) => realNumberOf(n) ?? n : undefined,
   );
 }
 
 /**
- * The inverse of `unmaskRules`: a deep copy of `rules` (real Expr trees, not formula text) with every constant
- * masked like the samples are (SPEC 7.2) - the `complete.fixed` of a completion call. A pure-digit constant is
- * masked like an ID cell (so it matches a masked ID in the samples), a constant with a letter like text, and a
- * constant with neither (a separator, a date) stays; label words the payload sends real stay real. Structural
- * fields are untouched, exactly as in `unmaskRules`. A NUMBER constant that is a real ID the masker has masked
- * as a number (amendment 2026-10-06, `Masker.fakeNumberOf`) is masked like it; every other number stays real.
+ * The inverse of `unmaskRules`: a deep copy of `rules` (real Expr trees, not formula text) with EVERY constant
+ * masked, when nothing says which column it belongs to: a pure-digit constant like an ID cell (so it matches a
+ * masked ID in the samples), anything else like text (`maskText`: a date, a no-value placeholder and punctuation
+ * stay; label words the payload sends real stay real). Structural fields are untouched, exactly as in
+ * `unmaskRules`. A NUMBER constant that is a real ID the masker has masked as a number (amendment 2026-10-06,
+ * `Masker.fakeNumberOf`) is masked like it; every other number stays real.
+ *
+ * Amendment 2026-10-07 (engine audit): a completion call masks the user's rules by their columns' classes
+ * (`learn/maskFixed.ts`); this is the fallback with no example. It decided by the constant's shape before -
+ * digits longer than 9 and text with no letter were sent real ("0501234567", "050-1234567").
  */
 export function maskRules<T>(rules: T, masker: Pick<Masker, 'maskText' | 'maskIdLike'> & Partial<Pick<Masker, 'fakeNumberOf'>>): T {
   const fakeNumberOf = masker.fakeNumberOf;
   return mapRuleConstants(
     rules,
-    (s) => {
-      if (/^[0-9]{1,9}$/.test(s)) return masker.maskIdLike(s);
-      // No letter at all (a separator, a date like 2026-01-31, a number written as text): sent real, like numbers and dates are in the samples.
-      if (!/\p{L}/u.test(s)) return s;
-      return masker.maskText(s);
-    },
+    (s) => (/^[0-9]+$/.test(s) ? masker.maskIdLike(s) : masker.maskText(s)),
     fakeNumberOf ? (n) => fakeNumberOf(n) ?? n : undefined,
   );
 }

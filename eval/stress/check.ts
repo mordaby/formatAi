@@ -132,7 +132,8 @@ function shownText(c: OutCell | undefined): string {
   if (c === undefined || c.v === null) return '';
   if (typeof c.v === 'number' && c.text === undefined) return plainNumber(c.v);
   const text = c.text ?? (typeof c.v === 'boolean' ? (c.v ? 'TRUE' : 'FALSE') : String(c.v));
-  return typeof c.v !== 'number' && /^[=+\-@]/.test(text) ? `'${text}` : text;
+  // (The writer's formula guard: a plain number is exempt in every column - engine audit 2026-10-07, O2.)
+  return typeof c.v !== 'number' && /^[=+\-@]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text) ? `'${text}` : text;
 }
 
 /**
@@ -431,7 +432,14 @@ function checkCellPair(m: MaskCtx, where: string, real: PayloadCell | undefined,
   }
 }
 
-/** Every string (except headers and format names) and every number anywhere in a JSON value: the parts of the payload with no row index. */
+/**
+ * Keys whose value is a fixed word of the payload's own vocabulary (an enum), never text of a cell: the only ones the mask check skips.
+ * Engine audit (2026-10-07): every field that can hold cell text is checked - a column's `shape` (it sent "Иван Петров" whole), its stats,
+ * the hints' texts and formats, headers, sheet names and title texts (their real words are in `allowedReal`, so only data words count).
+ */
+const ENUM_KEYS: ReadonlySet<string> = new Set(['type', 'rel', 'mode', 'op', 'direction', 'language', 'encoding', 'quote', 'delimiter', 'agg', 'fn', 'containsDate', 'kind']);
+
+/** Every string (except enum words) and every number anywhere in a JSON value: the parts of the payload with no row index. */
 function walk(v: unknown, path: string, onString: (s: string, path: string) => void, onNumber: (n: number, path: string) => void, key = ''): void {
   // A problem's `message` is English prose ("the example output has a title row ..."): only the values it quotes are data.
   if (typeof v === 'string') onString(key === 'message' ? (v.match(/"(?:[^"\\]|\\.)*"/g) ?? []).join(' ') : v, path);
@@ -439,7 +447,7 @@ function walk(v: unknown, path: string, onString: (s: string, path: string) => v
   else if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${path}[${i}]`, onString, onNumber));
   else if (v !== null && typeof v === 'object') {
     for (const [k, x] of Object.entries(v)) {
-      if (['header', 'sheetName', 'shape', 'format', 'type', 'rel', 'mode', 'op', 'direction', 'language', 'to', 'from', 'separator', 'encoding', 'quote', 'delimiter', 'agg', 'fn', 'containsDate', 'kind'].includes(k)) continue;
+      if (ENUM_KEYS.has(k)) continue;
       walk(x, `${path}.${k}`, onString, onNumber, k);
     }
   }

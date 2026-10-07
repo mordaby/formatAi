@@ -609,7 +609,11 @@ export function applyCaseAnswers<R extends Pick<LearnFromExamplesResult<LlmCallR
     }
   }
   if (answered.length === 0) return { result, answered };
-  const verification = !result.completion && analysis ? verifyAgainstExample(rules, analysis, { onlyColumns: columnsWithRule(rules) }) : result.verification;
+  // (The learn's own rule, flow.ts: the columns with no rule are left out - their cells only; engine audit 2026-10-07.)
+  const withRule = columnsWithRule(rules);
+  const skipColumns = rules.output.columns.flatMap((_, c) => (withRule.includes(c) ? [] : [c]));
+  const options = withRule.length === 0 ? { onlyColumns: [] } : skipColumns.length > 0 ? { skipColumns } : {};
+  const verification = !result.completion && analysis ? verifyAgainstExample(rules, analysis, options) : result.verification;
   return { result: { ...result, rules, unsupported: rules.unsupported, assumptions: rules.assumptions, verification }, answered };
 }
 

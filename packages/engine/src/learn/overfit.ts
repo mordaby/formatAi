@@ -18,8 +18,11 @@
 //     amount is no category: next month's file brings new ones, so a table of amounts only holds this file's rows (and code's fill, which
 //     completes a lookup from every row, would copy every one of them). learn-v8.1 wrote exactly this for a hand-edited row in its first
 //     real learn (2026-10-05): `coalesce(lookup("discountTable", amount, "discountAmount"), round(amount * 0.1, 2))`, filled to 150
-//     entries, verified, wrong the next month. DECISION: lookups only, and a plain column as the key - no kept rules file of the
-//     measurement keys one on a measure; an integer key may be a code (a branch number), and a date a calendar (holidays).
+//     entries, verified, wrong the next month. DECISION: an integer key may be a code (a branch number), and a date a calendar
+//     (holidays). Amendment 2026-10-07 (engine audit): the key is judged by the columns its value is made of (`keyColumnsOf`: through
+//     computed columns and functions of the value - `lookup(t, round(amount, 0), ...)` -, not through a condition), and a VALUE MAP on an
+//     amount (or on a computed column made of one) is the same table written as a map: both are found (it was "a plain column as the key,
+//     lookups only", and either escaped every guard).
 //
 // A finding becomes one `overfit` repair problem per column (`overfitProblems`), at most once per learn; an answer that still has it after
 // that repair gets the column reported as unsupported by code (`withOverfitFallback`, reason `overfit`: "needs your input"), so a rule that
@@ -29,7 +32,7 @@
 // atoms show (`atoms`): on a dozen sample rows a real list of categories names rows one by one too.
 //
 // Pure and synchronous, like the rest of this package.
-import { limits, withColumnsTakenOut, type Computed, type Expr, type ExprNode, type LearnResult, type RepairProblem, type Rules } from '@formatai/shared';
+import { limits, withColumnsTakenOut, withoutUnreadLists, type Computed, type Expr, type ExprNode, type LearnResult, type RepairProblem, type Rules } from '@formatai/shared';
 import { runRules } from '../pipeline/runRules';
 import { exprChildren } from '../pipeline/v1/expr';
 import type { InputTable } from '../types';
@@ -57,6 +60,8 @@ export interface OverfitFinding {
    * the user) or the rule copies rows (the browser's guard: one repair, then the fallback); the browser judges it on every row (`learn/flow.ts`).
    */
   rowExact?: true;
+  /** measureKey: found in a value map on an amount (`id` is the mapped column), not in a lookup (amendment 2026-10-07). */
+  valueMap?: true;
 }
 
 /** The unsupported reason code code writes for a column whose only rule copied rows (never offered to the AI step: `AI_UNSUPPORTED_REASON_CODES`). */
@@ -268,11 +273,55 @@ function copiesRows(counts: readonly number[], shape: { cases: readonly Case[]; 
 
 const MEASURE_TYPES: ReadonlySet<string> = new Set(['decimal', 'currency', 'percent']);
 
-/** Whether `e` looks a value up in a table by a measure column (`lookup("t", amount, "x")`). */
-function looksUpByMeasure(e: Expr, measureIds: ReadonlySet<string>): boolean {
+const BOOLEAN_OPS: ReadonlySet<string> = new Set(['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'and', 'or', 'not', 'oneOf', 'isEmpty', 'notEmpty', 'startsWith', 'endsWith', 'contains']);
+
+/**
+ * The columns a KEY is made of (amendment 2026-10-07, engine audit): the input and computed columns whose value reaches the key expression's
+ * value - through the computed columns it reads (`lookup(t, trim(account), ...)` is keyed on Account, and so is a value map on a computed
+ * copy of it), but not through a condition (`if(amount > 1000, "big", "small")` is keyed on a category, not on the amount), nor through a
+ * lookup's own result. Input columns in the order first read; every computed column on the way is listed in `via`.
+ */
+export function keyColumnsOf(rules: AnyRules, key: Expr): { inputs: string[]; via: string[] } {
+  const inputIds = new Set(rules.input.columns.map((c) => c.id));
+  const computed = new Map(rules.transform.computed.map((c) => [c.id, c.expr] as const));
+  const inputs: string[] = [];
+  const via: string[] = [];
+  const seen = new Set<string>();
+  const visit = (e: Expr): void => {
+    if ('col' in e) {
+      if (seen.has(e.col)) return;
+      seen.add(e.col);
+      if (inputIds.has(e.col)) inputs.push(e.col);
+      const expr = computed.get(e.col);
+      if (expr !== undefined) {
+        via.push(e.col);
+        visit(expr);
+      }
+      return;
+    }
+    if (!isNode(e) || BOOLEAN_OPS.has(e.op) || e.op === 'lookup') return;
+    let parts: Expr[];
+    if (e.op === 'if') parts = [e.then, e.else];
+    else if (e.op === 'switch') parts = [...e.cases.map((c) => c.then), e.else];
+    else if (e.op === 'window') parts = e.arg !== undefined ? [e.arg] : [];
+    else parts = exprChildren(e);
+    for (const c of parts) visit(c);
+  };
+  visit(key);
+  return { inputs, via };
+}
+
+/** Whether a key is made of a measure (an amount: a decimal, currency or percent input column, or a computed column of such a type). */
+function keyedOnMeasure(rules: AnyRules, key: Expr, measureIds: ReadonlySet<string>): boolean {
+  const { inputs, via } = keyColumnsOf(rules, key);
+  return [...inputs, ...via].some((id) => measureIds.has(id));
+}
+
+/** Whether `e` looks a value up in a table by a measure (`lookup("t", amount, "x")`, `lookup("t", round(amount, 0), "x")`). */
+function looksUpByMeasure(rules: AnyRules, e: Expr, measureIds: ReadonlySet<string>): boolean {
   if (!isNode(e)) return false;
-  if (e.op === 'lookup' && 'col' in e.key && measureIds.has(e.key.col)) return true;
-  return exprChildren(e).some((c) => looksUpByMeasure(c, measureIds));
+  if (e.op === 'lookup' && keyedOnMeasure(rules, e.key, measureIds)) return true;
+  return exprChildren(e).some((c) => looksUpByMeasure(rules, c, measureIds));
 }
 
 // ---------------------------------------------------------------------------
@@ -302,12 +351,13 @@ function outputsReached(rules: AnyRules): Map<string, number[]> {
     return [...(reads.get(from) ?? [])].some((id) => reaches(id, target, seen));
   };
   const out = new Map<string, number[]>();
-  for (const c of rules.transform.computed) {
+  // (Input columns too: a value map changes one in place - amendment 2026-10-07.)
+  for (const id of [...rules.transform.computed.map((c) => c.id), ...rules.input.columns.map((c) => c.id)]) {
     const positions: number[] = [];
     rules.output.columns.forEach((col, i) => {
-      if (col.from !== null && reaches(col.from, c.id, new Set())) positions.push(i);
+      if (col.from !== null && reaches(col.from, id, new Set())) positions.push(i);
     });
-    out.set(c.id, positions);
+    out.set(id, positions);
   }
   return out;
 }
@@ -331,7 +381,7 @@ export function overfitFindings(rules: AnyRules, opts: OverfitOptions): OverfitF
   const reached = outputsReached(rules);
   const findings: OverfitFinding[] = [];
   const seen = new Set<string>();
-  const add = (kind: OverfitKind, id: string, more: Partial<Pick<OverfitFinding, 'cases' | 'atoms' | 'rowExact'>> = {}): void => {
+  const add = (kind: OverfitKind, id: string, more: Partial<Pick<OverfitFinding, 'cases' | 'atoms' | 'rowExact' | 'valueMap'>> = {}): void => {
     for (const out of reached.get(id) ?? []) {
       const header = rules.output.columns[out]!.header;
       if (seen.has(`${kind}\u0000${header}`)) continue;
@@ -341,13 +391,18 @@ export function overfitFindings(rules: AnyRules, opts: OverfitOptions): OverfitF
   };
   for (const c of rules.transform.computed) {
     if (comparesPosition(c.expr, positionIds)) add('position', c.id, exactRows(c.expr, positionIds) ? { rowExact: true } : {});
-    if (looksUpByMeasure(c.expr, measureIds)) add('measureKey', c.id);
+    if (looksUpByMeasure(rules, c.expr, measureIds)) add('measureKey', c.id);
     const shape = caseListShape(c.expr, inputIds);
     if (shape && opts.table) {
       const counts = conditionCounts(rules, shape.atoms, opts.table);
       const found = counts ? copiesRows(counts, shape) : null;
       if (found) add('caseList', c.id, { cases: shape.cases.length, ...(found.perCase ? {} : { atoms: found.atoms }) });
     }
+  }
+  // A value map keyed on a measure (amendment 2026-10-07, engine audit): the same table of amounts as a lookup, written as a map - on an
+  // amount column or a computed column made of one. (It was caught by neither guard: the lists leave a measure key to this one.)
+  for (const vm of rules.transform.valueMaps) {
+    if (Object.keys(vm.map).length > 0 && keyedOnMeasure(rules, { col: vm.column }, measureIds)) add('measureKey', vm.column, { valueMap: true });
   }
   return findings;
 }
@@ -366,7 +421,9 @@ function whatWasFound(f: OverfitFinding): string {
         ? `it is a list of ${f.cases ?? 'many'} cases whose conditions name ${f.atoms} values one by one, each picking one or two rows; a real mapping is a value map or a lookup table`
         : `it is a list of ${f.cases ?? 'many'} cases, each giving a constant to one or two rows; a real mapping is a value map or a lookup table`;
     case 'measureKey':
-      return 'it looks values up by an amount, and the next file brings new amounts; a real mapping is keyed on a code or a category';
+      return f.valueMap
+        ? 'it maps amounts to values one by one, and the next file brings new amounts; a real mapping is keyed on a code or a category'
+        : 'it looks values up by an amount, and the next file brings new amounts; a real mapping is keyed on a code or a category';
   }
 }
 
@@ -393,10 +450,12 @@ export function overfitProblems(findings: readonly OverfitFinding[]): RepairProb
  */
 export function withOverfitFallback<R extends AnyRules>(rules: R, findings: readonly OverfitFinding[]): R {
   if (findings.length === 0) return rules;
-  return withColumnsTakenOut(
+  const out = withColumnsTakenOut(
     rules,
     new Set(findings.map((f) => f.outputColumn)),
     OVERFIT_REASON,
     findings.map((f) => f.id),
   );
+  // (A value map of amounts nothing reads any more goes too: its entries are this file's rows.)
+  return findings.some((f) => f.valueMap) ? withoutUnreadLists(out) : out;
 }

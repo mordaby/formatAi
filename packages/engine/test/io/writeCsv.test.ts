@@ -61,10 +61,19 @@ describe('writeCsv', () => {
   describe('formula-injection guard', () => {
     it('prefixes text starting with = + - @ with an apostrophe', () => {
       const bytes = writeCsv(
-        sheet([[{ v: '=SUM(A1)' }, { v: '+1' }, { v: '-1' }, { v: '@cmd' }, { v: 'plain' }]])
+        sheet([[{ v: '=SUM(A1)' }, { v: '+1' }, { v: '-1 unit' }, { v: '@cmd' }, { v: 'plain' }]])
       );
       const text = decode(bytes).replace(/^﻿/, '').trim();
-      expect(text).toBe("'=SUM(A1),'+1,'-1,'@cmd,plain");
+      expect(text).toBe("'=SUM(A1),'+1,'-1 unit,'@cmd,plain");
+    });
+
+    // Engine audit (2026-10-07), stress finding O2: a plain number cannot be a formula; the apostrophe wrote "'-1192964702.4" where the
+    // example shows the number, in a text column.
+    it('does not guard a plain number kept as text in ANY column', () => {
+      const columns: OutputSheet['columns'] = [{ header: 'Note' }, { header: 'Code', numeric: false }];
+      const bytes = writeCsv(sheet([[{ v: '-1192964702.4' }, { v: '-123' }], [{ v: '-5 units' }, { v: '-1e5' }]], columns));
+      const text = decode(bytes).replace(/^﻿/, '').trim();
+      expect(text.split('\r\n')).toEqual(['-1192964702.4,-123', "'-5 units,'-1e5"]);
     });
 
     it('does not guard numeric-typed values even if the column looks textual', () => {

@@ -82,6 +82,11 @@ export interface InCol {
   prefix?: string;
   /** Allow names in scripts the masker has no fake alphabet for (Arabic, Cyrillic, accented Latin). */
   otherScripts?: boolean;
+  /**
+   * name: every value is one of these few names of other scripts (an account manager on every row). Engine audit (2026-10-07): a column
+   * of few shapes gets a `shape` in the payload, which sent such names whole.
+   */
+  scriptPool?: string[];
   /** Emoji in text. */
   emoji?: boolean;
 }
@@ -256,7 +261,16 @@ export function newValueState(): ValueState {
   return { next: new Map(), pools: new Map() };
 }
 
+/** A few names of other scripts for a `scriptPool` column. */
+export function scriptPoolOf(rng: Rng): string[] {
+  const pool = [...OTHER_SCRIPT_NAMES];
+  const out: string[] = [];
+  for (let i = 0; i < 3; i++) out.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]!);
+  return out;
+}
+
 function fullName(rng: Rng, col: InCol): string {
+  if (col.scriptPool) return pick(rng, col.scriptPool);
   if (col.otherScripts && chance(rng, 0.1)) return pick(rng, OTHER_SCRIPT_NAMES);
   return col.lang === 'he' ? `${pick(rng, HE_FIRST)} ${pick(rng, HE_LAST)}` : `${pick(rng, EN_FIRST)} ${pick(rng, EN_LAST)}`;
 }

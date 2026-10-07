@@ -27,17 +27,37 @@ const PERCENT_FMT_RE = /%/;
 const CURRENCY_FMT_RE = /[₪$€]|\[\$[^\]]*\]|ש"ח|ש״ח|NIS/;
 const CURRENCY_TEXT_RE = /[₪$€]|NIS|ש"ח|ש״ח/;
 
-/** Shape signature of one value: D = digit, A = Latin letter, H = Hebrew letter, other characters literal. */
+const LETTER_RE = /\p{L}/u;
+const DIGIT_RE = /\p{N}/u;
+const MARK_RE = /\p{M}/u;
+const HEBREW_RE = /\p{Script=Hebrew}/u;
+
+/**
+ * Shape signature of one value: D = a digit, H = a Hebrew letter, A = any other letter, other characters literal.
+ *
+ * Amendment (2026-10-07, engine audit): script-agnostic. Every letter of every script is a shape letter (Cyrillic, Arabic, Greek, CJK, an
+ * accented Latin letter: `A`), every digit of any script a `D`, and a combining mark (niqqud, an accent written apart) is dropped - it
+ * belongs to the letter before it. Only separators (spaces, punctuation, symbols) are kept as they are, so a shape never holds a letter
+ * or digit of the value: "Иван Петров" was sent whole, "José" as "AAAé".
+ */
 export function shapeOf(s: string): string {
   let out = '';
   for (const ch of s) {
     const c = ch.charCodeAt(0);
     if (c >= 48 && c <= 57) out += 'D';
     else if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) out += 'A';
-    else if (c >= 0x05d0 && c <= 0x05ea) out += 'H';
-    else out += ch;
+    else if (c < 128) out += ch;
+    else if (LETTER_RE.test(ch)) out += HEBREW_RE.test(ch) ? 'H' : 'A';
+    else if (DIGIT_RE.test(ch)) out += 'D';
+    else if (!MARK_RE.test(ch)) out += ch;
   }
   return out;
+}
+
+/** Whether a shape signature holds only shape letters, digits' `D` and separators (`shapeOf`'s alphabet): never a letter or digit of a value. */
+export function isSafeShape(shape: string): boolean {
+  for (const ch of shape) if (ch !== 'A' && ch !== 'D' && ch !== 'H' && ch !== '|' && (LETTER_RE.test(ch) || DIGIT_RE.test(ch) || MARK_RE.test(ch))) return false;
+  return true;
 }
 
 /** Values read for the shape signature: spread over the whole column. */
