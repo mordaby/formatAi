@@ -69,7 +69,7 @@ function ResultScreen({ result, ai }: { result: LearnOutput; ai: AiInfo | undefi
   // answer that passes the fixed lock and the verification replaces them (see useCompletion). It never runs unless the user chose it: the
   // panel's button, or Home's "Learn with AI" (acted on below, once per result).
   // learn-v7: the notes of an applied answer go into the session (never into the rules): see `ResultSession.aiNotes`.
-  const completion = useCompletion(kept.store, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
+  const completion = useCompletion(kept, result.exampleId, (asked, notes) => applyCompletionNotes(kept, asked, notes));
   const completed = completion.completed;
   // A list copied from the example (owner decision 2026-10-06), and an identifier-shaped value (docs/proposals/saved-format-contents.md section
   // 6): never asked on screen - the rules are used as they are - but at Save, before the rules are stored, in one popup (`CopiedListSave`):

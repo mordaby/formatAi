@@ -106,10 +106,12 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
     (opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean }) => {
       if (!input || !output) return;
       if (opts?.deep !== undefined) setDeepAnalysis(opts.deep);
+      // A new learn replaces the result: a "Finish with AI" still at work on the old one has nothing left to finish.
+      resetCompletion();
       // (no `ai` given: the free engine only, see `getAi`)
       void start({ input, output, masking, ...(opts?.ai ? { ai: opts.ai } : {}) });
     },
-    [input, output, masking, start],
+    [input, output, masking, start, resetCompletion],
   );
   const finishWithAi = useCallback(() => begin({ ai: 'allowed' }), [begin]);
   const completeWithAi = useCallback(

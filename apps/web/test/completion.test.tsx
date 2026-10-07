@@ -2,7 +2,7 @@
 // the rules on screen (code-solved columns and the user's edits) are the fixed part, and an answer replaces them only when it passed the
 // fixed lock and the verification. When it cannot complete, the same button is the whole learn again, behind "This replaces your current rules". And the
 // regression tests of the owner's bug: a signed-in user's partial result shows "Finish with AI" however they got there.
-import type { LearnPayload, LearnResult, Rules } from '@formatai/shared';
+import { promptVersion, type LearnPayload, type LearnResult, type Rules } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api';
@@ -10,6 +10,7 @@ import { createMemoryPendingStore, setPendingStore, storeFile, type PendingLearn
 import { learnFromExamples } from '@formatai/engine';
 import { ordersRules } from '../src/editor/testkit';
 import type { LearnOutput } from '../src/worker/engineApi';
+import { conversionSummary, createFormatResponse, formatSummary } from './helpers/registryKit';
 import { csv, fakeApi, fakeEngine, learnResult, renderApp, USER } from './helpers/renderApp';
 
 const { redirectTo } = vi.hoisted(() => ({ redirectTo: vi.fn() }));
@@ -413,6 +414,94 @@ describe('"Finish with AI" completes only what is missing', () => {
     fireEvent.click(finishButton());
     await screen.findByTestId('completion-done');
     await waitFor(() => expect(learnOutcome).toHaveBeenCalledWith('L1', 'verified'));
+  });
+});
+
+describe('leaving the Result screen and coming back keeps "Finish with AI" as it was (the session keeps it, not the screen)', () => {
+  /** The same start as `start`, on the app's data router: the test goes to another screen and back the way a link does. */
+  async function startRouted(engine: ReturnType<typeof fakeEngine>['engine'], api = fakeApi({ user: USER })) {
+    const view = renderApp({ engine, api, dataRouter: true });
+    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });
+    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('Orders report.csv')] } });
+    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Learn the format/ }));
+    });
+    await screen.findByTestId('rules-map');
+    return { api, router: view.router! };
+  }
+  type Router = Awaited<ReturnType<typeof startRouted>>['router'];
+  /** To the privacy page (with unsaved edits, "Leave without saving?" first: the edits stay in the session) ... */
+  async function away(router: Router) {
+    await act(async () => void router.navigate('/privacy'));
+    const leave = screen.queryByRole('button', { name: 'Leave without saving' });
+    if (leave) await act(async () => void fireEvent.click(leave));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/privacy'));
+    expect(screen.queryByTestId('rules-map')).toBeNull();
+  }
+  /** ... and back to the result. */
+  async function back(router: Router) {
+    await act(async () => void router.navigate('/result'));
+    await screen.findByTestId('rules-map');
+  }
+
+  it('an answer that arrives while the user is away - edits made before it started - is applied when they come back, not thrown away as "changed"', async () => {
+    let release!: () => void;
+    const { engine } = engineWith((args) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(args)))));
+    const { router } = await startRouted(engine);
+    await renameSupplier();
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-running');
+    await away(router);
+    await act(async () => release());
+    await back(router);
+    expect((await screen.findByTestId('completion-done')).textContent).toContain('The deep analysis finished');
+    expect(screen.queryByTestId('completion-kept')).toBeNull();
+    await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
+    expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
+  });
+
+  it('coming back while it still works: the panel says so, the fields stay read-only, and the answer then merges what was edited meanwhile', async () => {
+    let release!: () => void;
+    const { engine } = engineWith((args) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(args)))));
+    const { router } = await startRouted(engine);
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-running');
+    await away(router);
+    await back(router);
+    expect(screen.getByTestId('completion-running')).toBeTruthy();
+    expect(line('col:Total').getAttribute('data-ai-running')).toBe('true');
+    await renameSupplier();
+    await act(async () => release());
+    expect((await screen.findByTestId('completion-done')).textContent).toContain('The deep analysis finished');
+    expect(screen.getByText('What you changed while it worked was kept too.')).toBeTruthy();
+    expect(line('col:Vendor').getAttribute('data-status')).toBe('edited');
+    await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
+  });
+
+  it('an applied answer is not applied twice, and after leaving and coming back Save still asks about its copied list and saves it as the AI\'s', async () => {
+    // The answer keeps a list copied from the example (the supplier codes): the Save popup must ask about it, whatever screens came between.
+    const supplierList = { kind: 'copiedList' as const, out: 1, header: 'Supplier', keyColumn: 'Supplier', entries: 2, list: { kind: 'valueMap' as const, column: 'supplier' } };
+    const { engine, learn } = engineWith(async (args) => completionOutput(args, { oneTimers: { questions: [supplierList], handedOff: [] } }));
+    const createFormat = vi.fn(async () => createFormatResponse({ format: formatSummary({ id: 'F1', name: 'Orders report' }), conversion: conversionSummary({ id: 'C1', formatId: 'F1', version: 1 }) }));
+    const { router } = await startRouted(engine, fakeApi({ user: USER, registry: { createFormat } }));
+    fireEvent.click(finishButton());
+    await screen.findByTestId('completion-done');
+    await waitFor(() => expect(line('col:Total').getAttribute('data-ai-step')).toBeNull());
+    await away(router);
+    await back(router);
+    expect(learn).toHaveBeenCalledTimes(2); // nothing ran again
+    expect(screen.getByTestId('completion-done')).toBeTruthy();
+    expect(line('col:Total').getAttribute('data-ai-step')).toBeNull();
+    const save = screen.getByRole('button', { name: 'Save format' }) as HTMLButtonElement;
+    await waitFor(() => expect(save.disabled).toBe(false));
+    await act(async () => void fireEvent.click(save));
+    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(within(box).getByTestId('copied-list-dialog').textContent).toContain('Supplier');
+    expect(createFormat).not.toHaveBeenCalled();
+    await act(async () => void fireEvent.click(within(box).getByRole('button', { name: 'Keep it' })));
+    await waitFor(() => expect(createFormat).toHaveBeenCalledTimes(1));
+    expect((createFormat.mock.calls[0] as unknown as [{ learnPath: string; promptVersion?: string }])[0]).toMatchObject({ learnPath: 'llm', promptVersion });
   });
 });
 

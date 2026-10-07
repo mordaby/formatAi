@@ -9,15 +9,20 @@
 //   * while it works, the fields it is asked for (and the shape of the columns) are read-only (`EditorStore.setLock`, see Workbench) and
 //     the rest can be edited: the answer is MERGED with those edits (`mergeRules`, the rules as they were at the start being the common
 //     ground). Only edits that collide with the answer keep it out.
+//
+// What it keeps about a run (what was asked, the rules and the editor's revision at the start, whether the answer has been dealt with, what
+// it came to, the applied answer's verification and report) lives in the result's session (`ResultSession.completion`), like the edits: the
+// flow itself lives in the session too, so leaving the screen while it works - or after - and coming back must find all of it as it was.
 import { isCompletable, type AiColumnNote, type AiStepPartCode, type LearnResult, type Rules } from '@formatai/shared';
 import type { AmbiguousColumn, FillSummary, OneTimeQuestion, VerifyResult } from '@formatai/engine';
 import type { CheckRoundInfo, LearnOutput, LoopRoundInfo } from '../../worker/engineApi';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { useLearnSession } from '../../app/LearnSession';
-import { mergeRules, type EditableRules, type EditorStore } from '../../editor';
-import type { AiInfo } from '../../flow/learnFlow';
+import { mergeRules, type EditableRules } from '../../editor';
+import type { AiInfo, LearnFlowState } from '../../flow/learnFlow';
 import type { FlowError } from '../../flow/errors';
 import { isRunning } from '../learningSteps';
+import type { ResultSession } from './session';
 
 export type CompletionOutcome =
   /** `asked`: how many columns and layout parts it was asked for; `produced`: how many of them it made. `merged`: your edits made while it worked were merged into its answer. */
@@ -35,6 +40,35 @@ export interface CompletionPlanInput {
   fixedRules: LearnResult | Rules;
   columns: number[];
   parts: AiStepPartCode[];
+}
+
+/** An applied answer: the verification that let it replace the rules, the AI step's report, and what the screen asks about it. */
+export interface CompletedRun {
+  /** The completion flow's result it came from (the outcome report folds into the same flow state). */
+  result: LearnOutput;
+  verification: VerifyResult;
+  ai: AiInfo | undefined;
+  filled: FillSummary | undefined;
+  ambiguous: readonly AmbiguousColumn[] | undefined;
+  oneTimers: readonly OneTimeQuestion[] | undefined;
+}
+
+/** What a result's session keeps about its "Finish with AI" (`ResultSession.completion`): it survives leaving the screen. */
+export interface CompletionRecord {
+  /** A run this result started whose answer (or error, or refusal) has not been dealt with yet. */
+  pending: boolean;
+  /** The completion flow's state when the run was started: never taken for its answer. */
+  since: LearnFlowState;
+  /** The editor's revision when it started: a different one means the user edited meanwhile. */
+  revAtStart: number;
+  /** The rules as they were when it started: the common ground of the merge. */
+  baseRules: EditableRules;
+  /** What it was asked for (headers and parts). */
+  asked: { columns: string[]; parts: AiStepPartCode[] };
+  outcome: CompletionOutcome | null;
+  /** The completion flow's result the last run came to (its outcome report folds into the flow's state a moment later). */
+  result: LearnOutput | null;
+  done: CompletedRun | null;
 }
 
 export interface UseCompletion {
@@ -58,84 +92,97 @@ export interface UseCompletion {
 }
 
 /**
- * `onNotes` (learn-v7): called with what the AI step noted about the columns it was asked for (its guess, whether a function request was
- * recorded) just before an applied answer replaces the rules - the screen keeps them in the session, never with the rules.
+ * `kept`: the result's session - its editor, and where what this hook keeps about a run lives. `onNotes` (learn-v7): called with what the AI
+ * step noted about the columns it was asked for (its guess, whether a function request was recorded) just before an applied answer replaces
+ * the rules - the screen keeps them in the session, never with the rules.
  */
-export function useCompletion(store: EditorStore, exampleId: string | undefined, onNotes?: (askedHeaders: string[], notes: AiColumnNote[]) => void): UseCompletion {
+export function useCompletion(kept: ResultSession, exampleId: string | undefined, onNotes?: (askedHeaders: string[], notes: AiColumnNote[]) => void): UseCompletion {
   const session = useLearnSession();
+  const store = kept.store;
   const state = session.completion.state;
-  const [outcome, setOutcome] = useState<CompletionOutcome | null>(null);
-  const [asked, setAsked] = useState<{ columns: string[]; parts: AiStepPartCode[] } | null>(null);
-  const columnsAsked = asked?.columns.length ?? 0;
-  const [done, setDone] = useState<{ result: object; verification: VerifyResult; ai: AiInfo | undefined; filled: FillSummary | undefined; ambiguous: readonly AmbiguousColumn[] | undefined; oneTimers: readonly OneTimeQuestion[] | undefined } | null>(null);
-  const revAtStart = useRef(0);
-  const baseRules = useRef<EditableRules | null>(null);
-  const handled = useRef<object | null>(null);
+  // (the record is the session's, a plain object: a change to it re-renders this screen)
+  const [, changed] = useReducer((n: number) => n + 1, 0);
+  const notesRef = useRef(onNotes);
+  notesRef.current = onNotes;
 
   useEffect(() => {
+    const rec = kept.completion;
+    // Only a run THIS result started, and only once: the flow is shared, and its last state stays after the run (and after leaving).
+    if (!rec?.pending || state === rec.since) return;
+    const settle = (outcome: CompletionOutcome | null, done: CompletedRun | null = rec.done): void => {
+      kept.completion = { ...rec, pending: false, outcome, result: state.status === 'done' ? state.result : null, done };
+      changed();
+    };
     if (state.status === 'done') {
       const res = state.result;
-      if (handled.current === res) return; // (the outcome report folds into the same state: already dealt with)
-      handled.current = res;
       const c = res.completion;
-      if (!res.rules || !c || c.fixedProblems.length > 0) setOutcome({ kind: 'kept', why: 'lock' });
-      else if (!c.matches) setOutcome({ kind: 'kept', why: 'mismatch' });
-      else if (c.produced.columns + c.produced.parts === 0) setOutcome({ kind: 'kept', why: 'nothing' });
+      if (!res.rules || !c || c.fixedProblems.length > 0) settle({ kind: 'kept', why: 'lock' });
+      else if (!c.matches) settle({ kind: 'kept', why: 'mismatch' });
+      else if (c.produced.columns + c.produced.parts === 0) settle({ kind: 'kept', why: 'nothing' });
       else {
         // DECISION: replaced as a fresh start (`reset`), so this step is not in the undo history; what the user changed before stays marked
         // "edited" and what the AI step added does not. Edits made while it worked (other fields: the asked ones were read-only) are merged in.
         const s = store.getState();
-        const edited = s.rev !== revAtStart.current;
-        const next = edited && baseRules.current ? mergeRules<EditableRules>(baseRules.current, s.rules, res.rules) : edited ? null : res.rules;
-        if (!next || (edited && !isCompletable(next))) setOutcome({ kind: 'kept', why: 'changed' });
+        const edited = s.rev !== rec.revAtStart;
+        const next = edited ? mergeRules<EditableRules>(rec.baseRules, s.rules, res.rules) : res.rules;
+        if (!next || (edited && !isCompletable(next))) settle({ kind: 'kept', why: 'changed' });
         else {
-          onNotes?.(
+          notesRef.current?.(
             c.columns.map((i) => res.rules!.output.columns[i]?.header ?? ''),
             res.aiNotes ?? [],
           );
           store.reset(next, { exceptions: s.exceptions, oneTime: s.oneTime, edited: [...s.edited] });
-          if (res.verification) setDone({ result: res, verification: res.verification, ai: state.ai, filled: res.filled, ambiguous: res.ambiguous, oneTimers: res.oneTimers?.questions });
-          const partsAsked = c.parts.length;
-          setOutcome({ kind: 'done', asked: { columns: c.columns.length, parts: partsAsked }, produced: c.produced, merged: edited });
+          const done: CompletedRun | null = res.verification
+            ? { result: res, verification: res.verification, ai: state.ai, filled: res.filled, ambiguous: res.ambiguous, oneTimers: res.oneTimers?.questions }
+            : null;
+          settle({ kind: 'done', asked: { columns: c.columns.length, parts: c.parts.length }, produced: c.produced, merged: edited }, done);
         }
       }
     } else if (state.status === 'error') {
-      if (handled.current === state.error) return;
-      handled.current = state.error;
-      setOutcome({ kind: 'error', error: state.error });
+      settle({ kind: 'error', error: state.error });
     } else if (state.status === 'notReady') {
-      if (handled.current === state.result) return;
-      handled.current = state.result;
-      setOutcome({ kind: 'notReady', result: state.result });
+      settle({ kind: 'notReady', result: state.result });
     } else if (state.status === 'blocked' || state.status === 'warn') {
       // (not expected: the files were analysed a moment ago, the same way) Never leave the flow waiting for an answer nobody can give here.
-      if (handled.current === state) return;
-      handled.current = state;
       session.completion.cancel();
-      setOutcome({ kind: 'error', error: { kind: 'unexpected', message: state.status } });
+      settle({ kind: 'error', error: { kind: 'unexpected', message: state.status } });
+    } else if (state.status === 'idle') {
+      settle(null); // cancelled meanwhile (a new learn, Start over): nothing came of it
     }
-  }, [state, store, session.completion]);
+  }, [state, kept, store, session.completion]);
 
   const start = (plan: CompletionPlanInput): void => {
-    setOutcome(null);
-    setAsked({ columns: plan.columns.map((i) => plan.fixedRules.output.columns[i]?.header ?? ''), parts: [...plan.parts] });
-    revAtStart.current = store.getState().rev;
-    baseRules.current = plan.fixedRules;
+    const prev = kept.completion;
+    kept.completion = {
+      pending: true,
+      since: session.completion.state,
+      revAtStart: store.getState().rev,
+      baseRules: plan.fixedRules,
+      asked: { columns: plan.columns.map((i) => plan.fixedRules.output.columns[i]?.header ?? ''), parts: [...plan.parts] },
+      outcome: null,
+      result: null,
+      done: prev?.done ?? null,
+    };
+    changed();
     session.completeWithAi({ ...plan, exampleId });
   };
 
-  // The report of the run that applied (its counted/quota arrive a moment after the answer itself).
+  const rec = kept.completion;
+  const done = rec?.done ?? null;
+  const outcome = rec?.outcome ?? null;
+  const ours = rec?.pending === true && state !== rec.since;
+  // The report of the last run (its counted/quota arrive a moment after the answer itself), and of the run that applied.
+  const last = rec?.result && state.status === 'done' && state.result === rec.result ? state.ai : undefined;
   const live = done && state.status === 'done' && state.result === done.result ? state.ai : undefined;
   const ai = done ? (live ?? done.ai) : undefined;
-  const exhausted =
-    (state.status === 'done' && state.ai?.exhausted === true) || (outcome?.kind === 'error' && outcome.error.kind === 'api' && outcome.error.code === 'aiAttemptsExhausted');
+  const exhausted = last?.exhausted === true || (outcome?.kind === 'error' && outcome.error.kind === 'api' && outcome.error.code === 'aiAttemptsExhausted');
 
   return {
-    running: isRunning(state),
-    round: state.status === 'learning' && state.round ? state.round : null,
-    checkRound: state.status === 'learning' && state.checkRound ? state.checkRound : null,
-    columnsAsked,
-    asked,
+    running: ours && isRunning(state),
+    round: ours && state.status === 'learning' && state.round ? state.round : null,
+    checkRound: ours && state.status === 'learning' && state.checkRound ? state.checkRound : null,
+    columnsAsked: rec?.asked.columns.length ?? 0,
+    asked: rec?.asked ?? null,
     outcome,
     completed: done ? { verification: done.verification, ai, filled: done.filled, ambiguous: done.ambiguous, oneTimers: done.oneTimers } : null,
     exhausted,
