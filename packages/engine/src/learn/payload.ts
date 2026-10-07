@@ -475,7 +475,7 @@ function maskHintList(hints: readonly HintCandidate[], analysis: PairAnalysis, m
 
 /**
  * Completion mode (amendment 2026-10-06): a number constant of the rules to keep that is a value of a column masked as an ID is masked
- * here once, like that column's cells, so `maskRules` sends its fake (`Masker.fakeNumberOf`) - even when no row this payload sends holds it.
+ * here once, like that column's cells, so `maskFixedRules` sends its fake (`Masker.fakeNumberOf`) - even when no row this payload sends holds it.
  */
 function registerIdConstants(analysis: PairAnalysis, rules: LearnResult | Rules, masker: Masker): void {
   const wanted = new Set<number>();
@@ -676,7 +676,7 @@ export function buildPayload(analysis: PairAnalysis, preflight: PreflightResult,
     if (droppedBuilt.length > 0) payload.dropped = droppedBuilt;
     if (preflight.skipColumns.length > 0) payload.skipColumns = preflight.skipColumns;
     if (opts.target) payload.target = buildTargetPayload(opts.target, masker);
-    if (opts.complete) payload.complete = completePayloadOf(opts.complete, masker);
+    if (opts.complete) payload.complete = completePayloadOf(opts.complete, masker, analysis);
 
     return { payload, sampleRows: samplesBuilt.sampleRows, droppedRows: [...droppedPriority] };
   };

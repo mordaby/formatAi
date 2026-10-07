@@ -37,7 +37,8 @@ import { restoreFixed } from '../registry/restoreFixed';
 import { columnsWithRule, completionProduced, isCompletable, learnResultOf, type CompleteOptions } from './complete';
 import { ambiguousColumns, fastPath } from './fastPath';
 import { loopCaps, loopStep, startLoop, wrongCount, type LoopRound, type LoopSummary } from './loop';
-import { createMasker, maskRules, unmaskRules, type Masker } from './mask';
+import { createMasker, unmaskRules, type Masker } from './mask';
+import { maskFixedRules } from './maskFixed';
 import { partialRules, type PartialRulesResult } from './partial';
 import { preflight, type PreflightResult } from './preflight';
 import { aiReadiness, type AiReadiness } from './readiness';
@@ -485,7 +486,7 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   const asked = complete ? { columns: complete.columns, parts: complete.parts } : null;
   const fixedLock = (r: LearnResult): FixedProblem[] => (complete && asked ? checkFixedLock(r, complete.fixedRules, asked) : []);
   // The fixed rules in the answer's vocabulary (masked like `complete.fixed`), for putting back what an answer changed (`restoreFixed`).
-  const maskedFixed = complete ? (masker ? maskRules(learnResultOf(complete.fixedRules), masker) : learnResultOf(complete.fixedRules)) : null;
+  const maskedFixed = complete ? (masker ? maskFixedRules(learnResultOf(complete.fixedRules), masker, analysis) : learnResultOf(complete.fixedRules)) : null;
   // What "the answer is good" means: a plain learn - the full verification; completion - that too, but a column with no rule does not count.
   // DECISION: in completion mode "matches the example" is relative to the user's own rules - the AI step answers for the columns it produced
   // (every cell must match) and must not make anything else worse; a difference the fixed rules already had (an edit that departs from the

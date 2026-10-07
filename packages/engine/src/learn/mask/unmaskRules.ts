@@ -183,23 +183,22 @@ export function unmaskRules<T>(rules: T, masker: Pick<Masker, 'fakeToReal'> & Pa
 }
 
 /**
- * The inverse of `unmaskRules`: a deep copy of `rules` (real Expr trees, not formula text) with every constant
- * masked like the samples are (SPEC 7.2) - the `complete.fixed` of a completion call. A pure-digit constant is
- * masked like an ID cell (so it matches a masked ID in the samples), a constant with a letter like text, and a
- * constant with neither (a separator, a date) stays; label words the payload sends real stay real. Structural
- * fields are untouched, exactly as in `unmaskRules`. A NUMBER constant that is a real ID the masker has masked
- * as a number (amendment 2026-10-06, `Masker.fakeNumberOf`) is masked like it; every other number stays real.
+ * The inverse of `unmaskRules`: a deep copy of `rules` (real Expr trees, not formula text) with EVERY constant
+ * masked, when nothing says which column it belongs to: a pure-digit constant like an ID cell (so it matches a
+ * masked ID in the samples), anything else like text (`maskText`: a date, a no-value placeholder and punctuation
+ * stay; label words the payload sends real stay real). Structural fields are untouched, exactly as in
+ * `unmaskRules`. A NUMBER constant that is a real ID the masker has masked as a number (amendment 2026-10-06,
+ * `Masker.fakeNumberOf`) is masked like it; every other number stays real.
+ *
+ * Amendment 2026-10-07 (engine audit): a completion call masks the user's rules by their columns' classes
+ * (`learn/maskFixed.ts`); this is the fallback with no example. It decided by the constant's shape before -
+ * digits longer than 9 and text with no letter were sent real ("0501234567", "050-1234567").
  */
 export function maskRules<T>(rules: T, masker: Pick<Masker, 'maskText' | 'maskIdLike'> & Partial<Pick<Masker, 'fakeNumberOf'>>): T {
   const fakeNumberOf = masker.fakeNumberOf;
   return mapRuleConstants(
     rules,
-    (s) => {
-      if (/^[0-9]{1,9}$/.test(s)) return masker.maskIdLike(s);
-      // No letter at all (a separator, a date like 2026-01-31, a number written as text): sent real, like numbers and dates are in the samples.
-      if (!/\p{L}/u.test(s)) return s;
-      return masker.maskText(s);
-    },
+    (s) => (/^[0-9]+$/.test(s) ? masker.maskIdLike(s) : masker.maskText(s)),
     fakeNumberOf ? (n) => fakeNumberOf(n) ?? n : undefined,
   );
 }
