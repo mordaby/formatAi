@@ -22,7 +22,7 @@ Calm, like a well-kept paper ledger. Simple (one main action per screen, the jou
 Provide a dark theme from the same roles (dark paper, light ink, teal/amber kept as roles).
 
 ## Type
-- **IBM Plex Sans Hebrew** (Google Fonts) for everything, Hebrew and Latin; weights 400 and 500 only.
+- **IBM Plex Sans Hebrew** for everything, Hebrew and Latin; weights 400 and 500 only. Self-hosted (`apps/web/public/fonts`, the official IBM release, OFL), never loaded from a font provider.
 - `font-variant-numeric: tabular-nums` in grids, counts and amounts.
 - Sizes: 13px UI small, 15px body, 18px section, 22–28px page title.
 

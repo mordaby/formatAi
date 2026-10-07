@@ -14,10 +14,9 @@ import type { FastifyInstance } from 'fastify';
 /**
  * The Content-Security-Policy of the app. Every external origin the app really loads, and nothing more:
  *  - Cloudflare Turnstile: its script (`api.js`) and the challenge iframe, both from challenges.cloudflare.com;
- *  - Google Fonts (docs/design-plan.md: IBM Plex Sans Hebrew): the stylesheet from fonts.googleapis.com, the font files
- *    from fonts.gstatic.com;
  *  - the account avatar: a Google profile picture (`*.googleusercontent.com`; Microsoft sends none).
- * Everything else is `'self'`: the bundle, the engine worker (a module worker built into /assets), and the API (`/api`).
+ * Everything else is `'self'`: the bundle, the engine worker (a module worker built into /assets), the API (`/api`) and the font
+ * (IBM Plex Sans Hebrew, served from /fonts since 2026-10-07 - no font provider sees a visitor, so `font-src` is `'self'` only).
  *
  * DECISION: `style-src` keeps `'unsafe-inline'`. The app's own inline styles are set through the CSSOM (React's `style`
  * prop), which CSP allows; the allowance is for Turnstile's widget, which injects style elements into the page (Cloudflare
@@ -26,8 +25,8 @@ import type { FastifyInstance } from 'fastify';
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self' https://challenges.cloudflare.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
   "img-src 'self' data: https://*.googleusercontent.com",
   "connect-src 'self'",
   'frame-src https://challenges.cloudflare.com',

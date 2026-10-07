@@ -6,3 +6,4 @@
 *.csv binary
 eval/cases/**/*.txt binary
 packages/engine/test/golden/cases/**/*.txt binary
+*.woff2 binary
