@@ -86,12 +86,13 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
   const final = leftover && !running && (!p.free || (p.who === 'user' && (noneLeft || exhausted)));
 
   // ----- what the last run came to -----
+  // (`done` and `kept` are said in the panel's status region, which is there before they are; a failure is an alert)
   const notice = ((): ReactNode => {
     if (running || !outcome || quotaHit) return null;
     if (outcome.kind === 'done') {
       const { asked, produced } = outcome;
       return (
-        <div className="deep__notice" role="status">
+        <div className="deep__notice">
           <p data-testid="completion-done">
             <Icon name="check" size={16} /> {t('deep.done')}
           </p>
@@ -110,7 +111,7 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
               ? t('complete.kept.nothing')
               : t('complete.kept.changed');
       return (
-        <div className="deep__notice" role="status">
+        <div className="deep__notice">
           <p className="deep__notice-title">{t('complete.kept.title')}</p>
           <p data-testid="completion-kept">{text}</p>
           <p className="muted">{t('complete.kept.todo')}</p>
@@ -141,6 +142,9 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
       </div>
     );
   })();
+
+  /** What the run came to is said in the status region (the others - a failure, the readiness gate - are alerts of their own). */
+  const quiet = outcome?.kind === 'done' || outcome?.kind === 'kept';
 
   // ----- the fields -----
   const fieldText = (header: string, external: boolean): ReactNode => (
@@ -227,27 +231,31 @@ export function DeepAnalysisPanel(p: DeepAnalysisPanelProps) {
         {p.free ? t('deep.title.free', { solved, total: p.total }) : t('deep.title', { solved, total: p.total })}
       </h2>
 
-      {running ? (
-        <div role="status">
-          <p className="deep__running" data-testid="completion-running">
-            <Spinner size={14} /> {t('deep.running')}
-          </p>
-          {completion.columnsAsked > 0 ? <p className="muted">{t(completion.columnsAsked === 1 ? 'deep.running.fields.one' : 'deep.running.fields.other', { n: completion.columnsAsked })}</p> : null}
-          {completion.checkRound ? (
-            <p className="muted" data-testid="completion-checks">
-              {checkRoundText(t, completion.checkRound)}
+      {/* The status region is there (empty) before the run: what it says - the run's progress, then what it came to - is read out as it changes. */}
+      <div role="status" data-testid="deep-status">
+        {running ? (
+          <div>
+            <p className="deep__running" data-testid="completion-running">
+              <Spinner size={14} /> {t('deep.running')}
             </p>
-          ) : null}
-          {completion.round ? (
-            <p className="muted" data-testid="completion-round">
-              {roundText(t, completion.round)}
-            </p>
-          ) : null}
-          <p className="deep__note">{t('deep.running.note')}</p>
-        </div>
-      ) : null}
+            {completion.columnsAsked > 0 ? <p className="muted">{t(completion.columnsAsked === 1 ? 'deep.running.fields.one' : 'deep.running.fields.other', { n: completion.columnsAsked })}</p> : null}
+            {completion.checkRound ? (
+              <p className="muted" data-testid="completion-checks">
+                {checkRoundText(t, completion.checkRound)}
+              </p>
+            ) : null}
+            {completion.round ? (
+              <p className="muted" data-testid="completion-round">
+                {roundText(t, completion.round)}
+              </p>
+            ) : null}
+            <p className="deep__note">{t('deep.running.note')}</p>
+          </div>
+        ) : null}
+        {quiet ? notice : null}
+      </div>
 
-      {notice}
+      {quiet ? null : notice}
       {/* None left: said first, where it explains why the AI step is not offered. */}
       {p.who === 'user' && noneLeft && p.quota && !running && !done ? <AiLimitNotice period={p.quota.period} /> : null}
       {fields}

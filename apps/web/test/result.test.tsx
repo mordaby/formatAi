@@ -254,6 +254,53 @@ describe('the live check strip', () => {
     // (no file is made from rules that cannot run, either)
     expect((screen.getByRole('button', { name: 'Download the file' }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  // The audit's C9: the problems were English-only in the Hebrew UI (the whole list marked lang="en"), and an alert said again after every edit.
+  it('says the problems in Hebrew in the Hebrew UI: only the checker\'s own words a sentence quotes stay English, and are marked so', async () => {
+    await openResult({
+      lang: 'he',
+      staticProblems: [
+        { layer: 'references', kind: 'reference', path: 'transform.sort[0].column', message: 'unknown column id "ghost"' },
+        { layer: 'types', kind: 'type', path: 'output.columns[3]', message: 'expected decimal, got text' },
+        { layer: 'formatLock', kind: 'header', path: 'output.columns[0].header', message: 'must equal the format\'s header "Item", got "Vendor"' },
+      ],
+    });
+    const list = await screen.findByTestId('check-problems');
+    const items = within(list).getAllByRole('listitem');
+    expect(items.map((li) => li.textContent)).toEqual([
+      'מיון: יש בו שימוש בעמודה ("ghost") שלא קיימת.',
+      'העמודה "Total": סוגי הערכים מתערבבים - צריך מספר אבל מתקבל טקסט.',
+      'העמודה "Item": כבר לא תואם לפורמט שהמקור הזה שייך אליו (must equal the format\'s header "Item", got "Vendor").',
+    ]);
+    expect(items.some((li) => li.getAttribute('lang') === 'en')).toBe(false);
+    const english = items[2]!.querySelector('[lang="en"]')!;
+    expect(english.textContent).toBe('must equal the format\'s header "Item", got "Vendor"');
+    expect(english.getAttribute('dir')).toBe('ltr');
+    expect(items[0]!.querySelector('[lang="en"]')).toBeNull();
+  });
+
+  it('the problems are said by a polite live region that is always there - not an alert - and an edit that leaves them as they were says nothing again', async () => {
+    const { staticChecks } = await openResult({ staticProblems: [{ layer: 'references', kind: 'reference', path: 'transform.sort[0].column', message: 'unknown column id "ghost"' }] });
+    const live = screen.getByTestId('check-problems-live');
+    expect(live.getAttribute('aria-live')).toBe('polite');
+    await waitFor(() => expect(live.textContent).toBe('Fix these before you save: Sort uses a column ("ghost") that does not exist.'));
+    const list = screen.getByTestId('check-problems');
+    expect(list.closest('[role="alert"]')).toBeNull();
+    expect(list.querySelector('[role="alert"]')).toBeNull();
+    const said: MutationRecord[] = [];
+    const watch = new MutationObserver((records) => said.push(...records));
+    watch.observe(live, { childList: true, characterData: true, subtree: true });
+    const checks = staticChecks.mock.calls.length;
+    fireEvent.click(document.querySelector('[data-line-id="col:Supplier"] .map-line__main') as HTMLElement);
+    fireEvent.change(screen.getByLabelText('Column name'), { target: { value: 'Vendor' } });
+    await waitFor(() => expect(staticChecks.mock.calls.length).toBeGreaterThan(checks));
+    await waitFor(() => expect(document.querySelector('[data-line-id="col:Vendor"]')).toBeTruthy());
+    await new Promise((r) => setTimeout(r, 50));
+    watch.disconnect();
+    expect(said).toEqual([]);
+    // (the list stayed on screen while the edit was checked: the same element)
+    expect(screen.getByTestId('check-problems')).toBe(list);
+  });
 });
 
 describe('the free tier', () => {

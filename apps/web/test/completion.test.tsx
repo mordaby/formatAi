@@ -157,6 +157,20 @@ describe('"Finish with AI" completes only what is missing', () => {
     expect(screen.getByText('Everything you had was kept as it was.', { exact: false })).toBeTruthy();
   });
 
+  it('the panel\'s status region is there, empty, before the run - and the run\'s progress, then what it came to, are said in it (C9)', async () => {
+    let release!: () => void;
+    const { engine } = engineWith((args) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(args)))));
+    await start(engine);
+    const region = screen.getByTestId('deep-status');
+    expect(region.getAttribute('role')).toBe('status');
+    expect(region.textContent).toBe('');
+    fireEvent.click(finishButton());
+    await waitFor(() => expect(within(region).getByTestId('completion-running')).toBeTruthy());
+    await act(async () => release());
+    await waitFor(() => expect(within(region).getByTestId('completion-done')).toBeTruthy());
+    expect(screen.getByTestId('deep-status')).toBe(region); // the same region all along
+  });
+
   it('while it works the rules stay as they are, and the button says it is busy', async () => {
     let release!: (o: LearnOutput) => void;
     const { engine } = engineWith((args) => new Promise<LearnOutput>((resolve) => (release = () => resolve(completionOutput(args)))));
