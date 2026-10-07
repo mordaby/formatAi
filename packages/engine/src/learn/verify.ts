@@ -61,6 +61,14 @@ export interface VerifyOptions {
    * produce are still reported. An empty list checks nothing: `verified` is false with 0 of 0 rows.
    */
   onlyColumns?: number[];
+  /**
+   * Amendment 2026-10-07 (engine audit): these output columns (0-based) are not compared - their cells in the data rows and in the summary
+   * rows - and EVERYTHING ELSE is checked as in the full verification: the row count, the row order and the title, header, blank and
+   * summary rows. For a learn whose answer has no rule for some columns (an honest "unsupported"): unlike `onlyColumns`, which skips the
+   * whole layout, a rules file missing its title, blank or "Total" rows is never `verified`. Every column skipped compares nothing: not
+   * verified.
+   */
+  skipColumns?: number[];
 }
 
 export interface Mismatch {
@@ -318,7 +326,7 @@ function layoutValue(seen: Seen, masker: Masker | undefined, headers: ReadonlySe
   return JSON.stringify(headers?.has(v) ? v : masker.maskText(v));
 }
 
-function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[], masker?: Masker): LayoutIssue[] {
+function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[], masker?: Masker, skip?: ReadonlySet<number>): LayoutIssue[] {
   const delimited = analysis.layout.file.type !== 'xlsx';
   // SPEC 8.13: a headerless output has no header row in the real file (rowKinds never
   // marks one), but the engine's own OutputSheet model always carries one structurally
@@ -358,6 +366,8 @@ function compareLayoutRows(analysis: PairAnalysis, actualRows: readonly OutRow[]
     const width = Math.max(expectedRow.length, act.row.cells.length);
     const headers = exp.category === 'header' ? knownHeaders : null;
     for (let c = 0; c < width; c++) {
+      // (A skipped column's summary cell, an aggregate of a column with no rule, is not compared: `VerifyOptions.skipColumns`.)
+      if (exp.category === 'summary' && skip?.has(c)) continue;
       const expectedVal = expectedSeen(expectedRow[c]);
       const actualVal = actualSeen(act.row.cells[c]);
       if (!cellsMatch(expectedVal, actualVal, delimited)) {
@@ -452,6 +462,9 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   const oneTime: Mismatch[] = [];
   const masker = opts.masker;
   const only = opts.onlyColumns !== undefined ? new Set(opts.onlyColumns) : null;
+  const skip = opts.skipColumns !== undefined && opts.skipColumns.length > 0 ? new Set(opts.skipColumns) : null;
+  /** Whether output column `c`'s cells are compared. */
+  const compared = (c: number): boolean => (only === null || only.has(c)) && (skip === null || !skip.has(c));
 
   const result = runRules(rules, exampleTable(analysis), {});
 
@@ -547,7 +560,7 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
       total++;
       let rowOk = true;
       for (let c = 0; c < analysis.output.columnCount; c++) {
-        if (only !== null && !only.has(c)) continue;
+        if (!compared(c)) continue;
         const expected = expectedCells[c] ?? null;
         const actual = actualCellValue(actualRow?.cells[c]);
         if (!cellsMatch(expectedSeen(expectedRaw?.[c]), actualSeen(actualRow?.cells[c]), delimited)) {
@@ -619,13 +632,15 @@ export function verifyAgainstExample(rules: LearnResult | Rules, analysis: PairA
   }
 
   // ---- layout: titles, header, summary rows, blank rows ----
-  for (const issue of only === null ? compareLayoutRows(analysis, result.sheet.rows, masker) : []) {
+  for (const issue of only === null ? compareLayoutRows(analysis, result.sheet.rows, masker, skip ?? undefined) : []) {
     layoutIssues.push({ code: issue.code, message: issue.message });
     repairProblems.push({ kind: 'layout', message: issue.repair });
   }
 
   const layoutProblems = layoutIssues.map((i) => i.message);
-  const verified = layoutProblems.length === 0 && repairProblems.length === 0 && matched === total;
+  // (Every column skipped compares no cell: nothing produced is never verified.)
+  const anyCompared = skip === null || Array.from({ length: analysis.output.columnCount }, (_, c) => c).some(compared);
+  const verified = anyCompared && layoutProblems.length === 0 && repairProblems.length === 0 && matched === total;
 
   return {
     verified,

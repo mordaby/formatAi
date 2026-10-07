@@ -472,14 +472,17 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   // DECISION (SPEC 4/8.10: a partial, correct rules file beats a complete, wrong one; an unsupported column is "needs your input", not an
   // error): a plain learn is checked on the columns that have a rule - one the AI step honestly reported as unsupported (`from: null` plus
   // an entry, typically `externalData`) would differ on every row and is left out, so the learn is `verified` when everything produced matches.
-  // Nothing produced at all checks nothing (`onlyColumns: []`: never verified). The same rule as the editor's live check. When every column has
-  // a rule this is the full verification (layout rows included). Completion mode keeps the full verification: its own `matchesExample` below
-  // already leaves out a column that has no rule.
+  // Nothing produced at all checks nothing (never verified). Amendment 2026-10-07 (engine audit): only those columns' CELLS are left out
+  // (`skipColumns`) - the row count, the row order and the title, header, blank and summary rows are checked as always (`onlyColumns` skipped
+  // them all, so rules missing the title, the blank and the "Total" rows were `verified`). When every column has a rule this is the full
+  // verification. Completion mode keeps the full verification: its own `matchesExample` below already leaves out a column that has no rule.
   const verifyAnswer = (r: LearnResult): VerifyResult => {
     const base = { wrongRows: true, ...(masker ? { masker } : {}) };
     if (complete) return verifyAgainstExample(r, analysis, base);
-    const withRule = columnsWithRule(r);
-    return verifyAgainstExample(r, analysis, withRule.length < r.output.columns.length ? { ...base, onlyColumns: withRule } : base);
+    const withRule = new Set(columnsWithRule(r));
+    if (withRule.size === 0) return verifyAgainstExample(r, analysis, { ...base, onlyColumns: [] });
+    const without = r.output.columns.flatMap((_, c) => (withRule.has(c) ? [] : [c]));
+    return verifyAgainstExample(r, analysis, without.length > 0 ? { ...base, skipColumns: without } : base);
   };
   // Completion mode: the answer must also still contain the user's rules, unchanged (the API checked this on the masked
   // copies; this is the same check on the real ones, before anything replaces what the user has).
