@@ -176,7 +176,8 @@ export async function measureFast(p: Prepared): Promise<{ record: FastRecord; le
 
   const totalColumns = analysis?.output.columnCount ?? p.type.outputs.length;
   const record: FastRecord = {
-    path: res.path === 'llm' ? 'error' : res.path,
+    // (no `known` is given here, so 'known' - "you already have this format" - never comes back)
+    path: res.path === 'llm' || res.path === 'known' ? 'error' : res.path,
     status: 'none',
     verified: res.verification ? res.verification.verified : null,
     solvedColumns: [],
