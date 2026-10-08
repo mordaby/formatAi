@@ -21,7 +21,7 @@ import { tiers } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../../api/http';
 import { useConvertApi } from '../../api/convert';
-import { downloadBytes, outputFileName } from '../../flow/download';
+import { downloadBytes, outputFileName, outputMimeType } from '../../flow/download';
 import { isCancellation } from '../../flow/errors';
 import { useI18n, type I18n } from '../../i18n';
 import { useServices } from '../../services';
@@ -62,8 +62,10 @@ export interface BatchItem {
   flags: Flag[];
   /** A flag's column id as the user knows it (the file's column header), for the flag lists. */
   columnLabels: Record<string, string>;
-  /** The name of the converted file inside the zip. */
+  /** The name of the converted file inside the zip (and of its own download). */
   outputName?: string;
+  /** The converted file's type, for its own download. */
+  fileType?: 'xlsx' | 'csv' | 'txt';
 }
 
 /** `matching`: every file is matched before anything is converted; `choosing`: the batch's one question, which formats to make. */
@@ -126,6 +128,10 @@ export interface UseBatchFlow {
   stop(): void;
   downloadZip(): void;
   downloadSummary(): void;
+  /** Whether this converted item's file can be downloaded on its own (it was made in this run). */
+  canDownloadFile(id: number): boolean;
+  /** Downloads one converted file on its own, next to the zip. */
+  downloadFile(id: number): void;
   reset(): void;
 }
 
@@ -279,6 +285,7 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
           flags: out.flags,
           columnLabels: Object.fromEntries([...new Set(out.flags.map((f) => f.column))].map((c) => [c, columnLabel(rules, c)])),
           outputName: outputFileName(item.file.name, rules),
+          fileType: out.fileType,
         },
       };
     },
@@ -530,8 +537,16 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
     if (downloads) downloadBytes(i18nRef.current.t('batch.summary.file'), downloads.summary, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   }, [downloads]);
 
+  // One converted file on its own (owner, 2026-10-08): its bytes are kept until the next run or "Start another batch".
+  const canDownloadFile = useCallback((id: number) => outputs.current.has(id), []);
+  const downloadFile = useCallback((id: number) => {
+    const bytes = outputs.current.get(id);
+    const item = itemsRef.current.find((i) => i.id === id);
+    if (bytes && item) downloadBytes(item.outputName ?? item.file.name, bytes, outputMimeType(item.fileType));
+  }, []);
+
   const done = useMemo(() => new Set(items.filter((i) => i.status !== 'queued' && i.status !== 'running').map((i) => i.fileId)).size, [items]);
   const total = useMemo(() => new Set(items.map((i) => i.fileId)).size, [items]);
 
-  return { phase, items, done, total, matched, choices, stopped, packError, downloads, filesPerRun, add, remove, clear, run, choose, cancelChoice, stop, downloadZip, downloadSummary, reset };
+  return { phase, items, done, total, matched, choices, stopped, packError, downloads, filesPerRun, add, remove, clear, run, choose, cancelChoice, stop, downloadZip, downloadSummary, canDownloadFile, downloadFile, reset };
 }

@@ -171,6 +171,14 @@ describe('a batch, file by file', () => {
     expect(downloaded).toHaveBeenLastCalledWith('formatAI batch.zip', expect.any(ArrayBuffer), 'application/zip');
     fireEvent.click(screen.getByRole('button', { name: 'Download the summary sheet' }));
     expect(downloaded).toHaveBeenLastCalledWith('formatAI batch summary.xlsx', expect.any(ArrayBuffer), expect.stringContaining('spreadsheetml'));
+    // Each converted file also has its own Download; a file that was not converted has none.
+    fireEvent.click(screen.getByRole('button', { name: 'Download b.csv (Load file)' }));
+    expect(downloaded).toHaveBeenLastCalledWith(expect.stringMatching(/^b \(converted\)\./), expect.any(ArrayBuffer), 'text/csv');
+    expect(screen.getAllByRole('button', { name: /^Download .+\.csv \(/ }).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Download a.csv (Load file)',
+      'Download b.csv (Load file)',
+      'Download e.csv (ERP load)',
+    ]);
   });
 
   it('POST /runs per converted file carries counts only: no values, headers or file names', async () => {

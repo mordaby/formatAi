@@ -121,7 +121,7 @@ export function BatchResults({ flow }: { flow: UseBatchFlow }) {
           </h3>
           <ul className="bfiles">
             {g.items.map((i) => (
-              <BatchFileRow key={i.id} item={i} />
+              <BatchFileRow key={i.id} item={i} onDownload={flow.canDownloadFile(i.id) ? () => flow.downloadFile(i.id) : undefined} />
             ))}
           </ul>
         </section>
@@ -130,7 +130,8 @@ export function BatchResults({ flow }: { flow: UseBatchFlow }) {
   );
 }
 
-function BatchFileRow({ item }: { item: BatchItem }) {
+/** One file's result for one format; a converted one has its own Download beside its status (`onDownload`), next to the zip. */
+function BatchFileRow({ item, onDownload }: { item: BatchItem; onDownload?: () => void }) {
   const i18n = useI18n();
   const { t, code, lang } = i18n;
   const nf = new Intl.NumberFormat(lang);
@@ -162,7 +163,14 @@ function BatchFileRow({ item }: { item: BatchItem }) {
           </details>
         ) : null}
       </div>
-      <StatusBadge status={item.status} />
+      <div className="bfile__end">
+        {onDownload ? (
+          <Button variant="ghost" size="sm" icon="file" aria-label={t('batch.downloadOne.label', { name: item.file.name, format: item.formatName ?? '' })} onClick={onDownload}>
+            {t('batch.downloadOne')}
+          </Button>
+        ) : null}
+        <StatusBadge status={item.status} />
+      </div>
     </li>
   );
 }

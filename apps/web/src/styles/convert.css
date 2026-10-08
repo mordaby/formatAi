@@ -369,6 +369,15 @@
 .bfile[data-status='needsAttention'] .muted {
   color: inherit;
 }
+/* A converted file's own Download, beside its status (the zip stays the main download). */
+.bfile__end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  flex-shrink: 0;
+}
 .bfile__actions {
   display: flex;
   flex-wrap: wrap;
