@@ -41,13 +41,13 @@ services:
       # full version such as 24.11.0.
       - key: NODE_VERSION
         value: "24"
-      # The production LLM is the Anthropic API (the dev "claude-cli" provider cannot run here, and the start check refuses it).
+      # The production LLM: OpenAI for now (owner decision 2026-10-08), with no fallback. The dev "claude-cli" provider cannot run here,
+      # and the start check refuses it. KEEP THIS IN STEP WITH THE DASHBOARD: a Blueprint sync writes this value over the dashboard's,
+      # and the start check refuses a provider without its key - with `anthropic` here and no ANTHROPIC_API_KEY, every deploy from #70
+      # to #80 failed to start (2026-10-07..08) while Render kept the old version serving.
+      # Back to the designed setup (SPEC 9.6): `anthropic` here, ANTHROPIC_API_KEY in the dashboard, and LLM_FALLBACK_PROVIDER=openai
+      # below (a call Anthropic cannot serve is made once more on OpenAI) - docs/deploy.md 2 and 2b.
       - key: LLM_PROVIDER
-        value: anthropic
-      # The fallback (SPEC 9.6, owner request 2026-10-05): a call Anthropic cannot serve (an outage, a timeout, a rate limit, its
-      # overloaded error, a rejected key) is made once more on OpenAI's gpt-5-mini / gpt-5. It needs OPENAI_API_KEY (asked for below; the
-      # start check refuses to start without it). To turn the fallback off, delete this variable in the dashboard (docs/deploy.md).
-      - key: LLM_FALLBACK_PROVIDER
         value: openai
       # Render's load balancer is in front of the process: without this every visitor looks like the proxy to the per-IP limits.
       # (Render appends to X-Forwarded-For; see docs/deploy.md "Known limit" about "true" versus a hop count.)
@@ -70,9 +70,10 @@ services:
       # ---- asked for once, when the Blueprint is created (sync: false) ----
       - key: MONGODB_URI
         sync: false
+      # Only needed while LLM_PROVIDER (or LLM_FALLBACK_PROVIDER) is `anthropic`; leave it empty with OpenAI alone.
       - key: ANTHROPIC_API_KEY
         sync: false
-      # The fallback provider's key (LLM_FALLBACK_PROVIDER=openai above): a key made for this app, with a monthly budget (docs/deploy.md step 2b).
+      # The production LLM's key (LLM_PROVIDER=openai above): a key made for this app, with a monthly budget (docs/deploy.md step 2b).
       - key: OPENAI_API_KEY
         sync: false
       - key: GOOGLE_CLIENT_ID

@@ -158,15 +158,15 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 |---|---|---|
 | `NODE_ENV=production` | `render.yaml` | Secure cookies, no dev routes, the web app served by the API, the start check |
 | `NODE_VERSION=24` | `render.yaml` | Node version on Render |
-| `LLM_PROVIDER=anthropic` | `render.yaml` | The production LLM is the Anthropic API (the start check refuses `claude-cli` and `fake`) |
-| `LLM_FALLBACK_PROVIDER=openai` | `render.yaml` | The fallback for a call Anthropic cannot serve (2b). Delete it to turn the fallback off |
+| `LLM_PROVIDER=openai` | `render.yaml` | The production LLM: OpenAI for now (owner, 2026-10-08; the start check refuses `claude-cli` and `fake`, and a provider without its key). Keep the dashboard and `render.yaml` in step: a Blueprint sync writes the file's value |
+| `LLM_FALLBACK_PROVIDER` | not set | No fallback while OpenAI is the provider. The designed setup is `LLM_PROVIDER=anthropic` + `LLM_FALLBACK_PROVIDER=openai` (2, 2b) |
 | `TRUST_PROXY=true` | `render.yaml` | Real client IP behind Render's proxy for the per-IP limits (see Known limits) |
 | `MONGODB_DB=formatai` | `render.yaml` | Database name inside the cluster |
 | `SESSION_SECRET` | Render (generated) | Signs the session and sign-in cookies; 32+ characters; changing it signs everyone out |
 | `IP_HASH_SECRET` | Render (generated) | Keys the per-IP counters and learn ids; 32+ characters |
 | `MONGODB_URI` | you (3.2) | Atlas connection string (1.4) |
-| `ANTHROPIC_API_KEY` | you (3.2) | Anthropic console (2.1) |
-| `OPENAI_API_KEY` | you (3.2) | OpenAI platform, the app's own project (2b.1); required while `LLM_FALLBACK_PROVIDER=openai` |
+| `ANTHROPIC_API_KEY` | you (3.2) | Anthropic console (2.1); only while Anthropic is the provider or the fallback |
+| `OPENAI_API_KEY` | you (3.2) | OpenAI platform, the app's own project (2b.1); required while OpenAI is the provider (now) or the fallback |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | you (4.3) | Google Cloud OAuth client |
 | `TURNSTILE_SITE_KEY` | you (5.2) | Cloudflare Turnstile widget, public; served to the browser at runtime |
 | `TURNSTILE_SECRET_KEY` | you (5.2) | Cloudflare Turnstile widget, secret |
@@ -215,7 +215,7 @@ Use `eval/cases/` as the examples: `orders-dedupe` (solved on your computer) and
 ```
 pnpm install --frozen-lockfile && pnpm build
 # set NODE_ENV=production, PORT (a spare one), PUBLIC_ORIGIN=http://localhost:<PORT>, MONGODB_URI (a local MongoDB), MONGODB_DB (a test name),
-# LLM_PROVIDER=anthropic + ANTHROPIC_API_KEY, SESSION_SECRET and IP_HASH_SECRET (32+ characters), the Google ids, and Cloudflare's
+# LLM_PROVIDER=openai + OPENAI_API_KEY, SESSION_SECRET and IP_HASH_SECRET (32+ characters), the Google ids, and Cloudflare's
 # test Turnstile keys (site 1x00000000000000000000AA, secret 1x0000000000000000000000000000000AA)
 cd apps/api && node --import tsx src/index.ts
 ```
