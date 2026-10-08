@@ -44,8 +44,10 @@ export interface LearnSession {
    * (owner decision: the AI step never runs unless the user chooses it - signed in or not); the learn waits until who is signed in is
    * known (`/api/me`) so its tier's limits are right. `opts.ai` says it outright (only "Finish with AI" as a whole learn does).
    * `opts.deep` sets `deepAnalysis` for this learn ("Learn with AI" true, "Learn the format" false); a retry leaves it as it was.
+   * A learn of the free engine first checks whether the user's saved rules already make this example ("You already have this format",
+   * owner decision 2026-10-07: a signed-in user with saved formats; the flow's `known` state) - unless `opts.anyway` ("Learn again anyway").
    */
-  begin(opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean }): void;
+  begin(opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean; anyway?: boolean }): void;
   /** The whole learn again, with the AI step allowed (signed in): "Finish with AI" when too little is solved to complete. It replaces the result on screen. */
   finishWithAi(): void;
   /**
@@ -110,7 +112,10 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   // (The Turnstile code stays: the lead form will use it.)
   // What either flow learns about the AI step - what is left, a refusal - is told the app the one way (app/aiReport.ts).
   const onAi = useOnAi();
-  const flow = useLearnFlow({ getTier, ready: whenMeKnown, onAi });
+  // "You already have this format": only a signed-in user who has saved formats (or whose count is not known yet) is checked - a visitor's
+  // learn does no extra work. Read when the learn starts, after who is signed in is known.
+  const mayCheckKnown = useCallback((): boolean => meRef.current.user !== null && (meRef.current.formatCount ?? 1) > 0, []);
+  const flow = useLearnFlow({ getTier, ready: whenMeKnown, onAi, mayCheckKnown });
   const completion = useLearnFlow({ getTier, ready: whenMeKnown, onAi });
   const [input, setInput] = useState<File | null>(null);
   const [output, setOutput] = useState<File | null>(null);
@@ -136,13 +141,15 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const { start, cancel: reset } = flow;
   const { start: startCompletion, cancel: resetCompletion } = completion;
   const begin = useCallback(
-    (opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean }) => {
+    (opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean; anyway?: boolean }) => {
       if (!input || !output) return;
       if (opts?.deep !== undefined) setDeepAnalysis(opts.deep);
       // A new learn replaces the result: a "Finish with AI" still at work on the old one has nothing left to finish.
       resetCompletion();
-      // (no `ai` given: the free engine only)
-      void start({ input, output, masking, columnChoices, ...(opts?.ai ? { ai: opts.ai } : {}) });
+      // (no `ai` given: the free engine only - and first the check for a saved format that already makes this example; "Finish with AI" and
+      // "Learn again anyway" go without it)
+      const checkKnown = opts?.ai !== 'allowed' && opts?.anyway !== true;
+      void start({ input, output, masking, columnChoices, ...(opts?.ai ? { ai: opts.ai } : {}), ...(checkKnown ? { checkKnown: true } : {}) });
     },
     [input, output, masking, columnChoices, start, resetCompletion],
   );
@@ -272,7 +279,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
         // when fields are missing (`deepAnalysis`). Not signed in after all (declined, failed): the files are back and nothing starts.
         resuming.current = true;
         setDeepAnalysis(true);
-        void startRef.current({ input: i, output: o, masking: record.masking, columnChoices: choices, ai: 'notAllowed' });
+        void startRef.current({ input: i, output: o, masking: record.masking, columnChoices: choices, ai: 'notAllowed', checkKnown: true });
       } else {
         restored();
       }
@@ -292,7 +299,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       // The same local analysis gives the same rules, so the kept (edited) rules are what the screen starts from.
       if (kept) seedResultSession(doneResult, { name: kept.name, rules: kept.rules, edited: kept.edited, exceptions: kept.exceptions });
       restored();
-    } else if (status === 'error' || status === 'blocked' || status === 'warn' || status === 'notReady') {
+    } else if (status === 'error' || status === 'blocked' || status === 'warn' || status === 'notReady' || status === 'known') {
       seed.current = null; // the kept learn did not come back as a result: nothing to put on top
       resuming.current = false;
       restored();

@@ -5,7 +5,7 @@
 // files fit comes from the plan (`tiers[tier].filesPerRun`). No LLM call, no upload.
 import { tiers, type Tier } from '@formatai/shared';
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMe } from '../../app/Me';
 import { useI18n } from '../../i18n';
 import { Button, DropZone, Icon, InlineMessage, Spinner } from '../../ui';
@@ -76,6 +76,19 @@ function ConvertTool({ tier }: { tier: Tier }) {
     // The files go to the batch: whatever the single-file flow was showing is put away.
     if (result.added > 0) flow.reset();
   };
+
+  // "You already have this format" -> "Convert files with it" (owner decision 2026-10-07): the example input comes along, already dropped - it
+  // runs as soon as the formats are read, as if the user had dropped it here. (Once; the address keeps no trace of it.)
+  const location = useLocation();
+  const handed = (location.state as { file?: unknown } | null)?.file;
+  const handedOver = useRef(false);
+  useEffect(() => {
+    if (handedOver.current || !(handed instanceof File) || sources.status !== 'ready') return;
+    handedOver.current = true;
+    navigate({ pathname: location.pathname, search: location.search }, { replace: true, state: null });
+    flow.start(handed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handed, sources.status]);
 
   // Coming back from the rules editor: convert the held file again, with the edited rules.
   const resumed = useRef(false);

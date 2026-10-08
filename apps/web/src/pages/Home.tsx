@@ -10,6 +10,7 @@ import { HomeActions } from './HomeActions';
 import { HomeForm } from './HomeForm';
 import { HomeHowItWorks } from './HomeHowItWorks';
 import { LearningError } from './LearningError';
+import { LearningKnown } from './LearningKnown';
 import { LearningNotReady } from './LearningNotReady';
 import { LearningPreflight } from './LearningPreflight';
 import { LearningProgress } from './LearningProgress';
@@ -21,6 +22,7 @@ function stepFor(status: LearnFlowStatus): StepNumber {
     case 'idle':
     case 'blocked':
     case 'notReady':
+    case 'known':
     case 'done':
       return 1;
     default:
@@ -77,6 +79,22 @@ export default function Home() {
     );
   } else if (state.status === 'notReady') {
     view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.cancel} />;
+  } else if (state.status === 'known') {
+    // "You already have this format": nothing was learned. To that format's Run screen with the example input already dropped (the learn page
+    // is back to its form, files kept, when the user comes back), or the learn they asked for, without the check.
+    const { formatId } = state.known;
+    const file = session.input;
+    view = (
+      <LearningKnown
+        key="known"
+        known={state.known}
+        onConvert={() => {
+          flow.cancel();
+          navigate(`/convert?format=${encodeURIComponent(formatId)}`, file ? { state: { file } } : undefined);
+        }}
+        onLearnAnyway={() => session.begin({ anyway: true })}
+      />
+    );
   } else if (state.status === 'error' && !isAiQuotaHit(state.error)) {
     // (a learn refused for the AI quota is no error screen: the form comes back with the out-of-AI-formats dialog, see AiLimitProvider)
     view = <LearningError key="error" error={state.error} onRetry={session.begin} onChangeFiles={flow.cancel} onSignIn={() => signIn.open('keepGoing')} />;

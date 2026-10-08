@@ -42,6 +42,7 @@ import { useCopiedListGate, type SaveChoice } from './CopiedListSave';
 import { columnKey, DeepAnalysisPanel, partKey } from './DeepAnalysisPanel';
 import { filledNote } from './filledNote';
 import { oneTimeQuestionsOf, questionsOf } from './helpers';
+import { Marked } from './Named';
 import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
 import { UnfinishedRows } from './UnfinishedRows';
@@ -535,6 +536,22 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
         />
       )}
       {aiInfo && <AiNote ai={aiInfo} verified={(completed ? completed.verification : result.verification)?.verified === true} />}
+      {/* "You already have this format", the other way (owner decision 2026-10-07): a saved format with this output, from this file, whose rules
+          make other values - so the rules were learned again. One line, until the first save. */}
+      {!source && result.knownDiffers ? (
+        <p className="muted" data-testid="known-differs">
+          <Marked
+            id="known.differs"
+            nodes={{
+              format: (
+                <strong>
+                  <bdi>{result.knownDiffers.formatName}</bdi>
+                </strong>
+              ),
+            }}
+          />
+        </p>
+      ) : null}
       {/* What the first save said, until a later save has something to say. (A new version of a saved source is said by the editor's notice.) */}
       {!laterSave && save.state.status === 'saved' && save.state.value.kind !== 'update' && (
         <InlineMessage tone="info" actions={<Link to="/formats">{t('save.viewFormats')}</Link>}>

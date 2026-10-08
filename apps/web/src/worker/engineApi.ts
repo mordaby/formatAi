@@ -7,7 +7,9 @@ import type {
   AnalysisStage,
   CompleteOptions,
   ConvertResult,
+  ExampleShape,
   Flag,
+  KnownCandidates,
   LearnCallResult,
   LearnFromExamplesResult,
   LoopRound,
@@ -74,6 +76,12 @@ export interface LearnArgs {
   keepExampleId?: string;
   /** "See what we send" (owner, 2026-10-07): the user's choice per column, hidden or sent as it is - for every request of this learn. */
   columnChoices?: UserColumnChoices;
+  /**
+   * "You already have this format" (owner decision 2026-10-07): before learning, check whether the user's saved rules already make this example
+   * (engine `findAlreadyLearned`); the saved formats are read through the host (`knownCandidates`, `knownRules`). Only for a signed-in user's
+   * learn from Home, who has saved formats. Result `path: 'known'` when they do.
+   */
+  checkKnown?: boolean;
 }
 
 /** Real progress from the worker. `reading` runs until the first analysis event; `learning`/`verifying` only happen on the LLM path. */
@@ -137,6 +145,13 @@ export interface LearnHost {
   callLearn(payload: LearnPayload, columns?: SentColumns): Promise<LearnCallResult>;
   callRepair(payload: LearnPayload, previousRules: LearnResult, problems: RepairProblem[], round: LoopRound): Promise<LearnCallResult>;
   callStep(payload: LearnPayload, rounds: CheckRound[]): Promise<LearnCallResult>;
+  /**
+   * "You already have this format" (`LearnArgs.checkKnown`): the user's saved formats whose output has the example's headers and file kind,
+   * with their conversions, and every source's signature (GET /api/formats, /api/formats/:id, /api/signatures: structure only - nothing of the
+   * example is sent); then one conversion's saved rules (GET /api/conversions/:id). Absent: no check.
+   */
+  knownCandidates?(example: ExampleShape): Promise<KnownCandidates>;
+  knownRules?(conversionId: string): Promise<Rules | LearnResult | null>;
 }
 
 // ---------- "See what we send" before the learn (owner, 2026-10-07) ----------

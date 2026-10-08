@@ -15,9 +15,11 @@ import {
   sendPreview as sendPreviewOf,
   sentColumns,
   sniffDelimitedText,
+  type ExampleShape,
+  type KnownCandidates,
   type LearnCallResult,
 } from '@formatai/engine';
-import { limits } from '@formatai/shared';
+import { limits, type LearnResult, type Rules } from '@formatai/shared';
 import type { AnalysisProgress, PairAnalysis } from '@formatai/engine';
 import type { ConvertArgs, ConvertOutput, InspectArgs, InspectOutput, LearnArgs, LearnOutput, LearnProgress, SendPreviewArgs, SendPreviewOutput, SendPreviewProgress } from './engineApi';
 import type { LiveCheckArgs, LiveCheckResult, LoadExampleArgs, LoadExampleOutput, StaticChecksArgs, StaticProblem } from './editorApi';
@@ -74,6 +76,15 @@ async function learn(args: LearnArgs, ctx: MethodContext): Promise<LearnOutput> 
     ...(args.complete ? { complete: args.complete } : {}),
     // "See what we send": the user's choices reach every request of the learn through the analysis (engine `classifyColumns`).
     ...(args.columnChoices ? { userColumnChoices: args.columnChoices } : {}),
+    // "You already have this format": the user's saved formats, read by the main thread (structure and their own rules; nothing is sent).
+    ...(args.checkKnown
+      ? {
+          known: {
+            candidates: (example: ExampleShape) => ctx.host<KnownCandidates>('knownCandidates', example),
+            rules: (conversionId: string) => ctx.host<Rules | LearnResult | null>('knownRules', conversionId),
+          },
+        }
+      : {}),
     onProgress: (p: AnalysisProgress) => emit({ phase: 'checking', stage: p.stage, fraction: p.fraction }),
     onAnalysis: (a) => {
       analysis = a;

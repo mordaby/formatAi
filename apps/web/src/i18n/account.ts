@@ -119,6 +119,13 @@ export const accountEn = {
   // ----- the AI step could not run (SPEC 21 v5 item 4) -----
   'notReady.title': "The AI step can't help with these files",
   'notReady.nothingUsed': 'Nothing was used up.',
+  // ----- "You already have this format" (owner decision 2026-10-07): the user's saved rules already make this example; nothing is learned.
+  // Neutral: a format, never a source. -----
+  'known.title': 'You already have this format',
+  'known.text': 'Your format {format} already makes this output from this file.',
+  'known.convert': 'Convert files with it',
+  'known.again': 'Learn again anyway',
+  'known.differs': 'Your format {format} gives different values for this example, so the rules were learned again.',
 
   // ----- the AI quota and its limits (SPEC 11, 21 v5 items 2-3) -----
   'aiLimit.local': 'Formats your computer can work out on its own, and every format you saved, keep working.',
@@ -298,6 +305,11 @@ export const accountHe: Record<keyof typeof accountEn, string> = {
 
   'notReady.title': 'שלב ה-AI לא יכול לעזור עם הקבצים האלה',
   'notReady.nothingUsed': 'לא נוצל דבר.',
+  'known.title': 'כבר יש לכם את הפורמט הזה',
+  'known.text': 'הפורמט שלכם {format} כבר מפיק את הפלט הזה מהקובץ הזה.',
+  'known.convert': 'להמיר קבצים בעזרתו',
+  'known.again': 'ללמוד מחדש בכל זאת',
+  'known.differs': 'הפורמט שלכם {format} נותן ערכים אחרים בדוגמה הזו, ולכן הכללים נלמדו מחדש.',
 
   'aiLimit.local': 'פורמטים שהמחשב שלכם מבין בכוחות עצמו, וכל פורמט ששמרתם, ממשיכים לעבוד.',
   'aiLimit.upgrade': 'שדרוג',

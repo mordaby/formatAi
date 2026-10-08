@@ -2,7 +2,7 @@
 // RPC runtime and client, in-process. This is not a substitute for the browser check (the
 // bundling of ExcelJS/SheetJS for a real Worker), but it pins the behaviour of the methods:
 // progress, the masking key, host calls, and the transfer of bytes.
-import { completionPlan, formulaRulesFromWire } from '@formatai/engine';
+import { completionPlan, formatOf, formulaRulesFromWire } from '@formatai/engine';
 import { fromWire, LearnResultSchema, type LearnPayload, type LearnResult } from '@formatai/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConvertOutput, LearnOutput, LearnProgress, LoadExampleOutput } from '../src/worker/engineApi';
@@ -326,5 +326,40 @@ describe('engine methods, through the worker RPC', () => {
     if (out.ok) return;
     expect(out.error.code).toBe('missingRequiredColumns');
     expect(out.error.missing).toContain('Customer ID');
+  });
+});
+
+describe('"You already have this format" in the worker (checkKnown, through the real RPC)', () => {
+  /** The saved format of the rename pair, as the main thread hands it over: the first learn's own rules. */
+  async function savedOf(): Promise<LearnResult> {
+    const { args, transfer } = learnArgs(renamePair(), false);
+    const res = await loopback(engineMethods).call<LearnOutput>('learn', args, { transfer });
+    return res.rules!;
+  }
+  const candidatesOf = (rules: LearnResult) => ({
+    formats: [{ id: 'F1', name: 'Contacts', format: formatOf(rules), usedAt: '2026-10-01', conversions: [{ id: 'C1', sourceId: 'S1', sourceName: 'CRM', version: 2 }] }],
+    sources: [{ id: 'S1', name: 'CRM', columns: rules.input.columns.map((c) => ({ header: c.header, aliases: [], type: c.type, required: true })) }],
+  });
+
+  it('the saved rules make the example: path "known", the host asked for the candidates and one conversion, no learn call', async () => {
+    const saved = await savedOf();
+    const knownCandidates = vi.fn(async () => candidatesOf(saved));
+    const knownRules = vi.fn(async () => saved);
+    const callLearn = vi.fn();
+    const { args, transfer } = learnArgs(renamePair('D'), false);
+    const res = await loopback(engineMethods).call<LearnOutput>('learn', { ...args, ai: 'allowed', checkKnown: true }, { transfer, host: { callLearn, knownCandidates, knownRules } });
+    expect(res.path).toBe('known');
+    expect(res.known).toMatchObject({ formatId: 'F1', formatName: 'Contacts', conversionId: 'C1' });
+    expect(knownCandidates).toHaveBeenCalledWith({ outputHeaders: ['Contact ID', 'Last Name', 'First Name', 'Email Address'], fileType: 'csv', headerRow: true, inputHeaders: ['Customer ID', 'First Name', 'Last Name', 'Email'] });
+    expect(knownRules).toHaveBeenCalledWith('C1');
+    expect(callLearn).not.toHaveBeenCalled();
+  });
+
+  it('without checkKnown nothing is asked (a visitor, "Learn again anyway")', async () => {
+    const knownCandidates = vi.fn();
+    const { args, transfer } = learnArgs(renamePair(), false);
+    const res = await loopback(engineMethods).call<LearnOutput>('learn', args, { transfer, host: { knownCandidates } });
+    expect(res.path).toBe('local');
+    expect(knownCandidates).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,8 @@ export interface UseLearnFlowOptions {
   beforeSend?: LearnFlowDeps['beforeSend'];
   /** See `LearnFlowDeps.onAi` (app/aiReport.ts `useOnAi`). Pass a stable function. */
   onAi?: LearnFlowDeps['onAi'];
+  /** See `LearnFlowDeps.mayCheckKnown` ("You already have this format"). Pass a stable function. */
+  mayCheckKnown?: LearnFlowDeps['mayCheckKnown'];
 }
 
 export interface UseLearnFlow {
@@ -34,6 +36,7 @@ export function useLearnFlow(options: UseLearnFlowOptions = {}): UseLearnFlow {
   const ready = options.ready;
   const beforeSend = options.beforeSend;
   const onAi = options.onAi;
+  const mayCheckKnown = options.mayCheckKnown;
 
   const flow = useMemo(
     () =>
@@ -45,8 +48,9 @@ export function useLearnFlow(options: UseLearnFlowOptions = {}): UseLearnFlow {
         ...(ready ? { ready } : {}),
         ...(beforeSend ? { beforeSend } : {}),
         ...(onAi ? { onAi } : {}),
+        ...(mayCheckKnown ? { mayCheckKnown } : {}),
       }),
-    [engine, api, getTier, ready, beforeSend, onAi],
+    [engine, api, getTier, ready, beforeSend, onAi, mayCheckKnown],
   );
   // Leaving the screen stops a run in progress (the worker drops the call; it keeps what it holds for other screens).
   useEffect(() => () => flow.cancel(), [flow]);

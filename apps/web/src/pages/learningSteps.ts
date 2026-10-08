@@ -60,7 +60,7 @@ export function useStepHistory(state: LearnFlowState): StepKey[] {
 
   useEffect(() => {
     if (key) setHistory((h) => (key === 'reading' ? ['reading'] : h[h.length - 1] === key ? h : [...h, key]));
-    else if (status === 'idle' || status === 'blocked' || status === 'error' || status === 'notReady') setHistory([]);
+    else if (status === 'idle' || status === 'blocked' || status === 'error' || status === 'notReady' || status === 'known') setHistory([]);
   }, [key, status]);
 
   // The current step is on screen in the very render it begins, before the effect has run.
