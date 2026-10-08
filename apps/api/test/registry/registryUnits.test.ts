@@ -20,7 +20,7 @@ import { edited, saveBody, sourceOne, sourceTwo } from './helpers.js';
 const meta: SaveMeta = {
   name: 'Catalog load',
   formatId: 'f1',
-  sourceName: 'Source 1',
+  sourceName: 'Input 1',
   status: 'verified',
   source: 'examplePair',
   learnPath: 'llm',
@@ -40,7 +40,7 @@ describe('withMeta', () => {
     expect(rules.name).toBe('Catalog load');
     expect(rules.meta).toEqual({
       formatId: 'f1',
-      sourceName: 'Source 1',
+      sourceName: 'Input 1',
       source: 'examplePair',
       status: 'verified',
       learnPath: 'llm',
@@ -55,7 +55,7 @@ describe('withMeta', () => {
       { ...meta, model: 'm2' },
     ) as Rules;
     expect(rules.name).toBe('My name');
-    expect(rules.meta).toMatchObject({ formatId: 'f1', sourceName: 'Source 1', source: 'examplePair', status: 'verified', createdAt: '2020-01-01T00:00:00.000Z', model: 'm2' });
+    expect(rules.meta).toMatchObject({ formatId: 'f1', sourceName: 'Input 1', source: 'examplePair', status: 'verified', createdAt: '2020-01-01T00:00:00.000Z', model: 'm2' });
   });
 
   it('leaves a value that is not an object for the schema check to reject', () => {
@@ -181,7 +181,7 @@ describe('request-body validators', () => {
 
   it('nameKey compares names without case and extra spaces', () => {
     expect(nameKey('  Source   2 ')).toBe(nameKey('source 2'));
-    expect(nameKey('Source 2')).not.toBe(nameKey('Source 3'));
+    expect(nameKey('Input 2')).not.toBe(nameKey('Input 3'));
   });
 
   it('uniqueSourceName keeps a free name and numbers a taken one: "name (2)", "name (3)", whatever the case', () => {
@@ -192,7 +192,7 @@ describe('request-body validators', () => {
     expect(uniqueSourceName(['ORDERS', 'Orders (2)', 'orders (4)'], 'orders')).toBe('orders (3)');
     expect(uniqueSourceName(['ספקים', 'ספקים (2)'], 'ספקים')).toBe('ספקים (3)');
     // the "first free Source N" default is unchanged
-    expect(freeSourceName(['Source 1', 'orders'])).toBe('Source 2');
+    expect(freeSourceName(['Input 1', 'orders'])).toBe('Input 2');
   });
 
   it('uniqueSourceName never goes past the longest name: a long one is cut to make room for the number', () => {
@@ -276,7 +276,7 @@ describe('headerRenames', () => {
 
 describe('applyFormat (SPEC 8.12 "Editing a format")', () => {
   const s1 = () => asRules(sourceOne());
-  const s2 = () => asRules(sourceTwo(), { sourceName: 'Source 2' });
+  const s2 = () => asRules(sourceTwo(), { sourceName: 'Input 2' });
 
   it('gives another source the new output side with its own mappings, and passes the lock', () => {
     const edit = edited(s1(), (r) => {

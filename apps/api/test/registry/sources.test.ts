@@ -271,7 +271,7 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       const res = await create(retyped, { inputHeaders: ['ID', 'Amount'] });
       expect(res.status).toBe(201);
       expect(res.body.sourceReused).toBeUndefined();
-      expect(res.body.source.name).toBe('Source 1');
+      expect(res.body.source.name).toBe('Input 1');
       expect(await appDb.sources.countDocuments()).toBe(2);
     });
 
@@ -326,11 +326,11 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       expect(clash.status).toBe(409);
       expect(clash.body).toEqual({ error: 'nameTaken' });
       expect((await create(sourceOne(), { sourceName: 'Supplier A' }, OTHER_USER)).status).toBe(201);
-      // the default name is the first free "Source N" among ALL the owner's sources
+      // the default name is the first free "Input N" among ALL the owner's sources
       const a = await create(sourceTwo());
-      expect(a.body.source.name).toBe('Source 1');
+      expect(a.body.source.name).toBe('Input 1');
       const b = await create(edited(sourceTwo(), (r) => { r.input.columns[0]!.header = 'Other'; }));
-      expect(b.body.source.name).toBe('Source 2');
+      expect(b.body.source.name).toBe('Input 2');
     });
 
     it('a default name from the example file (`suggestedSourceName`) names a new source, and is numbered - never refused - when it is taken', async () => {
@@ -368,11 +368,11 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       expect((await create(sourceTwo(), { newSource: { name: 'Mine' }, suggestedSourceName: 'prices' })).body.source.name).toBe('Mine');
     });
 
-    it('a default that cannot be a name is ignored ("Source N"), and none is used when an existing source is reused', async () => {
+    it('a default that cannot be a name is ignored ("Input N"), and none is used when an existing source is reused', async () => {
       for (const [i, bad] of ['', '   ', 'x'.repeat(limits.registry.maxNameChars + 1), 5].entries()) {
         const res = await create(edited(sourceOne(), (r) => { r.input.columns[0]!.header = `Col ${i}`; }), { suggestedSourceName: bad });
         expect(res.status).toBe(201);
-        expect(res.body.source.name).toBe(`Source ${i + 1}`);
+        expect(res.body.source.name).toBe(`Input ${i + 1}`);
       }
       await Promise.all([appDb.formats.deleteMany({}), appDb.conversions.deleteMany({}), appDb.sources.deleteMany({})]);
       const { sourceId } = await oneSourceTwoFormats();
@@ -432,7 +432,7 @@ describe.skipIf(!mongoUri)('sources (MongoDB)', () => {
       await create(sourceOne(), {}, OTHER_USER);
 
       const list = await sources();
-      expect(list.map((s) => s.name)).toEqual(['Supplier A', 'Source 1']);
+      expect(list.map((s) => s.name)).toEqual(['Supplier A', 'Input 1']);
       expect(list[0]).toMatchObject({ id: sourceId, columns: 2, version: 1, statuses: { verified: 2 }, runCount: 0 });
       expect(list[0].conversions).toEqual([
         { conversionId: a.conversion.id, formatId: a.format.id, formatName: 'Catalog', status: 'verified' },

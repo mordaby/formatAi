@@ -11,11 +11,11 @@ import { conversionWrite, saveVersion } from './conversionStore.js';
 import { plain, signatureOf, type RulesCheck } from './rules.js';
 import { applySource, newIgnoredHeaders, structureOfDoc, withDerivedRequired, withSourceAliases } from './sourceLogic.js';
 
-/** The first "Source N" no other source of the owner has. */
+/** The first "Input N" no other source of the owner has (neutral: the name shows to users while the source UI is off). */
 export function freeSourceName(taken: readonly string[]): string {
   const used = new Set(taken.map(nameKey));
   for (let n = 1; ; n++) {
-    const name = `Source ${n}`;
+    const name = `Input ${n}`;
     if (!used.has(nameKey(name))) return name;
   }
 }

@@ -487,7 +487,7 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
       learnPath,
       masking,
       // The name typed is used if the server has to create a source; left empty, the example input file's name is the default
-      // (SPEC 21 v11 item 9), and the server makes it unique. Nothing when no name is left of it ("Source N").
+      // (SPEC 21 v11 item 9), and the server makes it unique. Nothing when no name is left of it ("Input N").
       ...(sourceName !== '' ? { sourceName } : suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
       // (API audit 2026-10-07: the prompt version the server says it learned with - learn-v9 for an admin under LEARN_CHECKS - never a constant.)

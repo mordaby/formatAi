@@ -71,7 +71,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
     expect(first.status).toBe(201);
     const formatId = first.body.format.id as string;
     const second = await call('POST', `/api/formats/${formatId}/conversions`, {
-      sourceName: 'Source 2',
+      sourceName: 'Input 2',
       ...saveBody(sourceTwo()),
     });
     expect(second.status).toBe(201);
@@ -152,7 +152,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect(await appDb.conversions.countDocuments()).toBe(before);
       const owner = await call('GET', `/api/formats/${formatId}`);
       expect(owner.body.format.name).toBe('Catalog load');
-      expect(owner.body.conversions.map((c: any) => c.sourceName)).toEqual(['Source 1', 'Source 2']);
+      expect(owner.body.conversions.map((c: any) => c.sourceName)).toEqual(['Input 1', 'Input 2']);
     });
 
     it('treats an id that is not a 24-hex ObjectId like a missing one', async () => {
@@ -183,7 +183,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       });
       expect(conversion).toMatchObject({
         formatId: format.id,
-        sourceName: 'Source 1',
+        sourceName: 'Input 1',
         status: 'verified',
         acceptedDifferences: 0,
         learnPath: 'llm',
@@ -203,7 +203,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       const doc = await appDb.conversions.findOne({ _id: new ObjectId(conversion.id) });
       expect(doc!.rules).toMatchObject({
         name: 'Catalog load',
-        meta: { formatId: format.id, sourceName: 'Source 1', status: 'verified', source: 'examplePair', learnPath: 'llm', masking: false, model: 'fake-model' },
+        meta: { formatId: format.id, sourceName: 'Input 1', status: 'verified', source: 'examplePair', learnPath: 'llm', masking: false, model: 'fake-model' },
       });
       expect(doc!.inputSignature).toEqual({
         columns: [
@@ -335,7 +335,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect(res.body.format).toMatchObject({ id: formatId, name: 'Catalog load', sources: 2 });
       expect(res.body.format.output.columns).toEqual([{ header: 'ID' }, { header: 'Total' }]);
       expect(res.body.format.layout).toEqual({ sort: [] });
-      expect(res.body.conversions.map((c: any) => c.sourceName)).toEqual(['Source 1', 'Source 2']);
+      expect(res.body.conversions.map((c: any) => c.sourceName)).toEqual(['Input 1', 'Input 2']);
       expect(JSON.stringify(res.body.conversions)).not.toContain('"rules"');
     });
 
@@ -397,7 +397,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       const { formatId } = await twoSources();
       const third = await call('POST', `/api/formats/${formatId}/conversions`, saveBody(sourceTwo()));
       expect(third.status).toBe(201);
-      expect(third.body.conversion.sourceName).toBe('Source 3');
+      expect(third.body.conversion.sourceName).toBe('Input 3');
       const fourth = await call('POST', `/api/formats/${formatId}/conversions`, saveBody(sourceTwo()));
       expect(fourth.status).toBe(403);
       expect(fourth.body).toEqual({ error: 'limitHit', limit: 'sourcesPerFormat' });
@@ -471,13 +471,13 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
   // ---------------------------------------------------------------- attach a source (A2)
 
   describe('attaching a source (POST /api/formats/:id/conversions)', () => {
-    it('attaches a source whose output matches the format, named by default "Source N"', async () => {
+    it('attaches a source whose output matches the format, named by default "Input N"', async () => {
       const { body } = await create();
       const res = await call('POST', `/api/formats/${body.format.id}/conversions`, saveBody(sourceTwo()));
       expect(res.status).toBe(201);
-      expect(res.body.conversion).toMatchObject({ formatId: body.format.id, sourceName: 'Source 2', status: 'verified', version: 1 });
+      expect(res.body.conversion).toMatchObject({ formatId: body.format.id, sourceName: 'Input 2', status: 'verified', version: 1 });
       const stored = await rulesOf(res.body.conversion.id);
-      expect(stored.meta).toMatchObject({ formatId: body.format.id, sourceName: 'Source 2' });
+      expect(stored.meta).toMatchObject({ formatId: body.format.id, sourceName: 'Input 2' });
       // The format did not change: attaching never edits the format.
       const format = await call('GET', `/api/formats/${body.format.id}`);
       expect(format.body.format).toMatchObject({ version: 1, sources: 2 });
@@ -525,13 +525,13 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
 
     it('rejects a second source with the same name (409 nameTaken, case-insensitive) and picks the first free default', async () => {
       const { formatId, s2 } = await twoSources();
-      const dup = await call('POST', `/api/formats/${formatId}/conversions`, saveBody(sourceTwo(), { sourceName: 'source 2' }));
+      const dup = await call('POST', `/api/formats/${formatId}/conversions`, saveBody(sourceTwo(), { sourceName: 'input 2' }));
       expect(dup.status).toBe(409);
       expect(dup.body).toEqual({ error: 'nameTaken' });
 
       await call('DELETE', `/api/conversions/${s2}`);
       const next = await call('POST', `/api/formats/${formatId}/conversions`, saveBody(sourceTwo()));
-      expect(next.body.conversion.sourceName).toBe('Source 2'); // the freed name
+      expect(next.body.conversion.sourceName).toBe('Input 2'); // the freed name
     });
 
     it('rejects invalid rules with 422 invalidRules', async () => {
@@ -553,7 +553,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       const res = await call('GET', `/api/conversions/${body.conversion.id}`);
       expect(res.status).toBe(200);
       const c = res.body.conversion;
-      expect(c).toMatchObject({ id: body.conversion.id, sourceName: 'Source 1', exampleExceptions: [3], masking: false, model: 'fake-model' });
+      expect(c).toMatchObject({ id: body.conversion.id, sourceName: 'Input 1', exampleExceptions: [3], masking: false, model: 'fake-model' });
       expect(c.rules.output.columns).toHaveLength(2);
       expect(c.inputSignature.columns).toHaveLength(2);
       expect(c.versions).toBeUndefined();
@@ -566,7 +566,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect(res.body).toMatchObject({ formatChanged: false, affectedSources: 0, needsReview: [], conversion: { sourceName: 'Acme price list', version: 1 } });
       expect((await rulesOf(s1)).meta.sourceName).toBe('Acme price list');
       // The same name (any case) is taken by the other source.
-      const taken = await call('PATCH', `/api/conversions/${s1}`, { sourceName: 'SOURCE 2' });
+      const taken = await call('PATCH', `/api/conversions/${s1}`, { sourceName: 'INPUT 2' });
       expect(taken.status).toBe(409);
       expect(taken.body).toEqual({ error: 'nameTaken' });
       // Renaming to its own name is fine.
@@ -658,7 +658,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       const again = await call('POST', `/api/formats/${body.format.id}/conversions`, saveBody(sourceTwo()));
       expect(again.status).toBe(201);
       // The first source stays (SPEC 8.15: it is the company's), so its name is not free.
-      expect(again.body.conversion.sourceName).toBe('Source 2');
+      expect(again.body.conversion.sourceName).toBe('Input 2');
     });
   });
 
@@ -713,7 +713,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
         }),
       );
       expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({ formatChanged: true, affectedSources: 1, needsReview: [{ id: s2, sourceName: 'Source 2' }] });
+      expect(res.body).toMatchObject({ formatChanged: true, affectedSources: 1, needsReview: [{ id: s2, sourceName: 'Input 2' }] });
 
       const s2After = await detail(s2);
       expect(s2After.status).toBe('needsReview');
@@ -735,7 +735,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       );
       expect(res.status).toBe(200);
       expect(res.body.affectedSources).toBe(1);
-      expect(res.body.needsReview).toEqual([{ id: s2, sourceName: 'Source 2', formatId, formatName: 'Catalog load' }]);
+      expect(res.body.needsReview).toEqual([{ id: s2, sourceName: 'Input 2', formatId, formatName: 'Catalog load' }]);
       expect((await detail(s2)).status).toBe('needsReview');
     });
 
@@ -808,7 +808,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect((await detail(s2)).status).toBe('needsReview');
       const res = await save(s1, edited(await rulesOf(s1), (r) => { r.output.sheetName = 'Renamed sheet'; }));
       expect(res.body.affectedSources).toBe(1);
-      expect(res.body.needsReview).toEqual([{ id: s2, sourceName: 'Source 2', formatId, formatName: 'Catalog load' }]);
+      expect(res.body.needsReview).toEqual([{ id: s2, sourceName: 'Input 2', formatId, formatName: 'Catalog load' }]);
       expect((await detail(s2)).status).toBe('needsReview');
     });
 
@@ -853,7 +853,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       expect(res.body.conversion).toMatchObject({ version: 4, status: 'verified' });
       const now = await detail(id);
       expect(now.rules.transform).toEqual(original.transform);
-      expect(now.rules.meta.sourceName).toBe('Source 1');
+      expect(now.rules.meta.sourceName).toBe('Input 1');
       const versions = (await call('GET', `/api/conversions/${id}/versions`)).body.versions;
       expect(versions.map((v: any) => v.version)).toEqual([4, 3, 2, 1]);
 
@@ -908,23 +908,23 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
       const { formatId, s1, s2 } = await twoSources();
       // Another format fed by the same source as Source 1: one source, two conversions (SPEC 8.15).
       const other = await create(sourceOne(), { name: 'Other format' });
-      expect(other.body.sourceReused).toEqual({ id: expect.any(String), name: 'Source 1' });
+      expect(other.body.sourceReused).toEqual({ id: expect.any(String), name: 'Input 1' });
       await create(sourceOne(), {}, OTHER_USER);
       const res = await call('GET', '/api/signatures');
       expect(res.status).toBe(200);
       // Two sources (Source 1 feeds two formats, Source 2 one); the other user's source is not here.
       expect(res.body.signatures).toHaveLength(2);
-      const entry = res.body.signatures.find((s: any) => s.name === 'Source 2');
+      const entry = res.body.signatures.find((s: any) => s.name === 'Input 2');
       expect(entry).toEqual({
         sourceId: expect.any(String),
-        name: 'Source 2',
+        name: 'Input 2',
         columns: [
           { header: 'Code', aliases: [], type: 'idLike', required: true },
           { header: 'Price', aliases: [], type: 'decimal', required: true },
         ],
         conversions: [{ conversionId: s2, formatId, formatName: 'Catalog load', status: 'verified' }],
       });
-      const one = res.body.signatures.find((s: any) => s.name === 'Source 1');
+      const one = res.body.signatures.find((s: any) => s.name === 'Input 1');
       expect(one.conversions.map((c: any) => [c.conversionId, c.formatName])).toEqual([
         [s1, 'Catalog load'],
         [other.body.conversion.id, 'Other format'],

@@ -303,7 +303,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     // leave the computer); the rules alone would give a subset.
     const inputHeaders = result.exampleInput?.map((c) => c.header);
     // A new source is named after the example input file, without what changes from file to file ("orders 2026-09.xlsx" is "orders"); nothing
-    // is sent when nothing is left of the name (the server then names it "Source N"). Only the file's name is used, never a cell.
+    // is sent when nothing is left of the name (the server then names it "Input N"). Only the file's name is used, never a cell.
     const suggestedSourceName = defaultSourceName(file.name);
     const body: CreateFormatRequest = {
       name,
