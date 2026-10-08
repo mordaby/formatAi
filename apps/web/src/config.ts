@@ -72,7 +72,7 @@ export const webConfig = {
      * When each text last changed (ISO date): shown at the top of its page. Change a page's date whenever its text changes - only that
      * page's (the accessibility statement's date is also the date of the review it rests on).
      */
-    updated: { privacy: '2026-10-07', terms: '2026-10-05', accessibility: '2026-10-05' },
+    updated: { privacy: '2026-10-08', terms: '2026-10-05', accessibility: '2026-10-05' },
     contactEmail,
     operator: { en: 'FormatAI', he: '[שם החברה וכתובתה - להשלמה על ידי הבעלים]' } satisfies Localized,
     /** "Disputes will be decided only by ..." (the terms). */
