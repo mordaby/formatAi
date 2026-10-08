@@ -101,25 +101,68 @@ describe('the logic changed: the learn goes on', () => {
   });
 });
 
-describe('nothing is run unless the output AND the input match', () => {
-  it('another source (the input is not one of the format\'s sources): no "already", no rules read, nothing said', async () => {
+describe('this output, another input: the learn stops to ask (path "matchesFormat"), before any learning', () => {
+  const other = { id: 'S2', name: 'Other', columns: [{ header: 'Code', aliases: [], type: 'text', required: true }, { header: 'Label', aliases: [], type: 'text', required: true }] };
+
+  it('the input is not one of the format\'s inputs: the format is named with its output side, no rules read, no fast path, no AI call', async () => {
     const saved = await savedRulesOf(simplePair());
-    const other = { id: 'S2', name: 'Other', columns: [{ header: 'Code', aliases: [], type: 'text', required: true }, { header: 'Label', aliases: [], type: 'text', required: true }] };
     const { k, rules } = known([format('F1', 'Monthly orders', saved, { sourceId: 'S2' })], { 'F1-C1': saved }, [other]);
-    const { r } = await learn(simplePair(), { known: k });
-    expect(r.path).toBe('local');
-    expect(r.knownDiffers).toBeUndefined();
+    const { r, calls } = await learn(simplePair(), { known: k, ai: 'allowed' });
+    expect(r.path).toBe('matchesFormat');
+    expect(r.sameOutput).toEqual([{ formatId: 'F1', formatName: 'Monthly orders', sources: 1, usedAt: '2026-09-01T00:00:00.000Z', format: formatOf(saved) }]);
+    expect(r.rules).toBeNull();
+    expect(r.stages.fastPathTried).toBe(false);
+    expect(calls).toHaveLength(0);
     expect(rules).not.toHaveBeenCalled();
   });
 
-  it('the input matches a source that feeds ANOTHER format only: not this one', async () => {
+  it('the input is a source that feeds ANOTHER format only: asked about this one', async () => {
     const saved = await savedRulesOf(simplePair());
     const { k, rules } = known([format('F1', 'Monthly orders', saved, { sourceId: 'S9' })], { 'F1-C1': saved }, [sourceOfRules('S1', saved)]);
     const { r } = await learn(simplePair(), { known: k });
-    expect(r.path).toBe('local');
+    expect(r.path).toBe('matchesFormat');
     expect(rules).not.toHaveBeenCalled();
   });
 
+  it('several formats with this output: all of them, most recently used first', async () => {
+    const saved = await savedRulesOf(simplePair());
+    const { k } = known(
+      [format('F1', 'Monthly orders', saved, { sourceId: 'S2' }), format('F2', 'Board report', saved, { sourceId: 'S2', usedAt: '2026-10-02T00:00:00.000Z' })],
+      {},
+      [other],
+    );
+    const { r } = await learn(simplePair(), { known: k });
+    expect(r.sameOutput?.map((m) => m.formatId)).toEqual(['F2', 'F1']);
+  });
+
+  it('when the input IS one of a same-output format\'s inputs, nothing is asked (it is that format\'s learn)', async () => {
+    const saved = await savedRulesOf(simplePair());
+    const changed = structuredClone(saved);
+    changed.output.columns[0]!.from = idOf(saved, 'Ref');
+    const { k } = known([format('F1', 'Monthly orders', changed), format('F2', 'Board report', saved, { sourceId: 'S9' })], { 'F1-C1': changed }, [sourceOfRules('S1', saved)]);
+    const { r } = await learn(simplePair(), { known: k });
+    expect(r.path).toBe('local');
+    expect(r.knownDiffers?.formatId).toBe('F1');
+  });
+
+  it('a format with title rows the example does not have is not this output', async () => {
+    const saved = structuredClone(await savedRulesOf(simplePair()));
+    saved.output.titleRows = [{ text: 'Orders' }];
+    const { k } = known([format('F1', 'Titled', saved, { sourceId: 'S2' })], {}, [other]);
+    const { r } = await learn(simplePair(), { known: k });
+    expect(r.path).toBe('local');
+  });
+
+  it('Add a source (a target) never asks: it is that question answered', async () => {
+    const saved = await savedRulesOf(simplePair());
+    const { k, candidates } = known([format('F1', 'Monthly orders', saved, { sourceId: 'S2' })], {}, [other]);
+    const { r } = await learn(simplePair(), { known: k, ai: 'notAllowed', target: formatOf(saved) });
+    expect(r.path).toBe('local');
+    expect(candidates).not.toHaveBeenCalled();
+  });
+});
+
+describe('nothing is run unless the output AND the input match', () => {
   it('another output (a column named otherwise): never read', async () => {
     const saved = structuredClone(await savedRulesOf(simplePair()));
     saved.output.columns[2]!.header = 'Amount';
@@ -184,7 +227,7 @@ describe('several formats with this output', () => {
 describe('the pieces', () => {
   it('the example\'s shape is headers and file kind only', () => {
     const shape = exampleShapeOf(analyzeOf(simplePair()));
-    expect(shape).toEqual({ outputHeaders: ['Item', 'Ref', 'Total'], fileType: 'xlsx', headerRow: true, inputHeaders: ['Ref', 'Item', 'Qty', 'Price', 'Group'] });
+    expect(shape).toEqual({ outputHeaders: ['Item', 'Ref', 'Total'], fileType: 'xlsx', headerRow: true, titleRows: [], summaryRows: 0, groupBy: null, inputHeaders: ['Ref', 'Item', 'Qty', 'Price', 'Group'] });
   });
 
   it('spaces around a header do not count; a csv is not an xlsx', async () => {
@@ -200,6 +243,6 @@ describe('the pieces', () => {
     const saved = await savedRulesOf(simplePair());
     const { k } = known([format('F1', 'Monthly orders', saved)], { 'F1-C1': saved }, [sourceOfRules('S1', saved)]);
     const check = await findAlreadyLearned(analyzeOf(simplePair()), k);
-    expect(check).toMatchObject({ match: { formatId: 'F1' }, differs: [], ran: 1 });
+    expect(check).toMatchObject({ match: { formatId: 'F1' }, differs: [], sameOutput: [], inputKnown: true, ran: 1 });
   });
 });
