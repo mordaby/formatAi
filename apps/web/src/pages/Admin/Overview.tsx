@@ -1,39 +1,19 @@
 // The admin overview (SPEC 14.2): users by plan and new sign-ups, learns (the AI step, the cache, the computer), saved formats, AI calls and
-// their estimated cost (per day, per model), the problems the checks found most, function requests, events. For the last 7 / 30 / 90 UTC days.
+// their estimated cost (per day, per model), how the product is used (the usage events: `Usage.tsx`), the problems the checks found most,
+// function requests, events. For the last 7 / 30 / 90 UTC days.
 // Simple tables and one small chart. A number the server cannot know is "n/a".
 import { limits, type AdminOverview, type AdminPeriodDays } from '@formatai/shared';
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useLoad } from '../../app/useLoad';
 import { useI18n } from '../../i18n';
 import { useServices } from '../../services';
 import { CostChart } from './CostChart';
 import { numberText, usdText } from './format';
-import { Block, LoadFailed, Loading, Scroll } from './parts';
+import { Block, LoadFailed, Loading, Rows, Scroll } from './parts';
+import { Usage } from './Usage';
 
 const PERIODS = limits.admin.periodsDays as readonly AdminPeriodDays[];
-
-interface Row {
-  label: string;
-  value: ReactNode;
-  /** A part of the row above it. */
-  sub?: boolean;
-}
-
-function Rows({ rows }: { rows: readonly Row[] }) {
-  return (
-    <table className="admin-table admin-table--rows">
-      <tbody>
-        {rows.map((r) => (
-          <tr key={r.label} className={r.sub ? 'admin-table__sub' : undefined}>
-            <th scope="row">{r.label}</th>
-            <td className="num tabular">{r.value}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
 
 export function Overview() {
   const { t } = useI18n();
@@ -94,7 +74,7 @@ function Numbers({ o }: { o: AdminOverview }) {
               { label: t('admin.ov.learns.aiFailed'), value: num(o.learns.aiFailed), sub: true },
               { label: t('admin.ov.learns.aiErrored'), value: num(o.learns.aiErrored), sub: true },
               { label: t('admin.ov.learns.cache'), value: num(o.learns.cache) },
-              { label: t('admin.ov.learns.local'), value: t('admin.ov.learns.localNotTracked') },
+              { label: t('admin.ov.learns.local'), value: o.learns.local === null ? t('admin.na') : num(o.learns.local) },
             ]}
           />
           <p className="muted admin-note">{t('admin.ov.learns.localNote')} {t('admin.ov.learns.verifiedNote')}</p>
@@ -224,6 +204,8 @@ function Numbers({ o }: { o: AdminOverview }) {
           </Scroll>
         </details>
       </Block>
+
+      <Usage usage={o.usage} />
 
       <div className="admin-grid">
         <Block title={t('admin.ov.problems')}>

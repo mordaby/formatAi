@@ -1,7 +1,7 @@
 // The admin view (SPEC 14.2, M4): /admin renders for an admin only, the nav entry is drawn for an admin only, the overview shows the server's
 // numbers ("n/a" where they are not known), function requests offer the GitHub issue once and can be marked, the users list sets a plan and a
 // limit, leads and feedback read as text - and all of it in Hebrew. A fake API; the server is what really enforces access (apps/api/test/admin).
-import type { AdminAuditEntry, AdminContact, AdminFunctionRequest, AdminOverview, AdminUserRow, MeUser } from '@formatai/shared';
+import type { AdminAuditEntry, AdminContact, AdminFunctionRequest, AdminOverview, AdminUsage, AdminUserRow, MeUser } from '@formatai/shared';
 import { tiers } from '@formatai/shared';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,6 +23,33 @@ afterEach(() => {
 });
 
 const ADMIN_USER: MeUser = { ...USER, id: 'admin1', name: 'The Boss', email: 'boss@example.com', isAdmin: true };
+
+/** The usage events' numbers (SPEC 14.1), every group known. */
+function usage(over: Partial<AdminUsage> = {}): AdminUsage {
+  return {
+    learns: [
+      { path: 'local', status: 'verified', count: 21 },
+      { path: 'local', status: 'partial', count: 8 },
+      { path: 'local', status: 'blocked', count: 3 },
+      { path: 'llm', status: 'verified', count: 5 },
+      { path: 'llm', status: 'failed', count: 2 },
+      { path: 'cache', status: 'verified', count: 1 },
+    ],
+    matching: { auto: 31, choose: 6, none: 4 },
+    formatsChosen: { asked: 9, allShare: 0.33, avgOffered: 3.4, avgChosen: 1.6, single: 7, batch: 2 },
+    limits: [
+      { limit: 'aiLearns', count: 12 },
+      { limit: 'savedFormats', count: 3 },
+    ],
+    saves: { new: 14, anotherInput: 5, update: 0, edit: 11 },
+    returning: { users: 2, runs: 37, activeUsers: 5, runsPerActiveUser: 7.4 },
+    funnel: { uploaded: 18, learned: 15, saved: 9, ran: 6, ranAgain: 2 },
+    ...over,
+  };
+}
+
+/** Nothing of any usage event was recorded in the period. */
+const NO_USAGE: AdminUsage = { learns: null, matching: null, formatsChosen: null, limits: null, saves: null, returning: null, funnel: { uploaded: null, learned: null, saved: null, ran: null, ranAgain: null } };
 
 function overview(over: Partial<AdminOverview> = {}): AdminOverview {
   return {
@@ -53,6 +80,7 @@ function overview(over: Partial<AdminOverview> = {}): AdminOverview {
     ],
     functionRequests: { groups: 3, requests: 24, atThreshold: 1, issueOpened: 1, newInPeriod: 2 },
     events: [{ type: 'signed_up', count: 4 }],
+    usage: usage(),
     ...over,
   };
 }
@@ -184,9 +212,9 @@ describe('the overview', () => {
     expect(within(row('passed the server checks')).getByText('6')).toBeTruthy();
     expect(within(row('answered, but did not pass the checks')).getByText('2')).toBeTruthy();
     expect(within(row('Answered from the saved structure (no AI call)')).getByText('3')).toBeTruthy();
-    // learns done on the computer are not tracked yet (no event records them): said so, never 0
-    expect(within(row("Solved on the person's own computer")).getByText('Not tracked yet')).toBeTruthy();
-    expect(screen.getByText(/Learns done on the computer leave no trace on the server yet, so they are not counted./)).toBeTruthy();
+    // learns done on the computer come from the browser's reports: none reported in the period is n/a, never 0
+    expect(within(row("Solved on the person's own computer")).getByText('n/a')).toBeTruthy();
+    expect(screen.getByText(/Learns on the computer are counted from what the browser reports/)).toBeTruthy();
     expect(within(row('Runs, all time')).getByText('41')).toBeTruthy();
     expect(within(row('AI calls')).getByText('14')).toBeTruthy();
     expect(within(row('Estimated cost')).getByText('$0.0425')).toBeTruthy();
@@ -224,6 +252,12 @@ describe('the overview', () => {
     expect(within(rowByLabel('Estimated cost')).getByText('n/a')).toBeTruthy();
   });
 
+  it('counts the learns the browser reported as solved on the computer', async () => {
+    adminApp(adminApi({ overview: vi.fn(async () => overview({ learns: { ai: 9, aiVerified: 6, aiFailed: 2, aiErrored: 1, cache: 3, local: 21 } })) }));
+    await screen.findByText('Users with an account');
+    expect(within(rowByLabel("Solved on the person's own computer")).getByText('21')).toBeTruthy();
+  });
+
   it('switches the time range', async () => {
     const overviewCall = vi.fn(async (days: number) => overview({ days, learns: { ai: 17, aiVerified: 1, aiFailed: 0, aiErrored: 0, cache: 0, local: null } }));
     adminApp(adminApi({ overview: overviewCall }));
@@ -233,6 +267,91 @@ describe('the overview', () => {
     await waitFor(() => expect(overviewCall).toHaveBeenCalledWith(7, expect.anything()));
     expect(screen.getByRole('button', { name: 'Last 7 days' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'Last 90 days' })).toBeTruthy();
+  });
+});
+
+describe('how the product is used (the usage events)', () => {
+  const usageBlock = async (): Promise<HTMLElement> => (await screen.findByRole('heading', { name: 'How the product is used', level: 2 })).closest('section')!;
+
+  it('shows the learns by path and how they ended, with a zero only where the combination did not happen', async () => {
+    adminApp(adminApi());
+    const block = await usageBlock();
+    const table = within(block).getByTestId('usage-learns');
+    const header = within(table).getAllByRole('columnheader').map((c) => c.textContent);
+    expect(header).toEqual(['Learned by', 'Verified', 'Not verified', 'Partial', 'Stopped by the checks before learning', 'AI not ready', 'Error']);
+    const cells = (name: string): string[] => within(within(table).getByText(name).closest('tr')!).getAllByRole('cell').map((c) => c.textContent ?? '');
+    expect(cells('The free engine (on the computer)')).toEqual(['21', '0', '8', '3', '0', '0']);
+    expect(cells('The AI step')).toEqual(['5', '2', '0', '0', '0', '0']);
+    expect(cells('The saved structure')).toEqual(['1', '0', '0', '0', '0', '0']);
+  });
+
+  it('shows matching, the formats people pick, the limits hit, the saves and the people who come back', async () => {
+    adminApp(adminApi());
+    const block = await usageBlock();
+    const row = (label: string): HTMLElement => within(block).getByText(label).closest('tr')!;
+    expect(within(row('One clear match (no question)')).getByText('31')).toBeTruthy();
+    expect(within(row('The person was asked to choose')).getByText('6')).toBeTruthy();
+    expect(within(row('No match')).getByText('4')).toBeTruthy();
+
+    expect(within(row('Times the question was answered')).getByText('9')).toBeTruthy();
+    expect(within(row('Answers that ticked every format')).getByText('33%')).toBeTruthy();
+    expect(within(row('Formats offered, on average')).getByText('3.4')).toBeTruthy();
+    expect(within(row('Formats ticked, on average')).getByText('1.6')).toBeTruthy();
+    expect(within(row('For one file')).getByText('7')).toBeTruthy();
+    expect(within(row('For a batch')).getByText('2')).toBeTruthy();
+
+    expect(within(row('aiLearns')).getByText('12')).toBeTruthy();
+    expect(within(row('savedFormats')).getByText('3')).toBeTruthy();
+
+    expect(within(row('A new format')).getByText('14')).toBeTruthy();
+    expect(within(row('Another input file of a format')).getByText('5')).toBeTruthy();
+
+    expect(within(row('People who ran a format 7 or more days after making it')).getByText('2')).toBeTruthy();
+    expect(within(row('People who ran a saved format')).getByText('5')).toBeTruthy();
+    expect(within(row('Runs per person')).getByText('7.4')).toBeTruthy();
+  });
+
+  it('shows the signed-in funnel, step by step', async () => {
+    adminApp(adminApi());
+    const block = await usageBlock();
+    const row = (label: string): HTMLElement => within(block).getByText(label).closest('tr')!;
+    expect(within(row('Dropped a file')).getByText('18')).toBeTruthy();
+    expect(within(row('Finished a learn')).getByText('15')).toBeTruthy();
+    expect(within(row('Saved a format')).getByText('9')).toBeTruthy();
+    expect(within(row('Ran a saved format')).getByText('6')).toBeTruthy();
+    expect(within(row('Ran a format 7+ days after making it')).getByText('2')).toBeTruthy();
+  });
+
+  it('says n/a for every group nothing was recorded for - never 0', async () => {
+    adminApp(adminApi({ overview: vi.fn(async () => overview({ usage: NO_USAGE })) }));
+    const block = await usageBlock();
+    // seven groups, each n/a (the funnel's five steps are n/a rows)
+    expect(within(block).queryByTestId('usage-learns')).toBeNull();
+    expect(within(block).getAllByText('n/a').length).toBeGreaterThanOrEqual(6 + 5);
+    expect(within(block).queryByText('0')).toBeNull();
+    const funnel = (label: string): HTMLElement => within(block).getByText(label).closest('tr')!;
+    expect(within(funnel('Dropped a file')).getByText('n/a')).toBeTruthy();
+    expect(within(funnel('Ran a format 7+ days after making it')).getByText('n/a')).toBeTruthy();
+    // the note says what n/a means
+    expect(within(block).getByText(/n\/a means nothing of that kind was recorded in this period/)).toBeTruthy();
+  });
+
+  it('shows a funnel step that has rows but no signed-in person as 0, and the others as n/a', async () => {
+    adminApp(adminApi({ overview: vi.fn(async () => overview({ usage: usage({ funnel: { uploaded: 4, learned: 0, saved: null, ran: null, ranAgain: null } }) })) }));
+    const block = await usageBlock();
+    const funnel = (label: string): HTMLElement => within(block).getByText(label).closest('tr')!;
+    expect(within(funnel('Finished a learn')).getByText('0')).toBeTruthy();
+    expect(within(funnel('Saved a format')).getByText('n/a')).toBeTruthy();
+  });
+
+  it('is in Hebrew too', async () => {
+    adminApp(adminApi(), '/admin', 'he');
+    const block = (await screen.findByRole('heading', { name: 'איך משתמשים במוצר', level: 2 })).closest('section')!;
+    expect(within(block).getByText('למידות: איך הן הסתיימו')).toBeTruthy();
+    expect(within(block).getByText('התאמה אחת ברורה (בלי שאלה)')).toBeTruthy();
+    expect(within(block).getByText('אנשים שהריצו פורמט 7 ימים או יותר אחרי שיצרו אותו')).toBeTruthy();
+    expect(within(block).getByText('שחררו קובץ').closest('tr')).toBeTruthy();
+    expect(within(block).getByText('7.4')).toBeTruthy();
   });
 });
 
@@ -479,8 +598,8 @@ describe('Hebrew', () => {
     const tabs = screen.getByRole('navigation', { name: 'חלקי הניהול' });
     expect(within(tabs).getAllByRole('button').map((b) => b.textContent)).toEqual(['סקירה', 'בקשות לפונקציות', 'משתמשים', 'פניות ומשוב']);
     expect(await screen.findByText('משתמשים עם חשבון')).toBeTruthy();
-    // "not tracked yet" is said in words, not as 0
-    expect(within(screen.getByText('נפתרו במחשב של המשתמש').closest('tr')!).getByText('עדיין לא נמדד')).toBeTruthy();
+    // "not known" is said in words, not as 0
+    expect(within(screen.getByText('נפתרו במחשב של המשתמש').closest('tr')!).getByText('לא ידוע')).toBeTruthy();
     expect(screen.getByRole('button', { name: '30 הימים האחרונים' })).toBeTruthy();
 
     fireEvent.click(within(tabs).getByRole('button', { name: 'משתמשים' }));

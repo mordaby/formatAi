@@ -84,6 +84,10 @@
   gap: var(--s-3);
   min-inline-size: 0;
 }
+/* the learns table has a column per way a learn can end: it takes the whole row of the usage grid */
+.admin-usage__wide {
+  grid-column: 1 / -1;
+}
 .admin-block__title {
   font-size: var(--fs-section);
 }
