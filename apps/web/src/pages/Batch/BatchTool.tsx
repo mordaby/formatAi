@@ -2,6 +2,7 @@
 // to its own source (and converted into every format that source feeds); a zip of the converted files plus a summary sheet of flags.
 // The page (`/convert`) owns the flow and the saved sources; this is only what is shown while there are files to run or results.
 import { tiers, type Tier } from '@formatai/shared';
+import { useId, useState } from 'react';
 import { UpgradeButton } from '../../app/Upgrade';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
@@ -46,9 +47,15 @@ export function BatchTool({ flow, tier, notice, onFiles }: BatchToolProps) {
   const { phase, items } = flow;
 
   if (phase === 'packing' || phase === 'done') return <BatchResults flow={flow} />;
+  if (phase === 'choosing') return <BatchChooseFormats flow={flow} />;
 
-  const running = phase === 'running';
-  const progress = t('batch.progress', { done: Math.min(flow.done + 1, flow.total), total: flow.total });
+  // Every file is read (matched) before any is converted, so the batch can ask its one question first (SPEC 5 D).
+  const matching = phase === 'matching';
+  const running = phase === 'running' || matching;
+  const progress = matching
+    ? t('batch.matching', { done: Math.min(flow.matched + 1, flow.total), total: flow.total })
+    : t('batch.progress', { done: Math.min(flow.done + 1, flow.total), total: flow.total });
+  const share = flow.total === 0 ? 0 : (matching ? flow.matched : flow.done) / flow.total;
   const count = (n: number): string => t(n === 1 ? 'batch.count.one' : 'batch.count.other', { n: nf.format(n) });
 
   return (
@@ -64,7 +71,7 @@ export function BatchTool({ flow, tier, notice, onFiles }: BatchToolProps) {
         />
       ) : (
         <div className="conv__progress">
-          <Progress value={flow.total === 0 ? 0 : flow.done / flow.total} label={progress} />
+          <Progress value={share} label={progress} />
           <p className="muted tabular" role="status" data-testid="batch-progress">
             {progress}
           </p>
@@ -114,6 +121,69 @@ export function BatchTool({ flow, tier, notice, onFiles }: BatchToolProps) {
           </Button>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * The batch's one question (SPEC 5 D, owner 2026-10-08): some of the files can be made into several formats, so the user ticks the formats to
+ * make - none is ticked in advance, with an "All" toggle - and each file is made into the chosen formats it fits. "Back" converts nothing.
+ */
+function BatchChooseFormats({ flow }: { flow: UseBatchFlow }) {
+  const { t, lang } = useI18n();
+  const id = useId();
+  const nf = new Intl.NumberFormat(lang);
+  const all = flow.choices.map((c) => c.formatId);
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
+  const allPicked = picked.size === all.length;
+  const toggle = (formatId: string): void =>
+    setPicked((p) => {
+      const next = new Set(p);
+      if (next.has(formatId)) next.delete(formatId);
+      else next.add(formatId);
+      return next;
+    });
+
+  return (
+    <section className="conv__step" aria-labelledby={`${id}-title`} data-testid="batch-choose-formats">
+      <h2 id={`${id}-title`}>{t('batch.choose.title')}</h2>
+      <p className="lead">{t('batch.choose.lead')}</p>
+      <fieldset className="fmts">
+        <legend className="visually-hidden">{t('conv.formats.legend')}</legend>
+        <label className="check fmts__all">
+          <input
+            type="checkbox"
+            checked={allPicked}
+            ref={(el) => {
+              if (el) el.indeterminate = picked.size > 0 && !allPicked;
+            }}
+            onChange={() => setPicked(allPicked ? new Set() : new Set(all))}
+          />
+          <span>{t('conv.formats.all')}</span>
+        </label>
+        <ul className="fmts__list">
+          {flow.choices.map((c) => (
+            <li key={c.formatId}>
+              <label className="check">
+                <input type="checkbox" checked={picked.has(c.formatId)} onChange={() => toggle(c.formatId)} />
+                <span>
+                  <Cell value={c.formatName} />
+                  <span className="muted tabular"> · {t(c.files === 1 ? 'batch.count.one' : 'batch.count.other', { n: nf.format(c.files) })}</span>
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      </fieldset>
+      <div className="conv__actions">
+        <Button variant="primary" disabled={picked.size === 0} onClick={() => flow.choose(all.filter((x) => picked.has(x)))}>
+          {t('batch.choose.continue')}
+        </Button>
+        <Button variant="ghost" onClick={flow.cancelChoice}>
+          {t('batch.choose.back')}
+        </Button>
+      </div>
+      {picked.size === 0 ? <p className="muted">{t('conv.formats.none')}</p> : null}
     </section>
   );
 }

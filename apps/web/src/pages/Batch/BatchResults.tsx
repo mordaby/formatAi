@@ -11,7 +11,7 @@ import { reasonText, type BatchItem, type BatchStatus, type UseBatchFlow } from 
 const FLAGS_LISTED = 20;
 
 export function statusBadgeTone(status: BatchStatus): 'verified' | 'check' | 'neutral' {
-  return status === 'converted' ? 'verified' : status === 'queued' || status === 'running' ? 'neutral' : 'check';
+  return status === 'converted' ? 'verified' : status === 'queued' || status === 'running' || status === 'notChosen' ? 'neutral' : 'check';
 }
 
 export function StatusBadge({ status }: { status: BatchStatus }) {
@@ -30,24 +30,29 @@ export interface BatchGroup {
   format: string | null;
   /** The group of formats that need attention (SPEC 21 v11 items 4-7), as opposed to the files that didn't match. */
   attention?: true;
+  /** The group of files none of whose formats was chosen at the batch's question (SPEC 5 D). */
+  notChosen?: true;
   items: BatchItem[];
 }
 
-/** Converted files by format (in the order formats first appear), then the formats that need attention, then the files that didn't match. */
+/** Converted files by format (in the order formats first appear), then the formats that need attention, the files that didn't match, and those not made. */
 export function groupByFormat(items: readonly BatchItem[]): BatchGroup[] {
   const byFormat = new Map<string, BatchItem[]>();
   const attention: BatchItem[] = [];
   const unmatched: BatchItem[] = [];
+  const notChosen: BatchItem[] = [];
   for (const i of items) {
     if (i.status === 'converted' || i.status === 'convertedFlags') {
       const key = i.formatName ?? '';
       byFormat.set(key, [...(byFormat.get(key) ?? []), i]);
     } else if (i.status === 'needsAttention') attention.push(i);
     else if (i.status === 'noMatch') unmatched.push(i);
+    else if (i.status === 'notChosen') notChosen.push(i);
   }
   const groups: BatchGroup[] = [...byFormat.entries()].map(([format, list]) => ({ format, items: list }));
   if (attention.length > 0) groups.push({ format: null, attention: true, items: attention });
   if (unmatched.length > 0) groups.push({ format: null, items: unmatched });
+  if (notChosen.length > 0) groups.push({ format: null, notChosen: true, items: notChosen });
   return groups;
 }
 
@@ -60,6 +65,7 @@ export function BatchResults({ flow }: { flow: UseBatchFlow }) {
   const withFlags = flow.items.filter((i) => i.status === 'convertedFlags').length;
   const noMatch = flow.items.filter((i) => i.status === 'noMatch').length;
   const attention = flow.items.filter((i) => i.status === 'needsAttention').length;
+  const notChosen = flow.items.filter((i) => i.status === 'notChosen').length;
 
   return (
     <section className="conv__step" aria-labelledby="batch-done-title" data-testid="batch-results">
@@ -68,6 +74,7 @@ export function BatchResults({ flow }: { flow: UseBatchFlow }) {
         <p className="lead tabular" data-testid="batch-counts">
           {t('batch.done.counts', { converted: nf.format(converted), flags: nf.format(withFlags), noMatch: nf.format(noMatch) })}
           {attention > 0 ? ` · ${t('batch.done.attention', { n: nf.format(attention) })}` : ''}
+          {notChosen > 0 ? ` · ${t('batch.done.notChosen', { n: nf.format(notChosen) })}` : ''}
         </p>
         {flow.stopped ? <p className="muted">{t('batch.stopped')}</p> : null}
       </header>
@@ -103,14 +110,18 @@ export function BatchResults({ flow }: { flow: UseBatchFlow }) {
       )}
 
       {groups.map((g) => (
-        <section className="bgroup" key={g.attention ? '__attention' : (g.format ?? '__nomatch')} data-testid={g.attention ? 'group-attention' : g.format === null ? 'group-nomatch' : 'group-format'}>
+        <section
+          className="bgroup"
+          key={g.attention ? '__attention' : g.notChosen ? '__notchosen' : (g.format ?? '__nomatch')}
+          data-testid={g.attention ? 'group-attention' : g.notChosen ? 'group-notchosen' : g.format === null ? 'group-nomatch' : 'group-format'}
+        >
           <h3 className="bgroup__title">
-            {g.attention ? t('batch.group.attention') : g.format === null ? t('batch.group.noMatch') : <Cell value={g.format} empty="—" />}
+            {g.attention ? t('batch.group.attention') : g.notChosen ? t('batch.group.notChosen') : g.format === null ? t('batch.group.noMatch') : <Cell value={g.format} empty="—" />}
             <span className="muted tabular"> · {t(g.items.length === 1 ? 'batch.count.one' : 'batch.count.other', { n: nf.format(g.items.length) })}</span>
           </h3>
           <ul className="bfiles">
             {g.items.map((i) => (
-              <BatchFileRow key={i.id} item={i} />
+              <BatchFileRow key={i.id} item={i} onDownload={flow.canDownloadFile(i.id) ? () => flow.downloadFile(i.id) : undefined} />
             ))}
           </ul>
         </section>
@@ -119,7 +130,8 @@ export function BatchResults({ flow }: { flow: UseBatchFlow }) {
   );
 }
 
-function BatchFileRow({ item }: { item: BatchItem }) {
+/** One file's result for one format; a converted one has its own Download beside its status (`onDownload`), next to the zip. */
+function BatchFileRow({ item, onDownload }: { item: BatchItem; onDownload?: () => void }) {
   const i18n = useI18n();
   const { t, code, lang } = i18n;
   const nf = new Intl.NumberFormat(lang);
@@ -130,9 +142,9 @@ function BatchFileRow({ item }: { item: BatchItem }) {
         <p className="bfile__name">
           <Cell value={item.file.name} />
         </p>
-        {(item.status === 'noMatch' || item.status === 'needsAttention') && item.reason ? <p className="muted bfile__reason">{reasonText(i18n, item.reason)}</p> : null}
+        {(item.status === 'noMatch' || item.status === 'needsAttention' || item.status === 'notChosen') && item.reason ? <p className="muted bfile__reason">{reasonText(i18n, item.reason)}</p> : null}
         {item.status === 'noMatch' && item.formatName ? <p className="muted bfile__reason">{t('batch.forFormat', { format: isolate(item.formatName) })}</p> : null}
-        {item.status !== 'noMatch' && item.status !== 'needsAttention' && item.sourceName ? (
+        {item.status !== 'noMatch' && item.status !== 'needsAttention' && item.status !== 'notChosen' && item.sourceName ? (
           <p className="muted bfile__meta tabular">
             <Cell value={item.sourceName} /> · {t('batch.rows', { rowsIn: nf.format(item.rowsIn ?? 0), rowsOut: nf.format(item.rowsOut ?? 0) })}
             {flagRows > 0 ? ` · ${t(flagRows === 1 ? 'batch.flagsCount.one' : 'batch.flagsCount.other', { n: nf.format(flagRows) })}` : ''}
@@ -151,7 +163,14 @@ function BatchFileRow({ item }: { item: BatchItem }) {
           </details>
         ) : null}
       </div>
-      <StatusBadge status={item.status} />
+      <div className="bfile__end">
+        {onDownload ? (
+          <Button variant="ghost" size="sm" icon="file" aria-label={t('batch.downloadOne.label', { name: item.file.name, format: item.formatName ?? '' })} onClick={onDownload}>
+            {t('batch.downloadOne')}
+          </Button>
+        ) : null}
+        <StatusBadge status={item.status} />
+      </div>
     </li>
   );
 }

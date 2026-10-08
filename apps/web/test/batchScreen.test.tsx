@@ -37,6 +37,12 @@ async function addFiles(files: File[]) {
   if (only) fireEvent.click(await screen.findByRole('button', { name: 'Remove filler.csv' }));
 }
 
+/** The batch's one question (SPEC 5 D): some file can be made into several formats, so the user ticks them - here "All" - and converts. */
+async function answerAll() {
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'All formats' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
+}
+
 describe('what the several-files half takes', () => {
   it('paid: the drop zone takes up to the files per run of the tier, and says when more were dropped', async () => {
     renderConvert(<ConvertPage />, { api: fakeConvertApi({ user: PAID }), engine: {} as EngineClient });
@@ -165,6 +171,14 @@ describe('a batch, file by file', () => {
     expect(downloaded).toHaveBeenLastCalledWith('formatAI batch.zip', expect.any(ArrayBuffer), 'application/zip');
     fireEvent.click(screen.getByRole('button', { name: 'Download the summary sheet' }));
     expect(downloaded).toHaveBeenLastCalledWith('formatAI batch summary.xlsx', expect.any(ArrayBuffer), expect.stringContaining('spreadsheetml'));
+    // Each converted file also has its own Download; a file that was not converted has none.
+    fireEvent.click(screen.getByRole('button', { name: 'Download b.csv (Load file)' }));
+    expect(downloaded).toHaveBeenLastCalledWith(expect.stringMatching(/^b \(converted\)\./), expect.any(ArrayBuffer), 'text/csv');
+    expect(screen.getAllByRole('button', { name: /^Download .+\.csv \(/ }).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Download a.csv (Load file)',
+      'Download b.csv (Load file)',
+      'Download e.csv (ERP load)',
+    ]);
   });
 
   it('POST /runs per converted file carries counts only: no values, headers or file names', async () => {
@@ -187,12 +201,13 @@ describe('a batch, file by file', () => {
 
   it('Stop keeps what was converted so far and drops the files it never reached', async () => {
     const api = fakeConvertApi({ user: PAID, entries });
-    const { engine, matchFile } = setup();
+    const { engine, convertWithDecisions } = setup();
     let stopNow: (() => void) | undefined;
-    matchFile.mockImplementationOnce(async () => ({ ok: true, headers: [], ranked: [], pick: { kind: 'auto', match: match({ id: 'c1' }) } }) as MatchFileOutput);
-    matchFile.mockImplementationOnce(
+    // Every file is read first; the second CONVERSION hangs until Stop.
+    const converts = convertWithDecisions.getMockImplementation()!;
+    convertWithDecisions.mockImplementationOnce(converts).mockImplementationOnce(
       () =>
-        new Promise<MatchFileOutput>((_resolve, reject) => {
+        new Promise<ConvertRunOutput>((_resolve, reject) => {
           stopNow = () => reject(Object.assign(new Error('Cancelled'), { name: 'CancelledError' }));
         }),
     );
@@ -255,6 +270,7 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
     // (working, but never advertised: the page's text does not mention sources that feed several formats)
     expect(document.body.textContent).not.toMatch(/feeds several formats|all of them/);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 3 files' }));
+    await answerAll();
     const results = await screen.findByTestId('batch-results');
 
     // The matcher was offered SOURCES (one signature per source), once per file.
@@ -313,6 +329,7 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
     renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
+    await answerAll();
     const results = await screen.findByTestId('batch-results');
     expect(screen.getByTestId('batch-counts').textContent).toBe('1 converted · 0 with flags · 1 did not match');
     const groups = within(results).getAllByTestId(/group-/);
@@ -335,6 +352,7 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
     renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('d.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
+    await answerAll();
     await screen.findByTestId('batch-results');
     // One item per (file, format), each saying which column is missing; nothing was run or reported.
     const rows = screen.getAllByTestId('batch-file').map((r) => (r.textContent ?? '').replace(/[⁦-⁩]/g, ''));
@@ -353,9 +371,95 @@ describe('a source that feeds several formats (SPEC 8.15)', () => {
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
     expect(screen.getByTestId('batch-count').textContent).toBe('2 files');
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    await answerAll();
     await screen.findByTestId('batch-results');
     // 4 items, 2 files.
     expect(within(screen.getByTestId('batch-results')).getAllByTestId('batch-file')).toHaveLength(4);
+  });
+
+  // SPEC 5 D (owner, 2026-10-08): two senders can use the same column names for different things, so a format made is one the user ticked.
+  const formatBox = (name: string): HTMLInputElement => screen.getByRole('checkbox', { name: new RegExp(`^${name} ·`) }) as HTMLInputElement;
+
+  it('reads every file first, then asks ONCE which formats to make: each with its file count, none ticked, Convert off until one is', async () => {
+    const { engine, matchFile, convertWithDecisions, rulesById } = setup();
+    const api = fakeConvertApi({ user: PAID, entries: [feeds, other], rulesById });
+    renderConvert(<ConvertPage />, { api, engine });
+    await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x'), csvFile('x.csv', 'x')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 3 files' }));
+
+    const step = await screen.findByTestId('batch-choose-formats');
+    expect(step.textContent).toContain('Choose the formats to make');
+    expect(matchFile).toHaveBeenCalledTimes(3);
+    expect(convertWithDecisions).not.toHaveBeenCalled();
+    expect(within(step).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Load file · 2 files', 'ERP load · 2 files', 'Ledger · 1 file']);
+    expect(['Load file', 'ERP load', 'Ledger'].map((n) => formatBox(n).checked)).toEqual([false, false, false]);
+    expect((screen.getByRole('checkbox', { name: 'All formats' }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole('button', { name: 'Convert' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(step.textContent).toContain('Choose at least one format.');
+    fireEvent.click(formatBox('Ledger'));
+    expect((screen.getByRole('button', { name: 'Convert' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('makes only the ticked formats; a file none of whose formats was chosen is "Not made", in the list and the summary', async () => {
+    const { engine, convertWithDecisions, batch, rulesById } = setup();
+    const api = fakeConvertApi({ user: PAID, entries: [feeds, other], rulesById });
+    renderConvert(<ConvertPage />, { api, engine });
+    await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x'), csvFile('x.csv', 'x')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 3 files' }));
+    await screen.findByTestId('batch-choose-formats');
+    fireEvent.click(formatBox('ERP load'));
+    fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
+
+    await screen.findByTestId('batch-results');
+    const ran = convertWithDecisions.mock.calls.map((c) => [(c[0] as { file: { name: string } }).file.name, (c[0] as { rules: { name?: string } }).rules.name]);
+    expect(ran).toEqual([
+      ['a.csv', 'rules-c2'],
+      ['b.csv', 'rules-c2'],
+    ]);
+    expect(screen.getByTestId('batch-counts').textContent).toBe('1 converted · 1 with flags · 0 did not match · 1 not made');
+    const notMade = screen.getByTestId('group-notchosen');
+    expect(notMade.textContent).toContain('x.csv');
+    expect(notMade.textContent).toContain('It fits none of the formats you chose.');
+    const files = batch.mock.calls[0]![0].summary.files.rows;
+    expect(files.find((r) => r[0] === 'x.csv')?.slice(0, 4)).toEqual(['x.csv', '', 'Supplier C', 'Not made']);
+    expect(batch.mock.calls[0]![0].outputs.map((o) => o.folder)).toEqual(['ERP load', 'ERP load']);
+  });
+
+  it('"Back" converts nothing and keeps the files in the list', async () => {
+    const { engine, convertWithDecisions, rulesById } = setup();
+    const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
+    renderConvert(<ConvertPage />, { api, engine });
+    await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    await screen.findByTestId('batch-choose-formats');
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByRole('button', { name: 'Convert 2 files' })).toBeTruthy();
+    expect(screen.getAllByTestId('batch-file')).toHaveLength(2);
+    expect(convertWithDecisions).not.toHaveBeenCalled();
+    expect(api.recordRun).not.toHaveBeenCalled();
+  });
+
+  it('Stop while the files are read converts nothing: the list is back as it was', async () => {
+    const { engine, matchFile, convertWithDecisions, rulesById } = setup();
+    const api = fakeConvertApi({ user: PAID, entries: [feeds], rulesById });
+    let stopNow: (() => void) | undefined;
+    const reads = matchFile.getMockImplementation()!;
+    matchFile.mockImplementationOnce(reads).mockImplementationOnce(
+      () =>
+        new Promise<MatchFileOutput>((_resolve, reject) => {
+          stopNow = () => reject(Object.assign(new Error('Cancelled'), { name: 'CancelledError' }));
+        }),
+    );
+    renderConvert(<ConvertPage />, { api, engine });
+    await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    await waitFor(() => expect(stopNow).toBeDefined());
+    expect(screen.getByTestId('batch-progress').textContent).toBe('Reading file 2 of 2');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    stopNow!();
+    expect(await screen.findByRole('button', { name: 'Convert 2 files' })).toBeTruthy();
+    expect(screen.getAllByTestId('batch-file')).toHaveLength(2);
+    expect(convertWithDecisions).not.toHaveBeenCalled();
   });
 });
 
@@ -412,6 +516,7 @@ describe('formats that need attention, file by file (SPEC 21 v11 items 4-7)', ()
     renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    await answerAll();
     const results = await screen.findByTestId('batch-results');
 
     // a.csv: the load file is made, the report is not (it uses "Supplier SKU"). b.csv: both.
@@ -448,6 +553,7 @@ describe('formats that need attention, file by file (SPEC 21 v11 items 4-7)', ()
     renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    await answerAll();
     const results = await screen.findByTestId('batch-results');
     // Nothing about "Notes" anywhere.
     expect(plain(results)).not.toContain('Notes');
@@ -459,6 +565,7 @@ describe('formats that need attention, file by file (SPEC 21 v11 items 4-7)', ()
     renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('a.csv', 'x'), csvFile('b.csv', 'x')]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    await answerAll();
     const results = await screen.findByTestId('batch-results');
     expect(screen.getByTestId('batch-counts').textContent).toBe('2 converted · 0 with flags · 0 did not match · 2 need attention');
     const attention = within(results).getByTestId('group-attention');
@@ -486,6 +593,7 @@ describe('the real worker: one source, two formats', () => {
     renderConvert(<ConvertPage />, { api, engine });
     await addFiles([csvFile('jan.csv', SUPPLIER_A_CLEAN_CSV)]);
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 1 file' }));
+    await answerAll();
     await screen.findByRole('button', { name: 'Download all (zip)' }, { timeout: 15000 });
     expect(screen.getByTestId('batch-counts').textContent).toBe('2 converted · 0 with flags · 0 did not match');
 

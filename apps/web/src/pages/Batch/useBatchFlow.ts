@@ -4,9 +4,12 @@
 // conversion that source has, and gets a status: converted, converted with flags, or didn't match. Then the worker packs a zip
 // (a folder per format) and a summary workbook. Files and their bytes stay on this computer; POST /runs gets counts only.
 //
-// DECISION (SPEC 8.15): a source that feeds several formats converts the file into ALL of them, with no question asked (a batch
-// has no per-file dialogue). So the list holds one BatchItem per (file, conversion): results stay grouped by format, the zip has
-// a folder per format and the summary workbook a row per (file, format). `fileId` ties the items of one file together.
+// DECISION (SPEC 5 D, owner 2026-10-08): every file is matched FIRST. When some file's source feeds several formats, the batch asks ONCE,
+// for all its files, which formats to make - the formats the matched files can be made into, each with how many files, none ticked - and
+// each file is then made into the chosen formats its source feeds (a file none of whose formats was chosen is "not made", and said so).
+// Two senders can use the same column names for different things, so a format made is always one the user ticked. When every matched
+// source feeds one format (always so on `?format=`), nothing is asked. The list holds one BatchItem per (file, conversion): results stay
+// grouped by format, the zip has a folder per format and the summary workbook a row per (file, format). `fileId` ties the items of one file.
 //
 // DECISION (SPEC 21 v11 items 4-7): what a file lacks is settled per format, like in the single-file flow: a format whose rules need a column
 // the file does not have (required, or used though optional), or whose used column's values mostly did not parse as before, is not made
@@ -18,7 +21,7 @@ import { tiers } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../../api/http';
 import { useConvertApi } from '../../api/convert';
-import { downloadBytes, outputFileName } from '../../flow/download';
+import { downloadBytes, outputFileName, outputMimeType } from '../../flow/download';
 import { isCancellation } from '../../flow/errors';
 import { useI18n, type I18n } from '../../i18n';
 import { useServices } from '../../services';
@@ -27,7 +30,7 @@ import type { BatchOutputFile, SummaryTable } from '../../worker/convertApi';
 import { attentionLines } from '../Convert/attention';
 import { attentionOfGaps, attentionOfUnlike, columnLabel, isolate, runCounts, signatureOf, type Attention } from '../Convert/logic';
 
-export type BatchStatus = 'queued' | 'running' | 'converted' | 'convertedFlags' | 'noMatch' | 'needsAttention';
+export type BatchStatus = 'queued' | 'running' | 'converted' | 'convertedFlags' | 'noMatch' | 'needsAttention' | 'notChosen';
 
 /** Why a file didn't match (or couldn't be converted): said in plain words next to the file. */
 export type NoMatchReason =
@@ -39,6 +42,8 @@ export type NoMatchReason =
   /** SPEC 21 v11 items 4-7: the format was not made because of what this file lacks (or how its values look); the others of the file were. */
   | { kind: 'attention'; format: string; attention: Attention }
   | { kind: 'rules'; source: string }
+  /** None of the formats the user chose at the batch's question is one this file's source feeds. */
+  | { kind: 'notChosen' }
   | { kind: 'gone' }
   | { kind: 'failed' };
 
@@ -57,11 +62,24 @@ export interface BatchItem {
   flags: Flag[];
   /** A flag's column id as the user knows it (the file's column header), for the flag lists. */
   columnLabels: Record<string, string>;
-  /** The name of the converted file inside the zip. */
+  /** The name of the converted file inside the zip (and of its own download). */
   outputName?: string;
+  /** The converted file's type, for its own download. */
+  fileType?: 'xlsx' | 'csv' | 'txt';
 }
 
-export type BatchPhase = 'idle' | 'running' | 'packing' | 'done';
+/** `matching`: every file is matched before anything is converted; `choosing`: the batch's one question, which formats to make. */
+export type BatchPhase = 'idle' | 'matching' | 'choosing' | 'running' | 'packing' | 'done';
+
+/** A format the matched files can be made into, for the batch's question: how many of the files its sources take. */
+export interface BatchFormatChoice {
+  formatId: string;
+  formatName: string;
+  files: number;
+}
+
+/** What matching one file gave: its source (and the headers read), or why it can't be converted. */
+type Matched = { kind: 'matched'; source: SignatureEntry; headers: readonly string[] } | { kind: 'noMatch'; reason: NoMatchReason };
 
 /** What converting one file gave for ONE of its conversions: the item's fields, the file made, and the counts to report. */
 interface ConversionResult {
@@ -91,6 +109,10 @@ export interface UseBatchFlow {
   done: number;
   /** How many files the list holds. */
   total: number;
+  /** How many files were matched so far (the `matching` phase's progress). */
+  matched: number;
+  /** The formats to choose from (the `choosing` phase), in the order they first appear; none is ticked. */
+  choices: BatchFormatChoice[];
   stopped: boolean;
   packError: boolean;
   downloads: BatchDownloads | null;
@@ -99,9 +121,17 @@ export interface UseBatchFlow {
   remove(id: number): void;
   clear(): void;
   run(): void;
+  /** The answer to the batch's question: the ids of the formats to make (at least one). */
+  choose(formatIds: readonly string[]): void;
+  /** Back from the question: nothing is converted, and the files stay in the list. */
+  cancelChoice(): void;
   stop(): void;
   downloadZip(): void;
   downloadSummary(): void;
+  /** Whether this converted item's file can be downloaded on its own (it was made in this run). */
+  canDownloadFile(id: number): boolean;
+  /** Downloads one converted file on its own, next to the zip. */
+  downloadFile(id: number): void;
   reset(): void;
 }
 
@@ -125,6 +155,8 @@ export function reasonText(i18n: I18n, reason: NoMatchReason): string {
       return attentionLines(i18n, reason.format, reason.attention).join(' ');
     case 'rules':
       return t('batch.reason.rules', { source: isolate(reason.source) });
+    case 'notChosen':
+      return t('batch.reason.notChosen');
     case 'gone':
       return t('batch.reason.gone');
     case 'failed':
@@ -145,6 +177,8 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
   const [stopped, setStopped] = useState(false);
   const [packError, setPackError] = useState(false);
   const [downloads, setDownloads] = useState<BatchDownloads | null>(null);
+  const [matched, setMatched] = useState(0);
+  const [choices, setChoices] = useState<BatchFormatChoice[]>([]);
 
   const itemsRef = useRef<BatchItem[]>([]);
   itemsRef.current = items;
@@ -155,6 +189,8 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
   const outputs = useRef(new Map<number, ArrayBuffer>());
   /** Rules by conversion id, fetched once per batch. */
   const rulesCache = useRef(new Map<string, Rules>());
+  /** The batch waiting at the question: its files (in the list's order) and what matching gave each, by file id. */
+  const pending = useRef<{ queue: number[]; matches: Map<number, Matched> } | null>(null);
   const i18nRef = useRef(i18n);
   i18nRef.current = i18n;
 
@@ -249,30 +285,43 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
           flags: out.flags,
           columnLabels: Object.fromEntries([...new Set(out.flags.map((f) => f.column))].map((c) => [c, columnLabel(rules, c)])),
           outputName: outputFileName(item.file.name, rules),
+          fileType: out.fileType,
         },
       };
     },
     [api, engine],
   );
 
-  /** One file, start to finish: match it to a source, then convert it with each conversion of that source. */
-  const convertOne = useCallback(
-    async (item: BatchItem, entries: readonly SignatureEntry[], signal: AbortSignal): Promise<ConversionResult[]> => {
-      const noMatch = (reason: NoMatchReason): ConversionResult[] => [{ change: { status: 'noMatch', reason } }];
-      const matched = await engine.matchFile({ file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, signatures: entries.map(signatureOf) }, { signal });
-      if (!matched.ok) return noMatch({ kind: matched.reason });
-      // Only a clear winner is used: never a guess (DECISION 10), and no per-file mapping in a batch. What the file lacks (a missing
-      // required column, or one that is used) is settled per format below (SPEC 21 v11 items 4-7), not by stopping the whole file.
-      if (matched.pick.kind !== 'auto') return noMatch({ kind: matched.pick.options.length === 0 ? 'noSource' : 'unsure' });
-      const match = matched.pick.match;
+  /** Matches one file to a source: only a clear winner is used (never a guess, DECISION 10), and no per-file mapping in a batch. */
+  const matchOne = useCallback(
+    async (item: BatchItem, entries: readonly SignatureEntry[], signal: AbortSignal): Promise<Matched> => {
+      const noMatch = (reason: NoMatchReason): Matched => ({ kind: 'noMatch', reason });
+      const result = await engine.matchFile({ file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, signatures: entries.map(signatureOf) }, { signal });
+      if (!result.ok) return noMatch({ kind: result.reason });
+      if (result.pick.kind !== 'auto') return noMatch({ kind: result.pick.options.length === 0 ? 'noSource' : 'unsure' });
+      const match = result.pick.match;
       const source = entries.find((e) => e.sourceId === match.id);
       if (!source) return noMatch({ kind: 'gone' });
+      return { kind: 'matched', source, headers: result.headers };
+    },
+    [engine],
+  );
 
+  /**
+   * One matched file, converted with each conversion of its source - only those of the chosen formats when the batch asked (`chosen`).
+   * What the file lacks (a missing required column, or one that is used) is settled per format (SPEC 21 v11 items 4-7), not by stopping the file.
+   */
+  const convertMatched = useCallback(
+    async (item: BatchItem, m: Matched, chosen: ReadonlySet<string> | null, signal: AbortSignal): Promise<ConversionResult[]> => {
+      if (m.kind === 'noMatch') return [{ change: { status: 'noMatch', reason: m.reason } }];
+      const { source } = m;
+      const convs = chosen ? source.conversions.filter((c) => chosen.has(c.formatId)) : source.conversions;
+      if (convs.length === 0) return [{ change: { status: 'notChosen', reason: { kind: 'notChosen' }, sourceName: source.name } }];
       const results: ConversionResult[] = [];
-      for (const conv of source.conversions) results.push(await convertTo(item, source, conv, matched.headers, signal));
+      for (const conv of convs) results.push(await convertTo(item, source, conv, m.headers, signal));
       return results;
     },
-    [engine, convertTo],
+    [convertTo],
   );
 
   /** The zip and the summary workbook, made in the worker from what was converted. */
@@ -283,7 +332,7 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
       if (converted.length === 0) return null;
 
       const statusText = (i: BatchItem): string =>
-        t(i.status === 'converted' ? 'batch.status.converted' : i.status === 'convertedFlags' ? 'batch.status.convertedFlags' : i.status === 'needsAttention' ? 'batch.status.needsAttention' : 'batch.status.noMatch');
+        t(i.status === 'converted' ? 'batch.status.converted' : i.status === 'convertedFlags' ? 'batch.status.convertedFlags' : i.status === 'needsAttention' ? 'batch.status.needsAttention' : i.status === 'notChosen' ? 'batch.status.notChosen' : 'batch.status.noMatch');
       // A file that was made into several formats appears once per format, so its flag rows say which format they belong to
       // (the sheet keeps its five columns: file, row, column, value, message).
       const perFile = new Map<number, number>();
@@ -320,6 +369,68 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
     [engine],
   );
 
+  /** The converting half of a run: every file of `queue`, with what matching gave it; then the zip. */
+  const convertAll = useCallback(
+    (runId: number, abort: AbortController, queue: readonly number[], matches: ReadonlyMap<number, Matched>, chosen: ReadonlySet<string> | null) => {
+      setPhase('running');
+      void (async () => {
+        /** The items of every file that was finished, by file. */
+        const finished = new Map<number, BatchItem[]>();
+        let wasStopped = false;
+        for (const id of queue) {
+          if (abort.signal.aborted || runId !== runRef.current) {
+            wasStopped = true;
+            break;
+          }
+          const base = itemsRef.current.find((i) => i.id === id);
+          const m = matches.get(id);
+          if (!base || !m) continue;
+          patch(id, { status: 'running' });
+          let results: ConversionResult[];
+          try {
+            results = await convertMatched(base, m, chosen, abort.signal);
+          } catch (e) {
+            if (abort.signal.aborted || isCancellation(e)) {
+              wasStopped = true;
+              break;
+            }
+            results = [{ change: { status: 'noMatch', reason: { kind: 'failed' } } }];
+          }
+          if (runId !== runRef.current) return;
+          // One item per (file, conversion): the first takes the file's place in the list, the others follow it.
+          const made = results.map((r, k): BatchItem => {
+            const itemId = k === 0 ? base.id : nextId.current++;
+            if (r.bytes) outputs.current.set(itemId, r.bytes);
+            return { ...base, ...r.change, id: itemId };
+          });
+          finished.set(id, made);
+          setItems((list) => list.flatMap((i) => (i.id === id ? made : [i])));
+          // Counts only, once per converted (file, conversion); a file the user stopped on is reported for none of them.
+          for (const r of results) if (r.record) void api.recordRun(r.record.conversionId, r.record.counts).catch(() => undefined);
+        }
+        if (runId !== runRef.current) return;
+        // A stopped batch keeps what it converted; files it never reached are dropped from the list.
+        const kept = queue.flatMap((id) => finished.get(id) ?? []);
+        if (wasStopped) {
+          setItems(kept);
+          setStopped(true);
+        }
+        setPhase('packing');
+        // Stopping the run must not stop the packing of what it did convert: a fresh signal.
+        const packing = new AbortController();
+        abortRef.current = packing;
+        try {
+          setDownloads(await pack(kept, packing.signal));
+        } catch (e) {
+          if (runId !== runRef.current || isCancellation(e)) return;
+          setPackError(true);
+        }
+        if (runId === runRef.current) setPhase('done');
+      })();
+    },
+    [api, convertMatched, pack, patch],
+  );
+
   const run = useCallback(() => {
     if (entries.length === 0 || itemsRef.current.length === 0) return;
     abortRef.current?.abort();
@@ -329,66 +440,78 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
     const queue = itemsRef.current.map((i) => i.id);
     outputs.current.clear();
     rulesCache.current.clear();
+    pending.current = null;
     setStopped(false);
     setPackError(false);
     setDownloads(null);
+    setMatched(0);
+    setChoices([]);
     setItems((list) => list.filter((i) => i.id === i.fileId).map((i) => ({ file: i.file, id: i.id, fileId: i.fileId, status: 'queued', flags: [], columnLabels: {} })));
-    setPhase('running');
+    setPhase('matching');
 
     void (async () => {
-      /** The items of every file that was finished, by file. */
-      const finished = new Map<number, BatchItem[]>();
-      let wasStopped = false;
+      const matches = new Map<number, Matched>();
       for (const id of queue) {
-        if (abort.signal.aborted || runId !== runRef.current) {
-          wasStopped = true;
-          break;
-        }
         const base = itemsRef.current.find((i) => i.id === id);
         if (!base) continue;
-        patch(id, { status: 'running' });
-        let results: ConversionResult[];
         try {
-          results = await convertOne(base, entries, abort.signal);
+          matches.set(id, await matchOne(base, entries, abort.signal));
         } catch (e) {
+          // Stopped while the files were read: nothing was converted, so the list is back as it was.
           if (abort.signal.aborted || isCancellation(e)) {
-            wasStopped = true;
-            break;
+            if (runId === runRef.current) setPhase('idle');
+            return;
           }
-          results = [{ change: { status: 'noMatch', reason: { kind: 'failed' } } }];
+          matches.set(id, { kind: 'noMatch', reason: { kind: 'failed' } });
         }
         if (runId !== runRef.current) return;
-        // One item per (file, conversion): the first takes the file's place in the list, the others follow it.
-        const made = results.map((r, k): BatchItem => {
-          const itemId = k === 0 ? base.id : nextId.current++;
-          if (r.bytes) outputs.current.set(itemId, r.bytes);
-          return { ...base, ...r.change, id: itemId };
-        });
-        finished.set(id, made);
-        setItems((list) => list.flatMap((i) => (i.id === id ? made : [i])));
-        // Counts only, once per converted (file, conversion); a file the user stopped on is reported for none of them.
-        for (const r of results) if (r.record) void api.recordRun(r.record.conversionId, r.record.counts).catch(() => undefined);
+        setMatched(matches.size);
       }
       if (runId !== runRef.current) return;
-      // A stopped batch keeps what it converted; files it never reached are dropped from the list.
-      const kept = queue.flatMap((id) => finished.get(id) ?? []);
-      if (wasStopped) {
-        setItems(kept);
-        setStopped(true);
+      if (abort.signal.aborted) {
+        setPhase('idle');
+        return;
       }
-      setPhase('packing');
-      // Stopping the run must not stop the packing of what it did convert: a fresh signal.
-      const packing = new AbortController();
-      abortRef.current = packing;
-      try {
-        setDownloads(await pack(kept, packing.signal));
-      } catch (e) {
-        if (runId !== runRef.current || isCancellation(e)) return;
-        setPackError(true);
+      // Asked only when a matched file's source feeds several formats: then every format the matched files can be made into is listed,
+      // with how many of the files its sources take.
+      const sources = [...matches.values()].flatMap((m) => (m.kind === 'matched' ? [m.source] : []));
+      if (!sources.some((src) => src.conversions.length > 1)) {
+        convertAll(runId, abort, queue, matches, null);
+        return;
       }
-      if (runId === runRef.current) setPhase('done');
+      const formats = new Map<string, BatchFormatChoice>();
+      for (const src of sources) {
+        for (const formatId of new Set(src.conversions.map((c) => c.formatId))) {
+          const had = formats.get(formatId);
+          const formatName = had?.formatName ?? src.conversions.find((c) => c.formatId === formatId)?.formatName ?? '';
+          formats.set(formatId, { formatId, formatName, files: (had?.files ?? 0) + 1 });
+        }
+      }
+      pending.current = { queue, matches };
+      setChoices([...formats.values()]);
+      setPhase('choosing');
     })();
-  }, [api, convertOne, entries, pack, patch]);
+  }, [convertAll, entries, matchOne]);
+
+  const choose = useCallback(
+    (formatIds: readonly string[]) => {
+      const waiting = pending.current;
+      if (!waiting || formatIds.length === 0) return;
+      pending.current = null;
+      const abort = new AbortController();
+      abortRef.current = abort;
+      setChoices([]);
+      convertAll(runRef.current, abort, waiting.queue, waiting.matches, new Set(formatIds));
+    },
+    [convertAll],
+  );
+
+  const cancelChoice = useCallback(() => {
+    runRef.current++;
+    pending.current = null;
+    setChoices([]);
+    setPhase('idle');
+  }, []);
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
@@ -397,6 +520,9 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
     abortRef.current?.abort();
     outputs.current.clear();
     rulesCache.current.clear();
+    pending.current = null;
+    setChoices([]);
+    setMatched(0);
     setItems([]);
     setPhase('idle');
     setStopped(false);
@@ -411,8 +537,16 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
     if (downloads) downloadBytes(i18nRef.current.t('batch.summary.file'), downloads.summary, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   }, [downloads]);
 
+  // One converted file on its own (owner, 2026-10-08): its bytes are kept until the next run or "Start another batch".
+  const canDownloadFile = useCallback((id: number) => outputs.current.has(id), []);
+  const downloadFile = useCallback((id: number) => {
+    const bytes = outputs.current.get(id);
+    const item = itemsRef.current.find((i) => i.id === id);
+    if (bytes && item) downloadBytes(item.outputName ?? item.file.name, bytes, outputMimeType(item.fileType));
+  }, []);
+
   const done = useMemo(() => new Set(items.filter((i) => i.status !== 'queued' && i.status !== 'running').map((i) => i.fileId)).size, [items]);
   const total = useMemo(() => new Set(items.map((i) => i.fileId)).size, [items]);
 
-  return { phase, items, done, total, stopped, packError, downloads, filesPerRun, add, remove, clear, run, stop, downloadZip, downloadSummary, reset };
+  return { phase, items, done, total, matched, choices, stopped, packError, downloads, filesPerRun, add, remove, clear, run, choose, cancelChoice, stop, downloadZip, downloadSummary, canDownloadFile, downloadFile, reset };
 }

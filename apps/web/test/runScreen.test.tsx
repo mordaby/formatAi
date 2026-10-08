@@ -226,12 +226,14 @@ describe('?format= scopes the several-files half too', () => {
     expect(screen.getByTestId('only-format').textContent).toContain('ERP load');
   });
 
-  it('without it, every format of the source is made', async () => {
+  it('without it, the batch asks which formats, and "All" makes every format of the source', async () => {
     const { engine, convertWithDecisions } = fakeEngine();
     const api = fakeConvertApi({ entries: [feeds, other] });
     renderConvert(<ConvertPage />, { api, engine });
     await drop(files(2));
     fireEvent.click(await screen.findByRole('button', { name: 'Convert 2 files' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'All formats' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
     await screen.findByTestId('batch-results');
     expect(convertWithDecisions).toHaveBeenCalledTimes(4);
   });
