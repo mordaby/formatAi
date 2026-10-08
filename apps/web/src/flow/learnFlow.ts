@@ -7,6 +7,8 @@
 //                          |            +-> warn (continue past "unknown output columns")
 //                          +-> blocked | warn (Try anyway) | error
 //                          +-> known ("You already have this format": the user's saved rules make this example; nothing learned)
+//                          +-> matchesFormat ("Is this file another input for it?": the output is a saved format that does not take this
+//                              input yet; nothing learned - the user's answer starts the learn)
 //
 // `learning` may first go through rounds of AI code checks (learn-v9, at most 3, `checkRound`): code answers the AI step's checks on every
 // row and the next step (POST /api/learn/step) carries them, until the rules come.
@@ -15,7 +17,7 @@
 // simply never visited (the local fast path goes checking -> done, with no learning or
 // verifying). The HTTP calls are made HERE, on the main thread, on the worker's behalf.
 import { limits, payloadBytes, stepBytes, withRows, type AiLearnQuotaState, type CheckRound, type Format, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type RepairResponse, type Sample, type Tier } from '@formatai/shared';
-import type { AnalysisStage, CompleteOptions, KnownPair, LearnCallResult, PreflightIssue, UserColumnChoices } from '@formatai/engine';
+import type { AnalysisStage, CompleteOptions, KnownPair, LearnCallResult, OutputMatch, PreflightIssue, UserColumnChoices } from '@formatai/engine';
 import type { Api } from '../api';
 import { learnRequest, repairRequest, stepRequest, type LearnRequestOptions, type RepairRequestOptions } from '../api/learnRequests';
 import { webConfig } from '../config';
@@ -110,6 +112,12 @@ export type LearnFlowState =
    * exactly - nothing was learned, no AI format spent, nothing saved. The screen offers its Run screen, or the learn anyway (`StartParams.checkKnown` false).
    */
   | ({ status: 'known'; known: KnownPair } & Common)
+  /**
+   * "This output matches your format" (owner decision 2026-10-07): the example's output is one (or more) of the user's formats that does not
+   * take this input yet - nothing was learned. The screen asks whether the file is another input for it: yes is a learn against that format
+   * (`StartParams.target`), no a learn of its own.
+   */
+  | ({ status: 'matchesFormat'; matches: OutputMatch[] } & Common)
   /** SPEC 21 v5 item 4: the AI readiness gate stopped the AI step (`result.readiness` says why); nothing was used up. */
   | ({ status: 'notReady'; result: LearnOutput } & Common)
   /**
@@ -380,6 +388,8 @@ export class LearnFlow {
         }
       } else if (result.path === 'known' && result.known) {
         this.set({ status: 'known', known: result.known, sent });
+      } else if (result.path === 'matchesFormat' && result.sameOutput && result.sameOutput.length > 0) {
+        this.set({ status: 'matchesFormat', matches: result.sameOutput, sent });
       } else if (result.path === 'notReady') {
         this.set({ status: 'notReady', result, sent });
       } else if (!result.rules) {

@@ -791,8 +791,8 @@ describe('Add a source: the free engine first, the AI step only on the click', (
   });
 });
 
-describe('from the Result screen\'s Save ("Add as a source" of a result with fields left)', () => {
-  it('the Result screen shows no "looks like your format" banner: the question is asked at Save', async () => {
+describe('the Result screen never offers "Add as a source": another input for a format is asked at Learn', () => {
+  it('no "looks like your format" banner and no "Add as a source" button on the Result screen', async () => {
     const NAMES = formatSummary({ id: 'F7', name: 'Names list', outputHeaders: ['Name'], fileType: 'xlsx', outputColumns: 1 });
     const api = fakeApi({ features: { formatSources: true }, user: USER, registry: { listFormats: vi.fn(async () => [NAMES]) } });
     const { engine } = fakeEngine(async () => learnResult({ path: 'local' }));
@@ -805,33 +805,6 @@ describe('from the Result screen\'s Save ("Add as a source" of a result with fie
     await waitFor(() => expect(api.registry.listFormats).toHaveBeenCalled());
     expect(screen.queryByText(/looks like your format/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add as a source' })).toBeNull();
-  });
-
-  it('opens Add a source with the same files, and the free learn starts by itself', async () => {
-    const NAMES = formatSummary({ id: 'F1', name: 'Supplier price list', outputHeaders: HEADERS, fileType: 'xlsx', outputColumns: 4 });
-    const api = fakeApi({ features: { formatSources: true }, user: USER, registry: { listFormats: vi.fn(async () => [NAMES]), getFormat: vi.fn(async () => format), signatures: vi.fn(async () => []) } });
-    const { engine, learn } = fakeEngine(async () => partialAttach(), undefined, {
-      readHeaders: vi.fn(async ({ file }: { file: { name: string } }) => ({ ok: true, headers: file.name === 'load.xlsx' ? HEADERS : ['Code', 'Name', 'Price'], sheetName: 'S', direction: 'ltr', rows: 3 })),
-    });
-    renderApp({ engine, api });
-    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('supplier-b.csv')] } });
-    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [xlsx('load.xlsx')] } });
-    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
-    await act(async () => void fireEvent.click(screen.getByRole('button', { name: /Learn the format/ })));
-    await screen.findByTestId('rules-map');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Save format' }) as HTMLButtonElement).disabled).toBe(false));
-    await act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Save format' })));
-    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(within(box).getByTestId('format-match-question').textContent).toBe('This looks like your format Supplier price list. Add this file as a new source of it?');
-    await act(async () => void fireEvent.click(within(box).getByRole('button', { name: 'Add as a source' })));
-    // Add a source, with the session's files, learning against the format - the free engine, by itself.
-    await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
-    const args = learn.mock.calls[1]![0] as { ai: string; target?: unknown };
-    expect(args.ai).toBe('notAllowed');
-    expect(args.target).toBeDefined();
-    await screen.findByTestId('deep-panel');
-    expect(api.learn).not.toHaveBeenCalled();
-    expect(api.registry.attachSource).not.toHaveBeenCalled();
   });
 });
 

@@ -3,6 +3,7 @@
 // source (the source-related UI may be switched off).
 //   Convert files with it - the Run screen of that format, with the example input already dropped.
 //   Learn again anyway    - the learn the user asked for, without this check.
+//   Choose other files    - back to an empty form, the first drop zone focused.
 import type { KnownPair } from '@formatai/engine';
 import { useI18n } from '../i18n';
 import { Button } from '../ui';
@@ -12,9 +13,10 @@ export interface LearningKnownProps {
   known: KnownPair;
   onConvert(): void;
   onLearnAnyway(): void;
+  onChooseOther(): void;
 }
 
-export function LearningKnown({ known, onConvert, onLearnAnyway }: LearningKnownProps) {
+export function LearningKnown({ known, onConvert, onLearnAnyway, onChooseOther }: LearningKnownProps) {
   const { t } = useI18n();
   return (
     <div className="view preflight" data-testid="learning-known">
@@ -39,6 +41,9 @@ export function LearningKnown({ known, onConvert, onLearnAnyway }: LearningKnown
         </Button>
         <Button variant="secondary" onClick={onLearnAnyway}>
           {t('known.again')}
+        </Button>
+        <Button variant="ghost" onClick={onChooseOther}>
+          {t('known.other')}
         </Button>
       </div>
     </div>

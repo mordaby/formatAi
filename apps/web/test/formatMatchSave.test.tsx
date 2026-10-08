@@ -1,9 +1,9 @@
-// "Is this one of your formats?" at Save (owner decision 2026-10-07): learning the same OUTPUT again must not make a second format. The
-// first Save of a learn compares the learned output with the user's saved formats - by the output only - and, when one matches, asks once, in
-// the Save popup: update the rules of the source the file comes from, add the file as a new source of the format (when the format lock
-// allows it), or save a new format. Nothing matches: no question, one click. With a list or an identifier-shaped value to ask about, still
-// ONE dialog: the format question first, the "keep these" lines below. A fake API (the user's formats and sources) and a fake worker that runs
-// the engine's own comparison.
+// "Update your format X, or save as a new format?" at Save (owner decisions 2026-10-07): the same OUTPUT learned again from the same kind of
+// input file (other values) must not make a second format by accident. The first Save of a learn compares the learned output with the user's
+// saved formats and, when this input already feeds one, asks once, in the Save popup - with no "source" in it, whatever the feature switch
+// says. Another input for a format is asked at Learn (alreadyLearned.test.tsx), never at Save. Nothing matches: no question, one click. With a
+// list or an identifier-shaped value to ask about, still ONE dialog: the format question first, the "keep these" lines below. A fake API (the
+// user's formats and sources) and a fake worker that runs the engine's own comparison.
 import { formatOf } from '@formatai/engine';
 import type { FormatSummary, GetFormatResponse, LearnResult, MeUser, Rules, SignatureEntry } from '@formatai/shared';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
@@ -199,18 +199,19 @@ describe('no saved format with this output: Save works as before', () => {
   });
 });
 
-describe('the same output from the same source: update its rules', () => {
-  it('asks once - the format and the source by name - and "Update its rules" saves a new version of that source (the title text may differ)', async () => {
+describe('the same output from the same input, other values: "Update your format X, or save as a new format?"', () => {
+  it('asks once, naming the format and never a source - and "Update X" saves a new version of that input\'s rules (the title text may differ)', async () => {
     const { registry, router } = await openResult({ rules: learned({ title: 'Report for April' }), formats: [MONTHLY()] });
     await press('Save format');
     const box = await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(question()).toBe('This is your format Monthly accounts, from CRM A. Update its rules, or save as a new format?');
-    expect(answers()).toEqual(['Update its rules', 'Save as a new format', 'Cancel']);
-    // (one source: nobody else's format changes)
-    expect(box.textContent).not.toMatch(/other source/);
+    expect(question()).toBe('Update your format Monthly accounts, or save as a new format?');
+    expect(answers()).toEqual(['Update Monthly accounts', 'Save as a new format', 'Cancel']);
+    expect(box.textContent).not.toMatch(/source|CRM A/i);
+    // (one input: nobody else's file changes)
+    expect(box.textContent).not.toMatch(/other input/);
     expect(registry.createFormat).not.toHaveBeenCalled();
 
-    await answer('Update its rules');
+    await answer('Update Monthly accounts');
     await waitFor(() => expect(registry.updateConversion).toHaveBeenCalledTimes(1));
     const [id, body] = registry.updateConversion.mock.calls[0] as unknown as [string, { rules: Rules; status: string; baseVersion: number }];
     expect(id).toBe('F1-C1');
@@ -218,17 +219,16 @@ describe('the same output from the same source: update its rules', () => {
     expect(body.rules.output.titleRows).toEqual([{ text: 'Report for April' }]);
     expect(registry.createFormat).not.toHaveBeenCalled();
     expect(registry.attachSource).not.toHaveBeenCalled();
-    // The screen is now that source's editor: its address, its name, the version saved.
+    // The screen is now that input's editor: its address, the version saved.
     expect(await screen.findByText('Saved as version 5.')).toBeTruthy();
     await waitFor(() => expect(router.state.location.pathname).toBe('/formats/F1/sources/F1-C1'));
-    expect(screen.getByText('A source of "Monthly accounts". We do not keep your files.')).toBeTruthy();
   });
 
-  it('a format with other sources: says the update changes the format for them too', async () => {
+  it('a format with other inputs: says the update changes the format for them too', async () => {
     const two = saved('F1', 'Monthly accounts', learned(), { sources: [{ id: 'F1-C1', sourceId: 'S1', sourceName: 'CRM A', version: 4 }, { id: 'F1-C2', sourceId: 'S7', sourceName: 'CRM B', version: 1 }] });
     await openResult({ rules: learned({ title: 'Report for April' }), formats: [two] });
     await press('Save format');
-    expect(within(await screen.findByRole('dialog')).getByText('Updating changes the format for its other source too.')).toBeTruthy();
+    expect(within(await screen.findByRole('dialog')).getByText('Updating changes the format for its other input file too.')).toBeTruthy();
   });
 
   it('"Save as a new format" saves a new format, and "Cancel" saves nothing', async () => {
@@ -243,55 +243,8 @@ describe('the same output from the same source: update its rules', () => {
     await waitFor(() => expect(registry.createFormat).toHaveBeenCalledTimes(1));
     expect(registry.updateConversion).not.toHaveBeenCalled();
   });
-});
 
-describe('the same output from another input: add it as a new source', () => {
-  const OTHER_INPUT = () => learned({ inputHeaders: ['Acct no', 'Firm'] });
-
-  it('"Add as a source" adds the learned rules to the format as they are (the format lock holds)', async () => {
-    const { registry, router } = await openResult({ rules: OTHER_INPUT(), formats: [MONTHLY()] });
-    await press('Save format');
-    await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(question()).toBe('This looks like your format Monthly accounts. Add this file as a new source of it?');
-    expect(answers()).toEqual(['Add as a source', 'Save as a new format', 'Cancel']);
-    await answer('Add as a source');
-    await waitFor(() => expect(registry.attachSource).toHaveBeenCalledTimes(1));
-    const [formatId, body] = registry.attachSource.mock.calls[0] as unknown as [string, Record<string, unknown>];
-    expect(formatId).toBe('F1');
-    expect(body).toMatchObject({ status: 'verified', learnPath: 'local', suggestedSourceName: 'accounts', rules: OTHER_INPUT() });
-    expect(body).not.toHaveProperty('name');
-    expect(await screen.findByText('Added "accounts" to "Monthly accounts".')).toBeTruthy();
-    await waitFor(() => expect(router.state.location.pathname).toBe('/formats/F1/sources/C2'));
-    expect(registry.createFormat).not.toHaveBeenCalled();
-  });
-
-  it('rules that break the format lock are not added: it says why, and offers only a new format (the title text still matches the format)', async () => {
-    const { registry } = await openResult({ rules: learned({ inputHeaders: ['Acct no', 'Firm'], title: 'Report for April' }), formats: [MONTHLY()] });
-    await press('Save format');
-    await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(question()).toBe("This looks like your format Monthly accounts, but this file can't be added as a source of it: the title rows differ.");
-    expect(answers()).toEqual(['Save as a new format', 'Cancel']);
-    await answer('Save as a new format');
-    await waitFor(() => expect(registry.createFormat).toHaveBeenCalledTimes(1));
-    expect(registry.attachSource).not.toHaveBeenCalled();
-  });
-
-  it('a csv output named after another file is still added: its "sheet" is not in the file, and the format\'s is saved', async () => {
-    const csvOf = (sheetName: string, inputHeaders?: [string, string]): LearnResult => {
-      const r = learned(inputHeaders ? { inputHeaders } : {});
-      return { ...r, output: { ...r.output, file: { type: 'csv' }, sheetName } };
-    };
-    const monthly = saved('F1', 'Monthly accounts', csvOf('accounts 2026-09'));
-    const { registry } = await openResult({ rules: csvOf('accounts 2026-10', ['Acct no', 'Firm']), formats: [{ ...monthly, summary: { ...monthly.summary, fileType: 'csv' } }] });
-    await press('Save format');
-    await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(question()).toBe('This looks like your format Monthly accounts. Add this file as a new source of it?');
-    await answer('Add as a source');
-    await waitFor(() => expect(registry.attachSource).toHaveBeenCalledTimes(1));
-    expect(bodyOf(registry.attachSource).rules.output.sheetName).toBe('accounts 2026-09');
-  });
-
-  it('the reasons are said in words, one per kind', () => {
+  it('the format lock\'s problems become reasons, one per kind (what decides the "other input files" note)', () => {
     expect(
       lockReasons(
         [
@@ -305,119 +258,37 @@ describe('the same output from another input: add it as a new source', () => {
       ),
     ).toEqual([{ kind: 'numberFormat', column: 'Company' }, { kind: 'width' }, { kind: 'sort' }, { kind: 'checks' }]);
   });
-
-  it('a free result with fields missing is not added as it is: "Add as a source" opens Add a source with the same files', async () => {
-    const rules = OTHER_INPUT();
-    rules.output.columns[1]!.from = null;
-    const { registry, router } = await openResult({ rules, formats: [MONTHLY()], partial: true });
-    await press('Save format');
-    await screen.findByRole('dialog', { name: 'Save this format?' });
-    await answer('Add as a source');
-    await waitFor(() => expect(router.state.location.pathname).toBe('/formats/F1/add-source'));
-    expect(registry.attachSource).not.toHaveBeenCalled();
-    expect(router.state.location.state).toEqual({ fromSession: true });
-  });
 });
 
-describe("the plan's sources per format (SPEC 11): never an add the server would refuse", () => {
-  const OTHER_INPUT = () => learned({ inputHeaders: ['Acct no', 'Firm'] });
-  const sources = (n: number) =>
-    Array.from({ length: n }, (_, i) => ({ id: `F1-C${i + 1}`, sourceId: i === 0 ? 'S1' : `S${i + 7}`, sourceName: i === 0 ? 'CRM A' : `CRM ${i + 1}`, version: 1 }));
-  const withSources = (n: number) => saved('F1', 'Monthly accounts', learned(), { sources: sources(n) });
-
-  it('a registered user, a format at 3 sources, another input: no "Add as a source" - the limit, the upgrade, and a new format', async () => {
-    const { registry } = await openResult({ rules: OTHER_INPUT(), formats: [withSources(3)] });
+describe('the same output from another input: nothing is asked at Save (it is asked at Learn, before the learn)', () => {
+  it('a learn of its own saves a new format at once - never "Add as a source"', async () => {
+    const { registry } = await openResult({ rules: learned({ inputHeaders: ['Acct no', 'Firm'] }), formats: [MONTHLY()] });
     await press('Save format');
-    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(question()).toBe('This output looks like one of your formats.');
-    expect(within(box).getByTestId('format-match-limit').textContent).toContain("Monthly accounts already has 3 sources (your plan's limit).");
-    expect(answers()).toEqual(['Upgrade', 'Save as a new format', 'Cancel']);
-    expect(within(box).queryByRole('button', { name: 'Add as a source' })).toBeNull();
-    await answer('Save as a new format');
     await waitFor(() => expect(registry.createFormat).toHaveBeenCalledTimes(1));
+    expect(dialog()).toBeNull();
     expect(registry.attachSource).not.toHaveBeenCalled();
-  });
-
-  it('at the limit, the input of one of its sources: "Update its rules" adds no source, so it is offered as ever', async () => {
-    await openResult({ formats: [withSources(3)] });
-    await press('Save format');
-    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(question()).toBe('This is your format Monthly accounts, from CRM A. Update its rules, or save as a new format?');
-    expect(answers()).toEqual(['Update its rules', 'Save as a new format', 'Cancel']);
-    expect(within(box).queryByTestId('format-match-limit')).toBeNull();
-  });
-
-  it('under the limit (2 of 3): "Add as a source" as before', async () => {
-    await openResult({ rules: OTHER_INPUT(), formats: [withSources(2)] });
-    await press('Save format');
-    await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(answers()).toEqual(['Add as a source', 'Save as a new format', 'Cancel']);
-  });
-
-  it('a paid plan has no limit: 3 (or more) sources and still "Add as a source"', async () => {
-    const { registry } = await openResult({ rules: OTHER_INPUT(), formats: [withSources(5)], user: { ...USER, tier: 'paid' } });
-    await press('Save format');
-    await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(answers()).toEqual(['Add as a source', 'Save as a new format', 'Cancel']);
-    await answer('Add as a source');
-    await waitFor(() => expect(registry.attachSource).toHaveBeenCalledTimes(1));
-  });
-
-  it('a free result with fields missing, at the limit: never sent to Add a source', async () => {
-    const rules = OTHER_INPUT();
-    rules.output.columns[1]!.from = null;
-    const { router } = await openResult({ rules, formats: [withSources(3)], partial: true });
-    await press('Save format');
-    await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(answers()).toEqual(['Upgrade', 'Save as a new format', 'Cancel']);
-    expect(router.state.location.pathname).not.toBe('/formats/F1/add-source');
-  });
-
-  it('several formats: the one at its limit says so in the list, and its answers follow', async () => {
-    const full = saved('F1', 'Monthly accounts', learned(), { sources: sources(3), updatedAt: '2026-08-03T10:00:00.000Z' });
-    const open = saved('F2', 'Accounts for the board', learned(), { updatedAt: '2026-08-01T10:00:00.000Z', sources: [{ id: 'F2-C1', sourceId: 'S5', sourceName: 'ERP', version: 2 }] });
-    await openResult({ rules: OTHER_INPUT(), formats: [full, open] });
-    await press('Save format');
-    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect([...box.querySelectorAll('[data-format]')].map((o) => [o.getAttribute('data-format'), o.getAttribute('data-kind'), o.textContent])).toEqual([
-      ['F1', 'full', "Monthly accountsAlready has 3 sources (your plan's limit)"],
-      ['F2', 'attach', 'Accounts for the boardAdd this file as a new source of it'],
-    ]);
-    expect(answers()).toEqual(['Upgrade', 'Save as a new format', 'Cancel']);
-    const radios = within(box).getAllByRole('radio') as HTMLInputElement[];
-    await act(async () => void fireEvent.click(radios[1]!));
-    expect(within(box).queryByTestId('format-match-limit')).toBeNull();
-    expect(answers()).toEqual(['Add as a source', 'Save as a new format', 'Cancel']);
-  });
-
-  it('says it in Hebrew', async () => {
-    await openResult({ rules: OTHER_INPUT(), formats: [withSources(3)], lang: 'he' });
-    await press('שמירת הפורמט');
-    const box = await screen.findByRole('dialog', { name: 'לשמור את הפורמט?' });
-    expect(question()).toBe('הפלט הזה נראה כמו אחד מהפורמטים שלכם.');
-    expect(within(box).getByTestId('format-match-limit').textContent).toContain('לפורמט Monthly accounts כבר יש 3 מקורות (המגבלה של התוכנית שלכם).');
-    expect(answers()).toEqual(['שדרוג', 'שמירה כפורמט חדש', 'ביטול']);
   });
 });
 
-describe('several saved formats with this output', () => {
+describe('several saved formats this input feeds, with this output', () => {
   it('lists them most recently used first, the first one chosen; the answers follow the one chosen', async () => {
     const old = saved('F1', 'Monthly accounts', learned(), { updatedAt: '2026-08-01T10:00:00.000Z' });
-    const recent = saved('F2', 'Accounts for the board', learned(), { updatedAt: '2026-08-02T10:00:00.000Z', lastRunAt: '2026-10-01T10:00:00.000Z', sources: [{ id: 'F2-C1', sourceId: 'S5', sourceName: 'ERP', version: 2 }] });
-    const { registry } = await openResult({ formats: [old, recent] });
+    const recent = saved('F2', 'Accounts for the board', learned(), { updatedAt: '2026-08-02T10:00:00.000Z', lastRunAt: '2026-10-01T10:00:00.000Z', sources: [{ id: 'F2-C1', sourceId: 'S1', sourceName: 'CRM A', version: 2 }] });
+    const both: SignatureEntry = { ...CRM_A, conversions: [...CRM_A.conversions, { conversionId: 'F2-C1', formatId: 'F2', formatName: 'Accounts for the board', status: 'verified' }] };
+    const { registry } = await openResult({ formats: [old, recent], signatures: [both] });
     await press('Save format');
     const box = await screen.findByRole('dialog', { name: 'Save this format?' });
-    const group = within(box).getByRole('group', { name: 'This output looks like 2 of your formats. Which one is it?' });
+    const group = within(box).getByRole('group', { name: 'This output matches 2 of your formats. Which one do you want to update?' });
     const radios = within(group).getAllByRole('radio') as HTMLInputElement[];
     expect([...group.querySelectorAll('[data-format]')].map((o) => [o.getAttribute('data-format'), o.textContent])).toEqual([
-      ['F2', 'Accounts for the boardAdd this file as a new source of it'],
-      ['F1', 'Monthly accountsFrom your source CRM A: update its rules'],
+      ['F2', 'Accounts for the board'],
+      ['F1', 'Monthly accounts'],
     ]);
     expect(radios[0]!.checked).toBe(true);
-    expect(answers()).toEqual(['Add as a source', 'Save as a new format', 'Cancel']);
+    expect(answers()).toEqual(['Update Accounts for the board', 'Save as a new format', 'Cancel']);
     await act(async () => void fireEvent.click(radios[1]!));
-    expect(answers()).toEqual(['Update its rules', 'Save as a new format', 'Cancel']);
-    await answer('Update its rules');
+    expect(answers()).toEqual(['Update Monthly accounts', 'Save as a new format', 'Cancel']);
+    await answer('Update Monthly accounts');
     await waitFor(() => expect(registry.updateConversion).toHaveBeenCalledTimes(1));
     expect(registry.updateConversion.mock.calls[0]![0]).toBe('F1-C1');
   });
@@ -430,19 +301,19 @@ describe('with a list or an identifier-shaped value too: still one dialog', () =
     await press('Save format');
     const box = await screen.findByRole('dialog', { name: 'Save this format?' });
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(question()).toBe('This is your format Monthly accounts, from CRM A. Update its rules, or save as a new format?');
+    expect(question()).toBe('Update your format Monthly accounts, or save as a new format?');
     const keep = within(box).getByTestId('format-match-keep');
     expect(keep.querySelector('p')!.textContent).toBe('Target customer keeps an ID number in its rules.');
     const group = within(keep).getByRole('group', { name: 'Keep it in the saved format?' });
     expect(within(group).getAllByRole('radio').map((r) => (r as HTMLInputElement).checked)).toEqual([false, false]);
     // Nothing chosen for the user: the save waits for the answer.
-    expect(button('Update its rules').disabled).toBe(true);
+    expect(button('Update Monthly accounts').disabled).toBe(true);
     expect(button('Save as a new format').disabled).toBe(true);
     expect(within(box).getByText('Answer the question above to save.')).toBeTruthy();
     expect(box.textContent).not.toContain(ID);
 
     await act(async () => void fireEvent.click(within(group).getByLabelText('Save without it')));
-    await answer('Update its rules');
+    await answer('Update Monthly accounts');
     await waitFor(() => expect(registry.updateConversion).toHaveBeenCalledTimes(1));
     const sent = bodyOf(registry.updateConversion);
     expect(JSON.stringify(sent.rules)).not.toContain(ID);
@@ -463,53 +334,43 @@ describe('with a list or an identifier-shaped value too: still one dialog', () =
 });
 
 describe('in Hebrew', () => {
-  it('says the question, the reasons and the answers in Hebrew', async () => {
-    await openResult({ rules: learned({ inputHeaders: ['Acct no', 'Firm'] }), formats: [MONTHLY()], lang: 'he' });
+  it('says the question and the answers in Hebrew', async () => {
+    await openResult({ formats: [MONTHLY()], lang: 'he' });
     await press('שמירת הפורמט');
     const box = await screen.findByRole('dialog', { name: 'לשמור את הפורמט?' });
-    expect(question()).toBe('זה נראה כמו הפורמט שלכם Monthly accounts. להוסיף את הקובץ הזה כמקור חדש שלו?');
-    expect(answers()).toEqual(['הוספה כמקור', 'שמירה כפורמט חדש', 'ביטול']);
+    expect(question()).toBe('לעדכן את הפורמט שלכם Monthly accounts, או לשמור כפורמט חדש?');
+    expect(answers()).toEqual(['עדכון Monthly accounts', 'שמירה כפורמט חדש', 'ביטול']);
     expect(box.querySelector('bdi')?.textContent).toBe('Monthly accounts');
   });
 
-  it('a lock that stops the source, and an update, in Hebrew', async () => {
-    await openResult({ rules: learned({ inputHeaders: ['Acct no', 'Firm'], title: 'Report for April' }), formats: [MONTHLY()], lang: 'he' });
+  it('the note for the format\'s other input files', async () => {
+    const two = saved('F1', 'Monthly accounts', learned(), { sources: [{ id: 'F1-C1', sourceId: 'S1', sourceName: 'CRM A', version: 4 }, { id: 'F1-C2', sourceId: 'S7', sourceName: 'CRM B', version: 1 }] });
+    await openResult({ rules: learned({ title: 'Report for April' }), formats: [two], lang: 'he' });
     await press('שמירת הפורמט');
-    await screen.findByRole('dialog');
-    expect(question()).toBe('זה נראה כמו הפורמט שלכם Monthly accounts, אבל אי אפשר להוסיף את הקובץ הזה כמקור שלו: שורות הכותרת שונות.');
-    expect(answers()).toEqual(['שמירה כפורמט חדש', 'ביטול']);
-    cleanup();
-    await openResult({ formats: [MONTHLY()], lang: 'he' });
-    await press('שמירת הפורמט');
-    await screen.findByRole('dialog');
-    expect(question()).toBe('זה הפורמט שלכם Monthly accounts, מהמקור CRM A. לעדכן את הכללים שלו, או לשמור כפורמט חדש?');
-    expect(answers()).toEqual(['עדכון הכללים שלו', 'שמירה כפורמט חדש', 'ביטול']);
+    expect(within(await screen.findByRole('dialog')).getByText('העדכון משנה את הפורמט גם עבור קובץ הקלט האחר שלו.')).toBeTruthy();
   });
 });
 
-describe('"Formats with several sources" switched off (the MVP): Save never asks', () => {
-  it('the same output as a saved format: no question, one click, a new format - and no format or source is read', async () => {
+describe('"Formats with several sources" switched off (the MVP): the update question is asked all the same', () => {
+  it('the same input, other values: "Update your format X?" - and an update', async () => {
     const { registry } = await openResult({ formats: [MONTHLY()], formatSources: false });
     await press('Save format');
-    await waitFor(() => expect(registry.createFormat).toHaveBeenCalledTimes(1));
-    expect(dialog()).toBeNull();
-    expect(registry.getFormat).not.toHaveBeenCalled();
-    expect(registry.signatures).not.toHaveBeenCalled();
-    expect(registry.updateConversion).not.toHaveBeenCalled();
+    await screen.findByRole('dialog', { name: 'Save this format?' });
+    expect(question()).toBe('Update your format Monthly accounts, or save as a new format?');
+    await answer('Update Monthly accounts');
+    await waitFor(() => expect(registry.updateConversion).toHaveBeenCalledTimes(1));
     expect(registry.attachSource).not.toHaveBeenCalled();
-    expect(await screen.findByText('Saved. "Monthly accounts" is in My formats.')).toBeTruthy();
   });
 
-  it('from another input too (never "Add as a source"), and in Hebrew', async () => {
+  it('another input: no question at Save, a new format at once', async () => {
     const { registry } = await openResult({ rules: learned({ inputHeaders: ['Acct no', 'Firm'] }), formats: [MONTHLY()], formatSources: false, lang: 'he' });
     await press('שמירת הפורמט');
     await waitFor(() => expect(registry.createFormat).toHaveBeenCalledTimes(1));
     expect(dialog()).toBeNull();
-    expect(registry.attachSource).not.toHaveBeenCalled();
   });
 
   it('a list to ask about is still asked, in the Save popup as before (with no format question)', async () => {
-    const { registry } = await openResult({ rules: learned({ target: true }), formats: [saved('F1', 'Monthly accounts', learned({ target: true }))], formatSources: false });
+    const { registry } = await openResult({ rules: learned({ target: true, inputHeaders: ['Acct no', 'Firm'] }), formats: [saved('F1', 'Monthly accounts', learned({ target: true }))], formatSources: false });
     await press('Save format');
     const box = await screen.findByRole('dialog', { name: 'Save this format?' });
     expect(within(box).queryByTestId('format-match-question')).toBeNull();

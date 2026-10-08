@@ -350,7 +350,7 @@ describe('"You already have this format" in the worker (checkKnown, through the 
     const res = await loopback(engineMethods).call<LearnOutput>('learn', { ...args, ai: 'allowed', checkKnown: true }, { transfer, host: { callLearn, knownCandidates, knownRules } });
     expect(res.path).toBe('known');
     expect(res.known).toMatchObject({ formatId: 'F1', formatName: 'Contacts', conversionId: 'C1' });
-    expect(knownCandidates).toHaveBeenCalledWith({ outputHeaders: ['Contact ID', 'Last Name', 'First Name', 'Email Address'], fileType: 'csv', headerRow: true, inputHeaders: ['Customer ID', 'First Name', 'Last Name', 'Email'] });
+    expect(knownCandidates).toHaveBeenCalledWith({ outputHeaders: ['Contact ID', 'Last Name', 'First Name', 'Email Address'], fileType: 'csv', headerRow: true, titleRows: [], summaryRows: 0, groupBy: null, inputHeaders: ['Customer ID', 'First Name', 'Last Name', 'Email'] });
     expect(knownRules).toHaveBeenCalledWith('C1');
     expect(callLearn).not.toHaveBeenCalled();
   });

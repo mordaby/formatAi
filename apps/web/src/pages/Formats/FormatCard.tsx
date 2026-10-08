@@ -1,6 +1,7 @@
 import type { FormatSummary } from '@formatai/shared';
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useFeatures } from '../../app/Features';
 import { LinkButton } from '../../app/LinkButton';
 import { useLoad } from '../../app/useLoad';
 import { Cell } from '../../components/Cell';
@@ -19,9 +20,13 @@ export interface FormatCardProps {
   onDeleted(id: string): void;
 }
 
-/** One format of My formats (SPEC 16.1 screen 5): its name, "← N sources", the status of the sources, and what can be done with it. */
+/**
+ * One format of My formats (SPEC 16.1 screen 5): its name, "← N sources", the status of the sources, and what can be done with it. The source
+ * count and names (and "Add a source") are part of "Formats with several sources" (the feature switch): off, the card shows the format only.
+ */
 export function FormatCard({ format, onRenamed, onDeleted }: FormatCardProps) {
   const { t, lang } = useI18n();
+  const { formatSources } = useFeatures();
   const { api } = useServices();
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(format.name);
@@ -104,13 +109,15 @@ export function FormatCard({ format, onRenamed, onDeleted }: FormatCardProps) {
             <Cell value={format.name} />
           </h2>
         )}
-        <button type="button" className="format-card__sources" aria-expanded={expanded} aria-controls={expanded ? listId : undefined} onClick={() => setExpanded((e) => !e)}>
-          <span className="src-arrow" aria-hidden="true">
-            ←
-          </span>
-          <span>{format.sources === 0 ? t('formats.sources.none') : t(format.sources === 1 ? 'formats.sources.one' : 'formats.sources.other', { n: format.sources })}</span>
-          <Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={14} />
-        </button>
+        {formatSources ? (
+          <button type="button" className="format-card__sources" aria-expanded={expanded} aria-controls={expanded ? listId : undefined} onClick={() => setExpanded((e) => !e)}>
+            <span className="src-arrow" aria-hidden="true">
+              ←
+            </span>
+            <span>{format.sources === 0 ? t('formats.sources.none') : t(format.sources === 1 ? 'formats.sources.one' : 'formats.sources.other', { n: format.sources })}</span>
+            <Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={14} />
+          </button>
+        ) : null}
         {counts.length > 0 && (
           <div className="format-card__badges">
             {counts.map((c) => (
@@ -128,7 +135,7 @@ export function FormatCard({ format, onRenamed, onDeleted }: FormatCardProps) {
         {format.lastRunAt ? ` · ${t('formats.lastRun', { date: shortDate(format.lastRunAt, lang) })}` : ''}
       </p>
 
-      {expanded && (
+      {formatSources && expanded && (
         <div id={listId} className="format-card__list">
           {sources.state.status === 'loading' && (
             <p className="muted">

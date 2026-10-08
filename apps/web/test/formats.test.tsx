@@ -135,7 +135,7 @@ describe('My formats', () => {
         ],
       }),
     );
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), getFormat } }), route: '/formats' });
+    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), getFormat }, features: { formatSources: true } }), route: '/formats' });
     await screen.findByTestId('format-list');
     fireEvent.click(within(cards()[0]!).getByRole('button', { name: /3 sources/ }));
     const list = await within(cards()[0]!).findByRole('link', { name: 'Supplier A' });
@@ -245,7 +245,7 @@ describe('the company\'s Source objects have no screen on My formats (SPEC 8.15:
         sources: [conversionSummary({ id: 'C1', sourceId: 'S1', sourceName: 'Supplier A' }), conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' })],
       }),
     );
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources, getFormat } }), route: '/formats' });
+    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources, getFormat }, features: { formatSources: true } }), route: '/formats' });
     await screen.findByTestId('format-list');
     fireEvent.click(within(cards()[0]!).getByRole('button', { name: /3 sources/ }));
     await screen.findByText('Supplier B');
@@ -386,6 +386,9 @@ describe('Home for a signed-in user (SPEC 16.1 screen 5)', () => {
     await act(async () => {});
     expect(within(cards()[0]!).getByRole('link', { name: 'Run this format' })).toBeTruthy();
     expect(within(cards()[0]!).queryByRole('link', { name: 'Add a source' })).toBeNull();
+    // ... nor the source count and names: the card is the format.
+    expect(cards()[0]!.querySelector('.format-card__sources')).toBeNull();
+    expect(cards()[0]!.textContent).not.toMatch(/source/i);
     unmount();
 
     const one = getFormatResponse({ id: 'F2', name: 'Contacts export', sources: [conversionSummary({ id: 'C9', formatId: 'F2', sourceName: 'CRM' })] });

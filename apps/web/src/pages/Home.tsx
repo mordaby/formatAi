@@ -11,6 +11,7 @@ import { HomeForm } from './HomeForm';
 import { HomeHowItWorks } from './HomeHowItWorks';
 import { LearningError } from './LearningError';
 import { LearningKnown } from './LearningKnown';
+import { LearningMatch } from './LearningMatch';
 import { LearningNotReady } from './LearningNotReady';
 import { LearningPreflight } from './LearningPreflight';
 import { LearningProgress } from './LearningProgress';
@@ -23,6 +24,7 @@ function stepFor(status: LearnFlowStatus): StepNumber {
     case 'blocked':
     case 'notReady':
     case 'known':
+    case 'matchesFormat':
     case 'done':
       return 1;
     default:
@@ -63,6 +65,14 @@ export default function Home() {
     previous.current = state.status;
   }, [state.status, navigate]);
 
+  // "Choose other files" (the questions before a learn): an empty form - even for a user who has formats, who would otherwise see "Run a
+  // format" first - with the first drop zone focused.
+  const chooseOther = (): void => {
+    session.startOver();
+    setTeaching(true);
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('.home .zones input')?.focus());
+  };
+
   // SPEC 16.1 screen 5: a signed-in user who has formats starts from "Run a format"; teaching a new one is the other button.
   const offerConvert = me.user !== null && (me.formatCount ?? 0) > 0 && state.status === 'idle' && !teaching && session.input === null && session.output === null;
 
@@ -79,6 +89,18 @@ export default function Home() {
     );
   } else if (state.status === 'notReady') {
     view = <LearningNotReady key="notReady" result={state.result} onChangeFiles={flow.cancel} />;
+  } else if (state.status === 'matchesFormat') {
+    // "This output matches your format": yes is the learn for that format (another input of it), no a format of its own.
+    view = (
+      <LearningMatch
+        key="match"
+        matches={state.matches}
+        tier={me.tier}
+        onYes={(match) => session.begin({ attach: match })}
+        onNo={() => session.begin({ anyway: true })}
+        onChooseOther={chooseOther}
+      />
+    );
   } else if (state.status === 'known') {
     // "You already have this format": nothing was learned. To that format's Run screen with the example input already dropped (the learn page
     // is back to its form, files kept, when the user comes back), or the learn they asked for, without the check.
@@ -93,6 +115,7 @@ export default function Home() {
           navigate(`/convert?format=${encodeURIComponent(formatId)}`, file ? { state: { file } } : undefined);
         }}
         onLearnAnyway={() => session.begin({ anyway: true })}
+        onChooseOther={chooseOther}
       />
     );
   } else if (state.status === 'error' && !isAiQuotaHit(state.error)) {
