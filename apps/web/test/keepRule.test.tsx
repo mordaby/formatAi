@@ -380,6 +380,7 @@ describe('a source that feeds several formats', () => {
     const { engine } = realEngine();
     renderConvert(<ConvertPage />, { api: apiWithServer({ formats: TWO }).api, engine });
     await drop();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'All formats' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await screen.findByText(REVIEW);
     fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'Fix this row only' }));
@@ -392,6 +393,7 @@ describe('a source that feeds several formats', () => {
     const { api, saves } = apiWithServer({ formats: TWO });
     renderConvert(<ConvertPage />, { api, engine });
     await drop();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'All formats' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await screen.findByText(REVIEW);
     expect(screen.getByTestId('review-step').textContent).toBe('Format 1 of 2: ⁨Load file⁩');
@@ -426,6 +428,7 @@ describe('Hebrew', () => {
     await act(async () => {
       fireEvent.change(input, { target: { files: [csvFile('jan.csv', CSV)] } });
     });
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'כל הפורמטים' }));
     fireEvent.click(await screen.findByRole('button', { name: 'המשך' }));
     await screen.findByText('כמה שורות דורשות מבט לפני שהקובץ נוצר');
     fireEvent.click(within(rowCard(3)).getByRole('button', { name: 'לתקן רק את השורה הזו' }));

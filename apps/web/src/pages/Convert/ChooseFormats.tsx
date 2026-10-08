@@ -1,6 +1,11 @@
 // "This file feeds N formats" (SPEC 5 C, 8.15): the source the file matched feeds several formats, so the user picks which of
-// them to make - all are pre-checked, with an "All" toggle. Each chosen format is then converted on its own, with its own review
+// them to make - none is pre-checked when there are several to choose from, with an "All" toggle. Each chosen format is then converted on its own, with its own review
 // of flagged rows before its file is written.
+//
+// DECISION (owner, 2026-10-08): with several ready formats nothing is pre-checked. Two senders can use the same column names for different
+// things, so the formats of the file's source may include one learned from a file that only looks like this one; no check can tell every
+// such case apart, so each format made is one the user ticked ("All" is one click when they really want every one). A single ready format
+// (the others need attention) is pre-checked: there is nothing to choose between, as for a source with one format, which runs at once.
 //
 // When this file cannot be made into some of the formats as it is (a column they use is not in it, SPEC 21 v11 items 4-7), those are listed under
 // "Needs attention" with why, and the user decides each one: open its editor, skip it this time, or - when it can still run - make it
@@ -33,7 +38,7 @@ export function ChooseFormats({ source, ready, attention = [], onContinue, onEdi
   const id = useId();
   const nf = new Intl.NumberFormat(lang);
   const all = ready.map((c) => c.conversionId);
-  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set(all));
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set(all.length === 1 ? all : []));
   // What the user decided about the formats that need attention: make them anyway, or skip them this time.
   const [anyway, setAnyway] = useState<ReadonlySet<string>>(() => new Set());
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(() => new Set());

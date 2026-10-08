@@ -76,7 +76,7 @@ export const convertEn = {
 
   // ----- a source that feeds several formats (SPEC 8.15) -----
   'conv.formats.title': 'This file feeds {n} formats',
-  'conv.formats.lead': 'This file is from {source}. Choose which formats to make from it. Each one is checked on its own, and you look at its flagged rows before its file is made.',
+  'conv.formats.lead': 'This file is from {source}. Choose the formats this file should be made into. Each one is checked on its own, and you look at its flagged rows before its file is made.',
   'conv.formats.legend': 'Formats to make',
   'conv.formats.all': 'All formats',
   'conv.formats.continue': 'Continue',
@@ -346,7 +346,7 @@ export const convertHe: Record<keyof typeof convertEn, string> = {
 
   // ----- a source that feeds several formats (SPEC 8.15) -----
   'conv.formats.title': 'הקובץ הזה מזין {n} פורמטים',
-  'conv.formats.lead': 'הקובץ הזה הוא של {source}. בחרו אילו פורמטים להכין ממנו. כל פורמט נבדק בנפרד, ואתם עוברים על השורות המסומנות שלו לפני שהקובץ שלו נוצר.',
+  'conv.formats.lead': 'הקובץ הזה הוא של {source}. בחרו את הפורמטים שצריך להכין מהקובץ הזה. כל פורמט נבדק בנפרד, ואתם עוברים על השורות המסומנות שלו לפני שהקובץ שלו נוצר.',
   'conv.formats.legend': 'פורמטים להכנה',
   'conv.formats.all': 'כל הפורמטים',
   'conv.formats.continue': 'המשך',

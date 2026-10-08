@@ -178,7 +178,7 @@ export type Phase =
   /** No format can be made from this file: each lacks a column it requires and nothing can stand in. Stop, and say exactly which (and which formats it affects). */
   | { kind: 'missing'; source: SignatureEntry; missing: string[] }
   /**
-   * Which formats of the source to make (all pre-checked): the source feeds several, or some need attention (SPEC 21 v11 items 4-7) - those are
+   * Which formats of the source to make (none pre-checked: the user ticks them): the source feeds several, or some need attention (SPEC 21 v11 items 4-7) - those are
    * listed apart, with what to do. `mapping` is any rename already confirmed.
    */
   | { kind: 'formats'; source: SignatureEntry; mapping: Record<string, string>; ready: SourceConversionRef[]; attention: AttentionFormat[]; notice: NewColumnsNotice | null }

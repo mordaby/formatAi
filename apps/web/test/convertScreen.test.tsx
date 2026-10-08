@@ -563,10 +563,15 @@ describe('a source that feeds ONE format runs it at once', () => {
   });
 });
 
+/** Several ready formats start with none ticked (owner, 2026-10-08): tick "All", as a user who wants every one of them does. */
+async function tickAll(name = 'All formats'): Promise<void> {
+  fireEvent.click(await screen.findByRole('checkbox', { name }));
+}
+
 describe('a source that feeds SEVERAL formats', () => {
   const box = (name: string): HTMLInputElement => screen.getByRole('checkbox', { name }) as HTMLInputElement;
 
-  it('asks which formats: all pre-checked, an All toggle, and Continue is off with none selected', async () => {
+  it('asks which formats: none pre-checked, an All toggle, and Continue is off with none selected', async () => {
     const api = fakeConvertApi({ entries: [THREE], rulesById });
     const { engine, convertWithDecisions } = fakeEngine({ match: autoSource() });
     renderConvert(<ConvertPage />, { api, engine });
@@ -574,16 +579,16 @@ describe('a source that feeds SEVERAL formats', () => {
 
     expect(await screen.findByText('This file feeds 3 formats')).toBeTruthy();
     expect(screen.getByTestId('target-line').textContent).toBe('Matched to ⁨Supplier A⁩.');
-    expect(['All formats', 'Load file', 'ERP load', 'Ledger'].map((n) => box(n).checked)).toEqual([true, true, true, true]);
+    expect(['All formats', 'Load file', 'ERP load', 'Ledger'].map((n) => box(n).checked)).toEqual([false, false, false, false]);
     // Every format is checked against the file first (its rules are fetched for that), but nothing is run until the user continues.
     expect(api.conversion.mock.calls.map((c) => c[0])).toEqual(['c1', 'c2', 'c3']);
     expect(convertWithDecisions).not.toHaveBeenCalled();
 
-    // One box off: All is no longer fully checked (it shows "partly").
+    // One box on: All is not fully checked (it shows "partly").
     fireEvent.click(box('ERP load'));
     expect(box('All formats').checked).toBe(false);
     expect(box('All formats').indeterminate).toBe(true);
-    // Checking All again selects everything; unchecking it clears everything, and then Continue is off.
+    // Checking All selects everything; unchecking it clears everything, and then Continue is off.
     fireEvent.click(box('All formats'));
     expect(['Load file', 'ERP load', 'Ledger'].map((n) => box(n).checked)).toEqual([true, true, true]);
     fireEvent.click(box('All formats'));
@@ -605,6 +610,7 @@ describe('a source that feeds SEVERAL formats', () => {
     renderConvert(<ConvertPage />, { api, engine });
     await drop('jan.csv');
     await screen.findByText('This file feeds 3 formats');
+    await tickAll();
     fireEvent.click(box('ERP load'));
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
@@ -647,6 +653,7 @@ describe('a source that feeds SEVERAL formats', () => {
     });
     renderConvert(<ConvertPage />, { api, engine });
     await drop('jan.csv');
+    await tickAll();
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
 
     // The ones with nothing to review go straight through: no review screen at all.
@@ -690,6 +697,7 @@ describe('a source that feeds SEVERAL formats', () => {
     batch.mockRejectedValueOnce(new Error('boom'));
     renderConvert(<ConvertPage />, { api, engine });
     await drop('jan.csv');
+    await tickAll();
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await screen.findByText('Your 3 files are ready');
     fireEvent.click(screen.getByRole('button', { name: 'Download all (zip)' }));
@@ -708,7 +716,6 @@ describe('a source that feeds SEVERAL formats', () => {
     renderConvert(<ConvertPage />, { api, engine });
     await drop();
     await screen.findByText('This file feeds 3 formats');
-    fireEvent.click(box('All formats'));
     fireEvent.click(box('Ledger'));
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Your file is ready')).toBeTruthy();
@@ -725,6 +732,7 @@ describe('a source that feeds SEVERAL formats', () => {
     });
     renderConvert(<ConvertPage />, { api, engine });
     await drop();
+    await tickAll();
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Your 2 files are ready')).toBeTruthy();
     expect(screen.getAllByTestId('result-format')).toHaveLength(2);
@@ -743,6 +751,7 @@ describe('a source that feeds SEVERAL formats', () => {
     renderConvert(<ConvertPage />, { api, engine: first.engine });
     await drop();
     await screen.findByText('This file feeds 3 formats');
+    await tickAll();
     fireEvent.click(box('ERP load'));
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await screen.findByText('Some rows need a look before the file is made');
@@ -805,6 +814,7 @@ describe('a structural change is detected ONCE per source', () => {
     await waitFor(() => expect(api.signatures).toHaveBeenCalledTimes(2));
 
     // ... and it is applied in memory to EVERY conversion that runs, without asking again.
+    await tickAll();
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await screen.findByText('Your 2 files are ready');
     const reviews = convertWithDecisions.mock.calls.map((c) => c[0] as unknown as { mode: string; rules: Rules }).filter((a) => a.mode === 'review');
@@ -1085,7 +1095,7 @@ describe('formats that need attention', () => {
     expect(await screen.findByText('This file feeds 2 formats')).toBeTruthy();
     expect(second.matchFile).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('needs-attention')).toBeNull();
-    expect(box('Management report').checked).toBe(true);
+    expect(box('Management report').checked).toBe(false);
     expect(convertSession.peek()).toBeNull();
   });
 
@@ -1217,6 +1227,7 @@ describe('"same name, different meaning": most of a used column\'s values did no
     });
     renderConvert(<ConvertPage />, { api, engine });
     await drop();
+    await tickAll();
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Your 2 files are ready')).toBeTruthy();
     expect(plain(screen.getByTestId('needs-attention'))).toContain("The values in 'Qty' don't look like before (expected a whole number).");
@@ -1312,6 +1323,7 @@ describe('a new column in the file (SPEC 8.15)', () => {
     const { engine } = fakeEngine({ match: { ok: true, headers: [...HEADERS, 'Notes'], ranked: [], pick: { kind: 'auto', match: match({ id: 's1', extra: ['Notes'] }) } } });
     renderConvert(<ConvertPage />, { api, engine });
     await drop();
+    await tickAll();
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await screen.findByText('Your 3 files are ready');
     const notice = screen.getByTestId('new-columns');
@@ -1376,6 +1388,7 @@ describe('Hebrew', () => {
     // A format name is a <bdi>: a Hebrew name never reorders the words around it, and an English one stays whole.
     expect(screen.getByText('קובץ טעינה').tagName).toBe('BDI');
     expect(screen.getByText('ERP load').tagName).toBe('BDI');
+    await tickAll('כל הפורמטים');
     fireEvent.click(screen.getByRole('button', { name: 'המשך' }));
     expect(await screen.findByText('2 הקבצים שלכם מוכנים')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'הורדת הכול (zip)' })).toBeTruthy();
