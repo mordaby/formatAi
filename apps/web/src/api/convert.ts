@@ -5,7 +5,7 @@
 // SPEC 2/15: files never leave the browser. The bodies sent here are `{ rows, flagged }` (counts), `{ header, alias }` (a column name the
 // user confirmed), and - only when the user says "Do this every time?" in the row review (SPEC 5 C) - a conversion's rules saved as a new
 // version, carrying the one text of the file the user chose to keep and what they typed for it. There is no method that takes a file or a file name.
-import { type AddAliasRequest, type ConversionDetail, type IgnoreHeadersRequest, type RecordRunRequest, type SignatureEntry, type SignaturesResponse, type UpdateConversionRequest, type UpdateConversionResponse } from '@formatai/shared';
+import { type AddAliasRequest, type ConversionDetail, type IgnoreHeadersRequest, type RecordRunRequest, type SignatureEntry, type SignaturesResponse, type SizeRange, type UpdateConversionRequest, type UpdateConversionResponse, type WidenRangesRequest, type WidenRangesResponse } from '@formatai/shared';
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import { createHttp, type CreateHttpOptions } from './http';
 import { savedRules } from './savedRules';
@@ -33,6 +33,12 @@ export interface ConvertApi {
    * "Do this every time?" (SPEC 5 C): the rules are the ones just read from the server plus the `readAs` the user chose, nothing else.
    */
   saveRules(conversionId: string, body: UpdateConversionRequest): Promise<UpdateConversionResponse>;
+  /**
+   * POST /api/conversions/:id/widen-ranges (SPEC 5 C, 8.15, 2026-10-08): the user chose "Run anyway" on a format whose file looked different in
+   * size and the file was written - the size range (decade exponents, never a value) of each such column of this file, by input column id. The
+   * server takes the union with the saved range, in place (no new version); it can only widen. Resolves to the ids that grew.
+   */
+  widenRanges(conversionId: string, columns: Readonly<Record<string, SizeRange>>): Promise<string[]>;
 }
 
 export type CreateConvertApiOptions = CreateHttpOptions;
@@ -69,6 +75,11 @@ export function createConvertApi(options: CreateConvertApiOptions = {}): Convert
         ...(req.baseVersion !== undefined ? { baseVersion: req.baseVersion } : {}),
       };
       return request<UpdateConversionResponse>('PATCH', `/api/conversions/${encodeURIComponent(conversionId)}`, body);
+    },
+    widenRanges: async (conversionId, columns) => {
+      // Built here, field by field: a column id and two small integers each - no value, no file name.
+      const body: WidenRangesRequest = { columns: Object.fromEntries(Object.entries(columns).map(([id, r]) => [id, { lo: r.lo, hi: r.hi }])) };
+      return (await request<WidenRangesResponse>('POST', `/api/conversions/${encodeURIComponent(conversionId)}/widen-ranges`, body)).widened;
     },
   };
 }

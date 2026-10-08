@@ -33,6 +33,8 @@ import type {
   MatchFileOutput,
   FormatMatchesArgs,
   FormatMatchesOutput,
+  SizeGapsArgs,
+  SizeGapsOutput,
 } from './convertApi';
 import type { ExampleInputColumn } from '../editor/types';
 import type {
@@ -237,6 +239,8 @@ export interface EngineMethodMap {
   formatMatches: { args: FormatMatchesArgs; result: FormatMatchesOutput; progress: never };
   /** Which columns each conversion needs that the file (its headers) does not have (SPEC 8.15, 21 v11 items 4-7). */
   columnGaps: { args: ColumnGapsArgs; result: ColumnGapsOutput; progress: never };
+  /** Which used number columns of a file are far from the size each conversion was learned on (SPEC 8.15, 2026-10-08): reads the file's values only for rules that keep a range. */
+  sizeGaps: { args: SizeGapsArgs; result: SizeGapsOutput; progress: never };
   convertWithDecisions: { args: ConvertRunArgs; result: ConvertRunOutput; progress: never };
   batch: { args: BatchArgs; result: BatchOutput; progress: never };
 }

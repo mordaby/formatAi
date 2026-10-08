@@ -16,6 +16,8 @@ import type {
   MatchFileOutput,
   FormatMatchesArgs,
   FormatMatchesOutput,
+  SizeGapsArgs,
+  SizeGapsOutput,
   ConvertArgs,
   ConvertOutput,
   EngineMethodMap,
@@ -80,6 +82,8 @@ export interface EngineClient {
   formatMatches(args: FormatMatchesArgs, opts?: EngineCallOptions): Promise<FormatMatchesOutput>;
   /** Which columns each conversion needs that a file (its headers, from matching) does not have: required ones, and used ones that are optional. Parses nothing. */
   columnGaps(args: ColumnGapsArgs, opts?: EngineCallOptions): Promise<ColumnGapsOutput>;
+  /** Which used number columns of a file are far from the size each conversion was learned on (SPEC 8.15): the file is read only when some rules keep a size range. */
+  sizeGaps(args: SizeGapsArgs, opts?: EngineCallOptions): Promise<SizeGapsOutput>;
   /** Runs a conversion with per-run row decisions; in `review` mode stops before writing when rows need a look. */
   convertWithDecisions(args: ConvertRunArgs, opts?: EngineCallOptions): Promise<ConvertRunOutput>;
   /** Flow D (SPEC 5): packs converted files into a zip with the summary workbook. */
@@ -180,6 +184,7 @@ export function createEngineClient(options: CreateEngineClientOptions = {}): Eng
     matchFile: (args, opts) => call('matchFile', args, transfersOf(args.file), opts),
     formatMatches: (args, opts) => call('formatMatches', args, [], opts),
     columnGaps: (args, opts) => call('columnGaps', args, [], opts),
+    sizeGaps: (args, opts) => call('sizeGaps', args, transfersOf(args.file), opts),
     convertWithDecisions: (args, opts) => call('convertWithDecisions', args, transfersOf(args.file), opts),
     batch: (args, opts) => call('batch', args, args.outputs.map((o) => o.bytes), opts),
     terminate: () => rpc.terminate(),

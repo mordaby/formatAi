@@ -1,7 +1,7 @@
 // The worker methods of "convert a file" (SPEC 5 C, 5 D, 8.15, 21 v5 item 5): types only, re-exported from engineApi.ts so the
 // rest of the app sees one worker surface. Matching a file to a saved SOURCE, running one of its conversions with the user's row
 // decisions (the review happens BEFORE the file is written), and packing a batch into a zip and a summary workbook.
-import type { ConversionMatch, ConversionPick, Flag, FormatMatch, InputColumnGap, OutputSheet, RowDecisions, RunError, RunSummary, SavedFormatCandidate, UnlikeColumn } from '@formatai/engine';
+import type { ConversionMatch, ConversionPick, Flag, FormatMatch, InputColumnGap, OutputSheet, RowDecisions, RunError, RunSummary, SavedFormatCandidate, SizeGap, UnlikeColumn } from '@formatai/engine';
 import type { LearnResult, Rules, SignatureColumn } from '@formatai/shared';
 import type { FileBytes } from './engineApi';
 
@@ -69,6 +69,20 @@ export interface ColumnGapsArgs {
 
 /** Per conversion (in the order sent): the columns it needs that the file does not have - required ones, and used ones that are optional. */
 export type ColumnGapsOutput = InputColumnGap[][];
+
+// ---------- which number columns of a file are far from the size a format was learned on (SPEC 5 C, 8.15, 2026-10-08) ----------
+
+/**
+ * The file and the rules of the conversions it may run. The worker reads the file's values with the run's own code and compares each used
+ * number column with the size range its conversion kept (`input.columns[].range`): once per way of reading the file, however many formats.
+ */
+export interface SizeGapsArgs {
+  file: FileBytes;
+  rules: (LearnResult | Rules)[];
+}
+
+/** Per conversion (in the order sent): the columns whose values look far from the saved size. Ids, headers and decades only - no value. Empty for rules with no range. */
+export type SizeGapsOutput = SizeGap[][];
 
 // ---------- running a conversion, with the user's decisions about flagged rows ----------
 

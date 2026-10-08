@@ -29,6 +29,8 @@ export const webConfig = {
     /** "Is this one of your formats?" at Save: rules and headers only. */
     formatMatches: 10_000,
     columnGaps: 10_000,
+    /** "Same name, different size" (SPEC 8.15): reads the file's values once - like a run's reading, without writing anything. */
+    sizeGaps: 30_000,
     convertWithDecisions: 60_000,
     batch: 120_000,
     /** "See what we send" before the learn: the pair analysis (as long as a learn's, the first time), then the request built from it. */

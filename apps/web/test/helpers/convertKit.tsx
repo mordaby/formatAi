@@ -140,6 +140,7 @@ export function fakeConvertApi(opts: { user?: MeUser | null; entries?: Signature
       return detail({ id, sourceName: source?.name ?? 'Supplier A', formatId: conv?.formatId ?? 'F1', sourceFormats: source?.conversions.length ?? 1, ...(source ? { sourceId: source.sourceId } : {}) }, opts.rulesById?.[id] ?? opts.rules ?? RULES);
     }),
     recordRun: vi.fn(async () => undefined),
+    widenRanges: vi.fn(async (_id: string, columns: Readonly<Record<string, { lo: number; hi: number }>>) => Object.keys(columns)),
     addAlias: vi.fn(async () => undefined),
     ignoreHeaders: vi.fn(async () => undefined),
     // An editor-style save: the next version, and - when the source feeds more formats - the change reached the others (as the server says).

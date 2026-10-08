@@ -10,8 +10,8 @@
 //                                          -> running -> review -> writing  once per chosen conversion, one after another,
 //                                             running -> done                each with its OWN review before writing
 //   after the last one: done (exactly one file) or results (several, or some not made: a download each, and a zip)
-import type { ConversionMatch, Flag, OutputSheet, RunError, RunSummary } from '@formatai/engine';
-import type { ConversionDetail, ConversionStatus, Rules, SignatureEntry, SourceConversionRef } from '@formatai/shared';
+import type { ConversionMatch, Flag, OutputSheet, RunError, RunSummary, SizeGap } from '@formatai/engine';
+import type { ConversionDetail, ConversionStatus, Rules, SignatureEntry, SizeRange, SourceConversionRef } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../../api/http';
 import { useConvertApi } from '../../api/convert';
@@ -33,6 +33,7 @@ import {
   columnLabel,
   flaggedRowCount,
   formatsNeeding,
+  keepsSizeRange,
   newColumns,
   requiredAcross,
   fixesWithout,
@@ -41,6 +42,7 @@ import {
   runCounts,
   scopeSources,
   signatureOf,
+  sizeRangesToWiden,
   toRowDecisions,
   withAliases,
   withChoice,
@@ -152,6 +154,12 @@ export interface Job {
   failed: FailedFormat[];
   /** Conversions the user chose to make although their values look different ("Run anyway"): the values check is not made again for them. */
   bypass: string[];
+  /**
+   * "Run anyway" on a format whose file looked far from the size it was learned on (SPEC 8.15, 2026-10-08): per conversion, this file's range of each
+   * such column. Once that format's file is actually WRITTEN the saved range widens to include it, so the same kind of file is asked about once
+   * (`keep`); on no other path is a range ever widened. Two small integers a column - never a value.
+   */
+  widen: Record<string, Record<string, SizeRange>>;
   /** The new-column notice for this file, shown after the run. */
   notice: NewColumnsNotice | null;
   /** Fixes the user kept as rules while reviewing this file ("Do this every time?"), and what became of each: told after the run. */
@@ -265,8 +273,19 @@ export function failureText(i18n: I18n, failure: FormatFailure, formatName = '')
 }
 
 /** A job over `queue`, with nothing run yet. */
-function newJob(file: File, source: SignatureEntry, mapping: Record<string, string>, queue: SourceConversionRef[], failed: FailedFormat[], notice: NewColumnsNotice | null): Job {
-  return { file, source, mapping, queue, index: 0, results: [], failed, bypass: [], notice, kept: [] };
+function newJob(file: File, source: SignatureEntry, mapping: Record<string, string>, queue: SourceConversionRef[], failed: FailedFormat[], notice: NewColumnsNotice | null, widen: Job['widen'] = {}): Job {
+  return { file, source, mapping, queue, index: 0, results: [], failed, bypass: [], widen, notice, kept: [] };
+}
+
+/** The ranges "Run anyway" will widen, for the conversions of `items` the user chose to make anyway (only size reasons carry any). */
+function widenOf(items: readonly AttentionFormat[], anyway: readonly string[]): Job['widen'] {
+  const out: Job['widen'] = {};
+  for (const a of items) {
+    if (!anyway.includes(a.conversionId)) continue;
+    const ranges = sizeRangesToWiden(a.attention);
+    if (Object.keys(ranges).length > 0) out[a.conversionId] = ranges;
+  }
+  return out;
 }
 
 /** The formats of a split that were not made, as the results list them. */
@@ -375,6 +394,14 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
       job.results.push({ target, finished: { ...out, fileName: `${baseName(job.file.name)} (converted).${out.fileType}` } });
       // SPEC 14.1, 15: how many rows and how many were flagged - never a value, a header or a file name.
       void api.recordRun(target.conversionId, runCounts(out.summary, out.flags)).catch(() => undefined);
+      // "Run anyway" on a file of another size, and the file is made: the format's saved size range grows to include this file's, once, so the
+      // same file is not asked about every month. The server can only widen. A failure only means it is asked again next time.
+      const widen = job.widen[target.conversionId];
+      if (widen) {
+        delete job.widen[target.conversionId];
+        detailsRef.current.delete(target.conversionId);
+        void api.widenRanges(target.conversionId, widen).catch(() => undefined);
+      }
     },
     [api],
   );
@@ -518,6 +545,21 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
    * `columnGaps`), so the file is not parsed again and a check cannot disagree with a run. Without headers (nothing was read) nothing is
    * claimed: every format is ready, and the engine's own refusal of a missing required column is still there when it runs.
    */
+  /** Per set of rules (in order): the used number columns of the file that are far from the size the format was learned on. Nothing without a saved range. */
+  const sizeGapsFor = useCallback(
+    async (rules: Rules[], f: File, signal: AbortSignal): Promise<SizeGap[][]> => {
+      if (!rules.some(keepsSizeRange)) return [];
+      try {
+        return await engine.sizeGaps({ file: { name: f.name, bytes: await f.arrayBuffer() }, rules }, { signal });
+      } catch (e) {
+        // DECISION: a check that cannot run claims nothing (as columnGaps does without headers): the run itself is still there.
+        if (isCancellation(e) || signal.aborted) throw e;
+        return [];
+      }
+    },
+    [engine],
+  );
+
   const settle = useCallback(
     async (source: SignatureEntry, mapping: Record<string, string>, sourceFile: File, match: ConversionMatch | null, runId: number, signal: AbortSignal): Promise<void> => {
       setPhase({ kind: 'running', target: null });
@@ -529,12 +571,16 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         const headers = headersRef.current;
         const gaps = headers.length > 0 && checked.length > 0 ? await engine.columnGaps({ headers, rules: checked.map((c) => c.rules) }, { signal }) : [];
         if (runId !== runRef.current) return;
+        // "Same name, different size" (SPEC 8.15, 2026-10-08): the file's numbers against the size each format was learned on - the worker reads the
+        // file's values with the run's own code, once for all the formats, and only when some format keeps a range.
+        const sizes = headers.length > 0 ? await sizeGapsFor(checked.map((c) => c.rules), sourceFile, signal) : [];
+        if (runId !== runRef.current) return;
 
         const ready: SourceConversionRef[] = [];
         const attention: AttentionFormat[] = [];
         source.conversions.forEach((c, at) => {
           const k = checked.findIndex((x) => x.at === at);
-          const needs = k < 0 ? null : attentionOfGaps(gaps[k] ?? []);
+          const needs = k < 0 ? null : attentionOfGaps(gaps[k] ?? [], sizes[k] ?? []);
           if (needs) attention.push({ conversionId: c.conversionId, formatId: c.formatId, formatName: c.formatName, attention: needs });
           else ready.push(c);
         });
@@ -556,7 +602,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         fail(runId, e);
       }
     },
-    [engine, fail, loadDetails, startJob],
+    [engine, fail, loadDetails, sizeGapsFor, startJob],
   );
 
   /**
@@ -683,7 +729,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
       // The formats that needed attention and were not chosen to run are listed with the results (the user skipped them, or has not decided yet).
       const left = current.attention.filter((a) => !choice.anyway.includes(a.conversionId));
       const { run: runId, signal } = begin();
-      void startJob(newJob(f, current.source, current.mapping, queue, attentionFailures(left, new Set(choice.skipped)), current.notice), runId, signal);
+      void startJob(newJob(f, current.source, current.mapping, queue, attentionFailures(left, new Set(choice.skipped)), current.notice, widenOf(current.attention, choice.anyway)), runId, signal);
     },
     [begin, startJob],
   );
@@ -909,8 +955,12 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
       const conv = job?.source.conversions.find((c) => c.conversionId === conversionId);
       if (!job || !conv) return;
       const { run: runId, signal } = begin();
-      // What was made stays; this one format is made now, and the values check is not made again for it.
-      void startJob({ ...job, queue: [conv], index: 0, results: [...job.results], failed: job.failed.filter((x) => x.conversionId !== conversionId), bypass: [...job.bypass, conversionId] }, runId, signal);
+      // What was made stays; this one format is made now, and the values check is not made again for it. When it was held back for the size of
+      // its numbers, making it anyway widens its saved range once the file is made (like the formats step's "Run anyway").
+      const held = job.failed.find((x) => x.conversionId === conversionId);
+      const ranges = held?.failure.kind === 'attention' ? sizeRangesToWiden(held.failure.attention) : {};
+      const widen = Object.keys(ranges).length > 0 ? { ...job.widen, [conversionId]: ranges } : job.widen;
+      void startJob({ ...job, queue: [conv], index: 0, results: [...job.results], failed: job.failed.filter((x) => x.conversionId !== conversionId), bypass: [...job.bypass, conversionId], widen }, runId, signal);
     },
     [begin, startJob],
   );

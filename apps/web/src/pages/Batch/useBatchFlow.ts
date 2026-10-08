@@ -12,7 +12,11 @@
 // the file does not have (required, or used though optional), or whose used column's values mostly did not parse as before, is not made
 // and its item is "needs attention" with the reason - in the file's result and in the summary - while the file's other formats are
 // converted. A batch asks nothing, so there is no "Run anyway" here: that file can be run on its own on this screen.
-import type { Flag } from '@formatai/engine';
+//
+// DECISION (SPEC 8.15, 2026-10-08, "same name, different size"): a format whose used number column is far from the size it was learned on (its
+// saved `range`) is withheld the same way, with the same reason as on the Run screen - before the file is written. A batch never widens a range:
+// only the user's own "Run anyway" does, on the Run screen.
+import type { Flag, SizeGap } from '@formatai/engine';
 import type { Rules, SignatureEntry, SourceConversionRef, Tier } from '@formatai/shared';
 import { tiers } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -25,7 +29,7 @@ import { useServices } from '../../services';
 import { isAcceptedFile } from '../../ui';
 import type { BatchOutputFile, SummaryTable } from '../../worker/convertApi';
 import { attentionLines } from '../Convert/attention';
-import { attentionOfGaps, attentionOfUnlike, columnLabel, isolate, runCounts, signatureOf, type Attention } from '../Convert/logic';
+import { attentionOfGaps, attentionOfUnlike, columnLabel, isolate, keepsSizeRange, runCounts, signatureOf, type Attention } from '../Convert/logic';
 
 export type BatchStatus = 'queued' | 'running' | 'converted' | 'convertedFlags' | 'noMatch' | 'needsAttention';
 
@@ -199,30 +203,64 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
   const remove = useCallback((id: number) => setItems((list) => list.filter((i) => i.id !== id)), []);
   const clear = useCallback(() => setItems([]), []);
 
+  /** A conversion's rules, fetched once per batch; null when it is gone. */
+  const rulesOf = useCallback(
+    async (conv: SourceConversionRef, signal: AbortSignal): Promise<Rules | null> => {
+      const cached = rulesCache.current.get(conv.conversionId);
+      if (cached) return cached;
+      try {
+        const rules = (await api.conversion(conv.conversionId, signal)).rules;
+        rulesCache.current.set(conv.conversionId, rules);
+        return rules;
+      } catch (e) {
+        if (e instanceof ApiError && (e.code === 'notFound' || e.status === 404)) return null;
+        throw e;
+      }
+    },
+    [api],
+  );
+
   /**
-   * One file's conversion to one format: fetch its rules (once per batch), check the format against the file's headers, convert, and
-   * check how the values read. A format that needs attention is not made (SPEC 21 v11 items 4-7); the others of the file still are.
+   * "Same name, different size": every format of the source that keeps a size range, against this file's values - read once for all of them, in
+   * the worker, with the run's own code. Nothing is read for formats with no range (old rules), and a check that cannot run claims nothing.
+   */
+  const sizeGapsOfSource = useCallback(
+    async (item: BatchItem, source: SignatureEntry, headers: readonly string[], signal: AbortSignal): Promise<Map<string, SizeGap[]>> => {
+      const out = new Map<string, SizeGap[]>();
+      if (headers.length === 0) return out;
+      const sized: { id: string; rules: Rules }[] = [];
+      for (const conv of source.conversions) {
+        const rules = await rulesOf(conv, signal);
+        if (rules && keepsSizeRange(rules)) sized.push({ id: conv.conversionId, rules });
+      }
+      if (sized.length === 0) return out;
+      try {
+        const gaps = await engine.sizeGaps({ file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, rules: sized.map((x) => x.rules) }, { signal });
+        sized.forEach((x, i) => out.set(x.id, gaps[i] ?? []));
+      } catch (e) {
+        if (isCancellation(e) || signal.aborted) throw e;
+      }
+      return out;
+    },
+    [engine, rulesOf],
+  );
+
+  /**
+   * One file's conversion to one format: fetch its rules (once per batch), check the format against the file's headers and the size of its
+   * numbers, convert, and check how the values read. A format that needs attention is not made (SPEC 21 v11 items 4-7); the others of the file still are.
    */
   const convertTo = useCallback(
-    async (item: BatchItem, source: SignatureEntry, conv: SourceConversionRef, headers: readonly string[], signal: AbortSignal): Promise<ConversionResult> => {
+    async (item: BatchItem, source: SignatureEntry, conv: SourceConversionRef, headers: readonly string[], sizes: ReadonlyMap<string, SizeGap[]>, signal: AbortSignal): Promise<ConversionResult> => {
       const failed = (reason: NoMatchReason): ConversionResult => ({ change: { status: 'noMatch', reason, conversionId: conv.conversionId, formatName: conv.formatName, sourceName: source.name } });
       const attention = (needs: Attention): ConversionResult => ({
         change: { status: 'needsAttention', reason: { kind: 'attention', format: conv.formatName, attention: needs }, conversionId: conv.conversionId, formatName: conv.formatName, sourceName: source.name },
       });
-      let rules = rulesCache.current.get(conv.conversionId);
-      if (!rules) {
-        try {
-          rules = (await api.conversion(conv.conversionId, signal)).rules;
-        } catch (e) {
-          if (e instanceof ApiError && (e.code === 'notFound' || e.status === 404)) return failed({ kind: 'gone' });
-          throw e;
-        }
-        rulesCache.current.set(conv.conversionId, rules);
-      }
+      const rules = await rulesOf(conv, signal);
+      if (!rules) return failed({ kind: 'gone' });
       // What this format needs that the file does not have: the engine's own header mapping over the headers matching read (no file is
       // parsed again). Without headers nothing is claimed, and a missing required column is still the engine's refusal below.
       const [gaps] = headers.length > 0 ? await engine.columnGaps({ headers: [...headers], rules: [rules] }, { signal }) : [[]];
-      const missing = attentionOfGaps(gaps ?? []);
+      const missing = attentionOfGaps(gaps ?? [], sizes.get(conv.conversionId) ?? []);
       if (missing) return attention(missing);
       const out = await engine.convertWithDecisions({ rules, file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, mode: 'write', previewRows: 0 }, { signal });
       if (!out.ok) {
@@ -252,7 +290,7 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
         },
       };
     },
-    [api, engine],
+    [engine, rulesOf],
   );
 
   /** One file, start to finish: match it to a source, then convert it with each conversion of that source. */
@@ -268,11 +306,12 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
       const source = entries.find((e) => e.sourceId === match.id);
       if (!source) return noMatch({ kind: 'gone' });
 
+      const sizes = await sizeGapsOfSource(item, source, matched.headers, signal);
       const results: ConversionResult[] = [];
-      for (const conv of source.conversions) results.push(await convertTo(item, source, conv, matched.headers, signal));
+      for (const conv of source.conversions) results.push(await convertTo(item, source, conv, matched.headers, sizes, signal));
       return results;
     },
-    [engine, convertTo],
+    [engine, convertTo, sizeGapsOfSource],
   );
 
   /** The zip and the summary workbook, made in the worker from what was converted. */

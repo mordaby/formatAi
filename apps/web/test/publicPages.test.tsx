@@ -61,7 +61,7 @@ describe.each([
       // the precise promise
       // what a saved format may keep (docs/proposals/saved-format-contents.md section 8): in the promise, and in what is stored
       const kept =
-        "Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Never rows from your files.";
+        "Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Saved formats also keep the rough size of each number column (for example, 'thousands'), never its values. Never rows from your files.";
       expect(text).toContain(`Your full files never leave your computer. ${kept}`);
       expect(text).toContain(`Your saved formats and the rules for each kind of input file they read, with your edits and earlier versions. ${kept}`);
       expect(text).not.toContain('Saved formats contain');
@@ -76,6 +76,8 @@ describe.each([
       expect(text.split(kept)).toHaveLength(3);
       expect(text).toContain('אנא אל תשתמשו בפרטים אישיים אחרים, כמו שם של אדם, כתווית בכלל שאתם שומרים.');
       expect(text).toContain('לעולם לא שורות מהקבצים שלכם');
+      // (2026-10-08) the rough size of the number columns, never the values
+      expect(text.split('פורמטים שמורים שומרים גם את הגודל המשוער של כל עמודה מספרית (למשל ״אלפים״), ולא את הערכים שלה.')).toHaveLength(3);
       expect(text).toContain('Anthropic ו-OpenAI');
       expect(text).toContain('ערכים מדומים');
     }

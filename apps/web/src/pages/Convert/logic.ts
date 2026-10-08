@@ -1,7 +1,7 @@
 // The pure parts of "convert a file" (SPEC 5 C, 21 v5 item 5): which rows need a look, what the user chose for each,
 // the RowDecisions those choices become, and the counts a finished run reports. No React, no worker: easy to test.
-import type { ConversionMatch, Flag, RowDecisions, RunSummary } from '@formatai/engine';
-import { identifierKindOf, limits, type ColumnType, type IdentifierFinding, type LearnResult, type Rules, type SignatureEntry, type SourceConversionRef } from '@formatai/shared';
+import type { ConversionMatch, Flag, RowDecisions, RunSummary, SizeGap } from '@formatai/engine';
+import { identifierKindOf, limits, type ColumnType, type IdentifierFinding, type LearnResult, type Rules, type SignatureEntry, type SizeRange, type SourceConversionRef } from '@formatai/shared';
 import type { MessageKey } from '../../i18n';
 import type { RowInputCell, SignatureInput } from '../../worker/convertApi';
 
@@ -293,15 +293,43 @@ export function baseName(fileName: string): string {
  * format's editor, skip it this time, or (when it can still run) make it anyway.
  */
 export type Attention =
-  /** The file lacks columns the format needs. `required` are the ones it cannot run without; the rest are used but optional (it runs, and leaves what they feed empty). */
-  | { kind: 'missing'; columns: string[]; required: string[] }
+  /**
+   * The file lacks columns the format needs. `required` are the ones it cannot run without; the rest are used but optional (it runs, and leaves what they feed empty).
+   * `size`: the same format also finds the file far from the size it was learned on (see the `size` kind) - one row, both reasons.
+   */
+  | { kind: 'missing'; columns: string[]; required: string[]; size?: SizeColumn[] }
   /** "Same name, different meaning": most of a used column's values did not parse as the type it was saved with. */
-  | { kind: 'values'; columns: { header: string; type: ColumnType }[] };
+  | { kind: 'values'; columns: { header: string; type: ColumnType }[] }
+  /** "Same name, different size" (2026-10-08): the file's numbers are far from the size the format was learned on - it LOOKS different; nothing says which is right. */
+  | { kind: 'size'; columns: SizeColumn[] };
 
-/** The format needs the columns of these gaps (`missingInputColumns`), or nothing is missing (null). */
-export function attentionOfGaps(gaps: readonly { header: string; required: boolean }[]): Attention | null {
-  if (gaps.length === 0) return null;
-  return { kind: 'missing', columns: gaps.map((g) => g.header), required: gaps.filter((g) => g.required).map((g) => g.header) };
+/** A used number column of a file whose values look far from the size its format was learned on (the worker's `SizeGap`: ids, headers and decades only). */
+export type SizeColumn = Pick<SizeGap, 'id' | 'header' | 'saved' | 'file' | 'median'>;
+
+/**
+ * The format needs the columns of these gaps (`missingInputColumns`), or nothing is missing (null) - unless the file's numbers are far from the size
+ * the format was learned on (`size`: `SizeGap`s from the worker), which is a reason of its own, or an addition to the missing columns'.
+ */
+export function attentionOfGaps(gaps: readonly { header: string; required: boolean }[], size: readonly SizeColumn[] = []): Attention | null {
+  const sizes = size.map((s): SizeColumn => ({ id: s.id, header: s.header, saved: s.saved, file: s.file, median: s.median }));
+  if (gaps.length === 0) return sizes.length > 0 ? { kind: 'size', columns: sizes } : null;
+  return { kind: 'missing', columns: gaps.map((g) => g.header), required: gaps.filter((g) => g.required).map((g) => g.header), ...(sizes.length > 0 ? { size: sizes } : {}) };
+}
+
+/** Whether the rules keep a size range for some column: the only rules a file's values need to be read for (old stored rules have none). */
+export function keepsSizeRange(rules: LearnResult | Rules): boolean {
+  return rules.input.columns.some((c) => c.range !== undefined);
+}
+
+/** The size reasons of an attention (none for the other reasons): what "Run anyway" widens the saved ranges with. */
+export function sizeColumnsOf(attention: Attention): readonly SizeColumn[] {
+  if (attention.kind === 'size') return attention.columns;
+  return attention.kind === 'missing' ? (attention.size ?? []) : [];
+}
+
+/** Column id -> this file's range, for the widen route: only the columns the file was far from, and only what "Run anyway" accepted. */
+export function sizeRangesToWiden(attention: Attention): Record<string, SizeRange> {
+  return Object.fromEntries(sizeColumnsOf(attention).map((c) => [c.id, { lo: c.file.lo, hi: c.file.hi }]));
 }
 
 /** What a run says about "same name, different meaning" (`unlikeColumns`), or null when its values look as before. */
@@ -312,7 +340,7 @@ export function attentionOfUnlike(unlike: readonly { header: string; type: Colum
 
 /** "Run anyway" is offered unless the format cannot run at all: a missing required column is the engine's refusal, not ours. */
 export function canRunAnyway(attention: Attention): boolean {
-  return attention.kind === 'values' || attention.required.length === 0;
+  return attention.kind !== 'missing' || attention.required.length === 0;
 }
 
 /** Column names inside a sentence: each isolated and in quotes, comma separated ("'Qty', 'Price'"). */

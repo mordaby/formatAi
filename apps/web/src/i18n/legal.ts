@@ -54,7 +54,7 @@ const privacyEn: LegalDoc = {
       blocks: [
         {
           promise:
-            "Your full files never leave your computer. Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Never rows from your files.",
+            "Your full files never leave your computer. Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Saved formats also keep the rough size of each number column (for example, 'thousands'), never its values. Never rows from your files.",
         },
         { p: 'Learning from your two example files, checking the result and converting files all happen in your browser. Nothing on this service uploads a file.' },
         { p: 'AI learning is optional. It happens only when you press a button that says it uses AI, and only when you are signed in.' },
@@ -102,7 +102,7 @@ const privacyEn: LegalDoc = {
         {
           ul: [
             "Your account: the name, email address and picture your Google or Microsoft account gives us, that provider's identifier for you, your language and your plan.",
-            "Your saved formats and the rules for each kind of input file they read, with your edits and earlier versions. Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Never rows from your files.",
+            "Your saved formats and the rules for each kind of input file they read, with your edits and earlier versions. Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Saved formats also keep the rough size of each number column (for example, 'thousands'), never its values. Never rows from your files.",
             'Usage counts, for example how many AI formats you used this month and how many formats you saved.',
             'A record of each sign-in: when it happened, with which provider (Google or Microsoft), and the anonymous id of the browser it came from.',
             'AI call records: when a call was made, which model, how many tokens it used, what it cost and whether it worked. Counts only, never the content of a request or an answer.',
@@ -213,7 +213,7 @@ const privacyHe: LegalDoc = {
       blocks: [
         {
           promise:
-            'הקבצים המלאים שלכם לעולם לא יוצאים מהמחשב שלכם. פורמטים שמורים כוללים את שמות העמודות ואת הכללים שאישרתם, כולל הערכים הקבועים שהכללים האלה משתמשים בהם - כמו תוויות, קודים ורשימות המרה, וערכים שהקלדתם בפלט הדוגמה שלכם. לפני השמירה אנחנו שואלים אתכם על רשימות שהועתקו מהדוגמה שלכם ועל מספרי זהות, מספרי טלפון, כתובות אימייל ומספרי כרטיס או חשבון בנק שאנחנו מזהים בהם. אנא אל תשתמשו בפרטים אישיים אחרים, כמו שם של אדם, כתווית בכלל שאתם שומרים. לעולם לא שורות מהקבצים שלכם.',
+            'הקבצים המלאים שלכם לעולם לא יוצאים מהמחשב שלכם. פורמטים שמורים כוללים את שמות העמודות ואת הכללים שאישרתם, כולל הערכים הקבועים שהכללים האלה משתמשים בהם - כמו תוויות, קודים ורשימות המרה, וערכים שהקלדתם בפלט הדוגמה שלכם. לפני השמירה אנחנו שואלים אתכם על רשימות שהועתקו מהדוגמה שלכם ועל מספרי זהות, מספרי טלפון, כתובות אימייל ומספרי כרטיס או חשבון בנק שאנחנו מזהים בהם. אנא אל תשתמשו בפרטים אישיים אחרים, כמו שם של אדם, כתווית בכלל שאתם שומרים. פורמטים שמורים שומרים גם את הגודל המשוער של כל עמודה מספרית (למשל ״אלפים״), ולא את הערכים שלה. לעולם לא שורות מהקבצים שלכם.',
         },
         { p: 'הלמידה משני קובצי הדוגמה, בדיקת התוצאה והמרת הקבצים מתבצעות כולן בדפדפן שלכם. שום דבר בשירות הזה לא מעלה קובץ.' },
         { p: 'למידה עם AI היא אופציונלית. היא מתרחשת רק כשלוחצים על כפתור שכתוב עליו שהוא משתמש ב-AI, ורק כשמחוברים לחשבון.' },
@@ -261,7 +261,7 @@ const privacyHe: LegalDoc = {
         {
           ul: [
             'החשבון שלכם: השם, כתובת האימייל והתמונה שחשבון Google או Microsoft שלכם נותן לנו, המזהה שלכם אצל הספק הזה, השפה והתוכנית שלכם.',
-            'הפורמטים ששמרתם והכללים לכל סוג של קובץ קלט שהם קוראים, עם העריכות שלכם וגרסאות קודמות. פורמטים שמורים כוללים את שמות העמודות ואת הכללים שאישרתם, כולל הערכים הקבועים שהכללים האלה משתמשים בהם - כמו תוויות, קודים ורשימות המרה, וערכים שהקלדתם בפלט הדוגמה שלכם. לפני השמירה אנחנו שואלים אתכם על רשימות שהועתקו מהדוגמה שלכם ועל מספרי זהות, מספרי טלפון, כתובות אימייל ומספרי כרטיס או חשבון בנק שאנחנו מזהים בהם. אנא אל תשתמשו בפרטים אישיים אחרים, כמו שם של אדם, כתווית בכלל שאתם שומרים. לעולם לא שורות מהקבצים שלכם.',
+            'הפורמטים ששמרתם והכללים לכל סוג של קובץ קלט שהם קוראים, עם העריכות שלכם וגרסאות קודמות. פורמטים שמורים כוללים את שמות העמודות ואת הכללים שאישרתם, כולל הערכים הקבועים שהכללים האלה משתמשים בהם - כמו תוויות, קודים ורשימות המרה, וערכים שהקלדתם בפלט הדוגמה שלכם. לפני השמירה אנחנו שואלים אתכם על רשימות שהועתקו מהדוגמה שלכם ועל מספרי זהות, מספרי טלפון, כתובות אימייל ומספרי כרטיס או חשבון בנק שאנחנו מזהים בהם. אנא אל תשתמשו בפרטים אישיים אחרים, כמו שם של אדם, כתווית בכלל שאתם שומרים. פורמטים שמורים שומרים גם את הגודל המשוער של כל עמודה מספרית (למשל ״אלפים״), ולא את הערכים שלה. לעולם לא שורות מהקבצים שלכם.',
             'ספירות שימוש, למשל כמה פורמטים עם AI השתמשתם החודש וכמה פורמטים שמרתם.',
             'רישום של כל התחברות: מתי היא הייתה, דרך איזה ספק (Google או Microsoft), והמזהה האנונימי של הדפדפן שממנו היא הגיעה.',
             'רישומי קריאות AI: מתי בוצעה קריאה, באיזה מודל, כמה אסימונים היא השתמשה, כמה עלתה והאם הצליחה. ספירות בלבד, לעולם לא תוכן של בקשה או של תשובה.',

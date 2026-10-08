@@ -4,7 +4,9 @@
 // as an argument, and rules are fetched by the main thread.
 import {
   extractTable,
+  fileSizeGaps,
   findFormatMatches,
+  hasSizeRanges,
   formatYmd,
   mapHeaders,
   matchConversions,
@@ -20,7 +22,7 @@ import {
 } from '@formatai/engine';
 import type { InputTable, OutputSheet, OutRow, RawCell, RawWorkbook } from '@formatai/engine';
 import type { LearnResult, Rules } from '@formatai/shared';
-import type { BatchArgs, BatchOutput, ColumnGapsArgs, ColumnGapsOutput, ConvertRunArgs, ConvertRunOutput, FormatMatchesArgs, FormatMatchesOutput, HeadersArgs, HeadersOutput, MatchFileArgs, MatchFileOutput, RowInputCell, SummaryTable } from './convertApi';
+import type { BatchArgs, BatchOutput, ColumnGapsArgs, ColumnGapsOutput, ConvertRunArgs, ConvertRunOutput, FormatMatchesArgs, FormatMatchesOutput, HeadersArgs, HeadersOutput, MatchFileArgs, MatchFileOutput, RowInputCell, SizeGapsArgs, SizeGapsOutput, SummaryTable } from './convertApi';
 import { Transfer } from './runtime';
 
 /** A detached-safe ArrayBuffer holding exactly `bytes`. */
@@ -83,6 +85,18 @@ async function formatMatches(args: FormatMatchesArgs): Promise<FormatMatchesOutp
  */
 async function columnGaps(args: ColumnGapsArgs): Promise<ColumnGapsOutput> {
   return args.rules.map((rules) => missingInputColumns(rules, args.headers));
+}
+
+/**
+ * SPEC 5 C, 8.15 (2026-10-08): which used number columns of the file are far from the size each conversion was learned on. The file is read only
+ * when some rules keep a range (old rules cost nothing), once per way of reading it, and its values are read with the run's own code
+ * (`fileSizeGaps`), so this cannot disagree with the run that follows. A file that cannot be opened claims nothing (the run says so itself).
+ */
+async function sizeGaps(args: SizeGapsArgs): Promise<SizeGapsOutput> {
+  const none = (): SizeGapsOutput => args.rules.map(() => []);
+  if (!args.rules.some(hasSizeRanges)) return none();
+  const opened = await open(args.file);
+  return opened.ok ? fileSizeGaps(opened.wb, args.rules) : none();
 }
 
 // ---------- running a conversion with the user's decisions ----------
@@ -221,4 +235,4 @@ async function batch(args: BatchArgs): Promise<Transfer<BatchOutput>> {
   return new Transfer({ zip, summary: alone }, [zip, alone]);
 }
 
-export const convertMethods = { readHeaders, matchFile, formatMatches, columnGaps, convertWithDecisions, batch };
+export const convertMethods = { readHeaders, matchFile, formatMatches, columnGaps, sizeGaps, convertWithDecisions, batch };

@@ -73,3 +73,16 @@ describe('a lookup table or value map nothing reads any more is never saved', ()
     for (const sent of await sentBy(rules)) expect(sent).toEqual(rules);
   });
 });
+
+describe("a number column's size range (SPEC 8.15, 2026-10-08) rides every save", () => {
+  it('a new format, another input, a new version and the Run screen\'s save all send it, exactly as learned', async () => {
+    const orders = ordersRules();
+    const ranged: Rules = { ...orders, input: { ...orders.input, columns: orders.input.columns.map((c) => (c.id === 'price' ? { ...c, range: { lo: 1, hi: 2 } } : c)) } };
+    const sent = await sentBy(ranged);
+    expect(sent).toHaveLength(4);
+    for (const rules of sent) {
+      expect(rules.input.columns.find((c) => c.id === 'price')?.range).toEqual({ lo: 1, hi: 2 });
+      expect(rules).toEqual(ranged);
+    }
+  });
+});
