@@ -47,14 +47,14 @@ function answerFor(payload: LearnPayload): LearnResult {
 
 interface Spy {
   payloads: LearnPayload[];
-  repairs: { problems: RepairProblem[] }[];
+  repairs: { problems: RepairProblem[]; previous: LearnResult }[];
   callLearn: LearnFromExamplesOptions['callLearn'];
   callRepair: NonNullable<LearnFromExamplesOptions['callRepair']>;
 }
 
 function spy(answer: (payload: LearnPayload) => LearnResult | null, repaired?: (payload: LearnPayload) => LearnResult | null): Spy {
   const payloads: LearnPayload[] = [];
-  const repairs: { problems: RepairProblem[] }[] = [];
+  const repairs: { problems: RepairProblem[]; previous: LearnResult }[] = [];
   return {
     payloads,
     repairs,
@@ -62,8 +62,8 @@ function spy(answer: (payload: LearnPayload) => LearnResult | null, repaired?: (
       payloads.push(payload);
       return { rules: answer(payload), problems: [], calls: [] };
     },
-    callRepair: async (payload, _previous, problems): Promise<LearnCallResult> => {
-      repairs.push({ problems });
+    callRepair: async (payload, previous, problems): Promise<LearnCallResult> => {
+      repairs.push({ problems, previous });
       return { rules: repaired ? repaired(payload) : null, problems: [], calls: [] };
     },
   };
@@ -95,6 +95,18 @@ describe('learnFromExamples with complete', () => {
     expect(fixed.unsupported).toEqual([]); // the local rules never call a column unsupported: only the AI step does
     expect(s.payloads[0]!.skipColumns).toBeUndefined(); // an unexplained column is not skipped
     expect(r.stages).toMatchObject({ fastPathTried: false, llmCalled: true, partialBuilt: false, readinessBlocked: false });
+  });
+
+  it("the user's rules carry size ranges (written at the end of the free learn, SPEC 8.15): they are not sent, the fixed lock still holds, and the kept answer has them", async () => {
+    const { rules } = await localPartial(mixedPair());
+    const ranged = rules.input.columns.filter((c) => c.range !== undefined).map((c) => c.id);
+    expect(ranged.length).toBeGreaterThan(0);
+    const s = spy(answerFor);
+    const r = await complete(mixedPair(), s);
+    expect(JSON.stringify(s.payloads[0]!.complete)).not.toContain('"lo"');
+    expect(r.completion?.fixedProblems).toEqual([]);
+    expect(s.repairs).toHaveLength(0);
+    expect(r.rules!.input.columns.filter((c) => c.range !== undefined).map((c) => c.id)).toEqual(expect.arrayContaining(ranged));
   });
 
   it('a good answer: the fixed lock holds, and everything but the column with no rule matches the example', async () => {
@@ -166,6 +178,9 @@ describe('learnFromExamples with complete', () => {
     const r = await complete(mixedPair(), s);
     expect(s.repairs).toHaveLength(1);
     expect(s.repairs[0]!.problems).toContainEqual(expect.objectContaining({ kind: 'fixedMismatch', path: expect.stringMatching(/^transform\.valueMaps\[/) }));
+    // The rules handed back to the repair round hold no size range (SPEC 8.15): code writes them at the very end, from the example.
+    expect(s.repairs[0]!.previous.input.columns.some((c) => c.range !== undefined)).toBe(false);
+    expect(r.rules!.input.columns.some((c) => c.range !== undefined)).toBe(true);
     expect(r.stages).toMatchObject({ verifiedFirstCall: false, browserRepairUsed: true, verifiedAfterRepair: true });
     expect(r.completion).toMatchObject({ fixedProblems: [], matches: true });
     expect(r.loop).toEqual({ rounds: 1, rowsSent: expect.any(Number), end: 'verified' });

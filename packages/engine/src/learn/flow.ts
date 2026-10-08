@@ -28,7 +28,7 @@
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
 // SPEC 10). No DOM/Node APIs; no randomness beyond what a given `key` already carries.
-import { aiNotesOf, isCodeCheck, limits, payloadRowCount, stepBytes, stripAiNotes, unsupportedDespiteEvidence, withRows, type AiColumnNote, type AiStepPartCode, type Check, type CheckAnswer, type CheckRound, type ColumnClassHints, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
+import { aiNotesOf, isCodeCheck, limits, payloadRowCount, stepBytes, stripAiNotes, unsupportedDespiteEvidence, withRows, withoutRanges, type AiColumnNote, type AiStepPartCode, type Check, type CheckAnswer, type CheckRound, type ColumnClassHints, type Format, type LearnPayload, type LearnResult, type RepairProblem, type Rules, type Tier } from '@formatai/shared';
 import { answerChecks, checkSummaryOf, withoutRows, type CheckSummary } from './checks';
 import { deepEqual } from '../registry/deepEqual';
 import { fillParams, type FillAmbiguity, type FillResult, type FillSummary } from './fillParams';
@@ -400,8 +400,11 @@ async function learnPair<Call>(opts: LearnFromExamplesOptions<Call>, seen: { dif
   // Completion mode: a check only code writes in the user's rules (SPEC 8.8: a cut-off check holds two values of their rows, the marker of an
   // open question the other rule's constants), which is never sent (SPEC 7.2). The AI step gets their rules without it (the payload, the
   // fixed lock, what code puts back) and it is put back on the answer at the end.
+  // The same for the size ranges of their number columns (SPEC 8.15, 2026-10-08): code wrote them at the end of the free learn, and they are
+  // written again at the end of this one, from the example - so nothing in between (the payload, the fixed lock, what code puts back, the
+  // rules a repair round is handed back) ever holds one.
   const userCodeChecks = opts.complete ? opts.complete.fixedRules.validations.filter(isCodeCheck) : [];
-  const complete: CompleteOptions | undefined = opts.complete ? { ...opts.complete, fixedRules: withoutCodeChecks(opts.complete.fixedRules) } : undefined;
+  const complete: CompleteOptions | undefined = opts.complete ? { ...opts.complete, fixedRules: withoutRanges(withoutCodeChecks(opts.complete.fixedRules)) } : undefined;
 
   // ---- SPEC 5 A step 1: read both files (sniff delimited output bytes so
   // detectFileSpec can see quote: 'all' - SPEC 8.13) ----
