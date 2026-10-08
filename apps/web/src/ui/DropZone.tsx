@@ -1,6 +1,7 @@
 import { useId, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import { Cell } from '../components/Cell';
 import { useI18n, type MessageKey } from '../i18n';
+import { useTrack } from '../services';
 import { Button } from './Button';
 import { Icon } from './Icon';
 import { Spinner } from './Spinner';
@@ -57,6 +58,7 @@ function hasFiles(e: DragEvent): boolean {
  */
 export function DropZone({ label, caption, file, info, onFile, onFiles, onClear, onReject, accept = ACCEPTED_EXTENSIONS, maxBytes, disabled }: DropZoneProps) {
   const { t, lang } = useI18n();
+  const track = useTrack();
   const id = useId();
   const labelId = `${id}-label`;
   const captionId = `${id}-caption`;
@@ -78,12 +80,15 @@ export function DropZone({ label, caption, file, info, onFile, onFiles, onClear,
     if (!isAcceptedFile(first.name, accept)) {
       const r: DropRejection = { kind: 'type', file: first };
       setRejected(r);
+      // SPEC 14.1: why a file was turned away - the reason only, never its name.
+      track('file_rejected', { reason: 'type' });
       onReject?.(r);
       return;
     }
     if (maxBytes !== undefined && first.size > maxBytes) {
       const r: DropRejection = { kind: 'size', file: first, maxBytes };
       setRejected(r);
+      track('file_rejected', { reason: 'size' });
       onReject?.(r);
       return;
     }

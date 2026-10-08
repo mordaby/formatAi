@@ -55,10 +55,13 @@ export function newAnonId(): string {
   return randomBytes(16).toString('base64url');
 }
 
-/** Requests that don't get an anonId (and no Set-Cookie): monitors hitting the health check. */
+/**
+ * Requests that don't get an anonId (and no Set-Cookie): monitors hitting the health check, and the usage-events endpoint - a page view or a
+ * download count must never be what first gives a visitor an id (SPEC 14.1: a visitor's events are stored with no id at all).
+ */
 function needsAnonId(url: string): boolean {
   const path = url.split('?', 1)[0]!;
-  return path.startsWith('/api/') && path !== '/api/health';
+  return path.startsWith('/api/') && path !== '/api/health' && path !== '/api/events';
 }
 
 /**

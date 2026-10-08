@@ -5,6 +5,7 @@ import { useLearnSession } from '../app/LearnSession';
 import { useMe } from '../app/Me';
 import { useSignIn } from '../app/SignIn';
 import type { LearnFlowStatus } from '../flow/learnFlow';
+import { useTrack } from '../services';
 import { Stepper, type StepNumber } from '../ui';
 import { HomeActions } from './HomeActions';
 import { HomeForm } from './HomeForm';
@@ -43,6 +44,7 @@ export default function Home() {
   const me = useMe();
   const navigate = useNavigate();
   const location = useLocation();
+  const track = useTrack();
   // "Teach a new format" from My formats comes here with the two zones already open.
   const [teaching, setTeaching] = useState((location.state as { teach?: boolean } | null)?.teach === true);
   const { flow } = session;
@@ -96,9 +98,18 @@ export default function Home() {
         key="match"
         matches={state.matches}
         tier={me.tier}
-        onYes={(match) => session.begin({ attach: match })}
-        onNo={() => session.begin({ anyway: true })}
-        onChooseOther={chooseOther}
+        onYes={(match) => {
+          track('known_format', { kind: 'anotherInput', answer: 'yes' });
+          session.begin({ attach: match });
+        }}
+        onNo={() => {
+          track('known_format', { kind: 'anotherInput', answer: 'no' });
+          session.begin({ anyway: true });
+        }}
+        onChooseOther={() => {
+          track('known_format', { kind: 'anotherInput', answer: 'chooseOther' });
+          chooseOther();
+        }}
       />
     );
   } else if (state.status === 'known') {
@@ -111,11 +122,18 @@ export default function Home() {
         key="known"
         known={state.known}
         onConvert={() => {
+          track('known_format', { kind: 'same', answer: 'convert' });
           flow.cancel();
           navigate(`/convert?format=${encodeURIComponent(formatId)}`, file ? { state: { file } } : undefined);
         }}
-        onLearnAnyway={() => session.begin({ anyway: true })}
-        onChooseOther={chooseOther}
+        onLearnAnyway={() => {
+          track('known_format', { kind: 'same', answer: 'learnAnyway' });
+          session.begin({ anyway: true });
+        }}
+        onChooseOther={() => {
+          track('known_format', { kind: 'same', answer: 'chooseOther' });
+          chooseOther();
+        }}
       />
     );
   } else if (state.status === 'error' && !isAiQuotaHit(state.error)) {

@@ -8,6 +8,7 @@ import { registerContactRoutes } from './contact/routes.js';
 import { createMemoryContactStore, createMongoContactStore, type ContactStore } from './contact/store.js';
 import type { AppDb } from './db.js';
 import type { Env } from './env.js';
+import { createEventRecorder, createMemoryEventStore, createMongoEventStore, registerEventRoutes, registerLimitHitEvents, type EventStore } from './events/index.js';
 import type { CompleteFn } from './learn/index.js';
 import { registerAnonId, type Identity } from './protection/identity.js';
 import { createProtection, parseTrustProxy } from './protection/index.js';
@@ -29,6 +30,8 @@ export interface BuildServerOptions {
   store?: ProtectionStore;
   /** Tests: replaces where the public forms (leads, waitlist, feedback) are kept (default: MongoDB from `db`, or in memory when there is no database). */
   contactStore?: ContactStore;
+  /** Tests: replaces where the usage events (SPEC 14.1) are kept (default: MongoDB from `db`, or in memory when there is no database). */
+  eventStore?: EventStore;
   /** Tests: replaces the global `fetch` used to call Cloudflare Turnstile's siteverify endpoint. */
   fetch?: typeof fetch;
   /** Tests: the clock (UTC day/month keys, budgets, cache and learnId expiry). */
@@ -123,6 +126,16 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
     return reply.send(err);
   });
 
+  // SPEC 14.1 (beta usage events): every route that records one writes through this, for the signed-in caller or - a visitor - for nobody.
+  const events = createEventRecorder({
+    store: opts.eventStore ?? (db ? createMongoEventStore(db) : createMemoryEventStore()),
+    now: protection.now,
+    identify: opts.identify,
+    warn: (message) => app.log.warn(message),
+  });
+  // `limit_hit`: one hook sees every `limitHit` answer, whichever route sends it - so it comes before the routes.
+  registerLimitHitEvents(app, events);
+
   app.get('/api/health', async () => {
     if (!db) {
       return { ok: true, db: 'not configured' as const };
@@ -143,7 +156,7 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
   registerLearnRoutes(app, { env, protection, complete, identify: opts.identify });
 
   // SPEC 8.12 / 13: saved formats and their conversions (signed-in users only; needs the database).
-  registerRegistryRoutes(app, { db, protection, identify: opts.identify });
+  registerRegistryRoutes(app, { db, protection, events, identify: opts.identify });
 
   // SPEC 14.2: the admin view's API (/api/admin/*), admins only - checked here on the server, whatever the web app shows.
   registerAdminRoutes(app, { db, env, protection, identify: opts.identify });
@@ -152,9 +165,13 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
   // (Turnstile + rate limits), so they exist in every environment; they need no sign-in.
   registerContactRoutes(app, {
     protection,
+    events,
     store: opts.contactStore ?? (db ? createMongoContactStore(db) : createMemoryContactStore()),
     identify: opts.identify,
   });
+
+  // SPEC 14.1: the usage events only the browser knows (page views, how a learn ended, ...). Open to visitors - their events are stored with no id.
+  registerEventRoutes(app, { env, protection, recorder: events });
 
   // Last: the static files and the page-route fallback, once every /api route is in place.
   if (opts.webDist) await registerWebApp(app, { dir: opts.webDist, hsts: new URL(env.WEB_ORIGIN).protocol === 'https:' });

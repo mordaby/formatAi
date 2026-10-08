@@ -11,7 +11,7 @@
 //                                             running -> done                each with its OWN review before writing
 //   after the last one: done (exactly one file) or results (several, or some not made: a download each, and a zip)
 import type { ConversionMatch, Flag, OutputSheet, RunError, RunSummary } from '@formatai/engine';
-import type { ConversionDetail, ConversionStatus, Rules, SignatureEntry, SourceConversionRef } from '@formatai/shared';
+import { capCount, capSmall, fileTypeOfName, type ConversionDetail, type ConversionStatus, type Rules, type SignatureEntry, type SourceConversionRef } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../../api/http';
 import { useConvertApi } from '../../api/convert';
@@ -19,7 +19,7 @@ import { webConfig } from '../../config';
 import { downloadBytes, outputMimeType } from '../../flow/download';
 import { isCancellation, toFlowError, type FlowError } from '../../flow/errors';
 import { useI18n, type I18n } from '../../i18n';
-import { useServices } from '../../services';
+import { useServices, useTrack } from '../../services';
 import type { BatchOutputFile, RowInputCell, SummaryTable } from '../../worker/convertApi';
 import { RpcRemoteError } from '../../worker/rpcClient';
 import { attentionLines } from './attention';
@@ -292,6 +292,7 @@ export interface ConvertFlowOptions {
 
 export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptions): UseConvertFlow {
   const { engine } = useServices();
+  const track = useTrack();
   const api = useConvertApi();
   const i18n = useI18n();
   const i18nRef = useRef(i18n);
@@ -625,7 +626,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
   );
 
   const start = useCallback(
-    (next: File) => {
+    (next: File, opts: { quiet?: boolean } = {}) => {
       const { run: runId, signal } = begin();
       fileRef.current = next;
       jobRef.current = null;
@@ -644,6 +645,19 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         try {
           const out = await engine.matchFile({ file: { name: next.name, bytes: await next.arrayBuffer() }, signatures: entriesRef.current.map(signatureOf) }, { signal });
           if (runId !== runRef.current) return;
+          // SPEC 14.1: what was dropped (its type and size - never its name) and how matching went. `quiet`: the same file checked again after the
+          // editor trip (`resume`) is not a new file.
+          if (!opts.quiet) {
+            if (!out.ok) track('file_rejected', { reason: out.reason });
+            else {
+              const fileType = fileTypeOfName(next.name);
+              if (fileType) track('file_uploaded', { role: 'run', fileType, ...(out.rows !== undefined ? { rows: capCount(out.rows) } : {}), cols: capSmall(out.headers.length) });
+              // (the score of the clear winner, or of the best of the options; none: nothing to report)
+              if (out.pick.kind === 'auto') track('file_matched', { result: 'auto', score: out.pick.match.score });
+              else if (out.pick.options.length === 0) track('file_matched', { result: 'none' });
+              else track('file_matched', { result: 'choose', score: out.pick.options[0]!.score });
+            }
+          }
           if (!out.ok) {
             setPhase({ kind: 'error', error: { kind: out.reason } });
             return;
@@ -658,7 +672,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         }
       })();
     },
-    [begin, engine, maxBytes, selectSource, fail],
+    [begin, engine, maxBytes, selectSource, fail, track],
   );
 
   const choose = useCallback(
@@ -826,14 +840,17 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     if (current.kind !== 'done') return;
     const { finished } = current;
     downloadBytes(finished.fileName, finished.bytes, outputMimeType(finished.fileType));
-  }, []);
+    track('download', { kind: 'single' });
+  }, [track]);
 
   const downloadOne = useCallback((conversionId: string) => {
     const current = phaseRef.current;
     if (current.kind !== 'results') return;
     const hit = current.results.find((r) => r.target.conversionId === conversionId);
-    if (hit) downloadBytes(hit.finished.fileName, hit.finished.bytes, outputMimeType(hit.finished.fileType));
-  }, []);
+    if (!hit) return;
+    downloadBytes(hit.finished.fileName, hit.finished.bytes, outputMimeType(hit.finished.fileType));
+    track('download', { kind: 'single' });
+  }, [track]);
 
   const downloadAll = useCallback(() => {
     const current = phaseRef.current;
@@ -867,13 +884,14 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
         const outputs: BatchOutputFile[] = results.map((r) => ({ folder: r.target.formatName, fileName: r.finished.fileName, bytes: r.finished.bytes.slice(0) }));
         const out = await engine.batch({ outputs, summary: { files, flags, language: lang }, summaryFileName: t('conv.results.summaryFile') }, {});
         downloadBytes(`${baseName(f.name)} (converted).zip`, out.zip, 'application/zip');
+        track('download', { kind: 'zip' });
       } catch (e) {
         if (!isCancellation(e)) setPackError(true);
       } finally {
         setPacking(false);
       }
     })();
-  }, [engine]);
+  }, [engine, track]);
 
   const holdForEditing = useCallback((target: Target) => {
     const f = fileRef.current;
@@ -937,7 +955,7 @@ export function useConvertFlow({ enabled, formatId, maxBytes }: ConvertFlowOptio
     if (held.again) {
       // The file waited for the editor before anything was run: check it again, from the start.
       convertSession.clear();
-      start(held.file);
+      start(held.file, { quiet: true });
       return true;
     }
     const { run: runId, signal } = begin();

@@ -7,6 +7,7 @@ import { afterAll, beforeAll } from 'vitest';
 import { createMemoryAuthStore, createMongoAuthStore, type AuthStore } from '../../src/auth/index.js';
 import { PROVIDER_TABLE, type ProviderConfig } from '../../src/auth/providers.js';
 import { connectDb, ensureIndexes, type AppDb } from '../../src/db.js';
+import { createMemoryEventStore } from '../../src/events/index.js';
 import { loadEnv } from '../../src/env.js';
 import type { EventDoc, UserDoc } from '../../src/models.js';
 import { identityOf } from '../../src/protection/identity.js';
@@ -201,6 +202,8 @@ export interface AuthHarnessOptions {
 
 export interface AuthHarness extends AuthHandle {
   app: FastifyInstance;
+  /** The usage events (SPEC 14.1) written so far - not the sign-in records, which `events()` holds with them. */
+  usageEvents(): Promise<EventDoc[]>;
   issuer: FakeIssuer;
   clock: { current: Date };
   browser(): Browser;
@@ -216,6 +219,8 @@ export async function createAuthHarness(kit: AuthKit, issuer: FakeIssuer, opts: 
   const clock = { current: new Date() };
   const now = (): Date => new Date(clock.current);
   const handle = await kit.make(now);
+  // (with a database the usage events are in its `events` collection, with the sign-in records; without one, in a store of their own)
+  const usage = handle.db ? null : createMemoryEventStore();
   const env = makeEnv({
     SESSION_SECRET: 'test-session-secret-0123456789',
     WEB_ORIGIN,
@@ -231,6 +236,7 @@ export async function createAuthHarness(kit: AuthKit, issuer: FakeIssuer, opts: 
     db: handle.db,
     logger: process.env.AUTH_TEST_LOG === '1', // AUTH_TEST_LOG=1 to see server logs
     store: handle.protectionStore,
+    ...(usage ? { eventStore: usage } : {}),
     now,
     auth: { providers: fakeProviders(issuer, opts.providers), store: handle.authStore },
   });
@@ -241,6 +247,7 @@ export async function createAuthHarness(kit: AuthKit, issuer: FakeIssuer, opts: 
   return {
     ...handle,
     app,
+    usageEvents: async () => (usage ? usage.events : (await handle.events()).filter((e) => e.type !== 'signed_up' && e.type !== 'signed_in')),
     issuer,
     clock,
     browser,

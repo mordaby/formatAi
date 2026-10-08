@@ -15,7 +15,7 @@ import { resumeLeaveGuard } from '../src/app/unloadPrompt';
 import type { LearnArgs, LearnHost, LearnOutput } from '../src/worker/engineApi';
 import { entry, fakeConvertApi } from './helpers/convertKit';
 import { conversionDetail, conversionSummary, createFormatResponse, formatSummary } from './helpers/registryKit';
-import { csv, fakeApi, fakeEngine, learnResult, liveResult, renderApp, USER } from './helpers/renderApp';
+import { csv, fakeApi, fakeEngine, learnResult, liveResult, renderApp, tracked, USER } from './helpers/renderApp';
 
 vi.mock('../src/app/redirect', () => ({ redirectTo: vi.fn() }));
 // The Run screen's own API (GET /api/signatures and the rest): a fake, so "Convert files with it" can be followed there.
@@ -476,5 +476,58 @@ describe('this output, another input file: "This output matches your format" - a
     const box = await screen.findByTestId('learning-match');
     expect(within(box).getByTestId('learning-match-limit').textContent).toContain('הפורמט Monthly accounts כבר מקבל 3 קובצי קלט שונים (המגבלה של התוכנית שלכם).');
     expect(within(box).getAllByRole('button').map((b) => b.textContent)).toEqual(['שדרוג', 'ליצור פורמט חדש', 'בחירת קבצים אחרים']);
+  });
+});
+
+// The usage events of the two questions (SPEC 14.1; owner decision 2026-10-08): what the user answered - the button, as a code - and the learn
+// that follows an answer, reported like any other. Counts and codes only.
+describe('usage events: the answers to "You already have this format" and "This output matches your format"', () => {
+  const known = (api: Parameters<typeof tracked>[0]) => tracked(api).filter(([type]) => type === 'known_format').map(([, props]) => props);
+  const learned = (api: Parameters<typeof tracked>[0]) => tracked(api).filter(([type]) => type === 'learn_completed').map(([, props]) => props);
+
+  it('the two files dropped are reported as an input and an output, by type and size - not by name', async () => {
+    const { api } = await open();
+    const uploads = tracked(api).filter(([type]) => type === 'file_uploaded');
+    expect(uploads).toEqual([
+      ['file_uploaded', { role: 'input', fileType: 'csv', rows: 1204, cols: 8 }],
+      ['file_uploaded', { role: 'output', fileType: 'csv', rows: 1204, cols: 8 }],
+    ]);
+    expect(JSON.stringify(tracked(api))).not.toMatch(/accounts|Monthly/);
+  });
+
+  it.each([
+    ['Convert files with it', 'convert'],
+    ['Learn again anyway', 'learnAnyway'],
+    ['Choose other files', 'chooseOther'],
+  ])('"You already have this format": %s says %s, once - and nothing was learned before it', async (button, answer) => {
+    const { api } = await open();
+    await press(/Learn the format/);
+    await screen.findByTestId('learning-known');
+    expect(known(api)).toEqual([]);
+    expect(learned(api)).toEqual([]);
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: button })));
+    expect(known(api)).toEqual([{ kind: 'same', answer }]);
+  });
+
+  it('"Learn again anyway" then reports the learn it started, as an ordinary free learn', async () => {
+    const { api } = await open();
+    await press(/Learn the format/);
+    await screen.findByTestId('learning-known');
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Learn again anyway' })));
+    await screen.findByTestId('rules-map');
+    expect(learned(api)).toEqual([{ path: 'local', status: 'verified', masking: true, aiClicked: false }]);
+  });
+
+  it.each([
+    ['Yes, learn it for Monthly accounts', 'yes'],
+    ['No, make a new format', 'no'],
+    ['Choose other files', 'chooseOther'],
+  ])('"This output matches your format": %s says %s, once', async (button, answer) => {
+    const { api } = await open({ signatures: [OTHER] });
+    await press(/Learn the format/);
+    await screen.findByTestId('learning-match');
+    expect(known(api)).toEqual([]);
+    await act(async () => void fireEvent.click(screen.getByRole('button', { name: button })));
+    expect(known(api)).toEqual([{ kind: 'anotherInput', answer }]);
   });
 });

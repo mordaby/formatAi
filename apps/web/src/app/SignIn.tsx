@@ -1,15 +1,18 @@
-import type { AuthProviderId } from '@formatai/shared';
+import type { AuthProviderId, SignInWallTrigger } from '@formatai/shared';
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { signInUrl } from '../api/auth';
 import { useI18n, type MessageKey } from '../i18n';
-import { useServices } from '../services';
+import { useServices, useTrack } from '../services';
 import { Button, Dialog, InlineMessage, Spinner } from '../ui';
 import { useMe } from './Me';
 import { openInNewTab, redirectTo } from './redirect';
 
-/** Why the wall opened: a plain "Sign in", "you ran into a limit", "finish with the AI step", "see your formats", or "your sign-in has ended". */
-export type SignInReason = 'save' | 'download' | 'keepGoing' | 'ai' | 'formats' | 'expired';
+/**
+ * Why the wall opened: a plain "Sign in", "you ran into a limit", "finish with the AI step", "see your formats", or "your sign-in has ended". The same
+ * list the usage event `signin_wall_shown { trigger }` takes (SPEC 14.1: shared `SIGN_IN_WALL_TRIGGERS`).
+ */
+export type SignInReason = SignInWallTrigger;
 
 /** `newTab`: the sign-in happens in a new tab and this page stays exactly as it is (a page whose work lives only in memory). */
 export interface SignInOptions {
@@ -54,6 +57,7 @@ const REASON_TEXT: Record<SignInReason, MessageKey> = {
 /** Owns the sign-in wall and the one way out of the app to a provider. */
 export function SignInProvider({ children }: { children: ReactNode }) {
   const { api } = useServices();
+  const track = useTrack();
   const me = useMe();
   const location = useLocation();
   const [state, setState] = useState<{ open: boolean; reason: SignInReason; newTab: boolean }>({ open: false, reason: 'save', newTab: false });
@@ -65,10 +69,15 @@ export function SignInProvider({ children }: { children: ReactNode }) {
   const whereRef = useRef(location);
   whereRef.current = location;
 
-  const open = useCallback((reason: SignInReason = 'save', opts?: SignInOptions) => {
-    if (meRef.current.user) return;
-    setState({ open: true, reason, newTab: opts?.newTab === true });
-  }, []);
+  const open = useCallback(
+    (reason: SignInReason = 'save', opts?: SignInOptions) => {
+      if (meRef.current.user) return;
+      // SPEC 14.1 `signin_wall_shown`: the wall appears (once per time it opens, not once per call while it is already showing).
+      if (!stateRef.current.open) track('signin_wall_shown', { trigger: reason });
+      setState({ open: true, reason, newTab: opts?.newTab === true });
+    },
+    [track],
+  );
   const close = useCallback(() => setState((s) => ({ ...s, open: false })), []);
   const setBeforeRedirect = useCallback((fn: ((trip: { reason: SignInReason | null }) => Promise<void>) | null) => {
     beforeRedirect.current = fn;

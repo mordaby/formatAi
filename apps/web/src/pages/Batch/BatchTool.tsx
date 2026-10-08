@@ -6,6 +6,7 @@ import { useId, useState } from 'react';
 import { UpgradeButton } from '../../app/Upgrade';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
+import { useTrack } from '../../services';
 import { Button, DropZone, InlineMessage, Progress } from '../../ui';
 import { BatchResults, StatusBadge } from './BatchResults';
 import type { AddResult, UseBatchFlow } from './useBatchFlow';
@@ -131,6 +132,7 @@ export function BatchTool({ flow, tier, notice, onFiles }: BatchToolProps) {
  */
 function BatchChooseFormats({ flow }: { flow: UseBatchFlow }) {
   const { t, lang } = useI18n();
+  const track = useTrack();
   const id = useId();
   const nf = new Intl.NumberFormat(lang);
   const all = flow.choices.map((c) => c.formatId);
@@ -176,7 +178,15 @@ function BatchChooseFormats({ flow }: { flow: UseBatchFlow }) {
         </ul>
       </fieldset>
       <div className="conv__actions">
-        <Button variant="primary" disabled={picked.size === 0} onClick={() => flow.choose(all.filter((x) => picked.has(x)))}>
+        <Button
+          variant="primary"
+          disabled={picked.size === 0}
+          onClick={() => {
+            // SPEC 14.1 `formats_chosen` for the batch's one question: the formats offered and the ones ticked, counts only (owner, 2026-10-08: none is ticked).
+            track('formats_chosen', { offered: all.length, chosen: picked.size, all: allPicked, batch: true });
+            flow.choose(all.filter((x) => picked.has(x)));
+          }}
+        >
           {t('batch.choose.continue')}
         </Button>
         <Button variant="ghost" onClick={flow.cancelChoice}>

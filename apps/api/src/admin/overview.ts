@@ -4,6 +4,7 @@
 import { limits, type AdminDayRow, type AdminModelRow, type AdminOverview } from '@formatai/shared';
 import type { AppDb } from '../db.js';
 import { dayKey } from '../protection/keys.js';
+import { buildUsage } from './usage.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -33,7 +34,7 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
   const threshold = limits.learn.functionRequests.issueThreshold;
   const realCalls = { ts: { $gte: since }, cacheHit: false };
 
-  const [tiers, newUsers, activeUsers, learnRows, cacheLearns, byDayModel, problemRows, formats, formatsNew, ranInPeriod, runs, requestRows, eventRows, fallbackCalls] =
+  const [tiers, newUsers, activeUsers, learnRows, cacheLearns, byDayModel, problemRows, formats, formatsNew, ranInPeriod, runs, requestRows, eventRows, fallbackCalls, usage] =
     await Promise.all([
       db.users.aggregate<{ _id: string; n: number }>([{ $group: { _id: '$tier', n: { $sum: 1 } } }]).toArray(),
       db.users.countDocuments({ createdAt: { $gte: since } }),
@@ -106,6 +107,8 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
         .toArray(),
       // SPEC 9.6: the calls the fallback provider made (they are in the per-model rows under the fallback's own model too).
       db.llmCalls.countDocuments({ ...realCalls, fallback: true }),
+      // SPEC 14.1: the beta usage events (how the product is used); each group is null (n/a) when its event type has no row in the period.
+      buildUsage(db, since),
     ]);
 
   const tierCount = (tier: string): number => tiers.find((t) => t._id === tier)?.n ?? 0;
@@ -164,9 +167,9 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
       aiFailed: learn.answered - learn.verified,
       aiErrored: learn.ai - learn.answered,
       cache: cacheLearns,
-      // Learns solved in the browser leave no ledger row, and no code writes the `learn_completed` event SPEC 13 describes (audit
-      // 2026-10-07): not tracked yet, which the page says - never a count that is always 0.
-      local: null,
+      // Learns solved in the browser leave no ledger row; the browser reports how each ended (`learn_completed`, 2026-10-08). A period with no such
+      // event at all is n/a - never a 0 that could only mean "not recorded".
+      local: usage.learns === null ? null : usage.learns.filter((r) => r.path === 'local' && r.status === 'verified').reduce((n, r) => n + r.count, 0),
     },
     conversions: { formats, formatsNew, ranInPeriod, runsAllTime: runs[0]?.runs ?? 0 },
     llm: {
@@ -186,5 +189,6 @@ export async function buildOverview(db: AppDb, now: Date, days: number): Promise
       newInPeriod: requests.newInPeriod,
     },
     events: eventRows.map((e) => ({ type: e._id, count: e.n })),
+    usage,
   };
 }

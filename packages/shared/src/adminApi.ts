@@ -28,6 +28,59 @@ export interface AdminModelRow {
   unpriced: number;
 }
 
+/**
+ * The Usage section of the overview (SPEC 14.2, beta usage events 14.1): computed only from the `events` of the period. A group is `null` when its event
+ * type has no row in the period - the page says "n/a" - so "not recorded" is never shown as 0. Counts of signed-in users are of DISTINCT `userId`s: an
+ * event of a visitor carries no id, so it is in the counts of events and never in a count of users.
+ */
+export interface AdminUsage {
+  /** `learn_completed`: one row per (path, status) that happened, as the browser's final verdict (SPEC 5 A). */
+  learns: AdminLearnRow[] | null;
+  /** `file_matched`: how the Run screen's matching of one file ended. */
+  matching: { auto: number; choose: number; none: number } | null;
+  /** `formats_chosen`: the "which formats?" step, single file and batch. Nothing is pre-ticked (owner, 2026-10-08), so this is what people really pick. */
+  formatsChosen: {
+    /** Times the step was answered. */
+    asked: number;
+    /** The share (0..1) of those where every format offered was chosen. */
+    allShare: number;
+    /** The average number of formats offered / chosen, to one decimal. */
+    avgOffered: number;
+    avgChosen: number;
+    single: number;
+    batch: number;
+  } | null;
+  /** `limit_hit`: by limit, most frequent first. */
+  limits: { limit: string; count: number }[] | null;
+  /** `format_saved`: by kind. */
+  saves: { new: number; anotherInput: number; update: number; edit: number } | null;
+  /** `format_run` of signed-in users: the key metric (SPEC 14.2) - running a saved format again a week or more after creating it. */
+  returning: {
+    /** Distinct signed-in users with a run `limits.admin.returningAfterDays` or more days after the format was created. */
+    users: number;
+    /** Runs, and the distinct signed-in users who ran anything. */
+    runs: number;
+    activeUsers: number;
+    /** `runs / activeUsers`, to one decimal. */
+    runsPerActiveUser: number | null;
+  } | null;
+  /** Distinct signed-in users per step; a step is `null` when its event type has no row in the period. */
+  funnel: {
+    uploaded: number | null;
+    learned: number | null;
+    saved: number | null;
+    ran: number | null;
+    ranAgain: number | null;
+  };
+}
+
+/** One (path, status) of the learns' table. */
+export interface AdminLearnRow {
+  path: string;
+  status: string;
+  count: number;
+}
+
 /** GET /api/admin/overview?days=7|30|90 */
 export interface AdminOverview {
   days: number;
@@ -55,10 +108,11 @@ export interface AdminOverview {
     /** Learns answered from the owner's structure cache (no model, no cost). */
     cache: number;
     /**
-     * Learns solved in the browser: NOT TRACKED YET. They leave no ledger row, and no code writes the `learn_completed` event SPEC 13
-     * describes (audit 2026-10-07), so the overview says "not tracked yet" - never a 0 it cannot know.
+     * Learns the free engine solved in the browser (`learn_completed` with path `local`, status `verified`). They leave no ledger row; since the
+     * beta events (2026-10-08) the browser reports them, so this is the count of those reports - and `null` ("n/a") when the period has no
+     * `learn_completed` at all (before the first deploy that sends them, or no one learned), never a 0 it cannot know.
      */
-    local: null;
+    local: number | null;
   };
   /** Saved formats and how much they are run. The run count is not dated (the conversion keeps `runCount` and `lastRunAt`). */
   conversions: {
@@ -93,8 +147,10 @@ export interface AdminOverview {
     /** First seen in the period. */
     newInPeriod: number;
   };
-  /** The `events` collection in the period, by type (today only what the server itself records: `signed_up`, `signed_in`). */
+  /** The `events` collection in the period, by type (sign-in records and the beta usage events, SPEC 14.1). */
   events: { type: string; count: number }[];
+  /** What the beta usage events say about how the product is used. */
+  usage: AdminUsage;
 }
 
 export type AdminFunctionRequestStatus = 'new' | 'issueOpened' | 'approved' | 'declined';

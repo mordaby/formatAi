@@ -105,6 +105,7 @@ const privacyEn: LegalDoc = {
             "Your saved formats and the rules for each kind of input file they read, with your edits and earlier versions. Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Never rows from your files.",
             'Usage counts, for example how many AI formats you used this month and how many formats you saved.',
             'A record of each sign-in: when it happened, with which provider (Google or Microsoft), and the anonymous id of the browser it came from.',
+            'Usage records: a short record when you use the product - for example that a file was matched to a format, that a learn finished and how it ended, that a format was saved or run, that a limit was reached, or which page was opened - with counts such as the number of rows or columns. Never file names, column names or cell values. When you are signed in these records are linked to your account; when you are not, they are linked to nothing - no account, no anonymous id, no IP address.',
             'AI call records: when a call was made, which model, how many tokens it used, what it cost and whether it worked. Counts only, never the content of a request or an answer.',
             'A short-lived copy of the rules the AI wrote for a given structure of files, for you only, for up to {cacheDays} days, so the same structure is not learned twice. Only when masking was on and the rules hold no text values; with masking off nothing is kept.',
             'What you send us in a form on this site (the business contact form, the paid waitlist, feedback): your name, email, company and message as you typed them, and the path of the page you were on, for example /formats. A form never carries file contents or rules.',
@@ -163,7 +164,7 @@ const privacyEn: LegalDoc = {
           ul: [
             'Your account and saved formats: until you ask us to delete them or close your account. You can also delete a saved format yourself on the My formats page at any time.',
             'AI call records: up to {llmMonths} months.',
-            'Sign-in records: up to {eventsMonths} months.',
+            'Sign-in and usage records: up to {eventsMonths} months.',
             'What you sent in a form (contact, waitlist, feedback): up to {formsMonths} months, or until you ask us to delete it.',
             'The rules cache: {cacheDays} days. Usage and limit counters: until about {counterGraceDays} days after the end of the day or month they count. Sessions: {sessionDays} days after last use.',
           ],
@@ -264,6 +265,7 @@ const privacyHe: LegalDoc = {
             'הפורמטים ששמרתם והכללים לכל סוג של קובץ קלט שהם קוראים, עם העריכות שלכם וגרסאות קודמות. פורמטים שמורים כוללים את שמות העמודות ואת הכללים שאישרתם, כולל הערכים הקבועים שהכללים האלה משתמשים בהם - כמו תוויות, קודים ורשימות המרה, וערכים שהקלדתם בפלט הדוגמה שלכם. לפני השמירה אנחנו שואלים אתכם על רשימות שהועתקו מהדוגמה שלכם ועל מספרי זהות, מספרי טלפון, כתובות אימייל ומספרי כרטיס או חשבון בנק שאנחנו מזהים בהם. אנא אל תשתמשו בפרטים אישיים אחרים, כמו שם של אדם, כתווית בכלל שאתם שומרים. לעולם לא שורות מהקבצים שלכם.',
             'ספירות שימוש, למשל כמה פורמטים עם AI השתמשתם החודש וכמה פורמטים שמרתם.',
             'רישום של כל התחברות: מתי היא הייתה, דרך איזה ספק (Google או Microsoft), והמזהה האנונימי של הדפדפן שממנו היא הגיעה.',
+            'רישומי שימוש: רישום קצר כשמשתמשים במוצר - למשל שקובץ הותאם לפורמט, שלמידה הסתיימה ואיך, שפורמט נשמר או הורץ, שהגעתם למגבלה, או איזה דף נפתח - עם ספירות כמו מספר השורות או העמודות. לעולם לא שמות קבצים, שמות עמודות או ערכי תאים. כשאתם מחוברים הרישומים האלה מקושרים לחשבון שלכם; כשאתם לא מחוברים הם לא מקושרים לשום דבר - לא לחשבון, לא למזהה אנונימי ולא לכתובת IP.',
             'רישומי קריאות AI: מתי בוצעה קריאה, באיזה מודל, כמה אסימונים היא השתמשה, כמה עלתה והאם הצליחה. ספירות בלבד, לעולם לא תוכן של בקשה או של תשובה.',
             'עותק קצר מועד של הכללים שה-AI כתב למבנה קבצים מסוים, רק עבורכם, עד {cacheDays} ימים, כדי שאותו מבנה לא ילמד פעמיים. רק כשהסתרת הנתונים פעלה והכללים לא מכילים ערכי טקסט; כשהיא כבויה לא נשמר דבר.',
             'מה ששלחתם בטופס באתר (טופס יצירת הקשר לעסקים, רשימת ההמתנה לתוכנית בתשלום, משוב): השם, האימייל, החברה וההודעה כפי שהקלדתם, והנתיב של הדף שהייתם בו, למשל /formats. טופס אף פעם לא נושא תוכן של קבצים או כללים.',
@@ -322,7 +324,7 @@ const privacyHe: LegalDoc = {
           ul: [
             'החשבון והפורמטים השמורים: עד שתבקשו למחוק אותם או לסגור את החשבון. אפשר גם למחוק פורמט שמור בעצמכם בדף ״הפורמטים שלי״ בכל עת.',
             'רישומי קריאות AI: עד {llmMonths} חודשים.',
-            'רישומי התחברות: עד {eventsMonths} חודשים.',
+            'רישומי התחברות ושימוש: עד {eventsMonths} חודשים.',
             'מה ששלחתם בטופס (יצירת קשר, רשימת המתנה, משוב): עד {formsMonths} חודשים, או עד שתבקשו למחוק.',
             'מטמון הכללים: {cacheDays} ימים. מוני שימוש ומגבלות: עד כ-{counterGraceDays} ימים אחרי סוף היום או החודש שהם סופרים. התחברויות: {sessionDays} ימים אחרי השימוש האחרון.',
           ],

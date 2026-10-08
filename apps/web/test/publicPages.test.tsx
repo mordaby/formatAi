@@ -115,13 +115,14 @@ describe.each([
     const grace = limits.protection.counterGraceHours / 24;
     if (lang === 'en') {
       expect(retention).toContain(`AI call records: up to ${aiCallRecordsMonths} months.`);
-      expect(retention).toContain(`Sign-in records: up to ${eventsMonths} months.`);
+      // (sign-in AND usage records share the period: the `events` collection's TTL, SPEC 14.1)
+      expect(retention).toContain(`Sign-in and usage records: up to ${eventsMonths} months.`);
       expect(retention).toContain(`up to ${formsMonths} months, or until you ask us to delete it.`);
       expect(retention).toContain(`Usage and limit counters: until about ${grace} days after the end of the day or month they count.`);
       expect(retention).toContain('deleted by the database itself');
     } else {
       expect(retention).toContain(`רישומי קריאות AI: עד ${aiCallRecordsMonths} חודשים.`);
-      expect(retention).toContain(`רישומי התחברות: עד ${eventsMonths} חודשים.`);
+      expect(retention).toContain(`רישומי התחברות ושימוש: עד ${eventsMonths} חודשים.`);
       expect(retention).toContain(`עד ${formsMonths} חודשים, או עד שתבקשו למחוק.`);
       expect(retention).toContain(`מוני שימוש ומגבלות: עד כ-${grace} ימים אחרי סוף היום או החודש שהם סופרים.`);
     }
@@ -132,6 +133,26 @@ describe.each([
     expect(ai).not.toContain(lang === 'en' ? 'Numbers, dates, column names' : 'מספרים, תאריכים, שמות עמודות');
     // the font is our own file (index.html, styles/fonts.css): no font provider receives a visitor's address
     expect(document.body.textContent).not.toMatch(/Google Fonts|fonts\.googleapis|gstatic/i);
+  });
+
+  it("privacy: says what usage records are - counts, never names or values - and that a visitor's are linked to nothing", () => {
+    renderApp({ lang, route: '/privacy' });
+    const stored = document.getElementById('legal-stored')!.textContent ?? '';
+    if (lang === 'en') {
+      expect(stored).toContain('Usage records: a short record when you use the product');
+      expect(stored).toContain('that a file was matched to a format');
+      expect(stored).toContain('that a limit was reached');
+      expect(stored).toContain('with counts such as the number of rows or columns. Never file names, column names or cell values.');
+      expect(stored).toContain('When you are signed in these records are linked to your account; when you are not, they are linked to nothing - no account, no anonymous id, no IP address.');
+    } else {
+      expect(stored).toContain('רישומי שימוש: רישום קצר כשמשתמשים במוצר');
+      expect(stored).toContain('שקובץ הותאם לפורמט');
+      expect(stored).toContain('שהגעתם למגבלה');
+      expect(stored).toContain('עם ספירות כמו מספר השורות או העמודות. לעולם לא שמות קבצים, שמות עמודות או ערכי תאים.');
+      expect(stored).toContain('כשאתם לא מחוברים הם לא מקושרים לשום דבר - לא לחשבון, לא למזהה אנונימי ולא לכתובת IP.');
+    }
+    // the page's date is the day the text changed
+    expect(webConfig.legal.updated.privacy).toBe('2026-10-08');
   });
 
   it('terms: the basics, and Israeli law with a court to confirm', () => {

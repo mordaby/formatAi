@@ -80,6 +80,16 @@ first-party `anonId` cookie (httpOnly, SameSite=Lax, Secure in production) on fi
 limited per IP (`429 rateLimited`: 5 requests a minute in memory, and 20 stored forms per UTC day on a keyed hash of the IP in
 `usage_counters`). The IP is never stored. They exist in every environment and need no sign-in.
 
+**Usage events** (SPEC 14.1, 13 `events`; `src/events/`): the beta's record of how the product is used - counts, codes and ids only, each type's props
+whitelisted by a strict schema in `packages/shared/src/events.ts`. The routes write the ones the API sees through `events.record(req, type, props)`
+(`format_saved`, `format_run`, the forms' `lead_submitted` / `upgrade_intent` / `feedback_given`), and one `onSend` hook writes `limit_hit` for every
+`limitHit` answer. `POST /api/events` takes the browser's own (`page_view`, `learn_completed`, ...): at most `limits.events.maxPerRequest` events
+and `limits.events.maxBodyBytes` per request, `limits.events.perIpPerWindow` requests a minute per IP, a cross-site `Origin` refused (403), an invalid
+event dropped without costing the others, always 204, no Turnstile, and it never sets the anonymous-id cookie. The time is the server's. An event
+of a signed-in user carries their `userId`; **an event of a visitor is stored with no id at all** (no `anonId`, no IP). A failed write is logged by its
+error name and forgotten: it never turns a save, a run or a form into an error. The admin Overview's "How the product is used" reads them
+(`src/admin/usage.ts`; a group with no row in the period is `null`, shown as n/a).
+
 Production (`NODE_ENV=production`) refuses to start without `TURNSTILE_SECRET_KEY`,
 `IP_HASH_SECRET` (or `SESSION_SECRET`) and `MONGODB_URI` (`buildServer` throws on these; see "Deployment" for
 the start check that lists everything at once). Behind a proxy or load balancer set

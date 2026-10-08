@@ -8,6 +8,7 @@ import { App } from '../../src/app/App';
 import type { Api } from '../../src/api';
 import type { AuthApi } from '../../src/api/auth';
 import type { ContactApi } from '../../src/api/contact';
+import type { EventsApi } from '../../src/api/events';
 import type { RegistryApi } from '../../src/api/registry';
 import { I18nProvider, type Lang } from '../../src/i18n';
 import { ServicesProvider } from '../../src/services';
@@ -102,6 +103,7 @@ export type FakeApi = Api & {
   auth: { [K in keyof AuthApi]: ReturnType<typeof vi.fn> };
   registry: { [K in keyof RegistryApi]: ReturnType<typeof vi.fn> };
   contact: { [K in keyof ContactApi]: ReturnType<typeof vi.fn> };
+  events: { [K in keyof EventsApi]: ReturnType<typeof vi.fn> };
 };
 
 /**
@@ -110,9 +112,9 @@ export type FakeApi = Api & {
  * GET /api/session reports (default: the config's - "Formats with several sources" off).
  */
 export function fakeApi(
-  over: Partial<Omit<Api, 'auth' | 'registry' | 'contact'>> & { auth?: Partial<AuthApi>; registry?: Partial<RegistryApi>; contact?: Partial<ContactApi>; user?: MeUser | null; features?: Partial<Features> } = {},
+  over: Partial<Omit<Api, 'auth' | 'registry' | 'contact' | 'events'>> & { auth?: Partial<AuthApi>; registry?: Partial<RegistryApi>; contact?: Partial<ContactApi>; events?: Partial<EventsApi>; user?: MeUser | null; features?: Partial<Features> } = {},
 ): FakeApi {
-  const { auth, registry, contact, user, features, ...rest } = over;
+  const { auth, registry, contact, events, user, features, ...rest } = over;
   return {
     session: vi.fn(async () => ({ anonId: true, tier: 'free', limits: tiers.anonymous, features: { ...defaultFeatures, ...features } })),
     learn: vi.fn(async () => ({ rules: RULES, verified: true, problems: [], learnId: 'L1', cached: false })),
@@ -157,8 +159,19 @@ export function fakeApi(
       feedback: vi.fn(async () => undefined),
       ...contact,
     },
+    // The usage events (SPEC 14.1): nothing is sent; `tracked(api)` reads what the screens said.
+    events: {
+      track: vi.fn(),
+      flush: vi.fn(),
+      ...events,
+    },
     ...rest,
   } as unknown as FakeApi;
+}
+
+/** The usage events the screens tracked through a fake API, in order, as `[type, props]`. */
+export function tracked(api: Api): [string, Record<string, unknown>][] {
+  return ((api.events.track as unknown as ReturnType<typeof vi.fn>).mock.calls as [string, Record<string, unknown>][]).map(([type, props]) => [type, props]);
 }
 
 export function csv(name: string, body = 'a,b\n1,2\n3,4\n'): File {

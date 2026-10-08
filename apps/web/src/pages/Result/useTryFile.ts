@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EditableRules } from '../../editor';
 import { downloadBytes, outputFileName, outputMimeType } from '../../flow/download';
 import { isCancellation } from '../../flow/errors';
-import { useServices } from '../../services';
+import { useServices, useTrack } from '../../services';
 import type { RowInputCell } from '../../worker/convertApi';
 import { applyToAll, reviewRows, toRowDecisions, withChoice, type Choices, type ReviewRow, type RowChoice } from '../Convert/logic';
 import { runFailure, toConvertError, type ConvertError, type Finished } from '../Convert/useConvertFlow';
@@ -52,6 +52,7 @@ export interface TryFileOptions {
 
 export function useTryFile({ maxBytes, previewRows }: TryFileOptions): UseTryFile {
   const { engine } = useServices();
+  const track = useTrack();
   const [phase, setPhase] = useState<TryPhase>({ kind: 'idle' });
   const [file, setFile] = useState<File | null>(null);
   const phaseRef = useRef(phase);
@@ -146,7 +147,9 @@ export function useTryFile({ maxBytes, previewRows }: TryFileOptions): UseTryFil
     if (current.kind !== 'done') return;
     const { finished } = current;
     downloadBytes(finished.fileName, finished.bytes, outputMimeType(finished.fileType));
-  }, []);
+    // SPEC 14.1 `download`: this is the learn screen's own file (the rules not saved yet).
+    track('download', { kind: 'learnResult' });
+  }, [track]);
 
   const reset = useCallback(() => {
     runRef.current++;
