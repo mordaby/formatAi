@@ -9,7 +9,7 @@ import { applyExpand } from './expand';
 import { compileFunctions, compileTables, type CompileEnv } from './expr';
 import { compileExprFilter, compileFilter } from './filters';
 import { buildSheet, planColumns } from './layout';
-import { colNorm, mapHeaders, newIssue, normalizeCell, type ColNorm, type NormIssue } from './normalize';
+import { colNorm, mapHeaders, newIssue, normalizeCell, readAsOf, readCell, type ColNorm, type NormIssue } from './normalize';
 import { flagOrigin, slotOrThrow, type Row, type RunCtx, type SlotPlan } from './rows';
 import { applySort } from './sort';
 import { applyComputed, applyValueMaps } from './transform';
@@ -182,7 +182,7 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
 
   // 2. Normalize types. Input column i lives in slot i.
   const norms = inCols.map((c) => colNorm(c, date1904, language));
-  const readAs = inCols.map((c) => (c.readAs !== undefined && Object.keys(c.readAs).length > 0 ? new Map(Object.entries(c.readAs)) : null));
+  const readAs = inCols.map(readAsOf);
   const issue = newIssue();
   // Per-column memo of normalizeCell for repeated raw values (dates, amounts,
   // ids repeat a lot). normalizeCell is pure, and DateVal/Decimal are immutable,
@@ -218,13 +218,8 @@ export function runV1(rules: LearnResult, table: InputTable, opts: RunOptionsV1 
       else if (src < 0) continue; // missing optional column: stays empty
       else {
         // SPEC 8.4a: a text cell whose text is exactly a key of the column's `readAs` is read as the value it names, before the type is
-        // read (so "N/A" -> "" is an empty cell, not a flagged number). Exact text only; a per-run override above wins.
-        const reads = readAs[ci];
-        const text = cell?.v;
-        if (reads && typeof text === 'string') {
-          const to = reads.get(text);
-          if (to !== undefined) cell = to === '' ? null : { v: to };
-        }
+        // read (see `readCell`). A per-run override above wins.
+        cell = readCell(cell, readAs[ci] ?? null);
       }
       const memo = memos[ci];
       const val = memo ? memo.normalize(cell, norms[ci]!, issue) : normalizeCell(cell, norms[ci]!, issue);

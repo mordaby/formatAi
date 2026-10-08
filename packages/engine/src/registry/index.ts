@@ -10,3 +10,4 @@ export * from './restoreFixed';
 export * from './inputColumnsUsed';
 export * from './matchFormats';
 export * from './conformToFormat';
+export * from './sizeRange';

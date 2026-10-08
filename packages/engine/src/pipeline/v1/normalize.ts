@@ -87,6 +87,25 @@ function padId(s: string, n: number | undefined): string {
   return n !== undefined && DIGITS_RE.test(s) ? padLeft(s, n, '0') : s;
 }
 
+/** A column's `readAs` (SPEC 8.4a) as the lookup `readCell` takes; null when it reads nothing another way. */
+export function readAsOf(col: { readAs?: Record<string, string> }): ReadonlyMap<string, string> | null {
+  return col.readAs !== undefined && Object.keys(col.readAs).length > 0 ? new Map(Object.entries(col.readAs)) : null;
+}
+
+/**
+ * SPEC 8.4a: a text cell whose text is exactly a key of the column's `readAs` is read as the value it names, BEFORE the type is read (so "N/A" -> ""
+ * is an empty cell, not a flagged number). Exact text only; a number, a date or an empty cell is never matched. The run reads every input cell
+ * through this, and so does the size check of a file (`registry/sizeRange.ts`) - one reading, so a check can never disagree with a run.
+ */
+export function readCell(cell: RawCell | null | undefined, reads: ReadonlyMap<string, string> | null): RawCell | null | undefined {
+  const text = cell?.v;
+  if (reads && typeof text === 'string') {
+    const to = reads.get(text);
+    if (to !== undefined) return to === '' ? null : { v: to };
+  }
+  return cell;
+}
+
 /** A raw JS number kept as-is: it becomes a Decimal (the pipeline never holds floats). */
 function keepRaw(raw: string | number | boolean): Val {
   return typeof raw === 'number' ? (Number.isFinite(raw) ? fromExcelNumber(raw) : String(raw)) : raw;

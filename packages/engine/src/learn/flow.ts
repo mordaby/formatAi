@@ -40,6 +40,8 @@ import { analyzePair } from './analyze';
 import { checkFixedLock, type FixedProblem } from '../registry/checkFixedLock';
 import { conformToFormat } from '../registry/conformToFormat';
 import { restoreFixed } from '../registry/restoreFixed';
+import { withSizeRanges } from '../registry/sizeRange';
+import type { InputTable } from '../types';
 import { columnsWithRule, completionProduced, isCompletable, learnResultOf, type CompleteOptions } from './complete';
 import { fastPath } from './fastPath';
 import { loopCaps, loopStep, startLoop, wrongCount, type LoopRound, type LoopSummary } from './loop';
@@ -375,8 +377,15 @@ function blockedResult<Call>(pf: PreflightResult): LearnFromExamplesResult<Call>
  */
 export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesOptions<Call>): Promise<LearnFromExamplesResult<Call>> {
   const seen: { differs?: KnownPair } = {};
-  const result = await learnPair(opts, seen);
-  return seen.differs && result.path !== 'known' ? { ...result, knownDiffers: seen.differs } : result;
+  // The example input as the rules read it, kept from the pair analysis (the caller's own `onAnalysis` still gets it).
+  let example: InputTable | null = null;
+  const result = await learnPair({ ...opts, onAnalysis: (a) => { example = exampleTable(a); opts.onAnalysis?.(a); } }, seen);
+  // DECISION (SPEC 8.15, "same name, different size"): the size of each number column the rules use is written at the VERY END, from the example
+  // input, whichever path made the rules (fast path, partial, the AI step with its repair rounds, completion, attach): so it is never part of
+  // anything sent to the AI step - the payload is built before, a repair's `previousRules` and a completion's fixed rules go through `toWire`,
+  // which leaves it out - and every save path (a new format, another input of a format, Save's update) carries it. Two small integers a column.
+  const sized = example && result.rules ? { ...result, rules: withSizeRanges(result.rules, example) } : result;
+  return seen.differs && sized.path !== 'known' ? { ...sized, knownDiffers: seen.differs } : sized;
 }
 
 async function learnPair<Call>(opts: LearnFromExamplesOptions<Call>, seen: { differs?: KnownPair }): Promise<LearnFromExamplesResult<Call>> {
