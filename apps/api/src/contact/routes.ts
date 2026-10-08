@@ -18,6 +18,7 @@ import {
   type ContactResponse,
 } from '@formatai/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { EventRecorder } from '../events/index.js';
 import type { FeedbackDoc, LeadDoc } from '../models.js';
 import { identityOf, type Identity } from '../protection/identity.js';
 import { fail } from '../http.js';
@@ -31,6 +32,8 @@ import type { ContactStore } from './store.js';
 export interface RegisterContactRoutesOptions {
   protection: Protection;
   store: ContactStore;
+  /** Where the form's usage event is written once it is stored (SPEC 14.1): `lead_submitted`, `upgrade_intent`, `feedback_given`. */
+  events: EventRecorder;
   /** Tests: who is calling (default: `identityOf`, the session / anonId cookie). */
   identify?: (req: FastifyRequest) => Identity;
 }
@@ -48,7 +51,7 @@ interface Admitted<T> {
 }
 
 export function registerContactRoutes(app: FastifyInstance, opts: RegisterContactRoutesOptions): void {
-  const { protection, store } = opts;
+  const { protection, store, events } = opts;
   const identify = opts.identify ?? identityOf;
   const { now, secret } = protection;
 
@@ -114,6 +117,7 @@ export function registerContactRoutes(app: FastifyInstance, opts: RegisterContac
       ...anonOf(req),
     };
     await store.insertLead(doc);
+    await events.record(req, 'lead_submitted', { kind: 'contact' });
     return ok;
   });
 
@@ -132,6 +136,9 @@ export function registerContactRoutes(app: FastifyInstance, opts: RegisterContac
       ...anonOf(req),
     };
     await store.insertLead(doc);
+    await events.record(req, 'lead_submitted', { kind: 'waitlist' });
+    // The waitlist is the upgrade button's form: its trigger (the limit that was hit, or the batch hint) is the demand signal (SPEC 11, 14.1).
+    await events.record(req, 'upgrade_intent', { trigger: fields.trigger });
     return ok;
   });
 
@@ -148,6 +155,9 @@ export function registerContactRoutes(app: FastifyInstance, opts: RegisterContac
       ...userOf(identity),
     };
     await store.insertFeedback(doc);
+    // DECISION (SPEC 14.1): the feedback form has no rating (SPEC 13: the earlier `rating` field was never written), so the event says only
+    // whether the sender asked for an answer (gave an email) - never the message or the address.
+    await events.record(req, 'feedback_given', { replyRequested: fields.email !== undefined });
     return ok;
   });
 }

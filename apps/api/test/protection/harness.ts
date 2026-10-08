@@ -8,6 +8,7 @@ import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll } from 'vitest';
 import { connectDb, ensureIndexes, type AppDb } from '../../src/db.js';
 import { loadEnv, type Env } from '../../src/env.js';
+import type { EventStore } from '../../src/events/index.js';
 import type { CompleteFn } from '../../src/learn/index.js';
 import type { CompleteRequest, CompleteResult } from '../../src/llm/index.js';
 import type { FunctionRequestDoc, LlmCallDoc } from '../../src/models.js';
@@ -187,6 +188,8 @@ export interface HarnessOptions {
   env?: Record<string, string | undefined>;
   complete?: CompleteFn;
   fetch?: typeof fetch;
+  /** Where the usage events (SPEC 14.1) are kept, to read them back. */
+  eventStore?: EventStore;
 }
 
 export interface RequestOptions {
@@ -253,6 +256,7 @@ export async function createHarness(kit: StoreKit, opts: HarnessOptions = {}): P
     complete: opts.complete,
     store: handle.store,
     fetch: opts.fetch,
+    ...(opts.eventStore ? { eventStore: opts.eventStore } : {}),
     now,
     identify: stubIdentify,
   });

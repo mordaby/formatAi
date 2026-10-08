@@ -188,16 +188,21 @@ export interface ConversionDoc {
 }
 
 /**
- * SPEC 13 `events`. Only `signed_up` / `signed_in` are written today (auth/routes.ts). TTL-expired `limits.retention.eventsMonths` after
- * `ts` (owner decision 2026-10-07; the privacy page says so).
+ * SPEC 13 `events`: the sign-in records (`signed_up` / `signed_in`, auth/routes.ts) and the beta usage events (SPEC 14.1, `events/`). TTL-expired
+ * `limits.retention.eventsMonths` after `ts` (owner decision 2026-10-07; the privacy page says so).
+ *
+ * DECISION (owner's privacy stance, 2026-10-08; SPEC 14.1, 20.18): a usage event carries `userId` when a signed-in user caused it and NO id at
+ * all otherwise - never an `anonId`, never an IP (pure counts). Only the sign-in records keep their `anonId` (it is how a visitor's history
+ * joins their account at sign-in, SPEC 12).
  */
 export interface EventDoc {
   _id?: ObjectId;
+  /** The SERVER's time at which the event was recorded: a client's time is never read. */
   ts: Date;
   anonId?: string;
   userId?: ObjectId;
   type: string;
-  /** Counts, ids and codes only - never cell values or file names. */
+  /** Counts, ids and codes only - never cell values or file names. The usage events' props are whitelisted per type (shared `EVENT_PROPS`). */
   props: Record<string, unknown>;
 }
 

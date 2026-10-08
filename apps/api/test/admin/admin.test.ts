@@ -340,16 +340,31 @@ describe.skipIf(!mongoUri)('admin API (MongoDB)', () => {
       expect(body.llm.byDay.every((d) => d.aiCalls === 0 && d.costUsd === null)).toBe(true);
       expect(body.problems).toEqual([]);
       expect(body.functionRequests).toEqual({ groups: 0, requests: 0, atThreshold: 0, issueOpened: 0, newInPeriod: 0 });
+      // the usage events: every group n/a, not 0 (nothing was recorded, which is not the same as nobody doing it)
+      expect(body.usage).toEqual({
+        learns: null,
+        matching: null,
+        formatsChosen: null,
+        limits: null,
+        saves: null,
+        returning: null,
+        funnel: { uploaded: null, learned: null, saved: null, ran: null, ranAgain: null },
+      });
     });
 
-    it('says the local learns are not tracked (null), whatever the events hold: no code writes learn_completed yet (audit 2026-10-07)', async () => {
+    it("counts the learns the free engine solved from the browser's learn_completed reports, and says n/a when there are none", async () => {
+      expect((await call<AdminOverview>('GET', '/api/admin/overview?days=7')).body.learns.local).toBeNull();
+      const learn = (path: string, status: string, day: string) => ({ ts: at(day), type: 'learn_completed', props: { path, status, masking: true, aiClicked: false } });
       await db.events.insertMany([
-        { ts: at('2026-10-04T00:00:00Z'), type: 'learn_completed', props: { path: 'local' } },
-        { ts: at('2026-10-04T00:00:00Z'), type: 'learn_completed', props: { path: 'local' } },
-        { ts: at('2026-10-04T00:00:00Z'), type: 'learn_completed', props: { path: 'llm' } },
+        learn('local', 'verified', '2026-10-04T00:00:00Z'),
+        learn('local', 'verified', '2026-10-04T00:00:00Z'),
+        learn('local', 'partial', '2026-10-04T00:00:00Z'),
+        learn('llm', 'verified', '2026-10-04T00:00:00Z'),
+        // outside the 7 days
+        learn('local', 'verified', '2026-09-01T00:00:00Z'),
       ]);
       const { body } = await call<AdminOverview>('GET', '/api/admin/overview?days=7');
-      expect(body.learns.local).toBeNull();
+      expect(body.learns.local).toBe(2);
     });
 
     it('counts function requests: groups, times, the ones at the threshold, opened issues, new ones', async () => {

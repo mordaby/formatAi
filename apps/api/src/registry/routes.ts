@@ -36,6 +36,7 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ObjectId } from 'mongodb';
 import type { AppDb } from '../db.js';
+import type { EventRecorder } from '../events/index.js';
 import type { ConversionDoc, FormatDoc, SourceDoc } from '../models.js';
 import type { Identity } from '../protection/identity.js';
 import type { Protection } from '../protection/index.js';
@@ -62,10 +63,14 @@ import { applySource, inputChecksEdited, mergeFromEdit, structureOfDoc, withRead
 import { formatNamesOf, registerSourceRoutes } from './sourceRoutes.js';
 import { countSourceFormats, isDuplicateKey, propagateSource, renameSource, sourceEditOverCap, syncRequired, takenSourceNames, writeSourceVersion } from './sourceStore.js';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export interface RegisterRegistryRoutesOptions {
   /** Null when no database is configured: every route then answers 503 `unavailable`. */
   db: AppDb | null;
   protection: Protection;
+  /** Where the usage events a save or a run leaves are written (SPEC 14.1): `format_saved`, `format_run`. */
+  events: EventRecorder;
   /** Tests: who is calling (default: `identityOf`). */
   identify?: (req: FastifyRequest) => Identity;
 }
@@ -92,6 +97,7 @@ async function revertConversionWrite(d: AppDb, ownerId: ObjectId, conv: Conversi
 export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegistryRoutesOptions): void {
   const ctx = createRegistryContext(opts);
   const { protection, guard, idParam, ownedFormat, ownedConversion, ownedSource } = ctx;
+  const { events } = opts;
 
   registerSourceRoutes(app, ctx);
 
@@ -238,6 +244,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       return fail(reply, 403, { error: 'limitHit', limit: 'savedFormats' });
     }
     await settleSource(d, caller.ownerId, source.id, planned.plan, now, choice.inputHeaders);
+    await events.record(req, 'format_saved', { kind: 'new' });
 
     const response: CreateFormatResponse = {
       format: formatSummary(formatDoc, aggregateSources([conversionDoc])),
@@ -395,6 +402,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       throw err;
     }
     await settleSource(d, caller.ownerId, source.id, planned.plan, now, choice.inputHeaders);
+    await events.record(req, 'format_saved', { kind: 'anotherInput' });
 
     const response: AttachSourceResponse = {
       conversion: conversionSummary(doc, sourceName),
@@ -651,6 +659,9 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       }
     }
     await syncRequired(d, caller.ownerId, source._id!);
+    // DECISION (SPEC 14.1): Save's "Update your format" (a new version from the Learn flow) and the rules editor's save are ONE route with one
+    // body - nothing the server knows tells them apart - so both are `edit`; `update` stays in the vocabulary for when the web app can say it.
+    await events.record(req, 'format_saved', { kind: 'edit' });
 
     const body: UpdateConversionResponse = {
       conversion: conversionSummary(next, sourceName),
@@ -804,6 +815,13 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       { returnDocument: 'after', projection: { runCount: 1 } },
     );
     if (!updated) return fail(reply, 404, { error: 'notFound' });
+    // SPEC 14.1 `format_run`: counts, and how old the FORMAT is - whole days since it was created, the "returning use" metric (a run a week or
+    // more later). A format that is gone (deleted a moment ago) has no age: no event rather than a guess.
+    const format = await g.db.formats.findOne({ _id: conv.formatId, ownerId: g.caller.ownerId }, { projection: { createdAt: 1 } });
+    if (format) {
+      const daysSinceCreated = Math.max(0, Math.floor((lastRunAt.getTime() - format.createdAt.getTime()) / DAY_MS));
+      await events.record(req, 'format_run', { daysSinceCreated, rows: run.rows, flagged: run.flagged });
+    }
     return reply.send({ runCount: updated.runCount, lastRunAt: lastRunAt.toISOString() });
   });
 
