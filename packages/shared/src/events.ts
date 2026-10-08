@@ -56,6 +56,11 @@ export function pageNameOf(pathname: string): PageName {
 export const EVENT_FILE_TYPES = ['xlsx', 'xls', 'csv', 'txt'] as const;
 export type EventFileType = (typeof EVENT_FILE_TYPES)[number];
 
+/** A count kept within what a prop may hold (a file with more rows than any plan allows is still reported, as the most there can be). */
+export const capCount = (n: number): number => Math.max(0, Math.min(limits.events.maxCount, Math.round(n)));
+/** A small count (columns, files, formats) kept within what a prop may hold. */
+export const capSmall = (n: number): number => Math.max(0, Math.min(limits.events.maxSmallCount, Math.round(n)));
+
 /** The file type of a file name (its extension, lower-cased), or null when it is none we read. Only the extension is looked at; the name is not kept. */
 export function fileTypeOfName(name: string): EventFileType | null {
   const dot = name.lastIndexOf('.');
@@ -64,10 +69,10 @@ export function fileTypeOfName(name: string): EventFileType | null {
 }
 
 /**
- * `file_rejected.reason`: why a file was turned away. `type` / `size` / `unreadable` are the drop zone's and the reader's; the rest are the
- * engine's table checks that reject a file at Learn (SPEC 6.1 `TableIssueCode`, severity `reject`).
+ * `file_rejected.reason`: why a file was turned away. `type` / `size` are the drop zone's, `unreadable` / `noTable` the reader's (the Run screen and
+ * the drop zones); the rest are the engine's table checks that reject a file at Learn (SPEC 6.1 `TableIssueCode`, severity `reject`).
  */
-export const FILE_REJECT_REASONS = ['type', 'size', 'unreadable', 'noHeaderRow', 'multipleTables', 'mergedHeader', 'splitHeader', 'tooFewDataRows', 'onlyDrawings', 'emptySheet'] as const;
+export const FILE_REJECT_REASONS = ['type', 'size', 'unreadable', 'noTable', 'noHeaderRow', 'multipleTables', 'mergedHeader', 'splitHeader', 'tooFewDataRows', 'onlyDrawings', 'emptySheet'] as const;
 export type FileRejectReason = (typeof FILE_REJECT_REASONS)[number];
 
 /**

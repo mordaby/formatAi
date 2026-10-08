@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  capCount,
+  capSmall,
   CLIENT_EVENT_TYPES,
   EVENT_PROPS,
   fileTypeOfName,
@@ -198,5 +200,26 @@ describe('fileTypeOfName', () => {
     expect(fileTypeOfName('photo.png')).toBeNull();
     expect(fileTypeOfName('noextension')).toBeNull();
     expect(fileTypeOfName('')).toBeNull();
+  });
+});
+
+describe('capCount / capSmall', () => {
+  it('keep a count inside what a prop may hold, so a very big file is still reported', () => {
+    expect(capCount(1204)).toBe(1204);
+    expect(capCount(10 ** 12)).toBe(limits.events.maxCount);
+    expect(capCount(-5)).toBe(0);
+    expect(capCount(7.6)).toBe(8);
+    expect(capSmall(16_384)).toBe(limits.events.maxSmallCount);
+    expect(capSmall(12)).toBe(12);
+    expect(EVENT_PROPS.file_uploaded.safeParse({ role: 'run', fileType: 'xlsx', rows: capCount(10 ** 12), cols: capSmall(16_384) }).success).toBe(true);
+  });
+});
+
+describe('the reject reasons', () => {
+  it.each(['type', 'size', 'unreadable', 'noTable', 'noHeaderRow', 'multipleTables', 'mergedHeader', 'splitHeader', 'tooFewDataRows', 'onlyDrawings', 'emptySheet'])('takes %s', (reason) => {
+    expect(EVENT_PROPS.file_rejected.safeParse({ reason }).success).toBe(true);
+  });
+  it.each(['hiddenRowsOrCols', 'multipleSheets', 'orders.xlsx', ''])('refuses %j (a notice, or a name)', (reason) => {
+    expect(EVENT_PROPS.file_rejected.safeParse({ reason }).success).toBe(false);
   });
 });
