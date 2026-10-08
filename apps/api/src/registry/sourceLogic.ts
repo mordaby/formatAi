@@ -22,6 +22,7 @@ import {
 } from '@formatai/engine';
 import {
   checkRules,
+  isNumberColumnType,
   limits,
   type ApiProblem,
   type InputColumn,
@@ -290,7 +291,8 @@ export interface SourceApplied {
  * Rebuilds `target`'s input side from `source` (SPEC 8.15 "Editing a source": "headers, aliases, types, reading options and
  * input validations are written into every conversion's `input`"):
  *  - each column the conversion declares takes its header, aliases, type, `padLeft`, `inputFormats` and `readAs` from the source column
- *    it stands for (found through `renames`, then the way the engine finds a header). It keeps its id, its `required` and its place;
+ *    it stands for (found through `renames`, then the way the engine finds a header). It keeps its id, its `required`, its size `range`
+ *    (the conversion's own, SPEC 8.15) and its place;
  *    a column the source no longer has is dropped (what still refers to it then fails `checkRules`: `needsReview`);
  *  - sheet, header row and `stopAt` are the source's; the conversion's input validations are the source's on the columns IT
  *    declares, with each header turned back into this conversion's own id (SPEC 8.15: input checks are the source's per column). Its
@@ -315,6 +317,10 @@ export function applySource(target: Rules, source: SourceStructure, renames: Rea
     if (s.padLeft !== undefined) col.padLeft = s.padLeft;
     if (s.inputFormats !== undefined && s.inputFormats.length > 0) col.inputFormats = [...s.inputFormats];
     if (s.readAs !== undefined && Object.keys(s.readAs).length > 0) col.readAs = { ...s.readAs };
+    // The size range (SPEC 8.15, 2026-10-08) is the CONVERSION's own, never the source's: two formats fed by one source can mean different
+    // things by one column name. It survives every write of the source's structure unchanged - taken from this conversion's column, never from
+    // the source or another conversion - and goes only when the column is no longer a number (a size means nothing for text).
+    if (c.range !== undefined && isNumberColumnType(s.type)) col.range = { ...c.range };
     columns.push(col);
   }
 

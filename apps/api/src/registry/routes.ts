@@ -16,11 +16,13 @@
 //   GET    /api/conversions/:id/versions            history (newest first)
 //   POST   /api/conversions/:id/restore/:version    restore an earlier version as a new one
 //   POST   /api/conversions/:id/runs                count a run (counts only)
+//   POST   /api/conversions/:id/widen-ranges        "Run anyway" on a file of another size: the saved size ranges grow, in place (never narrow)
 //   GET    /api/signatures                          every source's input signature with the formats it feeds (matching runs in the browser)
 //   ...and the source routes of `sourceRoutes.ts`.
 import { checkFormatLock, checkSourceLock, deepEqual } from '@formatai/engine';
 import {
   canAddSource,
+  keepWiderRanges,
   limits,
   RulesSchema,
   tiers,
@@ -32,6 +34,9 @@ import {
   type SignatureEntry,
   type SourceStructure,
   type UpdateConversionResponse,
+  type WidenRangesResponse,
+  WidenRangesBodySchema,
+  widenRanges,
 } from '@formatai/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ObjectId } from 'mongodb';
@@ -150,7 +155,8 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     if (tier.sourcesPerFormat === 0) return fail(reply, 403, { error: 'limitHit', limit: 'sourcesPerFormat' });
 
     // SPEC 8.15 "Saving": the source this conversion reads - an existing one that matches, or a new one.
-    const planned = await planSource(d, caller.ownerId, { rules: checked.rules, choice });
+    // (A size range, SPEC 8.15, is kept only on a number column: a stray one on any other is dropped.)
+    const planned = await planSource(d, caller.ownerId, { rules: keepWiderRanges(null, checked.rules), choice });
     if (!planned.ok) return fail(reply, planned.status, planned.body);
     const sourceName = planName(planned.plan);
     const final = checkRulesFile(withMeta(planned.rules, metaFor(sourceName)), caller.tier);
@@ -352,7 +358,7 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
 
     // SPEC 8.15 "Saving": reuse the source the example input matches, or make a new one - and the source lock holds either way.
     const planned = await planSource(d, caller.ownerId, {
-      rules: checked.rules,
+      rules: keepWiderRanges(null, checked.rules),
       choice,
       feedsFormat: async (sourceId) => (await d.conversions.countDocuments({ ownerId: caller.ownerId, sourceId, formatId })) > 0,
     });
@@ -491,7 +497,9 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       caller.tier,
     );
     if (!checked.ok) return rulesRefusal(reply, checked);
-    let rules = checked.rules;
+    // SPEC 8.15 (2026-10-08): a new version never narrows a number column's size range - the previous version's and this one's are united
+    // (a month with small numbers must not make the format forget that it was learned on large ones).
+    let rules = keepWiderRanges(before, checked.rules);
 
     // SPEC 8.15: an edit that changes the input side changes the SOURCE, for every format it feeds (like a format edit): the source
     // takes the change, this conversion is brought to the source (aliases the source has and it doesn't), and the others follow below.
@@ -740,14 +748,16 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
       caller.tier,
     );
     if (!checked.ok) return rulesRefusal(reply, checked);
+    // The size ranges are united with the current version's like any new version (see the editor's save): a restore never narrows them.
+    const checkedRules = keepWiderRanges(conv.rules as Rules, checked.rules);
     // An older version from before a change to the format cannot come back on its own (SPEC 8.12 format lock).
-    const mismatch = lockProblems(checked.rules, formatOfDoc(format));
+    const mismatch = lockProblems(checkedRules, formatOfDoc(format));
     if (mismatch.length > 0) return fail(reply, 422, { error: 'formatMismatch', problems: mismatch });
 
     // The same for the source lock (SPEC 8.15) - except its aliases: they are what the source has learned since, not how the rules
     // behave, so the version comes back with the source's.
     const structure = structureOfDoc(source);
-    let restored = withSourceAliases(checked.rules, structure);
+    let restored = withSourceAliases(checkedRules, structure);
     const sourceProblems = checkSourceLock(restored, structure);
     // SPEC 8.4a: what a column reads another way (`readAs`) belongs to the source, and the Run screen's "Do this every time?" saves it as a new
     // version - so restoring the version before it is how it is undone. A difference in `readAs` alone is therefore not a refusal but an edit of
@@ -805,6 +815,46 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     );
     if (!updated) return fail(reply, 404, { error: 'notFound' });
     return reply.send({ runCount: updated.runCount, lastRunAt: lastRunAt.toISOString() });
+  });
+
+  // ------------------------------------------------ widen a size range (Run anyway)
+
+  /**
+   * SPEC 5 C, 8.15 (owner decision 2026-10-08): the user chose "Run anyway" on a format whose file looked different in size, and the file was
+   * written. The browser sends the size range of this file's column (decade exponents, never a value); the server takes the UNION with the saved
+   * range, in place - the current version's rules, no new version (like a source rename, which keeps its copy inside the rules in step). It can
+   * only WIDEN: a column with no saved range, an id the rules do not have, and a column that is not a number are left alone, and a range inside
+   * the saved one changes nothing. Owner-scoped (someone else's id is a 404). Only this route and a new version ever change a range.
+   */
+  app.post('/api/conversions/:id/widen-ranges', async (req, reply) => {
+    const g = guard(req, reply);
+    if (!g) return reply;
+    const { db: d, caller } = g;
+
+    const conv = await ownedConversion(d, caller, idParam(req));
+    if (!conv) return fail(reply, 404, { error: 'notFound' });
+    const body = WidenRangesBodySchema.safeParse(req.body);
+    if (!body.success) return fail(reply, 400, { error: 'invalidRequest' });
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const cur = attempt === 0 ? conv : await d.conversions.findOne({ _id: conv._id!, ownerId: caller.ownerId });
+      if (!cur) return fail(reply, 404, { error: 'notFound' });
+      const parsed = RulesSchema.safeParse(cur.rules);
+      if (!parsed.success) return fail(reply, 422, { error: 'invalidRules' });
+      const before = parsed.data as unknown as Rules;
+      const { rules, widened } = widenRanges(before, body.data.columns);
+      if (widened.length === 0) return reply.send({ widened: [] } satisfies WidenRangesResponse);
+      // Only the ranges are written, at their place in the columns; the filter holds the version read (a save changes the columns' order or
+      // ids only with a new version), so nothing else of the rules is touched and a concurrent save is never overwritten.
+      const set: Record<string, unknown> = {};
+      for (const id of widened) {
+        const at = rules.input.columns.findIndex((c) => c.id === id);
+        set[`rules.input.columns.${at}.range`] = rules.input.columns[at]!.range;
+      }
+      const res = await d.conversions.updateOne({ _id: cur._id!, ownerId: caller.ownerId, version: cur.version }, { $set: set });
+      if (res.matchedCount > 0) return reply.send({ widened } satisfies WidenRangesResponse);
+    }
+    return fail(reply, 409, { error: 'versionConflict' });
   });
 
   // ------------------------------------------------------- signatures

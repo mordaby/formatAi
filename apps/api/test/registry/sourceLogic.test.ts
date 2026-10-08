@@ -508,3 +508,45 @@ describe('headers a source needs no "new column" notice for', () => {
     expect(unusedExampleHeaders({ columns }, [])).toEqual([]);
   });
 });
+
+describe("the size range of a number column (SPEC 8.15, 2026-10-08) is the conversion's own", () => {
+  const ranged = (range: { lo: number; hi: number }): Rules => edited(one(), (r) => void (r.input.columns[1]!.range = range));
+
+  it('is not part of a source: sourceOf has none, and the source lock ignores it', () => {
+    const rules = ranged({ lo: 3, hi: 4 });
+    const structure = sourceOf(rules);
+    expect(JSON.stringify(structure)).not.toContain('"lo"');
+    expect(sourceOf(one())).toEqual(structure);
+    expect(checkSourceLock(rules, structure)).toEqual([]);
+    expect(checkSourceLock(ranged({ lo: 0, hi: 1 }), structure)).toEqual([]);
+  });
+
+  it("applySource rewrites the input from the source and keeps the conversion's OWN range, never another's", () => {
+    const source = sourceOf(ranged({ lo: 3, hi: 4 }));
+    source.inputSignature.columns[1] = { ...source.inputSignature.columns[1]!, aliases: ['Value'] };
+    const mine = ranged({ lo: 0, hi: 1 });
+    const applied = applySource(mine, source);
+    expect(applied.needsReview).toBe(false);
+    expect(applied.rules.input.columns[1]).toEqual({ id: 'amount', header: 'Amount', aliases: ['Value'], type: 'decimal', range: { lo: 0, hi: 1 } });
+    expect(mine.input.columns[1]!.range).toEqual({ lo: 0, hi: 1 }); // not mutated
+    // nothing to change: unchanged
+    expect(applySource(mine, sourceOf(mine)).changed).toBe(false);
+  });
+
+  it('applySource keeps it through a change to another number type and drops it when the column stops being a number', () => {
+    const source = sourceOf(one());
+    source.inputSignature.columns[1] = { ...source.inputSignature.columns[1]!, type: 'currency' };
+    expect(applySource(ranged({ lo: 3, hi: 4 }), source).rules.input.columns[1]!.range).toEqual({ lo: 3, hi: 4 });
+    source.inputSignature.columns[1] = { ...source.inputSignature.columns[1]!, type: 'text' };
+    expect('range' in applySource(ranged({ lo: 3, hi: 4 }), source).rules.input.columns[1]!).toBe(false);
+  });
+
+  it('withSourceAliases and a merge into an existing source leave it alone', () => {
+    const source = sourceOf(ranged({ lo: 3, hi: 4 }));
+    source.inputSignature.columns[1] = { ...source.inputSignature.columns[1]!, aliases: ['Value'] };
+    expect(withSourceAliases(ranged({ lo: 0, hi: 1 }), source, 'union').input.columns[1]!.range).toEqual({ lo: 0, hi: 1 });
+    const merged = mergeForReuse(source, ranged({ lo: 5, hi: 6 }));
+    expect(merged.ok).toBe(true);
+    if (merged.ok) expect(JSON.stringify(merged.structure)).not.toContain('"lo"');
+  });
+});
