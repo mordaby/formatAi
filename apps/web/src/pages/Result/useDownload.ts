@@ -3,7 +3,7 @@
 import { useCallback, useState } from 'react';
 import type { EditableRules } from '../../editor';
 import { downloadBytes, outputFileName, outputFileType, outputMimeType } from '../../flow/download';
-import { useServices } from '../../services';
+import { useServices, useTrack } from '../../services';
 import type { EngineClient } from '../../worker/engineClient';
 
 /** Converts the example input with `rules` in the worker (no network) and saves the FULL file through the browser. */
@@ -21,16 +21,21 @@ export interface UseDownload {
 
 export function useDownload(): UseDownload {
   const { engine } = useServices();
+  const track = useTrack();
   const [status, setStatus] = useState<UseDownload['status']>('idle');
   const run = useCallback(
     (file: File, rules: EditableRules): void => {
       setStatus('busy');
       convertAndDownload(engine, file, rules).then(
-        () => setStatus('idle'),
+        () => {
+          setStatus('idle');
+          // SPEC 14.1 `download`: the learn screen's file was saved.
+          track('download', { kind: 'learnResult' });
+        },
         () => setStatus('failed'),
       );
     },
-    [engine],
+    [engine, track],
   );
   return { status, run };
 }

@@ -297,7 +297,8 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       if (record.result && i && o) {
         seed.current = record.result;
         // The local analysis only: the AI step is the user's choice on the Result screen (never started here).
-        void startRef.current({ input: i, output: o, masking: record.masking, columnChoices: choices, ai: 'notAllowed', ...(record.tryAnyway ? { tryAnyway: true } : {}) });
+        // (the same learn the user already saw end, run again to put its result back: not a new learn for the usage events)
+        void startRef.current({ input: i, output: o, masking: record.masking, columnChoices: choices, ai: 'notAllowed', restore: true, ...(record.tryAnyway ? { tryAnyway: true } : {}) });
       } else if (record.deepAnalysis && i && o && meRef.current.user) {
         // "Learn with AI" from a visitor, now signed in: the learn they asked for starts by itself, and the Result screen goes on with the AI step
         // when fields are missing (`deepAnalysis`). Not signed in after all (declined, failed): the files are back and nothing starts.

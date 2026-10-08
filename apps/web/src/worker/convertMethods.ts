@@ -66,7 +66,7 @@ async function matchFile(args: MatchFileArgs): Promise<MatchFileOutput> {
   const read = await readTable(args.file);
   if (!read.ok) return read;
   const ranked = matchConversions(read.table.headers, args.signatures);
-  return { ok: true, headers: read.table.headers, ranked, pick: pickConversion(ranked) };
+  return { ok: true, headers: read.table.headers, rows: read.table.rows.length, ranked, pick: pickConversion(ranked) };
 }
 
 /**

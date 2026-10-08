@@ -1,6 +1,6 @@
 import type { Tier } from '@formatai/shared';
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import { useServices } from '../services';
+import { useServices, useTrack } from '../services';
 import { LearnFlow, type LearnFlowDeps, type LearnFlowState, type StartParams } from './learnFlow';
 
 export interface UseLearnFlowOptions {
@@ -32,6 +32,7 @@ export interface UseLearnFlow {
  */
 export function useLearnFlow(options: UseLearnFlowOptions = {}): UseLearnFlow {
   const { engine, api } = useServices();
+  const track = useTrack();
   const getTier = options.getTier;
   const ready = options.ready;
   const beforeSend = options.beforeSend;
@@ -44,13 +45,14 @@ export function useLearnFlow(options: UseLearnFlowOptions = {}): UseLearnFlow {
         engine,
         api,
         tier: 'anonymous',
+        track,
         ...(getTier ? { getTier } : {}),
         ...(ready ? { ready } : {}),
         ...(beforeSend ? { beforeSend } : {}),
         ...(onAi ? { onAi } : {}),
         ...(mayCheckKnown ? { mayCheckKnown } : {}),
       }),
-    [engine, api, getTier, ready, beforeSend, onAi, mayCheckKnown],
+    [engine, api, track, getTier, ready, beforeSend, onAi, mayCheckKnown],
   );
   // Leaving the screen stops a run in progress (the worker drops the call; it keeps what it holds for other screens).
   useEffect(() => () => flow.cancel(), [flow]);

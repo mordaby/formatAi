@@ -39,6 +39,8 @@ export type MatchFileOutput =
       ok: true;
       /** The file's own headers, as read. */
       headers: string[];
+      /** How many data rows its table has (a count, for the usage events; absent from an answer that did not count them). */
+      rows?: number;
       /** Every signature, best first (`matchConversions`). */
       ranked: ConversionMatch[];
       /** `pickConversion`: one clear winner, or the top matches for the user to choose from. */

@@ -1,4 +1,5 @@
-import { lazy, Suspense } from 'react';
+import { pageNameOf } from '@formatai/shared';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import AddSourcePage from '../pages/AddSource';
 import BusinessPage from '../pages/Business';
@@ -11,6 +12,7 @@ import { useI18n } from '../i18n';
 import { LegalPage } from '../pages/Legal/LegalPage';
 import { ResultPage } from '../pages/Result';
 import { peekResultSession } from '../pages/Result/session';
+import { useTrack } from '../services';
 import { Spinner } from '../ui';
 import { AiLimitProvider } from './AiLimit';
 import { FeaturesProvider } from './Features';
@@ -60,6 +62,23 @@ function ResultRoute() {
   return <ResultPage {...flow} />;
 }
 
+/**
+ * `page_view {page}` (SPEC 14.1): one event each time the address changes, with the route's NAME (home, learn, formats, format, convert, ...) -
+ * never the path or the query, which can carry a format's id. Renders nothing.
+ */
+function PageViews() {
+  const { pathname } = useLocation();
+  const track = useTrack();
+  // (the same address twice in a row is one view: React's development double-run of effects must not count a page twice)
+  const last = useRef<string | null>(null);
+  useEffect(() => {
+    if (last.current === pathname) return;
+    last.current = pathname;
+    track('page_view', { page: pageNameOf(pathname) });
+  }, [pathname, track]);
+  return null;
+}
+
 /** /batch was the paid-only batch page: batch is part of the Run screen now (SPEC 21 v11), so old links land there, query string and all (`?format=`). */
 function BatchRedirect() {
   const { search } = useLocation();
@@ -75,6 +94,7 @@ export function App() {
             <LearnSessionProvider>
               <AiLimitProvider>
                 <Shell>
+                  <PageViews />
                   <Routes>
                     <Route path="/" element={<Home />} />
                     <Route path="/result" element={<ResultRoute />} />

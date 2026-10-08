@@ -11,7 +11,7 @@ import { vi, type Mock } from 'vitest';
 import { ConvertApiProvider, type ConvertApi } from '../../src/api/convert';
 import { MeProvider } from '../../src/app/Me';
 import { I18nProvider, type Lang } from '../../src/i18n';
-import { fakeApi } from './renderApp';
+import { fakeApi, tracked } from './renderApp';
 import { ServicesProvider } from '../../src/services';
 import type { ColumnGapsArgs } from '../../src/worker/convertApi';
 import { convertMethods } from '../../src/worker/convertMethods';
@@ -170,12 +170,16 @@ export interface RenderConvertOptions {
   route?: string;
 }
 
-/** One screen inside i18n, the services, `MeProvider` (fed by `api.user`), the convert API and a memory router (with a location probe). */
+/**
+ * One screen inside i18n, the services, `MeProvider` (fed by `api.user`), the convert API and a memory router (with a location probe).
+ * `events()` reads the usage events (SPEC 14.1) the screen tracked, in order, as `[type, props]`.
+ */
 export function renderConvert(ui: ReactElement, { api, engine, lang = 'en', route = '/convert' }: RenderConvertOptions) {
   const user = (api as Partial<FakeConvertApi>).user ?? null;
-  return render(
+  const services = fakeApi({ user });
+  const view = render(
     <I18nProvider initial={lang}>
-      <ServicesProvider engine={engine} api={fakeApi({ user })}>
+      <ServicesProvider engine={engine} api={services}>
         <ConvertApiProvider api={api}>
           <MemoryRouter initialEntries={[route]}>
             <MeProvider>
@@ -187,6 +191,7 @@ export function renderConvert(ui: ReactElement, { api, engine, lang = 'en', rout
       </ServicesProvider>
     </I18nProvider>,
   );
+  return Object.assign(view, { events: () => tracked(services) });
 }
 
 export const FILES_PER_RUN = { registered: tiers.registered.filesPerRun, paid: tiers.paid.filesPerRun };

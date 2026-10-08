@@ -17,14 +17,14 @@
 // converted. A batch asks nothing, so there is no "Run anyway" here: that file can be run on its own on this screen.
 import type { Flag } from '@formatai/engine';
 import type { Rules, SignatureEntry, SourceConversionRef, Tier } from '@formatai/shared';
-import { tiers } from '@formatai/shared';
+import { capCount, capSmall, fileTypeOfName, tiers } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../../api/http';
 import { useConvertApi } from '../../api/convert';
 import { downloadBytes, outputFileName, outputMimeType } from '../../flow/download';
 import { isCancellation } from '../../flow/errors';
 import { useI18n, type I18n } from '../../i18n';
-import { useServices } from '../../services';
+import { useServices, useTrack } from '../../services';
 import { isAcceptedFile } from '../../ui';
 import type { BatchOutputFile, SummaryTable } from '../../worker/convertApi';
 import { attentionLines } from '../Convert/attention';
@@ -168,6 +168,7 @@ export function reasonText(i18n: I18n, reason: NoMatchReason): string {
 export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly SignatureEntry[] }): UseBatchFlow {
   const i18n = useI18n();
   const { engine } = useServices();
+  const track = useTrack();
   const api = useConvertApi();
   const limits = tiers[tier];
   const filesPerRun = limits.filesPerRun;
@@ -214,6 +215,8 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
       for (const f of files) {
         if (!isAcceptedFile(f.name) || f.size > limits.maxFileBytes) {
           result.skipped++;
+          // SPEC 14.1 `file_rejected`: the reason only, never the file's name.
+          track('file_rejected', { reason: isAcceptedFile(f.name) ? 'size' : 'type' });
           continue;
         }
         if (have.has(fileKey(f))) continue;
@@ -229,7 +232,7 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
       result.added = fresh.length;
       return result;
     },
-    [filesPerRun, limits.maxFileBytes],
+    [filesPerRun, limits.maxFileBytes, track],
   );
 
   const remove = useCallback((id: number) => setItems((list) => list.filter((i) => i.id !== id)), []);
@@ -297,14 +300,20 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
     async (item: BatchItem, entries: readonly SignatureEntry[], signal: AbortSignal): Promise<Matched> => {
       const noMatch = (reason: NoMatchReason): Matched => ({ kind: 'noMatch', reason });
       const result = await engine.matchFile({ file: { name: item.file.name, bytes: await item.file.arrayBuffer() }, signatures: entries.map(signatureOf) }, { signal });
-      if (!result.ok) return noMatch({ kind: result.reason });
+      // SPEC 14.1: each file of the batch is a file run (its type and size, never its name), or turned away (why).
+      if (!result.ok) {
+        track('file_rejected', { reason: result.reason });
+        return noMatch({ kind: result.reason });
+      }
+      const fileType = fileTypeOfName(item.file.name);
+      if (fileType) track('file_uploaded', { role: 'run', fileType, ...(result.rows !== undefined ? { rows: capCount(result.rows) } : {}), cols: capSmall(result.headers.length) });
       if (result.pick.kind !== 'auto') return noMatch({ kind: result.pick.options.length === 0 ? 'noSource' : 'unsure' });
       const match = result.pick.match;
       const source = entries.find((e) => e.sourceId === match.id);
       if (!source) return noMatch({ kind: 'gone' });
       return { kind: 'matched', source, headers: result.headers };
     },
-    [engine],
+    [engine, track],
   );
 
   /**
@@ -415,6 +424,19 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
           setItems(kept);
           setStopped(true);
         }
+        // SPEC 14.1 `batch_run`: how the batch ended, in FILES (a file made into several formats counts once, by its best outcome: made, else
+        // needing attention, else not matched, else not chosen). Counts only. A stopped batch reports the files it reached.
+        const byFile = new Map<number, BatchStatus>();
+        const rank: Record<BatchStatus, number> = { converted: 5, convertedFlags: 5, needsAttention: 4, noMatch: 3, notChosen: 2, running: 1, queued: 0 };
+        for (const i of kept) if ((rank[i.status] ?? 0) > (rank[byFile.get(i.fileId) ?? 'queued'] ?? 0)) byFile.set(i.fileId, i.status);
+        const outcomes = [...byFile.values()];
+        track('batch_run', {
+          files: capSmall(byFile.size),
+          converted: capSmall(outcomes.filter((x) => x === 'converted' || x === 'convertedFlags').length),
+          needsAttention: capSmall(outcomes.filter((x) => x === 'needsAttention').length),
+          noMatch: capSmall(outcomes.filter((x) => x === 'noMatch').length),
+          notChosen: capSmall(outcomes.filter((x) => x === 'notChosen').length),
+        });
         setPhase('packing');
         // Stopping the run must not stop the packing of what it did convert: a fresh signal.
         const packing = new AbortController();
@@ -428,7 +450,7 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
         if (runId === runRef.current) setPhase('done');
       })();
     },
-    [api, convertMatched, pack, patch],
+    [api, convertMatched, pack, patch, track],
   );
 
   const run = useCallback(() => {
@@ -531,19 +553,25 @@ export function useBatchFlow({ tier, entries }: { tier: Tier; entries: readonly 
   }, []);
 
   const downloadZip = useCallback(() => {
-    if (downloads) downloadBytes(i18nRef.current.t('batch.summary.zip'), downloads.zip, 'application/zip');
-  }, [downloads]);
+    if (!downloads) return;
+    downloadBytes(i18nRef.current.t('batch.summary.zip'), downloads.zip, 'application/zip');
+    track('download', { kind: 'zip' });
+  }, [downloads, track]);
   const downloadSummary = useCallback(() => {
-    if (downloads) downloadBytes(i18nRef.current.t('batch.summary.file'), downloads.summary, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  }, [downloads]);
+    if (!downloads) return;
+    downloadBytes(i18nRef.current.t('batch.summary.file'), downloads.summary, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    track('download', { kind: 'summary' });
+  }, [downloads, track]);
 
   // One converted file on its own (owner, 2026-10-08): its bytes are kept until the next run or "Start another batch".
   const canDownloadFile = useCallback((id: number) => outputs.current.has(id), []);
   const downloadFile = useCallback((id: number) => {
     const bytes = outputs.current.get(id);
     const item = itemsRef.current.find((i) => i.id === id);
-    if (bytes && item) downloadBytes(item.outputName ?? item.file.name, bytes, outputMimeType(item.fileType));
-  }, []);
+    if (!bytes || !item) return;
+    downloadBytes(item.outputName ?? item.file.name, bytes, outputMimeType(item.fileType));
+    track('download', { kind: 'batchFile' });
+  }, [track]);
 
   const done = useMemo(() => new Set(items.filter((i) => i.status !== 'queued' && i.status !== 'running').map((i) => i.fileId)).size, [items]);
   const total = useMemo(() => new Set(items.map((i) => i.fileId)).size, [items]);

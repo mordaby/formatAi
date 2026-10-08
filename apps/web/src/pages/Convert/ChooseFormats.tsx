@@ -14,6 +14,7 @@ import type { SourceConversionRef, SignatureEntry } from '@formatai/shared';
 import { useId, useState } from 'react';
 import { Cell } from '../../components/Cell';
 import { useI18n } from '../../i18n';
+import { useTrack } from '../../services';
 import { Button } from '../../ui';
 import { runAnywayLabel, willRunText } from './attention';
 import { isolate } from './logic';
@@ -35,6 +36,7 @@ export interface ChooseFormatsProps {
 export function ChooseFormats({ source, ready, attention = [], onContinue, onEdit, onCancel }: ChooseFormatsProps) {
   const i18n = useI18n();
   const { t, lang } = i18n;
+  const track = useTrack();
   const id = useId();
   const nf = new Intl.NumberFormat(lang);
   const all = ready.map((c) => c.conversionId);
@@ -142,7 +144,12 @@ export function ChooseFormats({ source, ready, attention = [], onContinue, onEdi
         <Button
           variant="primary"
           disabled={makes === 0}
-          onClick={() => onContinue({ run: all.filter((x) => picked.has(x)), anyway: attention.filter((a) => anyway.has(a.conversionId)).map((a) => a.conversionId), skipped: attention.filter((a) => skipped.has(a.conversionId)).map((a) => a.conversionId) })}
+          onClick={() => {
+            // SPEC 14.1 `formats_chosen`: how many formats were offered (the ready ones) and how many were ticked - nothing is pre-ticked (owner,
+            // 2026-10-08), so this is what people really choose. Counts only.
+            track('formats_chosen', { offered: all.length, chosen: picked.size, all: all.length > 0 && allPicked, batch: false });
+            onContinue({ run: all.filter((x) => picked.has(x)), anyway: attention.filter((a) => anyway.has(a.conversionId)).map((a) => a.conversionId), skipped: attention.filter((a) => skipped.has(a.conversionId)).map((a) => a.conversionId) });
+          }}
         >
           {t('conv.formats.continue')}
         </Button>

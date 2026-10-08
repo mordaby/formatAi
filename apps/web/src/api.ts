@@ -9,6 +9,7 @@ import type { CheckRound, LearnPayload, LearnResponse, LearnResult, RepairProble
 import { createAdminApi, type AdminApi } from './api/admin';
 import { createAuthApi, type AuthApi } from './api/auth';
 import { createContactApi, type ContactApi } from './api/contact';
+import { createEvents, type EventsApi } from './api/events';
 import { createHttp, type CreateHttpOptions } from './api/http';
 import { learnRequest, repairRequest, stepRequest } from './api/learnRequests';
 import { createRegistryApi, type RegistryApi } from './api/registry';
@@ -48,6 +49,11 @@ export interface Api {
   admin: AdminApi;
   /** The public forms: the business lead form, the paid waitlist, feedback (SPEC 16.1 screen 7, 13). */
   contact: ContactApi;
+  /**
+   * Usage events (SPEC 14.1): `track(type, props)` says that something happened that only the browser knows. Counts and codes only, queued and sent
+   * in the background; never blocks, never throws.
+   */
+  events: EventsApi;
   /** The API's base URL ('' = same origin): where the sign-in buttons navigate to. */
   baseUrl: string;
 }
@@ -68,6 +74,7 @@ export function createApi(options: CreateApiOptions = {}): Api {
     registry: createRegistryApi(request),
     admin: createAdminApi(request),
     contact: createContactApi(request),
+    events: createEvents({ baseUrl, ...(options.fetch ? { fetch: options.fetch } : {}) }),
     baseUrl,
   };
 }

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, type ReactNode } from 'react';
 import { useI18n } from '../i18n';
+import { useTrack } from '../services';
 import { Button, InlineMessage, Spinner } from '../ui';
 import { useMe } from './Me';
 import { SignInButtons, useSignIn } from './SignIn';
@@ -17,6 +18,7 @@ export function RequireSignIn({ title, children }: { title: string; children: Re
   const me = useMe();
   const { t } = useI18n();
   const signIn = useSignIn();
+  const track = useTrack();
   // Who the screen was opened for (the last signed-in user); null until someone was.
   const owner = useRef<string | null>(null);
   if (me.user) owner.current = me.user.id;
@@ -24,6 +26,12 @@ export function RequireSignIn({ title, children }: { title: string; children: Re
   else if (me.signedOut) owner.current = null;
   const expired = me.user === null && owner.current !== null;
   const { refresh } = me;
+
+  // The visitor's page of this screen is a sign-in wall too (SPEC 14.1 `signin_wall_shown`, trigger `formats`): once per time it shows.
+  const walled = me.user === null && !expired && me.status === 'ready';
+  useEffect(() => {
+    if (walled) track('signin_wall_shown', { trigger: 'formats' });
+  }, [walled, track]);
 
   // The wall, once, when the session ends; and coming back to this tab (from the sign-in tab) reads who is signed in at once. The screen
   // going away (signing out goes home) takes its wall with it.

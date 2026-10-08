@@ -16,9 +16,10 @@
 // Real progress comes from the worker (`LearnProgress`); steps that don't happen are
 // simply never visited (the local fast path goes checking -> done, with no learning or
 // verifying). The HTTP calls are made HERE, on the main thread, on the worker's behalf.
-import { limits, payloadBytes, stepBytes, withRows, type AiLearnQuotaState, type CheckRound, type Format, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type RepairResponse, type Sample, type Tier } from '@formatai/shared';
+import { FILE_REJECT_REASONS, limits, payloadBytes, stepBytes, withRows, type AiLearnQuotaState, type FileRejectReason, type LearnCompletedStatus, type CheckRound, type Format, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type RepairResponse, type Sample, type Tier } from '@formatai/shared';
 import type { AnalysisStage, CompleteOptions, KnownPair, LearnCallResult, OutputMatch, PreflightIssue, UserColumnChoices } from '@formatai/engine';
 import type { Api } from '../api';
+import type { Track } from '../api/events';
 import { learnRequest, repairRequest, stepRequest, type LearnRequestOptions, type RepairRequestOptions } from '../api/learnRequests';
 import { webConfig } from '../config';
 import type { EngineClient } from '../worker/engineClient';
@@ -164,6 +165,11 @@ export interface StartParams {
    * saved formats, on Home's learns; "Learn again anyway" leaves it out.
    */
   checkKnown?: boolean;
+  /**
+   * The same learn run again to put a result back after a sign-in (SPEC 5 E): the learn was already counted when the user first saw it, so this run
+   * reports no usage event (SPEC 14.1 `learn_completed`).
+   */
+  restore?: boolean;
 }
 
 export interface LearnFlowDeps {
@@ -195,6 +201,8 @@ export interface LearnFlowDeps {
    * with (the app shows the quota everywhere, and reads who is signed in again when the session is gone). See app/aiReport.ts.
    */
   onAi?: (event: AiEvent) => void;
+  /** Usage events (SPEC 14.1): how each learn ended (`learn_completed`), and the table checks that turned a file away (`file_rejected`). Counts and codes only. */
+  track?: Track;
 }
 
 const IDLE: LearnFlowState = { status: 'idle', sent: [] };
@@ -265,6 +273,15 @@ export class LearnFlow {
     const setPhase = (next: LearnFlowState): void => {
       if (!stale()) this.set(next);
     };
+    // SPEC 14.1 `learn_completed`: the browser's FINAL verdict of this run - the free engine's local learns never reach the server, so this is the
+    // only place they are seen. `aiClicked`: this run is the AI step's (the user chose it); the free run before it is not. Reported once per run,
+    // never for a run that was cancelled or superseded, a "known" / "matches your format" stop (nothing was learned; the question's answer is
+    // `known_format`), a "rows couldn't be aligned" pause (the run goes on when the user says so) or a restored one.
+    const tell = (status: LearnCompletedStatus, path: 'local' | 'llm' | 'cache'): void => {
+      if (params.restore) return;
+      this.deps.track?.('learn_completed', { path, status, masking: params.masking, aiClicked: params.ai === 'allowed' });
+    };
+    const askedAi = params.ai === 'allowed';
     const record = async (rec: Omit<SentRecord, 'bytes'>): Promise<void> => {
       // (a loop round's rows count with the payload: the byte cap holds for the payload with every row sent added to it; a step's rounds the same)
       const full: SentRecord = { ...rec, bytes: rec.rounds ? stepBytes(withRows(rec.payload, rec.rows ?? []), rec.rounds) : payloadBytes(withRows(rec.payload, rec.rows ?? [])) };
@@ -381,8 +398,13 @@ export class LearnFlow {
 
       if (result.path === 'blocked') {
         const hardBlock = result.preflight.issues.some((i) => i.severity === 'block');
-        if (hardBlock) this.set({ status: 'blocked', result, sent });
-        else {
+        if (hardBlock) {
+          this.set({ status: 'blocked', result, sent });
+          tell('blocked', 'local');
+          // The engine's table checks that rejected a file (SPEC 6.1): which reason, never which file.
+          const reasons = new Set(result.preflight.issues.flatMap((i) => (i.severity === 'block' && i.code === 'tableRejected' ? [i.params?.tableIssueCode] : [])));
+          if (!params.restore) for (const reason of reasons) if (typeof reason === 'string' && (FILE_REJECT_REASONS as readonly string[]).includes(reason)) this.deps.track?.('file_rejected', { reason: reason as FileRejectReason });
+        } else {
           // Only "rows couldn't be aligned" (SPEC 6.4): the user may try anyway.
           this.set({ status: 'warn', reason: 'tryAnyway', issues: result.preflight.issues.filter((i) => i.severity === 'warn'), sent });
         }
@@ -392,10 +414,13 @@ export class LearnFlow {
         this.set({ status: 'matchesFormat', matches: result.sameOutput, sent });
       } else if (result.path === 'notReady') {
         this.set({ status: 'notReady', result, sent });
+        tell('notReady', 'local');
       } else if (!result.rules) {
         this.set({ status: 'error', error: { kind: 'learnFailed', problems: lastProblems }, sent });
+        tell('error', askedAi ? 'llm' : 'local');
       } else {
         this.set({ status: 'done', result, sent, ...(ai ? { ai } : {}), ...(tryAnyway ? { tryAnyway: true } : {}) });
+        tell(learnStatus(result), result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local');
         // SPEC 21 v5 item 3: the browser reports its own full verification, and the answer says what counted. (Not a completion: whether its
         // answer is used is the caller's decision - the lock, the match, and the user's edits made meanwhile - so the caller reports it.)
         if (result.path === 'llm' && ai?.learnId && result.verification && !params.complete) {
@@ -406,6 +431,7 @@ export class LearnFlow {
       if (stale() || isCancellation(e)) return;
       const error = toFlowError(e, hostError);
       this.set({ status: 'error', error, sent });
+      tell('error', askedAi ? 'llm' : 'local');
       if (error.kind === 'api') this.deps.onAi?.({ error });
     } finally {
       if (this.abort === abort) this.abort = null;
@@ -429,6 +455,18 @@ export class LearnFlow {
     this.abort?.abort();
     this.abort = null;
   }
+}
+
+/**
+ * How a learn that produced rules ended, for the usage event `learn_completed` (SPEC 14.1): `partial` - the free engine's partial result, shown
+ * before the AI step; `verified` - the browser's own full verification passed (a completion's answer must also hold the user's fixed rules and
+ * match the example, the same test that decides whether it may replace them); `failed` - anything else.
+ */
+export function learnStatus(result: Pick<LearnOutput, 'path' | 'verification' | 'completion'>): LearnCompletedStatus {
+  if (result.path === 'partial') return 'partial';
+  if (!result.verification?.verified) return 'failed';
+  if (result.completion && !(result.completion.matches && result.completion.fixedProblems.length === 0)) return 'failed';
+  return 'verified';
 }
 
 /** The fresh learn that stands in for a round of the learning loop: uncached, and it must answer with the rules (learn-v9). */
