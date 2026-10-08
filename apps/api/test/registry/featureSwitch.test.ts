@@ -1,6 +1,7 @@
-// The feature switch "Formats with several sources" (owner decision 2026-10-07, `config/features.ts`): off by default (the MVP), overridden by
-// `FEATURE_FORMAT_SOURCES=on|off`. GET /api/session tells the web app the value the server runs with; while it is off the attach route is
-// refused (403 `featureOff`) before anything else is looked at, so no hidden path stays reachable. No database needed.
+// The feature switch "Formats with several sources" (owner decisions 2026-10-07, `config/features.ts`): off by default (the MVP), overridden by
+// `FEATURE_FORMAT_SOURCES=on|off`. GET /api/session tells the web app the value the server runs with. The switch hides only the explicit
+// source UI in the web app: the attach route stays open whatever it says - the Learn-time "Is this file another input for it?" saves through
+// it - and its plan limit and locks still hold (registry.test.ts). No database needed.
 import { features } from '@formatai/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
@@ -46,26 +47,17 @@ describe('the switch as the server reads it', () => {
   });
 });
 
-describe('the attach route (POST /api/formats/:id/conversions)', () => {
-  it('off: refused with featureOff, whoever calls and whatever is sent', async () => {
-    const call = await serve(undefined);
-    for (const user of [undefined, null]) {
-      const res = await call('POST', `/api/formats/${ID}/conversions`, saveBody(sourceTwo()), { user });
-      expect(res.status).toBe(403);
-      expect(res.body).toEqual({ error: 'featureOff' });
+describe('the attach route (POST /api/formats/:id/conversions) is the same whatever the switch says', () => {
+  it('off and on alike: a visitor is asked to sign in, and a signed-in call reaches the registry (with no database: unavailable)', async () => {
+    for (const value of [undefined, 'off', 'on']) {
+      const call = await serve(value);
+      const anon = await call('POST', `/api/formats/${ID}/conversions`, saveBody(sourceTwo()), { user: null });
+      expect(anon.status, String(value)).toBe(401);
+      const res = await call('POST', `/api/formats/${ID}/conversions`, saveBody(sourceTwo()));
+      expect(res.status, String(value)).toBe(503);
+      expect(res.body).toEqual({ error: 'unavailable' });
+      await app!.close();
+      app = undefined;
     }
-  });
-
-  it('on: the route is there (with no database it is unavailable, like every registry route)', async () => {
-    const call = await serve('on');
-    const res = await call('POST', `/api/formats/${ID}/conversions`, saveBody(sourceTwo()));
-    expect(res.status).toBe(503);
-    expect(res.body).toEqual({ error: 'unavailable' });
-  });
-
-  it('off: the other registry routes are untouched (a format is still created as before)', async () => {
-    const call = await serve('off');
-    const res = await call('POST', '/api/formats', { name: 'x', ...saveBody(sourceTwo()) });
-    expect(res.body).toEqual({ error: 'unavailable' });
   });
 });

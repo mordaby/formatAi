@@ -32,7 +32,7 @@ describe.skipIf(!mongoUri)('registry API (MongoDB)', () => {
   async function start(): Promise<void> {
     await app?.close();
     store = createMemoryStore(now);
-    app = await buildServer({ env: makeEnv({ FEATURE_FORMAT_SOURCES: 'on' }), db: appDb, logger: false, store, now, identify: stubIdentify });
+    app = await buildServer({ env: makeEnv(), db: appDb, logger: false, store, now, identify: stubIdentify });
     call = makeCaller(app);
   }
 

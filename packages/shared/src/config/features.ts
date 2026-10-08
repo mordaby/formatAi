@@ -2,14 +2,15 @@
 // has its default here; the API may override it from its environment and tells the web app the value it runs with (`GET /api/session`
 // `features`), so turning one on or off is a configuration change, not a new build.
 //
-// `formatSources` - "Formats with several sources" (SPEC 5 A2, 8.12, 8.15, 16; SPEC 20). OFF for the MVP. When off, the product stays
-// simple: a learned format is saved as its own format (Save asks nothing about the user's saved formats), there is no "Add a source" anywhere
-// and the API refuses to attach a source to a format (403 `featureOff`), and nothing says "source". Sources still exist behind the scenes,
-// created and reused silently when a format is saved (SPEC 8.15). The "You already have this format" check at Learn does not depend on it.
+// `formatSources` - "Formats with several sources" (SPEC 5 A2, 8.12, 8.15, 16). OFF for the MVP. It hides only the EXPLICIT source UI: the
+// "Add a source" buttons and screen, and the source counts and names on My formats' cards. A format is the output; each kind of input file
+// has its own rules, kept as a "source" behind the scenes - and what the learn does with that is on whatever the switch says: "You already
+// have this format", "Is this file another input for it?" (a learn against that format, saved as another input of it: the API's attach
+// route, which the switch therefore does not close - its limit and locks still hold), and Save's "Update your format X?".
 // API override: `FEATURE_FORMAT_SOURCES=on|off` (unset: this default; any other value stops a production start).
 
 export interface Features {
-  /** "Formats with several sources": Save's "Is this one of your formats?", "Add a source", the attach route. */
+  /** "Formats with several sources": the explicit source UI ("Add a source", source counts and names on the cards). */
   formatSources: boolean;
 }
 

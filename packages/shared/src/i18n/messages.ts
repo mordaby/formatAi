@@ -328,10 +328,6 @@ export const apiErrorMessages: Record<ApiErrorCode, Localized> = {
     en: 'This page is for admins only.',
     he: 'הדף הזה מיועד למנהלים בלבד.',
   },
-  featureOff: {
-    en: "This isn't available yet. Save it as its own format instead.",
-    he: 'האפשרות הזאת עדיין לא זמינה. שמרו אותו כפורמט נפרד במקום זה.',
-  },
 };
 
 // SPEC 21 v5 item 3: what the user is told when the failed-attempt cap is reached. `counted` = this answer
