@@ -1,6 +1,7 @@
 // One format and its sources (SPEC 16.1 screen 5, 8.12): the sources with their status, a way in to each one's rules, and the
 // two things a format is for - converting a file, and adding another source.
 import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
+import { useFeatures } from '../../app/Features';
 import { LinkButton } from '../../app/LinkButton';
 import { RequireSignIn } from '../../app/RequireSignIn';
 import { useLoad } from '../../app/useLoad';
@@ -23,6 +24,7 @@ export default function FormatPage() {
 function FormatDetail() {
   const { t } = useI18n();
   const { api } = useServices();
+  const { formatSources } = useFeatures();
   const { id = '' } = useParams();
   const location = useLocation();
   const data = useLoad((signal) => api.registry.getFormat(id, signal), [id]);
@@ -103,6 +105,8 @@ function FormatDetail() {
                     key={c.id}
                     formatId={format.id}
                     source={c}
+                    explicit={formatSources}
+                    others={conversions.length > 1}
                     onRenamed={(next) => data.set((old) => ({ ...old, conversions: old.conversions.map((x) => (x.id === next.id ? next : x)) }))}
                     onDeleted={(cid) => data.set((old) => ({ ...old, conversions: old.conversions.filter((x) => x.id !== cid) }))}
                   />

@@ -137,8 +137,8 @@ describe('a visitor whose example needs the AI step', () => {
     expect(line('col:Item').getAttribute('data-ai-step')).toBeNull();
     expect(line('col:Item').getAttribute('data-status')).toBe('matches');
     // A column with no trace in the input needs the AI step too, with the note that it may come from another source.
-    expect(line('col:Remarks').textContent).toContain('it may come from another source');
-    expect(line('col:Total').textContent).not.toContain('it may come from another source');
+    expect(line('col:Remarks').textContent).toContain('it may come from somewhere else');
+    expect(line('col:Total').textContent).not.toContain('it may come from somewhere else');
 
     // The parts (how the rows are sorted, the summary rows) are listed as what the AI step still does.
     const parts = screen.getByTestId('ai-step-parts');
@@ -239,7 +239,7 @@ describe('only an unexplained (external) column is left', () => {
     );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Not now' }));
     expect(line('col:Remarks').getAttribute('data-ai-step')).toBe('true');
-    expect(line('col:Remarks').textContent).toContain('it may come from another source');
+    expect(line('col:Remarks').textContent).toContain('it may come from somewhere else');
     expect(screen.queryByRole('button', { name: /Save format/ })).toBeNull();
   });
 

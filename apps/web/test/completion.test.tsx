@@ -920,7 +920,7 @@ describe('a column composed from three input columns reaches the AI buttons (the
     fireEvent.click(within(dialog).getByRole('button', { name: 'Not now' }));
     expect(line('col:Label').getAttribute('data-ai-step')).toBe('true');
     expect(line('col:Label').textContent).toContain('Needs the AI step');
-    expect(line('col:Label').textContent).toContain('it may come from another source');
+    expect(line('col:Label').textContent).toContain('it may come from somewhere else');
   });
 
   it('the owner\'s case, signed in, on a non-partial result with the column empty: "Finish with AI" is offered for it', async () => {

@@ -305,7 +305,7 @@ describe('the panel on the Result screen', () => {
     expect(within(panel).getByRole('heading', { name: 'The free engine solved 3 of 6 fields.' })).toBeTruthy();
     const fields = within(panel).getByTestId('deep-fields');
     const names = within(fields).getAllByRole('checkbox').map((c) => c.closest('label')!.textContent);
-    expect(names).toEqual(['Total', 'Shipped', 'Remarks — may come from another source', 'The summary or total rows.']);
+    expect(names).toEqual(['Total', 'Shipped', 'Remarks — may come from somewhere else', 'The summary or total rows.']);
     for (const box of within(fields).getAllByRole('checkbox')) expect((box as HTMLInputElement).checked).toBe(true);
     // The panel is above the editor content: before the map.
     expect(panel.compareDocumentPosition(screen.getByTestId('rules-map')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

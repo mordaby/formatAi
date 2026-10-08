@@ -63,7 +63,7 @@ describe.each([
       const kept =
         "Saved formats keep the column names and the rules you approved, including the fixed values those rules use - such as labels, codes and lookup lists, and values you typed into your example output. Before saving, we ask you about lists copied from your example and about ID numbers, phone numbers, emails and card or bank numbers we recognize in them. Please don't use other personal details, such as a person's name, as a label in a rule you save. Never rows from your files.";
       expect(text).toContain(`Your full files never leave your computer. ${kept}`);
-      expect(text).toContain(`Your saved formats and sources, with your edits and earlier versions. ${kept}`);
+      expect(text).toContain(`Your saved formats and the rules for each kind of input file they read, with your edits and earlier versions. ${kept}`);
       expect(text).not.toContain('Saved formats contain');
       expect(text).toContain('Never rows from your files.');
       expect(text).toContain('Anthropic and OpenAI');

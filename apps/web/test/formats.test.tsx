@@ -201,7 +201,8 @@ describe('My formats', () => {
       await screen.findByTestId('format-list');
       fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Delete' }));
       const dialog = await screen.findByRole('dialog', { name: 'Delete "Supplier price list"?' });
-      expect(dialog.textContent).toContain('This deletes the format and its 3 sources.');
+      // ("Formats with several sources" off: input files, never sources)
+      expect(dialog.textContent).toContain('This deletes the format and the rules of its 3 input files.');
       expect(dialog.textContent).toContain('It frees a saved-format slot, but it does not give back any AI formats you used.');
       expect(deleteFormat).not.toHaveBeenCalled();
 
@@ -257,7 +258,7 @@ describe('the company\'s Source objects have no screen on My formats (SPEC 8.15:
   });
 
   it('deleting a format says it goes with its sources, and never mentions a list of the company\'s sources', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) } }), route: '/formats' });
+    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) }, features: { formatSources: true } }), route: '/formats' });
     await screen.findByTestId('format-list');
     fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Delete' }));
     const dialog = await screen.findByRole('dialog');
@@ -306,7 +307,7 @@ describe('one format', () => {
         needsReview: [],
       }));
     const deleteConversion = vi.fn(async () => undefined);
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => two), updateConversion, deleteConversion } }), route: '/formats/F1' });
+    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => two), updateConversion, deleteConversion }, features: { formatSources: true } }), route: '/formats/F1' });
     await screen.findByTestId('source-rows');
     const first = screen.getAllByTestId('source-row')[0]!;
 

@@ -142,7 +142,6 @@ export const formatsEn = {
   'add.type.xlsx': 'an Excel file (.xlsx)',
   'add.type.csv': 'a CSV file',
   'add.type.txt': 'a text file',
-  'add.fromMatch': 'Your files are filled in from the format you just learned. The free engine learns them against this format first.',
   'add.deep.whole': 'For a source of a format, the deep analysis starts again from your two files and builds all of it, to the format exactly.',
 } as const satisfies Record<string, string>;
 
@@ -277,6 +276,5 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'add.type.xlsx': 'Excel (.xlsx)',
   'add.type.csv': 'CSV',
   'add.type.txt': 'טקסט',
-  'add.fromMatch': 'הקבצים שלכם מולאו מהפורמט שזה עתה למדתם. המנוע החינמי לומד אותם קודם מול הפורמט הזה.',
   'add.deep.whole': 'עבור מקור של פורמט, הניתוח המעמיק מתחיל מחדש משני הקבצים שלכם ובונה את הכול, בדיוק לפי הפורמט.',
 };

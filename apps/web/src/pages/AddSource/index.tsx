@@ -8,7 +8,7 @@
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
 import { canAddSource, defaultSourceName } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { isAiQuotaHit, useAiLimit, useQuotaRefusal } from '../../app/AiLimit';
 import { useOnAi } from '../../app/aiReport';
 import { useFeatures } from '../../app/Features';
@@ -208,9 +208,7 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   const meRef = useRef(me);
   meRef.current = me;
   const signIn = useSignIn();
-  const location = useLocation();
   const session = useLearnSession();
-  const fromSession = (location.state as { fromSession?: boolean } | null)?.fromSession === true && session.input !== null && session.output !== null;
 
   // (a stable function: a new one every render would make a new flow every render, and drop the learn in progress)
   const getTier = useCallback(() => meRef.current.tier, []);
@@ -220,8 +218,8 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   const target = useMemo(() => formatOf(format), [format]);
 
   const [sourceName, setSourceName] = useState('');
-  const [input, setInput] = useState<File | null>(fromSession ? session.input : null);
-  const [output, setOutput] = useState<File | null>(fromSession ? session.output : null);
+  const [input, setInput] = useState<File | null>(null);
+  const [output, setOutput] = useState<File | null>(null);
   const [masking, setMasking] = useState(session.masking);
   const [sendOpen, setSendOpen] = useState(false);
   const inputInfo = useFileInfo(input, 'input');
@@ -259,19 +257,9 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   const lastAi = useRef<'notAllowed' | 'allowed'>('notAllowed');
   const begin = (ai: 'notAllowed' | 'allowed' = 'notAllowed'): void => {
     if (!ready || !input || !output) return;
-    // The session's own files (the Result screen's Save: "Add as a source"): the user's choices of what is sent go with them.
-    const sameFiles = input === session.input && output === session.output;
     lastAi.current = ai;
-    void flow.start({ input, output, masking, ai, target, ...(sameFiles ? { columnChoices: session.columnChoices } : {}) });
+    void flow.start({ input, output, masking, ai, target });
   };
-  // Sent here by the Result screen's Save ("Add as a source" of a result with fields missing): the files are the session's, and the free learn
-  // starts by itself as soon as they have been read - one click less.
-  const autoStarted = useRef(false);
-  useEffect(() => {
-    if (!fromSession || autoStarted.current || !ready || state.status !== 'idle') return;
-    autoStarted.current = true;
-    begin();
-  });
 
   // The AI step was refused for the quota: the out-of-AI-formats dialog says so (and when they come back) over the form, the files kept -
   // not an error screen - the way every flow says it.
@@ -329,7 +317,6 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
           </ol>
         </div>
 
-        {fromSession ? <InlineMessage tone="info">{t('add.fromMatch')}</InlineMessage> : null}
 
         <TextField
           label={t('add.sourceName')}
