@@ -3,7 +3,7 @@
 // the backstop for tests and other callers; this check is what the owner sees first, with EVERY missing setting in one
 // message instead of one per restart. It never prints a value: only names, and what a value must look like.
 import { existsSync } from 'node:fs';
-import { LEARN_CHECKS_MODES, learnChecksModeOf, models, type LlmProviderName } from '@formatai/shared';
+import { FEATURE_SWITCH_VALUES, featureSwitchOf, features, LEARN_CHECKS_MODES, learnChecksModeOf, models, type LlmProviderName } from '@formatai/shared';
 import path from 'node:path';
 import { isTurnstileDisabled, repoRoot, type Env } from './env.js';
 import { PROVIDER_TABLE } from './auth/providers.js';
@@ -110,6 +110,11 @@ export function checkProductionConfig(
   // AI code checks (SPEC 21 v14): who gets learn-v9. A value that is no mode is a typo that would silently mean "nobody".
   if (learnChecksModeOf(env.LEARN_CHECKS) === null) {
     problems.push(`LEARN_CHECKS must be one of ${LEARN_CHECKS_MODES.join(', ')} (or unset: off)`);
+  }
+  // Feature switch "Formats with several sources" (config/features.ts): a value that is neither on nor off is a typo that would silently
+  // mean the default.
+  if (featureSwitchOf(env.FEATURE_FORMAT_SOURCES, features.formatSources) === null) {
+    problems.push(`FEATURE_FORMAT_SOURCES must be one of ${FEATURE_SWITCH_VALUES.join(', ')} (or unset: ${features.formatSources ? 'on' : 'off'})`);
   }
 
   // Sign-in: at least one provider, and never half of one (a provider with only an id is silently not offered).

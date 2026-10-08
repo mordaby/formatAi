@@ -60,6 +60,7 @@ const converted = (): unknown => ({
 
 function setup(over: { registry?: Record<string, unknown>; learn?: Parameters<typeof fakeEngine>[0]; engine?: Record<string, unknown>; apiLearn?: () => Promise<never>; auth?: Record<string, unknown>; lang?: 'en' | 'he' } = {}) {
   const api = fakeApi({
+    features: { formatSources: true },
     user: USER,
     ...(over.auth ? { auth: over.auth } : {}),
     registry: { getFormat: vi.fn(async () => format), attachSource: vi.fn(async () => ({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' }), source: { id: 'S2', name: 'Supplier B', formats: 1 } })), ...over.registry },
@@ -186,7 +187,7 @@ describe('the Add a source screen', () => {
   });
 
   it('says it in Hebrew', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => format) } }), route: ROUTE, lang: 'he', engine: fakeEngine(undefined, undefined, { readHeaders: vi.fn(async () => ({ ok: true, headers: ['Item Code', 'Product', 'Unit Price', 'Category'], sheetName: 'S', direction: 'ltr', rows: 3 })) }).engine });
+    renderApp({ api: fakeApi({ features: { formatSources: true }, user: USER, registry: { getFormat: vi.fn(async () => format) } }), route: ROUTE, lang: 'he', engine: fakeEngine(undefined, undefined, { readHeaders: vi.fn(async () => ({ ok: true, headers: ['Item Code', 'Product', 'Unit Price', 'Category'], sheetName: 'S', direction: 'ltr', rows: 3 })) }).engine });
     await screen.findByTestId('add-format-columns');
     fireEvent.change(await screen.findByLabelText('דוגמת פלט'), { target: { files: [xlsx('renamed.xlsx')] } });
     const list = await screen.findByTestId('output-mismatch');
@@ -338,6 +339,30 @@ describe('the Add a source screen', () => {
     expect(screen.getByRole('button', { name: 'Upgrade' })).toBeTruthy();
   });
 
+  it('a format already at the limit (registered, 3 sources) says so before anything is dropped: no form, the limit and Upgrade - in either language', async () => {
+    const full = getFormatResponse({ id: 'F1', name: 'Supplier price list', sources: ['A', 'B', 'C'].map((x) => conversionSummary({ id: `C${x}`, sourceName: `Supplier ${x}` })), detail: { ...format.format, sources: 3 } });
+    const { learn } = setup({ registry: { getFormat: vi.fn(async () => full) } });
+    expect(await screen.findByTestId('source-limit')).toBeTruthy();
+    expect(screen.getByTestId('source-limit').textContent).toContain("Supplier price list already has 3 sources (your plan's limit).");
+    expect(screen.getByRole('button', { name: 'Upgrade' })).toBeTruthy();
+    expect(screen.queryByTestId('add-format-columns')).toBeNull();
+    expect(screen.queryByLabelText('Example input')).toBeNull();
+    expect(learn).not.toHaveBeenCalled();
+    cleanup();
+
+    setup({ registry: { getFormat: vi.fn(async () => full) }, lang: 'he' });
+    expect(await screen.findByTestId('source-limit')).toBeTruthy();
+    expect(screen.getByTestId('source-limit').textContent).toContain('לפורמט Supplier price list כבר יש 3 מקורות (המגבלה של התוכנית שלכם).');
+  });
+
+  it('a paid plan has no limit: a format with 3 sources still opens the form', async () => {
+    const PAID = { ...USER, tier: 'paid' as const };
+    const full = getFormatResponse({ id: 'F1', name: 'Supplier price list', sources: ['A', 'B', 'C'].map((x) => conversionSummary({ id: `C${x}`, sourceName: `Supplier ${x}` })), detail: { ...format.format, sources: 3 } });
+    setup({ registry: { getFormat: vi.fn(async () => full) }, auth: { me: vi.fn(async () => PAID), setLanguage: vi.fn(async () => PAID) } });
+    expect(await screen.findByTestId('add-format-columns')).toBeTruthy();
+    expect(screen.queryByTestId('source-limit')).toBeNull();
+  });
+
   it('the AI step refused for the quota (429 limitHit aiLearns): the out-of-AI-formats dialog over the form, the files kept - not an error screen', async () => {
     const apiLearn = vi.fn(async () => Promise.reject(new ApiError('limitHit', 429, { limit: 'aiLearns', period: 'month' })));
     setup({ apiLearn, learn: freeThenAi });
@@ -406,12 +431,12 @@ describe('the Add a source screen', () => {
   });
 
   it('a format that is not there says so', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => Promise.reject(new ApiError('notFound', 404))) } }), route: ROUTE });
+    renderApp({ api: fakeApi({ features: { formatSources: true }, user: USER, registry: { getFormat: vi.fn(async () => Promise.reject(new ApiError('notFound', 404))) } }), route: ROUTE });
     expect(await screen.findByText("We couldn't find this format. It may have been deleted.")).toBeTruthy();
   });
 
   it('a visitor is asked to sign in', async () => {
-    renderApp({ api: fakeApi(), route: ROUTE });
+    renderApp({ api: fakeApi({ features: { formatSources: true } }), route: ROUTE });
     expect(await screen.findByText('Sign in to see your saved formats.')).toBeTruthy();
   });
 
@@ -425,6 +450,7 @@ describe('the Add a source screen', () => {
       .mockRejectedValueOnce(new ApiError('signInRequired', 401))
       .mockResolvedValue({ conversion: conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' }), source: { id: 'S2', name: 'Supplier B', formats: 1 } });
     const api = fakeApi({
+    features: { formatSources: true },
       user: USER,
       auth: { me },
       registry: { getFormat: vi.fn(async () => format), attachSource },
@@ -654,7 +680,7 @@ describe('which source is this file? Automatic and silent (SPEC 8.15: no source 
   });
 
   it('says the name field in Hebrew, with no chooser', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => format), listSources: vi.fn(async () => [SUPPLIER_A, MASTER]) } }), route: ROUTE, lang: 'he' });
+    renderApp({ api: fakeApi({ features: { formatSources: true }, user: USER, registry: { getFormat: vi.fn(async () => format), listSources: vi.fn(async () => [SUPPLIER_A, MASTER]) } }), route: ROUTE, lang: 'he' });
     expect(await screen.findByLabelText('שם המקור')).toBeTruthy();
     expect(screen.getByText('לא חובה. למשל הספק או הלקוח שממנו הקובץ מגיע. השאירו ריק ונבחר שם בשבילכם.')).toBeTruthy();
     expect(screen.queryByLabelText('לאיזה מקור שייך הקובץ הזה?')).toBeNull();
@@ -765,10 +791,10 @@ describe('Add a source: the free engine first, the AI step only on the click', (
   });
 });
 
-describe('from the Result screen\'s Save ("Add as a source" of a result with fields left)', () => {
-  it('the Result screen shows no "looks like your format" banner: the question is asked at Save', async () => {
+describe('the Result screen never offers "Add as a source": another input for a format is asked at Learn', () => {
+  it('no "looks like your format" banner and no "Add as a source" button on the Result screen', async () => {
     const NAMES = formatSummary({ id: 'F7', name: 'Names list', outputHeaders: ['Name'], fileType: 'xlsx', outputColumns: 1 });
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [NAMES]) } });
+    const api = fakeApi({ features: { formatSources: true }, user: USER, registry: { listFormats: vi.fn(async () => [NAMES]) } });
     const { engine } = fakeEngine(async () => learnResult({ path: 'local' }));
     renderApp({ engine, api });
     fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });
@@ -779,33 +805,6 @@ describe('from the Result screen\'s Save ("Add as a source" of a result with fie
     await waitFor(() => expect(api.registry.listFormats).toHaveBeenCalled());
     expect(screen.queryByText(/looks like your format/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add as a source' })).toBeNull();
-  });
-
-  it('opens Add a source with the same files, and the free learn starts by itself', async () => {
-    const NAMES = formatSummary({ id: 'F1', name: 'Supplier price list', outputHeaders: HEADERS, fileType: 'xlsx', outputColumns: 4 });
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [NAMES]), getFormat: vi.fn(async () => format), signatures: vi.fn(async () => []) } });
-    const { engine, learn } = fakeEngine(async () => partialAttach(), undefined, {
-      readHeaders: vi.fn(async ({ file }: { file: { name: string } }) => ({ ok: true, headers: file.name === 'load.xlsx' ? HEADERS : ['Code', 'Name', 'Price'], sheetName: 'S', direction: 'ltr', rows: 3 })),
-    });
-    renderApp({ engine, api });
-    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('supplier-b.csv')] } });
-    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [xlsx('load.xlsx')] } });
-    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
-    await act(async () => void fireEvent.click(screen.getByRole('button', { name: /Learn the format/ })));
-    await screen.findByTestId('rules-map');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Save format' }) as HTMLButtonElement).disabled).toBe(false));
-    await act(async () => void fireEvent.click(screen.getByRole('button', { name: 'Save format' })));
-    const box = await screen.findByRole('dialog', { name: 'Save this format?' });
-    expect(within(box).getByTestId('format-match-question').textContent).toBe('This looks like your format Supplier price list. Add this file as a new source of it?');
-    await act(async () => void fireEvent.click(within(box).getByRole('button', { name: 'Add as a source' })));
-    // Add a source, with the session's files, learning against the format - the free engine, by itself.
-    await waitFor(() => expect(learn).toHaveBeenCalledTimes(2));
-    const args = learn.mock.calls[1]![0] as { ai: string; target?: unknown };
-    expect(args.ai).toBe('notAllowed');
-    expect(args.target).toBeDefined();
-    await screen.findByTestId('deep-panel');
-    expect(api.learn).not.toHaveBeenCalled();
-    expect(api.registry.attachSource).not.toHaveBeenCalled();
   });
 });
 

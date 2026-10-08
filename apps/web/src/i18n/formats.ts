@@ -40,6 +40,8 @@ export const formatsEn = {
   'formats.slots': 'Saved formats: {used} of {max}',
   'formats.convert': 'Run this format',
   'formats.addSource': 'Add a source',
+  // (the plan's sources per format, SPEC 11: shown before the user starts, never after a learn)
+  'formats.sourceLimit': '{format} already has {n} sources (your plan\'s limit).',
   'formats.editRules': 'Edit rules',
   'formats.rename': 'Rename',
   'formats.delete': 'Delete',
@@ -140,7 +142,6 @@ export const formatsEn = {
   'add.type.xlsx': 'an Excel file (.xlsx)',
   'add.type.csv': 'a CSV file',
   'add.type.txt': 'a text file',
-  'add.fromMatch': 'Your files are filled in from the format you just learned. The free engine learns them against this format first.',
   'add.deep.whole': 'For a source of a format, the deep analysis starts again from your two files and builds all of it, to the format exactly.',
 } as const satisfies Record<string, string>;
 
@@ -179,6 +180,7 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'formats.slots': 'פורמטים שמורים: {used} מתוך {max}',
   'formats.convert': 'הרצת הפורמט',
   'formats.addSource': 'הוספת מקור',
+  'formats.sourceLimit': 'לפורמט {format} כבר יש {n} מקורות (המגבלה של התוכנית שלכם).',
   'formats.editRules': 'עריכת כללים',
   'formats.rename': 'שינוי שם',
   'formats.delete': 'מחיקה',
@@ -274,6 +276,5 @@ export const formatsHe: Record<keyof typeof formatsEn, string> = {
   'add.type.xlsx': 'Excel (.xlsx)',
   'add.type.csv': 'CSV',
   'add.type.txt': 'טקסט',
-  'add.fromMatch': 'הקבצים שלכם מולאו מהפורמט שזה עתה למדתם. המנוע החינמי לומד אותם קודם מול הפורמט הזה.',
   'add.deep.whole': 'עבור מקור של פורמט, הניתוח המעמיק מתחיל מחדש משני הקבצים שלכם ובונה את הכול, בדיוק לפי הפורמט.',
 };

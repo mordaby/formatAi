@@ -40,6 +40,8 @@ const three = getFormatResponse({
 
 function apiFor(over: Record<string, unknown> = {}, format = three) {
   return fakeApi({
+    // ("Formats with several sources" on: this file is about a source's editor as the explicit source UI says it; off - sourceWording.test.tsx)
+    features: { formatSources: true },
     user: USER,
     registry: {
       getConversion: vi.fn(async () => conversionDetail({ id: 'C1', version: 4, sourceName: 'Supplier A' }, cleanRules())),

@@ -60,7 +60,7 @@ function defineProtectionSuite(kit: StoreKit): void {
       expect(raw).not.toMatch(/Secure/i); // development: plain http is fine
     });
 
-    it('returns no user data: the free tier, its limits, and the Turnstile site key when configured', async () => {
+    it('returns no user data: the free tier, its limits, the Turnstile site key when configured, and the feature switches', async () => {
       const h = await setup({ env: { VITE_TURNSTILE_SITE_KEY: 'site-key-123' } });
       const res = await h.get('/api/session');
       expect(res.headers['cache-control']).toBe('no-store');
@@ -69,6 +69,8 @@ function defineProtectionSuite(kit: StoreKit): void {
         tier: 'free',
         limits: JSON.parse(JSON.stringify(tiers.anonymous)),
         turnstileSiteKey: 'site-key-123',
+        // ("Formats with several sources": off unless FEATURE_FORMAT_SOURCES=on)
+        features: { formatSources: false },
       });
     });
 

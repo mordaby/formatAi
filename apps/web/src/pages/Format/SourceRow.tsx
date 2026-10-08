@@ -14,10 +14,17 @@ export interface SourceRowProps {
   source: ConversionSummary;
   onRenamed(source: ConversionSummary): void;
   onDeleted(id: string): void;
+  /**
+   * "Formats with several sources" is on: the row is a source (rename, delete). Off: it is one of the format's input files - named by its saved
+   * name, with no rename, and "Remove this input file" only when it is not the format's last one (the format itself is deleted from My formats).
+   */
+  explicit: boolean;
+  /** The format has other inputs besides this one. */
+  others: boolean;
 }
 
 /** One source of a format: its name, status and last run, and what can be done with it (edit its rules, rename, delete). */
-export function SourceRow({ formatId, source, onRenamed, onDeleted }: SourceRowProps) {
+export function SourceRow({ formatId, source, onRenamed, onDeleted, explicit, others }: SourceRowProps) {
   const { t, code, lang } = useI18n();
   const { api } = useServices();
   const [renaming, setRenaming] = useState(false);
@@ -107,12 +114,16 @@ export function SourceRow({ formatId, source, onRenamed, onDeleted }: SourceRowP
         <LinkButton variant="secondary" size="sm" to={`/formats/${formatId}/sources/${source.id}`}>
           {t('format.source.edit')}
         </LinkButton>
-        <Button variant="ghost" size="sm" onClick={() => setRenaming(true)} disabled={renaming}>
-          {t('format.source.rename')}
-        </Button>
-        <Button variant="ghost" size="sm" icon="trash" onClick={() => setConfirmDelete(true)}>
-          {t('format.source.delete')}
-        </Button>
+        {explicit ? (
+          <Button variant="ghost" size="sm" onClick={() => setRenaming(true)} disabled={renaming}>
+            {t('format.source.rename')}
+          </Button>
+        ) : null}
+        {explicit || others ? (
+          <Button variant="ghost" size="sm" icon="trash" onClick={() => setConfirmDelete(true)}>
+            {t('format.source.delete')}
+          </Button>
+        ) : null}
       </div>
 
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title={t('format.source.deleteTitle', { name: source.sourceName })}>

@@ -1,7 +1,10 @@
 // The Result screen (SPEC 16.1 screen 4, 8.11) for a fresh learn: the working part (`Workbench`) plus what is specific to a learn -
-// the local result before the AI step (SPEC 21 v5), the AI quota, and saving - where "Save format" first asks, in the Save popup, whether
-// the learned output is one of the user's saved formats (owner decision 2026-10-07: update its rules, add the file as a new source of it, or
-// save a new format; `useFormatMatch`, `FormatMatchDialog`). Nothing matches: Save goes at once, as before.
+// the local result before the AI step (SPEC 21 v5), the AI quota, and saving (owner decisions 2026-10-07):
+//   - a learn for one of the user's formats ("Yes, learn it for X" at Learn, `session.attachTo`): Save adds the file as another input of that
+//     format, with no further question;
+//   - otherwise, when the learned output is a saved format this input already feeds (the same file, other values), "Save format" first asks
+//     in the Save popup: "Update your format X, or save as a new format?" (`useFormatMatch`, `FormatMatchDialog`). Nothing matches: Save goes
+//     at once, as before. Neither depends on the feature switch.
 // Once the learn is saved (a format and its first source, a new source of a saved format, or a new version of one of its sources) the SAME
 // screen becomes the editor of that source: its address is the source's own, the example files stay in the worker for the live check, and
 // every further save is a new version of the source.
@@ -40,6 +43,7 @@ import { useCopiedListGate, type SaveChoice } from './CopiedListSave';
 import { columnKey, DeepAnalysisPanel, partKey } from './DeepAnalysisPanel';
 import { filledNote } from './filledNote';
 import { oneTimeQuestionsOf, questionsOf } from './helpers';
+import { Marked } from './Named';
 import { PartialSignInDialog } from './PartialResult';
 import { SaveFailureMessage } from './SaveMessages';
 import { UnfinishedRows } from './UnfinishedRows';
@@ -78,7 +82,9 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
 
   // The edits (and the name, and where the learn was saved) live in the session, not in this component: they survive leaving the screen
   // and the sign-in wall.
-  const kept = getResultSession(result, defaultFormatName(session.output?.name, t('result.untitled')));
+  // A learn for one of the user's formats ("Yes, learn it for X" at Learn): its name is that format's, and Save adds the file to it.
+  const attachTo = session.attachTo;
+  const kept = getResultSession(result, attachTo ? attachTo.formatName : defaultFormatName(session.output?.name, t('result.untitled')));
   const [name, setName] = useState(kept.name);
   const rules = result.rules!;
 
@@ -187,9 +193,10 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
   }, [aiPending, me.status, me.user]);
 
   const save = useSave<FirstSave>();
-  // "Is this one of your formats?" (owner decision 2026-10-07): asked at the first Save of a learn, for a signed-in user (the list of their
-  // formats is read in the background as soon as the result is shown, so a Save that matches nothing waits for nothing).
-  const formatMatch = useFormatMatch(me.user !== null && !source);
+  // "Update your format X?" (owner decisions 2026-10-07): asked at the first Save of a learn, for a signed-in user (the list of their formats
+  // is read in the background as soon as the result is shown, so a Save that matches nothing waits for nothing). Not for a learn that was for
+  // a chosen format: that one is added to it.
+  const formatMatch = useFormatMatch(me.user !== null && !source && !attachTo);
   const [matching, setMatching] = useState(false);
   const matchingNow = useRef(false);
 
@@ -216,7 +223,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     }
   };
 
-  /** The rules as one of the user's saved formats was learned into: a new source of it, or a new version of its source. */
+  /** The rules as one of the user's saved formats was learned into: another input of it, or a new version of the rules of this input. */
   const saveInto = (info: WorkbenchInfo, choice: { kind: 'update' | 'attach'; offer: FormatOffer }): void => {
     const file = session.input;
     if (!info.metaStatus || !file) return;
@@ -256,8 +263,8 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
       });
       return;
     }
-    // A new source of the format (SPEC 5 A2): the rules are already learned and hold the format lock (checked before it was offered; the
-    // server checks it again), so they are saved as they are - the server reuses the source the example input matches, or makes one.
+    // Another input of the format (the learn was for it, with its output side taken from it - the format lock holds, and the server checks it
+    // again with the plan's limit): the server reuses the source the example input matches, or makes one.
     const learnPath = completed ? 'llm' : result.path === 'llm' ? (ai?.cached ? 'cache' : 'llm') : 'local';
     const inputHeaders = result.exampleInput?.map((c) => c.header);
     const suggestedSourceName = defaultSourceName(file.name);
@@ -285,12 +292,6 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
 
   const doSave = (info: WorkbenchInfo, choice: SaveChoice): void => {
     if (choice.kind !== 'new') {
-      // A free result with fields still missing is not added as it is: the Add a source screen learns the file against the format, the free
-      // engine first, and offers "Finish with AI" for what is left (owner decision 2026-10-07). The files go with it.
-      if (choice.kind === 'attach' && incompleteNow()) {
-        navigate(`/formats/${choice.offer.formatId}/add-source`, { state: { fromSession: true } });
-        return;
-      }
       saveInto(info, choice);
       return;
     }
@@ -302,7 +303,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     // leave the computer); the rules alone would give a subset.
     const inputHeaders = result.exampleInput?.map((c) => c.header);
     // A new source is named after the example input file, without what changes from file to file ("orders 2026-09.xlsx" is "orders"); nothing
-    // is sent when nothing is left of the name (the server then names it "Source N"). Only the file's name is used, never a cell.
+    // is sent when nothing is left of the name (the server then names it "Input N"). Only the file's name is used, never a cell.
     const suggestedSourceName = defaultSourceName(file.name);
     const body: CreateFormatRequest = {
       name,
@@ -327,16 +328,19 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     });
   };
 
-  /** The free result still has fields the AI step was not asked for, and nobody filled them: it is not a finished result yet. */
-  const incompleteNow = (): boolean => aiPending && missing.any;
-
   /**
-   * "Save format": ask first whether the learned output is one of the user's saved formats (nothing matches: no question, and the save goes on
-   * exactly as before); together with the Save popup's question about lists and identifier values, in ONE dialog.
+   * "Save format": a learn for one of the user's formats is added to it (no question but the lists' one); otherwise ask first whether to update
+   * a saved format this input already feeds (nothing matches: no question, and the save goes on exactly as before) - together with the Save
+   * popup's question about lists and identifier values, in ONE dialog.
    */
   const startSave = async (info: WorkbenchInfo): Promise<void> => {
     const findings = findingsToConfirm(info.rules, copied);
-    // (no saved format has these headers: nothing to read or wait for - the save goes at once, exactly as before)
+    if (attachTo) {
+      const offer: FormatOffer = { formatId: attachTo.formatId, formatName: attachTo.formatName, sources: attachTo.sources, kind: 'attach', reasons: [], format: attachTo.format };
+      gate.save(info, findings, (i) => saveInto(i, { kind: 'attach', offer }));
+      return;
+    }
+    // (no saved format has these headers: nothing to read or wait for - the save goes at once, as before)
     if (formatMatch.surelyNone(info.rules)) {
       gate.save(info, findings, doSave);
       return;
@@ -353,10 +357,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
     }
     // (rules changed while the formats were read: nothing is saved - Save is there to press again)
     if (kept.store.getState().rules !== info.rules) return;
-    // A free result with fields missing is not attached as it is (`doSave`): the format lock of THESE rules says nothing about the rules the
-    // Add a source screen will learn, so the file is offered as a source whatever it says.
-    const offered = incompleteNow() ? offers.map((o) => (o.kind === 'locked' ? { ...o, kind: 'attach' as const, reasons: [] } : o)) : offers;
-    gate.save(info, findings, doSave, offered);
+    gate.save(info, findings, doSave, offers);
   };
 
   // A save after the first one (or an attempt at it) has been made: the first save's message has done its job.
@@ -392,7 +393,11 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
    * to complete, so the button runs the whole learn instead.
    */
   const runDeep = (): void => {
-    if (missing.completable) {
+    // (a learn for one of the user's formats: always the whole learn against it - completion mode is not combined with a format target)
+    if (attachTo) {
+      if (hasEdits()) setConfirmWhole(true);
+      else learnWhole();
+    } else if (missing.completable) {
       const columns = missing.columns.filter((c) => !unticked.has(columnKey(c))).map((c) => c.index);
       const parts = missing.parts.filter((code) => !unticked.has(partKey(code)));
       if (columns.length + parts.length === 0) return;
@@ -406,7 +411,7 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
   const runRef = useRef(runDeep);
   runRef.current = runDeep;
   const autoStart =
-    session.deepAnalysis && me.user !== null && aiPending && !source && missing.any && me.quota?.remaining !== 0 && (missing.completable || !hasEdits());
+    session.deepAnalysis && me.user !== null && aiPending && !source && missing.any && me.quota?.remaining !== 0 && ((missing.completable && !attachTo) || !hasEdits());
   useEffect(() => {
     if (!autoStart || kept.deepRun) return;
     runRef.current();
@@ -507,7 +512,8 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
           aiNotes={aiNotes}
           unticked={unticked}
           onToggle={toggle}
-          whole={!missing.completable}
+          whole={!missing.completable || attachTo !== null}
+          wholeNote={attachTo ? t('attach.deep.whole') : undefined}
           primary={incomplete}
           onRun={runDeep}
           onSignIn={() => setPopupOpen(true)}
@@ -531,13 +537,42 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
         />
       )}
       {aiInfo && <AiNote ai={aiInfo} verified={(completed ? completed.verification : result.verification)?.verified === true} />}
+      {/* "You already have this format", the other way (owner decision 2026-10-07): a saved format with this output, from this file, whose rules
+          make other values - so the rules were learned again. One line, until the first save. */}
+      {!source && result.knownDiffers ? (
+        <p className="muted" data-testid="known-differs">
+          <Marked
+            id="known.differs"
+            nodes={{
+              format: (
+                <strong>
+                  <bdi>{result.knownDiffers.formatName}</bdi>
+                </strong>
+              ),
+            }}
+          />
+        </p>
+      ) : null}
+      {/* A learn for one of the user's formats: said once, until it is saved into it. */}
+      {!source && attachTo ? (
+        <p className="muted" data-testid="attach-for">
+          <Marked
+            id="attach.for"
+            nodes={{
+              format: (
+                <strong>
+                  <bdi>{attachTo.formatName}</bdi>
+                </strong>
+              ),
+            }}
+          />
+        </p>
+      ) : null}
       {/* What the first save said, until a later save has something to say. (A new version of a saved source is said by the editor's notice.) */}
       {!laterSave && save.state.status === 'saved' && save.state.value.kind !== 'update' && (
         <InlineMessage tone="info" actions={<Link to="/formats">{t('save.viewFormats')}</Link>}>
           <p>
-            {save.state.value.kind === 'attach'
-              ? t('add.saved', { source: save.state.value.res.source.name, format: save.state.value.formatName })
-              : t('save.done', { name })}
+            {save.state.value.kind === 'attach' ? t('attach.saved', { format: save.state.value.formatName }) : t('save.done', { name })}
           </p>
         </InlineMessage>
       )}
@@ -545,8 +580,8 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
         <SaveFailureMessage
           failure={save.state.error}
           onSignIn={() => signIn.open('save')}
-          // (a new source of a saved format the server refused for the format or source lock: said like Add a source says it)
-          {...(save.state.error.code === 'formatMismatch' ? { problemsTitle: t('add.saveMismatch.title') } : {})}
+          // (another input of a saved format the server refused for the format lock: said without "source")
+          {...(save.state.error.code === 'formatMismatch' ? { problemsTitle: t('attach.mismatch.title') } : {})}
         />
       )}
       {source && (
@@ -567,6 +602,8 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
         exampleInput={result.exampleInput}
         inputFile={session.input}
         tier={me.tier}
+        // (a learn for one of the user's formats: its output side is that format's - the format lock is on)
+        format={!source && attachTo ? attachTo.format : undefined}
         partial={partial}
         aiNotes={aiNotes}
         ambiguous={questions}
@@ -574,9 +611,9 @@ function ResultScreen({ result, ai, sent }: { result: LearnOutput; ai: AiInfo | 
         analysing={analysing}
         verification={completed ? completed.verification : result.verification}
         name={name}
-        // A saved format is renamed from its own page (the name was saved with it).
+        // A saved format is renamed from its own page (the name was saved with it) - and so is the format a learn is for.
         onRename={
-          source
+          source || attachTo
             ? undefined
             : (next) => {
                 setName(next);

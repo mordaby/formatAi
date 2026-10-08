@@ -21,3 +21,4 @@ export * from './partial';
 export * from './complete';
 export * from './readiness';
 export * from './sendPreview';
+export * from './alreadyLearned';

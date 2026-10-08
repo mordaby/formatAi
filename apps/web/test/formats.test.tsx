@@ -41,7 +41,7 @@ describe('My formats', () => {
   });
 
   it('lists each format with "← N sources", its statuses, its runs and its actions', async () => {
-    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER, CONTACTS]) } });
+    const api = fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER, CONTACTS]) }, features: { formatSources: true } });
     renderApp({ api, route: '/formats' });
     await screen.findByTestId('format-list');
     expect(cards()).toHaveLength(2);
@@ -57,7 +57,8 @@ describe('My formats', () => {
     expect(supplier.textContent).toContain('Last run');
 
     expect(within(supplier).getByRole('link', { name: 'Run this format' }).getAttribute('href')).toBe('/convert?format=F1');
-    expect(within(supplier).getByRole('link', { name: 'Add a source' }).getAttribute('href')).toBe('/formats/F1/add-source');
+    // (3 sources: a registered plan's limit - said up front instead of a way in, see "sources per format" below)
+    expect(within(supplier).queryByRole('link', { name: 'Add a source' })).toBeNull();
     expect(within(supplier).getByRole('link', { name: 'Edit rules' }).getAttribute('href')).toBe('/formats/F1');
     expect(within(supplier).getByRole('button', { name: 'Rename' })).toBeTruthy();
     expect(within(supplier).getByRole('button', { name: 'Delete' })).toBeTruthy();
@@ -66,6 +67,55 @@ describe('My formats', () => {
     expect(contacts.querySelector('.format-card__sources')!.textContent).toBe('←1 source');
     expect(within(contacts).getByText('1 with differences')).toBeTruthy();
     expect(contacts.textContent).toContain('Not run yet');
+    expect(within(contacts).getByRole('link', { name: 'Add a source' }).getAttribute('href')).toBe('/formats/F2/add-source');
+  });
+
+  describe("the plan's sources per format, said before the user starts (SPEC 11)", () => {
+    const ON = { formatSources: true };
+    it('a registered user at 3 sources: no way in, the limit and the upgrade - on the card and on the format', async () => {
+      const { unmount } = renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) }, features: ON }), route: '/formats' });
+      await screen.findByTestId('format-list');
+      const card = cards()[0]!;
+      await waitFor(() => expect(within(card).getByTestId('source-limit')).toBeTruthy());
+      expect(within(card).getByTestId('source-limit').textContent).toContain("Supplier price list already has 3 sources (your plan's limit).");
+      expect(within(card).getByRole('button', { name: 'Upgrade' })).toBeTruthy();
+      expect(within(card).queryByRole('link', { name: 'Add a source' })).toBeNull();
+      unmount();
+
+      const three = getFormatResponse({
+        id: 'F1',
+        name: 'Supplier price list',
+        sources: ['A', 'B', 'C'].map((x) => conversionSummary({ id: `C${x}`, sourceName: `Supplier ${x}` })),
+      });
+      renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => three) }, features: ON }), route: '/formats/F1' });
+      expect(await screen.findByRole('heading', { name: 'Supplier price list' })).toBeTruthy();
+      await waitFor(() => expect(screen.getByTestId('source-limit').textContent).toContain("already has 3 sources (your plan's limit)."));
+      expect(screen.queryByRole('link', { name: 'Add a source' })).toBeNull();
+      expect(screen.getByRole('link', { name: 'Run this format' })).toBeTruthy();
+    });
+
+    it('under the limit (2 of 3): the way in, and no limit line', async () => {
+      const two = formatSummary({ ...SUPPLIER, sources: 2 });
+      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [two]) }, features: ON }), route: '/formats' });
+      await screen.findByTestId('format-list');
+      await waitFor(() => expect(within(cards()[0]!).getByRole('link', { name: 'Add a source' })).toBeTruthy());
+      expect(screen.queryByTestId('source-limit')).toBeNull();
+    });
+
+    it('a paid plan has no limit: 12 sources and still the way in', async () => {
+      const many = formatSummary({ ...SUPPLIER, sources: 12 });
+      renderApp({ api: fakeApi({ user: { ...USER, tier: 'paid' }, registry: { listFormats: vi.fn(async () => [many]) }, features: ON }), route: '/formats' });
+      await screen.findByTestId('format-list');
+      await waitFor(() => expect(within(cards()[0]!).getByRole('link', { name: 'Add a source' })).toBeTruthy());
+      expect(screen.queryByTestId('source-limit')).toBeNull();
+    });
+
+    it('says it in Hebrew', async () => {
+      renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) }, features: ON }), route: '/formats', lang: 'he' });
+      await screen.findByTestId('format-list');
+      await waitFor(() => expect(screen.getByTestId('source-limit').textContent).toContain('לפורמט Supplier price list כבר יש 3 מקורות (המגבלה של התוכנית שלכם).'));
+      expect(screen.queryByRole('link', { name: 'הוספת מקור' })).toBeNull();
+    });
   });
 
   it('shows how many of the plan\'s saved formats are used', async () => {
@@ -85,7 +135,7 @@ describe('My formats', () => {
         ],
       }),
     );
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), getFormat } }), route: '/formats' });
+    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), getFormat }, features: { formatSources: true } }), route: '/formats' });
     await screen.findByTestId('format-list');
     fireEvent.click(within(cards()[0]!).getByRole('button', { name: /3 sources/ }));
     const list = await within(cards()[0]!).findByRole('link', { name: 'Supplier A' });
@@ -151,7 +201,8 @@ describe('My formats', () => {
       await screen.findByTestId('format-list');
       fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Delete' }));
       const dialog = await screen.findByRole('dialog', { name: 'Delete "Supplier price list"?' });
-      expect(dialog.textContent).toContain('This deletes the format and its 3 sources.');
+      // ("Formats with several sources" off: input files, never sources)
+      expect(dialog.textContent).toContain('This deletes the format and the rules of its 3 input files.');
       expect(dialog.textContent).toContain('It frees a saved-format slot, but it does not give back any AI formats you used.');
       expect(deleteFormat).not.toHaveBeenCalled();
 
@@ -195,7 +246,7 @@ describe('the company\'s Source objects have no screen on My formats (SPEC 8.15:
         sources: [conversionSummary({ id: 'C1', sourceId: 'S1', sourceName: 'Supplier A' }), conversionSummary({ id: 'C2', sourceId: 'S2', sourceName: 'Supplier B' })],
       }),
     );
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources, getFormat } }), route: '/formats' });
+    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]), listSources, getFormat }, features: { formatSources: true } }), route: '/formats' });
     await screen.findByTestId('format-list');
     fireEvent.click(within(cards()[0]!).getByRole('button', { name: /3 sources/ }));
     await screen.findByText('Supplier B');
@@ -207,7 +258,7 @@ describe('the company\'s Source objects have no screen on My formats (SPEC 8.15:
   });
 
   it('deleting a format says it goes with its sources, and never mentions a list of the company\'s sources', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) } }), route: '/formats' });
+    renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [SUPPLIER]) }, features: { formatSources: true } }), route: '/formats' });
     await screen.findByTestId('format-list');
     fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Delete' }));
     const dialog = await screen.findByRole('dialog');
@@ -232,7 +283,7 @@ describe('one format', () => {
   });
 
   it('lists the sources with status and last run, and the two things a format is for', async () => {
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => two) } }), route: '/formats/F1' });
+    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => two) }, features: { formatSources: true } }), route: '/formats/F1' });
     expect(await screen.findByRole('heading', { name: 'Supplier price list' })).toBeTruthy();
     const rows = screen.getAllByTestId('source-row');
     expect(rows).toHaveLength(2);
@@ -256,7 +307,7 @@ describe('one format', () => {
         needsReview: [],
       }));
     const deleteConversion = vi.fn(async () => undefined);
-    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => two), updateConversion, deleteConversion } }), route: '/formats/F1' });
+    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => two), updateConversion, deleteConversion }, features: { formatSources: true } }), route: '/formats/F1' });
     await screen.findByTestId('source-rows');
     const first = screen.getAllByTestId('source-row')[0]!;
 
@@ -328,6 +379,34 @@ describe('Home for a signed-in user (SPEC 16.1 screen 5)', () => {
     await act(async () => {});
     expect(screen.getByLabelText('Example input')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Run a format' })).toBeNull();
+  });
+
+  it('"Formats with several sources" switched off (the MVP): no "Add a source" on a card or on the format, in either language', async () => {
+    const { unmount } = renderApp({ api: fakeApi({ user: USER, registry: { listFormats: vi.fn(async () => [CONTACTS]) } }), route: '/formats' });
+    await screen.findByTestId('format-list');
+    await act(async () => {});
+    expect(within(cards()[0]!).getByRole('link', { name: 'Run this format' })).toBeTruthy();
+    expect(within(cards()[0]!).queryByRole('link', { name: 'Add a source' })).toBeNull();
+    // ... nor the source count and names: the card is the format.
+    expect(cards()[0]!.querySelector('.format-card__sources')).toBeNull();
+    expect(cards()[0]!.textContent).not.toMatch(/source/i);
+    unmount();
+
+    const one = getFormatResponse({ id: 'F2', name: 'Contacts export', sources: [conversionSummary({ id: 'C9', formatId: 'F2', sourceName: 'CRM' })] });
+    renderApp({ api: fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => one) } }), route: '/formats/F2', lang: 'he' });
+    expect(await screen.findByRole('heading', { name: 'Contacts export' })).toBeTruthy();
+    await act(async () => {});
+    expect(screen.queryByRole('link', { name: 'הוספת מקור' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'הרצת הפורמט' })).toBeTruthy();
+  });
+
+  it('switched off, an old "Add a source" link lands on the format itself (nothing can be attached)', async () => {
+    const one = getFormatResponse({ id: 'F2', name: 'Contacts export', sources: [conversionSummary({ id: 'C9', formatId: 'F2', sourceName: 'CRM' })] });
+    const api = fakeApi({ user: USER, registry: { getFormat: vi.fn(async () => one) } });
+    renderApp({ api, route: '/formats/F2/add-source' });
+    expect(await screen.findByRole('heading', { name: 'Contacts export' })).toBeTruthy();
+    expect(screen.queryByText(/Add a source to/)).toBeNull();
+    expect(api.registry.attachSource).not.toHaveBeenCalled();
   });
 
   it('"Teach a new format" from My formats opens the two zones', async () => {

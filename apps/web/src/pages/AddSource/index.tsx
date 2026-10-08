@@ -6,11 +6,12 @@
 // something is left, the Result screen's deep-analysis panel offers "Finish with AI" (the AI step only decides how THIS input produces the
 // format's columns, and is never run without that click). Saving makes a new conversion of the format (a link from the source to it).
 import type { AttachSourceRequest, AttachSourceResponse, Format, FormatDetail, SourceSummary } from '@formatai/shared';
-import { defaultSourceName } from '@formatai/shared';
+import { canAddSource, defaultSourceName } from '@formatai/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { isAiQuotaHit, useAiLimit, useQuotaRefusal } from '../../app/AiLimit';
 import { useOnAi } from '../../app/aiReport';
+import { useFeatures } from '../../app/Features';
 import { useLearnSession } from '../../app/LearnSession';
 import { LinkButton } from '../../app/LinkButton';
 import { useMe } from '../../app/Me';
@@ -39,6 +40,7 @@ import { useCopiedListGate } from '../Result/CopiedListSave';
 import { DeepAnalysisPanel } from '../Result/DeepAnalysisPanel';
 import { missingFields } from '../Result/missingFields';
 import type { UseCompletion } from '../Result/useCompletion';
+import { SourceLimit } from '../Formats/AddSourceEntry';
 import { compareOutput, fileTypeOfName, type OutputMismatch, type OutputFileType } from '../Result/matchFormat';
 import { SaveFailureMessage } from '../Result/SaveMessages';
 import { defaultFormatName } from '../Result/session';
@@ -49,6 +51,20 @@ import type { LearnOutput } from '../../worker/engineApi';
 
 export default function AddSourcePage() {
   const { t } = useI18n();
+  const { id = '' } = useParams();
+  // Part of "Formats with several sources" (the feature switch, app/Features.tsx): while it is off this screen does not exist - an old link
+  // lands on the format itself (and the API refuses the attach anyway).
+  const features = useFeatures();
+  if (!features.known) {
+    return (
+      <main id="main" className="page" tabIndex={-1}>
+        <p className="muted">
+          <Spinner size={14} /> {t('formats.loading')}
+        </p>
+      </main>
+    );
+  }
+  if (!features.formatSources) return <Navigate to={`/formats/${encodeURIComponent(id)}`} replace />;
   return (
     <RequireSignIn title={t('formats.title')}>
       <AddSourceLoader />
@@ -59,6 +75,7 @@ export default function AddSourcePage() {
 function AddSourceLoader() {
   const { t } = useI18n();
   const { api } = useServices();
+  const me = useMe();
   const { id = '' } = useParams();
   // The format, and the names the company's sources already use. The list is a convenience (SPEC 8.15): when it can't be read the save
   // goes on, and the server has the last word on a name in use.
@@ -113,6 +130,25 @@ function AddSourceLoader() {
     );
   }
   const { detail, sources } = data.state.data;
+  // The plan's sources per format (SPEC 11), said before anything is dropped or learned: at the limit there is no form (the save would be
+  // refused), only the limit and the upgrade. (The signed-in user's plan: a session that ends on this screen keeps it - SPEC 5 E.)
+  if (me.user && !canAddSource(me.user.tier, detail.conversions.length)) {
+    return (
+      <main id="main" className="page" tabIndex={-1}>
+        <section className="tool">
+          <div className="view">
+            <p>
+              <Link to="/formats">{t('format.back')}</Link>
+            </p>
+            <header className="tool__head">
+              <h1>{t('add.title', { name: detail.format.name })}</h1>
+            </header>
+            <SourceLimit formatName={detail.format.name} sources={detail.conversions.length} />
+          </div>
+        </section>
+      </main>
+    );
+  }
   return <AddSource format={detail.format} sourceCount={detail.conversions.length} sources={sources} formatSourceNames={detail.conversions.map((c) => c.sourceName)} />;
 }
 
@@ -172,9 +208,7 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   const meRef = useRef(me);
   meRef.current = me;
   const signIn = useSignIn();
-  const location = useLocation();
   const session = useLearnSession();
-  const fromSession = (location.state as { fromSession?: boolean } | null)?.fromSession === true && session.input !== null && session.output !== null;
 
   // (a stable function: a new one every render would make a new flow every render, and drop the learn in progress)
   const getTier = useCallback(() => meRef.current.tier, []);
@@ -184,8 +218,8 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   const target = useMemo(() => formatOf(format), [format]);
 
   const [sourceName, setSourceName] = useState('');
-  const [input, setInput] = useState<File | null>(fromSession ? session.input : null);
-  const [output, setOutput] = useState<File | null>(fromSession ? session.output : null);
+  const [input, setInput] = useState<File | null>(null);
+  const [output, setOutput] = useState<File | null>(null);
   const [masking, setMasking] = useState(session.masking);
   const [sendOpen, setSendOpen] = useState(false);
   const inputInfo = useFileInfo(input, 'input');
@@ -223,19 +257,9 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
   const lastAi = useRef<'notAllowed' | 'allowed'>('notAllowed');
   const begin = (ai: 'notAllowed' | 'allowed' = 'notAllowed'): void => {
     if (!ready || !input || !output) return;
-    // The session's own files (the Result screen's Save: "Add as a source"): the user's choices of what is sent go with them.
-    const sameFiles = input === session.input && output === session.output;
     lastAi.current = ai;
-    void flow.start({ input, output, masking, ai, target, ...(sameFiles ? { columnChoices: session.columnChoices } : {}) });
+    void flow.start({ input, output, masking, ai, target });
   };
-  // Sent here by the Result screen's Save ("Add as a source" of a result with fields missing): the files are the session's, and the free learn
-  // starts by itself as soon as they have been read - one click less.
-  const autoStarted = useRef(false);
-  useEffect(() => {
-    if (!fromSession || autoStarted.current || !ready || state.status !== 'idle') return;
-    autoStarted.current = true;
-    begin();
-  });
 
   // The AI step was refused for the quota: the out-of-AI-formats dialog says so (and when they come back) over the form, the files kept -
   // not an error screen - the way every flow says it.
@@ -293,7 +317,6 @@ function AddSource({ format, sourceCount, sources, formatSourceNames }: AddSourc
           </ol>
         </div>
 
-        {fromSession ? <InlineMessage tone="info">{t('add.fromMatch')}</InlineMessage> : null}
 
         <TextField
           label={t('add.sourceName')}
@@ -464,7 +487,7 @@ function AttachResult({ result, ai, sent, format, target, sourceName, input, mas
       learnPath,
       masking,
       // The name typed is used if the server has to create a source; left empty, the example input file's name is the default
-      // (SPEC 21 v11 item 9), and the server makes it unique. Nothing when no name is left of it ("Source N").
+      // (SPEC 21 v11 item 9), and the server makes it unique. Nothing when no name is left of it ("Input N").
       ...(sourceName !== '' ? { sourceName } : suggestedSourceName !== '' ? { suggestedSourceName } : {}),
       ...(inputHeaders && inputHeaders.length > 0 ? { inputHeaders } : {}),
       // (API audit 2026-10-07: the prompt version the server says it learned with - learn-v9 for an admin under LEARN_CHECKS - never a constant.)

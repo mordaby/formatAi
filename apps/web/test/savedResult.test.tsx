@@ -39,7 +39,8 @@ const enabled = (name: string): void => expect(button(name).disabled).toBe(false
 async function openSaved(over: Record<string, unknown> = {}, edit?: () => Promise<void>) {
   const createFormat = vi.fn(async () => created);
   const updateConversion = vi.fn(async () => patched());
-  const api = fakeApi({ user: USER, registry: { createFormat, updateConversion, ...over } });
+  // ("Formats with several sources" on: the saved source's editor as the explicit source UI says it; off - sourceWording.test.tsx)
+  const api = fakeApi({ user: USER, registry: { createFormat, updateConversion, ...over }, features: { formatSources: true } });
   const ctx = await openResult({ api, convert: converted, dataRouter: true });
   await waitFor(() => enabled('Save format'));
   await edit?.();

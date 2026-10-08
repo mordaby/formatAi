@@ -4,6 +4,7 @@ import {
   codeText,
   directionOf,
   initialLang,
+  interpolate,
   otherLang,
   translate,
   writeLangCookie,
@@ -66,4 +67,33 @@ export function useI18n(): I18n {
   const ctx = useContext(I18nContext);
   if (!ctx) throw new Error('useI18n must be used inside <I18nProvider>');
   return ctx;
+}
+
+export interface I18nWordingProps {
+  /** Message texts to say instead of the dictionaries', per language (with the same `{param}` placeholders). Null: as the dictionaries say. */
+  messages: { en: Partial<Record<MessageKey, string>>; he: Partial<Record<MessageKey, string>> } | null;
+  /** A shared code's text to say instead (undefined from it: as the shared messages say). */
+  code?: ((lang: Lang, msg: CodeMessage) => string | undefined) | undefined;
+  children: ReactNode;
+}
+
+/**
+ * Another wording for the screens under it (the input wording while "Formats with several sources" is off, app/Features.tsx): the same
+ * language and direction, with these texts over the dictionaries'.
+ */
+export function I18nWording({ messages, code, children }: I18nWordingProps) {
+  const base = useI18n();
+  const value = useMemo<I18n>(() => {
+    if (!messages && !code) return base;
+    const own = messages?.[base.lang];
+    return {
+      ...base,
+      t: (key, params) => {
+        const text = own?.[key];
+        return text !== undefined ? interpolate(text, params) : base.t(key, params);
+      },
+      code: (msg) => code?.(base.lang, msg) ?? base.code(msg),
+    };
+  }, [base, messages, code]);
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

@@ -8,7 +8,8 @@
 //   GET    /api/formats/:id                         a format and its conversions
 //   PATCH  /api/formats/:id                         rename
 //   DELETE /api/formats/:id                         delete it and its conversions (its sources stay)
-//   POST   /api/formats/:id/conversions             attach a source (format lock, source lock; reuses a matching one)
+//   POST   /api/formats/:id/conversions             attach a source (format lock, source lock; reuses a matching one) - another input
+//                                                    of the format, whatever the feature switch says (it hides only the source UI)
 //   GET    /api/conversions/:id                     one conversion with its rules
 //   PATCH  /api/conversions/:id                     rename its source / save edited rules (a format or source edit propagates)
 //   DELETE /api/conversions/:id                     (its source stays)
@@ -19,6 +20,7 @@
 //   ...and the source routes of `sourceRoutes.ts`.
 import { checkFormatLock, checkSourceLock, deepEqual } from '@formatai/engine';
 import {
+  canAddSource,
   limits,
   RulesSchema,
   tiers,
@@ -101,10 +103,10 @@ export function registerRegistryRoutes(app: FastifyInstance, opts: RegisterRegis
     );
 
   const sourcesAllowed = async (d: AppDb, c: Caller, formatId: ObjectId): Promise<boolean> => {
-    const cap = tiers[c.tier].sourcesPerFormat;
-    if (cap === 'unlimited') return true;
-    return (await d.conversions.countDocuments({ ownerId: c.ownerId, formatId })) < cap;
+    if (tiers[c.tier].sourcesPerFormat === 'unlimited') return true;
+    return canAddSource(c.tier, await d.conversions.countDocuments({ ownerId: c.ownerId, formatId }));
   };
+
 
   /** Source id (hex) -> the source's name, for the conversions' summaries (SPEC 13: the source's own name is the only name). */
   const sourceNames = async (d: AppDb, c: Caller, docs: readonly Pick<ConversionDoc, 'sourceId'>[]): Promise<Map<string, string>> => {

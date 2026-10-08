@@ -92,6 +92,8 @@ services:
       # ---- optional, NOT set: add in the dashboard (Environment) only to change the default ----
       #   LEARN_CHECKS              AI code checks (SPEC 21 v14): off | admin | all. Unset = off (limits.learn.checks.mode). Any other value
       #                             stops the start (apps/api/src/productionConfig.ts). Try `admin` first: only the admin accounts get it.
+      #   FEATURE_FORMAT_SOURCES    Feature switch "Formats with several sources": on | off. Unset = off (the MVP: no "Add a source", no
+      #                             source counts or names on the cards; the learn's questions work either way). Any other value stops the start.
 
       # ---- Microsoft sign-in: add these in the dashboard (Environment) once the Entra app is registered (docs/deploy.md step 6) ----
       # Not asked for at creation, so the first deploy does not wait for them; a provider is offered only when its id AND secret are set.

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { UserColumnChoices } from '@formatai/engine';
+import type { OutputMatch, UserColumnChoices } from '@formatai/engine';
 import { stripAiNotes, type AiStepPartCode, type LearnResult, type Rules, type Tier } from '@formatai/shared';
 import { hasChoices } from '../flow/learnFlow';
 import { useLearnFlow, type UseLearnFlow } from '../flow/useLearnFlow';
@@ -44,8 +44,17 @@ export interface LearnSession {
    * (owner decision: the AI step never runs unless the user chooses it - signed in or not); the learn waits until who is signed in is
    * known (`/api/me`) so its tier's limits are right. `opts.ai` says it outright (only "Finish with AI" as a whole learn does).
    * `opts.deep` sets `deepAnalysis` for this learn ("Learn with AI" true, "Learn the format" false); a retry leaves it as it was.
+   * A learn of the free engine first checks what the user already has (owner decisions 2026-10-07: a signed-in user with saved formats): the
+   * flow's `known` state ("You already have this format") or `matchesFormat` ("Is this file another input for it?") - unless `opts.anyway`
+   * ("Learn again anyway", "No, make a new format"). `opts.attach`: "Yes, learn it for X" - the learn against that format (attach mode, the
+   * free engine first), remembered in `attachTo` for the AI step and for Save. Any other new learn forgets it; "Finish with AI" keeps it.
    */
-  begin(opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean }): void;
+  begin(opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean; anyway?: boolean; attach?: OutputMatch }): void;
+  /**
+   * The format this learn is for, as another input of it ("Yes, learn it for X"): the learn's target, and Save adds the file to it as another
+   * input (the attach route), with no further question. Null: a learn of its own.
+   */
+  attachTo: OutputMatch | null;
   /** The whole learn again, with the AI step allowed (signed in): "Finish with AI" when too little is solved to complete. It replaces the result on screen. */
   finishWithAi(): void;
   /**
@@ -110,7 +119,10 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   // (The Turnstile code stays: the lead form will use it.)
   // What either flow learns about the AI step - what is left, a refusal - is told the app the one way (app/aiReport.ts).
   const onAi = useOnAi();
-  const flow = useLearnFlow({ getTier, ready: whenMeKnown, onAi });
+  // "You already have this format": only a signed-in user who has saved formats (or whose count is not known yet) is checked - a visitor's
+  // learn does no extra work. Read when the learn starts, after who is signed in is known.
+  const mayCheckKnown = useCallback((): boolean => meRef.current.user !== null && (meRef.current.formatCount ?? 1) > 0, []);
+  const flow = useLearnFlow({ getTier, ready: whenMeKnown, onAi, mayCheckKnown });
   const completion = useLearnFlow({ getTier, ready: whenMeKnown, onAi });
   const [input, setInput] = useState<File | null>(null);
   const [output, setOutput] = useState<File | null>(null);
@@ -118,6 +130,8 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const [columnChoices, setColumnChoices] = useState<UserColumnChoices>(NO_CHOICES);
   const [saved, setSaved] = useState(false);
   const [deepAnalysis, setDeepAnalysis] = useState(false);
+  const [attachTo, setAttachTo] = useState<OutputMatch | null>(null);
+  const attachRef = useRef<OutputMatch | null>(null);
   const [restoring, setRestoring] = useState(true);
   // The latest of everything a callback below needs to read at the moment it runs (not when it was made).
   const latest = useRef({ input, output, masking, columnChoices, state: flow.state });
@@ -136,13 +150,28 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
   const { start, cancel: reset } = flow;
   const { start: startCompletion, cancel: resetCompletion } = completion;
   const begin = useCallback(
-    (opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean }) => {
+    (opts?: { ai?: 'allowed' | 'notAllowed'; deep?: boolean; anyway?: boolean; attach?: OutputMatch }) => {
       if (!input || !output) return;
       if (opts?.deep !== undefined) setDeepAnalysis(opts.deep);
       // A new learn replaces the result: a "Finish with AI" still at work on the old one has nothing left to finish.
       resetCompletion();
-      // (no `ai` given: the free engine only)
-      void start({ input, output, masking, columnChoices, ...(opts?.ai ? { ai: opts.ai } : {}) });
+      // The format this learn is for: chosen now ("Yes, learn it for X"), kept by "Finish with AI" (the whole learn again, against it),
+      // forgotten by any other learn.
+      const target = opts?.attach ?? (opts?.ai === 'allowed' ? attachRef.current : null);
+      attachRef.current = target;
+      setAttachTo(target);
+      // (no `ai` given: the free engine only - and first the check of what the user already has; "Finish with AI", "Learn again anyway",
+      // "No, make a new format" and a learn for a chosen format go without it)
+      const checkKnown = opts?.ai !== 'allowed' && opts?.anyway !== true && !target;
+      void start({
+        input,
+        output,
+        masking,
+        columnChoices,
+        ...(opts?.ai ? { ai: opts.ai } : {}),
+        ...(checkKnown ? { checkKnown: true } : {}),
+        ...(target ? { target: target.format } : {}),
+      });
     },
     [input, output, masking, columnChoices, start, resetCompletion],
   );
@@ -173,6 +202,8 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
     setColumnChoices(NO_CHOICES);
     setSaved(false);
     setDeepAnalysis(false);
+    attachRef.current = null;
+    setAttachTo(null);
   }, [reset, resetCompletion]);
   const clearIfSaved = useCallback(() => {
     if (saved) startOver();
@@ -272,7 +303,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
         // when fields are missing (`deepAnalysis`). Not signed in after all (declined, failed): the files are back and nothing starts.
         resuming.current = true;
         setDeepAnalysis(true);
-        void startRef.current({ input: i, output: o, masking: record.masking, columnChoices: choices, ai: 'notAllowed' });
+        void startRef.current({ input: i, output: o, masking: record.masking, columnChoices: choices, ai: 'notAllowed', checkKnown: true });
       } else {
         restored();
       }
@@ -292,7 +323,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       // The same local analysis gives the same rules, so the kept (edited) rules are what the screen starts from.
       if (kept) seedResultSession(doneResult, { name: kept.name, rules: kept.rules, edited: kept.edited, exceptions: kept.exceptions });
       restored();
-    } else if (status === 'error' || status === 'blocked' || status === 'warn' || status === 'notReady') {
+    } else if (status === 'error' || status === 'blocked' || status === 'warn' || status === 'notReady' || status === 'known' || status === 'matchesFormat') {
       seed.current = null; // the kept learn did not come back as a result: nothing to put on top
       resuming.current = false;
       restored();
@@ -314,6 +345,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       masking,
       columnChoices,
       deepAnalysis,
+      attachTo,
       setInput: chooseInput,
       setOutput: chooseOutput,
       setMasking,
@@ -327,7 +359,7 @@ export function LearnSessionProvider({ children }: { children: ReactNode }) {
       clearIfSaved,
       restoring,
     }),
-    [flow, completion, input, output, masking, columnChoices, deepAnalysis, chooseInput, chooseOutput, begin, finishWithAi, completeWithAi, startOver, saved, markSaved, clearIfSaved, restoring],
+    [flow, completion, input, output, masking, columnChoices, deepAnalysis, attachTo, chooseInput, chooseOutput, begin, finishWithAi, completeWithAi, startOver, saved, markSaved, clearIfSaved, restoring],
   );
   return <LearnSessionContext.Provider value={value}>{children}</LearnSessionContext.Provider>;
 }

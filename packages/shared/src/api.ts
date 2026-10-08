@@ -2,6 +2,7 @@
 // browser bundle can import them freely. The server's source of truth is `apps/api/src/routes`.
 import type { Check, CheckRound } from './checks';
 import type { ApiErrorCode, LimitCode } from './codes';
+import type { Features } from './config/features';
 import type { PromptVersion } from './config/prompts';
 import type { AiLearnPeriod, TierLimits } from './config/tiers';
 import type { LearnPayload, RepairProblem, Sample } from './payload';
@@ -36,6 +37,11 @@ export interface SessionResponse {
   limits: TierLimits;
   /** Present when Turnstile is configured; absent in dev without it (the public forms then skip the check). */
   turnstileSiteKey?: string;
+  /**
+   * The feature switches the API runs with (`config/features.ts`, its env overrides applied): what the web app shows follows them, so
+   * turning one on or off needs no new build. Absent (an older API): the config's defaults.
+   */
+  features?: Features;
 }
 
 /** POST /api/learn body. (`turnstileToken` is not read: the AI step is for signed-in users only, who are never asked - SPEC 21 v5.) */

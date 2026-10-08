@@ -270,7 +270,7 @@ describe('the live check strip', () => {
     expect(items.map((li) => li.textContent)).toEqual([
       'מיון: יש בו שימוש בעמודה ("ghost") שלא קיימת.',
       'העמודה "Total": סוגי הערכים מתערבבים - צריך מספר אבל מתקבל טקסט.',
-      'העמודה "Item": כבר לא תואם לפורמט שהמקור הזה שייך אליו (must equal the format\'s header "Item", got "Vendor").',
+      'העמודה "Item": כבר לא תואם לפורמט שהכללים האלה שייכים אליו (must equal the format\'s header "Item", got "Vendor").',
     ]);
     expect(items.some((li) => li.getAttribute('lang') === 'en')).toBe(false);
     const english = items[2]!.querySelector('[lang="en"]')!;

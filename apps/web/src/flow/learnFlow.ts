@@ -6,6 +6,9 @@
 //                          |            |         +----------+  a round of the learning loop (at most 3), as the engine's driver decides
 //                          |            +-> warn (continue past "unknown output columns")
 //                          +-> blocked | warn (Try anyway) | error
+//                          +-> known ("You already have this format": the user's saved rules make this example; nothing learned)
+//                          +-> matchesFormat ("Is this file another input for it?": the output is a saved format that does not take this
+//                              input yet; nothing learned - the user's answer starts the learn)
 //
 // `learning` may first go through rounds of AI code checks (learn-v9, at most 3, `checkRound`): code answers the AI step's checks on every
 // row and the next step (POST /api/learn/step) carries them, until the rules come.
@@ -14,13 +17,14 @@
 // simply never visited (the local fast path goes checking -> done, with no learning or
 // verifying). The HTTP calls are made HERE, on the main thread, on the worker's behalf.
 import { limits, payloadBytes, stepBytes, withRows, type AiLearnQuotaState, type CheckRound, type Format, type LearnPayload, type LearnResponse, type LearnResult, type RepairProblem, type RepairResponse, type Sample, type Tier } from '@formatai/shared';
-import type { AnalysisStage, CompleteOptions, LearnCallResult, PreflightIssue, UserColumnChoices } from '@formatai/engine';
+import type { AnalysisStage, CompleteOptions, KnownPair, LearnCallResult, OutputMatch, PreflightIssue, UserColumnChoices } from '@formatai/engine';
 import type { Api } from '../api';
 import { learnRequest, repairRequest, stepRequest, type LearnRequestOptions, type RepairRequestOptions } from '../api/learnRequests';
 import { webConfig } from '../config';
 import type { EngineClient } from '../worker/engineClient';
 import type { CheckRoundInfo, LearnArgs, LearnHost, LearnOutput, LearnProgress, LoopRoundInfo, SentColumns } from '../worker/engineApi';
 import { isCancellation, toFlowError, type FlowError } from './errors';
+import { knownFormatsHost } from './knownFormats';
 
 /**
  * What the browser actually sent to the API ("See what we send", SPEC 15): the learn, each step of AI code checks (`step`: the checks the AI
@@ -103,6 +107,17 @@ export type LearnFlowState =
       issues: PreflightIssue[];
     } & Common)
   | ({ status: 'blocked'; result: LearnOutput } & Common)
+  /**
+   * "You already have this format" (owner decision 2026-10-07): the saved rules of the user's format `known.formatName` make this example
+   * exactly - nothing was learned, no AI format spent, nothing saved. The screen offers its Run screen, or the learn anyway (`StartParams.checkKnown` false).
+   */
+  | ({ status: 'known'; known: KnownPair } & Common)
+  /**
+   * "This output matches your format" (owner decision 2026-10-07): the example's output is one (or more) of the user's formats that does not
+   * take this input yet - nothing was learned. The screen asks whether the file is another input for it: yes is a learn against that format
+   * (`StartParams.target`), no a learn of its own.
+   */
+  | ({ status: 'matchesFormat'; matches: OutputMatch[] } & Common)
   /** SPEC 21 v5 item 4: the AI readiness gate stopped the AI step (`result.readiness` says why); nothing was used up. */
   | ({ status: 'notReady'; result: LearnOutput } & Common)
   /**
@@ -143,6 +158,12 @@ export interface StartParams {
    * every request of the learn (the first call, the checks' answers, the loop's rows, a completion's fixed rules).
    */
   columnChoices?: UserColumnChoices;
+  /**
+   * "You already have this format" (owner decision 2026-10-07): before learning, check whether the user's saved rules already make this
+   * example (the worker runs them; the formats are read from the API through `api.registry`). The caller sets it for a signed-in user with
+   * saved formats, on Home's learns; "Learn again anyway" leaves it out.
+   */
+  checkKnown?: boolean;
 }
 
 export interface LearnFlowDeps {
@@ -164,6 +185,11 @@ export interface LearnFlowDeps {
    * spending LLM calls by accident.
    */
   beforeSend?: (record: SentRecord) => void | Promise<void>;
+  /**
+   * "You already have this format": whether this user's learn may be checked against their saved formats (`StartParams.checkKnown`) - a
+   * signed-in user with saved formats. Read after `ready`. Absent: never.
+   */
+  mayCheckKnown?: () => boolean;
   /**
    * Every flow tells the app the same way (C10): the quota after each answer of the API and each outcome report, and a refusal the run ended
    * with (the app shows the quota everywhere, and reads who is signed in again when the session is gone). See app/aiReport.ts.
@@ -264,6 +290,7 @@ export class LearnFlow {
       // Not knowing is the same as nobody signed in: the learn goes on with what `getTier` says.
     }
     if (stale()) return;
+    const checkKnown = params.checkKnown === true && !params.target && !params.complete && (this.deps.mayCheckKnown?.() ?? false);
 
     const host: LearnHost = {
       callLearn: async (payload, columns) => {
@@ -337,10 +364,12 @@ export class LearnFlow {
           throw e;
         }
       },
+      // "You already have this format": the user's own saved formats, read for the worker's check (structure and rules; nothing is sent).
+      ...(checkKnown ? knownFormatsHost(this.deps.api.registry, abort.signal) : {}),
     };
 
     try {
-      const args = await readArgs(params, this.deps.getTier?.() ?? this.deps.tier, tryAnyway, params.ai ?? 'notAllowed');
+      const args = await readArgs({ ...params, checkKnown }, this.deps.getTier?.() ?? this.deps.tier, tryAnyway, params.ai ?? 'notAllowed');
       if (stale()) return; // cancelled or superseded while the files were being read
       const result = await this.deps.engine.learn(args, host, {
         signal: abort.signal,
@@ -357,6 +386,10 @@ export class LearnFlow {
           // Only "rows couldn't be aligned" (SPEC 6.4): the user may try anyway.
           this.set({ status: 'warn', reason: 'tryAnyway', issues: result.preflight.issues.filter((i) => i.severity === 'warn'), sent });
         }
+      } else if (result.path === 'known' && result.known) {
+        this.set({ status: 'known', known: result.known, sent });
+      } else if (result.path === 'matchesFormat' && result.sameOutput && result.sameOutput.length > 0) {
+        this.set({ status: 'matchesFormat', matches: result.sameOutput, sent });
       } else if (result.path === 'notReady') {
         this.set({ status: 'notReady', result, sent });
       } else if (!result.rules) {
@@ -483,6 +516,7 @@ async function readArgs(params: StartParams, tier: Tier, tryAnyway: boolean, ai:
     ai,
     ...(params.target ? { target: params.target } : {}),
     ...(params.columnChoices && hasChoices(params.columnChoices) ? { columnChoices: params.columnChoices } : {}),
+    ...(params.checkKnown && !params.target && !params.complete ? { checkKnown: true } : {}),
     ...(params.complete ? { complete: { fixedRules: params.complete.fixedRules, columns: params.complete.columns, parts: params.complete.parts }, ...(params.complete.exampleId ? { keepExampleId: params.complete.exampleId } : {}) } : {}),
   };
 }

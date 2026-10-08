@@ -18,6 +18,12 @@
 // asked about at Save. The overfitting guards keep their own one repair (an `overfit` problem never rides in this round, and this round is
 // not it).
 //
+// What the user already has (owner decisions 2026-10-07; `alreadyLearned.ts`): given the user's saved formats (`known`), the flow first
+// checks - after the pre-flight, before the fast path and any AI step - for a saved format with this example's output. Its saved rules for
+// this input make the example exactly: nothing is learned (`path: 'known'`). They make something else: the learn goes on as always, and says
+// which (`knownDiffers`). This input is not one of its inputs: the flow stops to ask whether it is another input for it (`path:
+// 'matchesFormat'`, `sameOutput`) - before any learning.
+//
 // Deliberately transport-agnostic: `callLearn`/`callRepair`/`callStep` are injected by the caller,
 // so the SAME sequence runs whether they call the real `POST /api/learn` (the browser)
 // or `apps/api/src/learn`'s `learn()`/`repairFromBrowser` in-process (the eval harness,
@@ -43,6 +49,7 @@ import { partialRules, type PartialRulesResult } from './partial';
 import { preflight, type PreflightResult } from './preflight';
 import type { AiReadiness } from './readiness';
 import { aiRequestOf } from './sendPreview';
+import { findAlreadyLearned, type KnownFormats, type KnownPair, type OutputMatch } from './alreadyLearned';
 import { OVERFIT_REASON, overfitFindings, overfitProblems, withOverfitFallback } from './overfit';
 import { exampleTable, verifyAgainstExample, type VerifyResult, type WrongRow } from './verify';
 
@@ -153,6 +160,12 @@ export interface LearnFromExamplesOptions<Call = unknown> {
    */
   onAnalysis?: (analysis: PairAnalysis) => void;
   /**
+   * "You already have this format" (owner decision 2026-10-07; `alreadyLearned.ts`): the user's saved formats and their rules. Given, the
+   * learn first checks - after the pre-flight, before the fast path and any AI step - whether the saved rules of one of them make this example
+   * exactly; then nothing is learned (`path: 'known'`, `known`). Ignored with `complete` or `target` (they learn against rules the user has).
+   */
+  known?: KnownFormats;
+  /**
    * Engine audit (2026-10-07): the time budget for code's work on one AI answer (fill, guards, verification), default
    * `limits.learn.judge.timeBudgetMs`; see `LearnFromExamplesResult.timeBudget`. `now` is the clock it is read with (tests).
    */
@@ -164,8 +177,11 @@ export interface LearnFromExamplesOptions<Call = unknown> {
  * blocked: pre-flight (SPEC 6.3) stopped it.  local: the strict fast path finished it, no LLM.
  * llm: the AI step ran.  partial (v5): the local partial result - see `LearnFromExamplesResult.partial`.
  * notReady (v5): the AI readiness gate stopped the AI step - see `readiness`; nothing was consumed.
+ * known (2026-10-07): the saved rules of one of the user's formats already make this example - see `known`; nothing was learned.
+ * matchesFormat (2026-10-07): the output is one of the user's formats, which does not take this input yet - see `sameOutput`; nothing was
+ * learned: the user is asked whether the file is another input for it.
  */
-export type LearnPath = 'blocked' | 'local' | 'llm' | 'partial' | 'notReady';
+export type LearnPath = 'blocked' | 'local' | 'llm' | 'partial' | 'notReady' | 'known' | 'matchesFormat';
 
 /**
  * DECISION: SPEC 10's report needs per-stage shares ("share blocked, share fast path
@@ -218,6 +234,15 @@ export interface PartialInfo {
 
 export interface LearnFromExamplesResult<Call = unknown> {
   path: LearnPath;
+  /** path 'known': the saved format / source whose rules make this example exactly (`rules` is null: nothing was learned). */
+  known?: KnownPair;
+  /** path 'matchesFormat': the user's formats with this output that do not take this input yet, most recently used first. */
+  sameOutput?: OutputMatch[];
+  /**
+   * Any other path, when `known` was given: the first saved format / source with this example's output and input whose saved rules make
+   * something else - the logic changed, so the rules were learned again (the screen may say so). Absent when there was none.
+   */
+  knownDiffers?: KnownPair;
   preflight: PreflightResult;
   /** UNMASKED (real) rules, ready to show/save/run - or null when blocked, or the LLM
    * never returned anything usable even after repair. */
@@ -349,6 +374,12 @@ function blockedResult<Call>(pf: PreflightResult): LearnFromExamplesResult<Call>
  * browser-triggered repairs, each sending rows the rules got wrong, as `loopStep` decides.
  */
 export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesOptions<Call>): Promise<LearnFromExamplesResult<Call>> {
+  const seen: { differs?: KnownPair } = {};
+  const result = await learnPair(opts, seen);
+  return seen.differs && result.path !== 'known' ? { ...result, knownDiffers: seen.differs } : result;
+}
+
+async function learnPair<Call>(opts: LearnFromExamplesOptions<Call>, seen: { differs?: KnownPair }): Promise<LearnFromExamplesResult<Call>> {
   if (opts.masking && !opts.key) {
     throw new Error('learnFromExamples: masking is on but no key was given (SPEC 7.2: the key never leaves the browser, and this module never generates one)');
   }
@@ -394,6 +425,19 @@ export async function learnFromExamples<Call = unknown>(opts: LearnFromExamplesO
   }
 
   const stages = emptyStages(pf.status);
+
+  // ---- "You already have this format" (owner decision 2026-10-07): the user's saved rules, before anything is learned. Cheap when nothing
+  // matches (headers and file kind only); the saved rules run only for a format with this output whose source this input is. ----
+  if (opts.known && !complete && !opts.target) {
+    const check = await findAlreadyLearned(analysis, opts.known);
+    if (check.match) {
+      return { path: 'known', known: check.match, preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls: [], stages };
+    }
+    if (check.differs[0]) seen.differs = check.differs[0];
+    else if (!check.inputKnown && check.sameOutput.length > 0) {
+      return { path: 'matchesFormat', sameOutput: check.sameOutput, preflight: pf, rules: null, verification: null, assumptions: [], unsupported: [], calls: [], stages };
+    }
+  }
 
   const ai = opts.ai ?? 'allowed';
 
