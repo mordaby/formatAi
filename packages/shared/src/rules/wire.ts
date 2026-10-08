@@ -142,7 +142,9 @@ const WireUnsupportedSchema = buildUnsupportedSchema(false);
 
 // `readAs` (SPEC 8.4a) is not on the wire: it holds the user's own text (what "Do this every time?" saved on the Run screen), the AI never writes
 // it and is never shown it - so the schema sent to the provider is the one it always was, and `toWire` / `fromWire` below drop it.
-const WireInputColumnSchema = InputColumnSchema.omit({ readAs: true });
+// Neither is `range` (a number column's size, SPEC 8.15, 2026-10-08): code computes it from the example at the END of a learn, after every AI
+// round, so no request - a repair's `previousRules`, a completion's fixed rules - ever carries it, and an answer cannot slip one in.
+const WireInputColumnSchema = InputColumnSchema.omit({ readAs: true, range: true });
 
 const WireRulesInputSchema = z.strictObject({
   sheet: InputSheetSelectorSchema,
@@ -316,7 +318,7 @@ function outputToWire(output: RulesOutput): WireRulesOutput {
 export function toWire<T extends LearnResult>(rules: T): WireLearnResult<T> {
   return {
     ...rules,
-    input: { ...rules.input, columns: rules.input.columns.map(({ readAs: _readAs, ...column }) => column) },
+    input: { ...rules.input, columns: rules.input.columns.map(({ readAs: _readAs, range: _range, ...column }) => column) },
     transform: transformToWire(rules.transform),
     output: outputToWire(rules.output),
   };
@@ -324,10 +326,11 @@ export function toWire<T extends LearnResult>(rules: T): WireLearnResult<T> {
 
 // ---------- fromWire: wire (pairs, untrusted) -> real (record-shaped) ----------
 
-/** An answer never carries `readAs` (SPEC 8.4a): a provider that does not hold to the wire schema cannot slip one in. */
+/** An answer never carries `readAs` (SPEC 8.4a) or `range` (SPEC 8.15): a provider that does not hold to the wire schema cannot slip one in. */
 function inputFromWire(input: unknown): unknown {
   if (!isRecord(input) || !Array.isArray(input.columns)) return input;
-  return { ...input, columns: input.columns.map((c) => (isRecord(c) && 'readAs' in c ? Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'readAs')) : c)) };
+  const own = (c: unknown): unknown => (isRecord(c) && ('readAs' in c || 'range' in c) ? Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'readAs' && k !== 'range')) : c);
+  return { ...input, columns: input.columns.map(own) };
 }
 
 function summaryRowFromWire(row: unknown): unknown {

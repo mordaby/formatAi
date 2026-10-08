@@ -6,7 +6,7 @@ import type { Features } from './config/features';
 import type { PromptVersion } from './config/prompts';
 import type { AiLearnPeriod, TierLimits } from './config/tiers';
 import type { LearnPayload, RepairProblem, Sample } from './payload';
-import type { LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, Validation } from './rules/schema';
+import type { LearnResult, Rules, RulesMetaLearnPath, RulesMetaSource, RulesMetaStatus, SizeRange, Validation } from './rules/schema';
 import type { SourceColumn, SourceInputReading, SourceInputSignature, SourceLockProblem } from './source';
 
 /** What an error's `problems` may hold: what the checks found in a rules file, or what the source lock found (SPEC 8.15). */
@@ -301,6 +301,20 @@ export interface RenameFormatRequest {
 export interface RecordRunRequest {
   rows: number;
   flagged: number;
+}
+
+/**
+ * POST /api/conversions/:id/widen-ranges body (SPEC 5 C, 8.15, owner decision 2026-10-08): the user chose "Run anyway" on a format whose file
+ * looked different in size, and the file was written - `columns` is the size range (decade exponents, two small integers, never a value) of this
+ * file's column, by the conversion's input column id. The server computes the union with the saved range and can ONLY widen it.
+ */
+export interface WidenRangesRequest {
+  columns: Record<string, SizeRange>;
+}
+
+/** POST /api/conversions/:id/widen-ranges 200 body: the ids of the columns whose saved range grew (none when the file was inside it already). */
+export interface WidenRangesResponse {
+  widened: string[];
 }
 
 /** POST /api/sources/:id/aliases body (SPEC 5 C): the file's header `alias` was confirmed to be the input column `header`. (The old

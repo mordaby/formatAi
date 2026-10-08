@@ -11,6 +11,7 @@ export * from './format';
 export * from './formatMatch';
 export * from './source';
 export * from './sourceName';
+export * from './sizeRange';
 
 export * from './codes';
 export * from './i18n/messages';

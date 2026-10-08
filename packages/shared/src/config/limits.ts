@@ -723,6 +723,23 @@ export const limits = {
      * non-empty cells), which only ever errs towards saying nothing.
      */
     parseFailShare: 0.9,
+    /**
+     * "Same name, different size" (SPEC 5 C, 8.15, owner decision 2026-10-08): two senders can use one column name for different things ("Total" is
+     * money in the thousands for one, a count of 1-50 for another) - both parse as numbers, so nothing else catches it. Each CONVERSION keeps a
+     * coarse size range per number column its rules use: `{ lo, hi }`, the decade exponents (floor(log10 |v|)) of the `sizeLowPercentile`th and
+     * `sizeHighPercentile`th percentile (nearest rank) of the non-zero absolute values of the example input - two small integers, never a value.
+     * A file's column whose MEDIAN is more than `sizeMarginDecades` decades outside the saved range puts that format under "Needs attention".
+     * With fewer than `sizeMinValues` non-zero values (in the example, or in the file) nothing is claimed. DECISION: 3 values, one decade of
+     * margin (a month with a quiet or a very busy week is not a different meaning, a factor of ten more or less than ever seen is), and the
+     * 10th/90th percentiles so a few typos or one huge total do not stretch the range. `sizeMinExponent`/`sizeMaxExponent` bound the stored
+     * integers (10^-12 .. 10^16): the schema and the widen route refuse anything outside them.
+     */
+    sizeMinValues: 3,
+    sizeMarginDecades: 1,
+    sizeLowPercentile: 10,
+    sizeHighPercentile: 90,
+    sizeMinExponent: -12,
+    sizeMaxExponent: 15,
   },
 } as const;
 

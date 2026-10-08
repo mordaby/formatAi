@@ -222,6 +222,35 @@ describe('readAs (SPEC 8.4a) is the user\'s own text and is not on the wire', ()
   });
 });
 
+describe("range (SPEC 8.15, a number column's size) is code's own and is not on the wire either", () => {
+  const withRange = (): LearnResult => {
+    const r = richLearnResult();
+    r.input.columns[2] = { ...r.input.columns[2]!, range: { lo: 3, hi: 4 } };
+    return r;
+  };
+
+  it("toWire leaves it out of every request (a repair's previousRules, a completion's fixed rules), and never mutates the rules", () => {
+    const rules = withRange();
+    const before = JSON.stringify(rules);
+    const wire = toWire(rules);
+    expect(wire.input.columns.some((c) => 'range' in c)).toBe(false);
+    expect(JSON.stringify(wire)).not.toContain('"lo"');
+    expect(JSON.stringify(rules)).toBe(before);
+  });
+
+  it('fromWire drops one an answer carries anyway: the AI never writes it', () => {
+    const answer = JSON.parse(JSON.stringify(toWire(richLearnResult()))) as { input: { columns: Record<string, unknown>[] } };
+    answer.input.columns[2]!.range = { lo: 0, hi: 1 };
+    const back = fromWire(answer) as LearnResult;
+    expect(back.input.columns.some((c) => 'range' in c)).toBe(false);
+    expect(LearnResultSchema.safeParse(back).success).toBe(true);
+  });
+
+  it('the schema sent to the provider has no range', () => {
+    expect(JSON.stringify(learnResultWireJsonSchema())).not.toContain('"lo"');
+  });
+});
+
 describe('learnResultWireJsonSchema', () => {
   const schema = learnResultWireJsonSchema();
 

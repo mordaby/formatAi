@@ -416,6 +416,22 @@ export const StopAtSchema = z.strictObject({
 
 // ---------- input.columns (SPEC 8.1) ----------
 
+/**
+ * A number column's coarse SIZE (SPEC 5 C, 8.15, owner decision 2026-10-08): the decade exponents (floor(log10 |v|)) of the 10th and 90th
+ * percentile of the non-zero absolute values the example input had - `{ lo: 3, hi: 4 }` is "thousands to tens of thousands". Two small
+ * integers, never a value, min or max (`limits.matching.sizeLowPercentile`, `sizeHighPercentile`).
+ */
+export interface SizeRange {
+  lo: number;
+  hi: number;
+}
+export const SizeRangeSchema = z
+  .strictObject({
+    lo: z.number().int().min(limits.matching.sizeMinExponent).max(limits.matching.sizeMaxExponent),
+    hi: z.number().int().min(limits.matching.sizeMinExponent).max(limits.matching.sizeMaxExponent),
+  })
+  .refine((r) => r.lo <= r.hi, { message: 'lo must not be above hi' });
+
 export interface InputColumn {
   id: string;
   header: string;
@@ -433,6 +449,16 @@ export interface InputColumn {
    * `inputFormats` (how the column is read, SPEC 8.15), and it holds the user's own text, not anything code read from the data.
    */
   readAs?: Record<string, string>;
+  /**
+   * The size of this NUMBER column in the example it was learned from (`SizeRange`): a conversion's own, optional, kept next to the type. The Run
+   * screen asks about a file whose column is far outside it ("Total" in this file is mostly in the tens; this format was learned on thousands).
+   * DECISION: it belongs to the CONVERSION, never to its source (two formats fed by one source can mean different things by one column name), so
+   * it is not in `sourceOf`, not part of the source lock, and every write of a source's structure into a conversion keeps the conversion's own
+   * (`applySource`). Code writes it at the end of a learn (`sizeRangesOf`), after every AI round - the AI never writes it, is never shown it (the
+   * wire schema leaves it out, like `readAs`) - and a run that the user chose to make anyway widens it (`POST /api/conversions/:id/widen-ranges`).
+   * Old stored rules have none: no check, nothing breaks. Number types only.
+   */
+  range?: SizeRange;
 }
 /** The open dictionary of `readAs`: a cell's exact text -> the text it is read as (empty = an empty cell). Not on the wire (`./wire.ts`). */
 export const ReadAsSchema = z.record(z.string().min(1), z.string());
@@ -445,6 +471,7 @@ export const InputColumnSchema = z.strictObject({
   padLeft: z.number().int().positive().max(limits.rules.maxPadLength).optional(),
   inputFormats: z.array(z.string().min(1)).optional(),
   readAs: ReadAsSchema.optional(),
+  range: SizeRangeSchema.optional(),
 });
 
 // ---------- input.rowFilters (SPEC 8.3) ----------

@@ -152,6 +152,26 @@
                 "additionalProperties": {
                   "type": "string"
                 }
+              },
+              "range": {
+                "type": "object",
+                "properties": {
+                  "lo": {
+                    "type": "integer",
+                    "minimum": -12,
+                    "maximum": 15
+                  },
+                  "hi": {
+                    "type": "integer",
+                    "minimum": -12,
+                    "maximum": 15
+                  }
+                },
+                "required": [
+                  "lo",
+                  "hi"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
