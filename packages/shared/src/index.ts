@@ -34,4 +34,5 @@ export * from './unsupportedEvidence';
 export * from './api';
 export * from './adminApi';
 export * from './contact';
+export * from './events';
 export * from './checks';

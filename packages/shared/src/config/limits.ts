@@ -163,9 +163,31 @@ export const limits = {
     aiCallRecordsMonths: 12,
     /** `leads` (the business contact form and the paid waitlist) and `feedback`. */
     formsMonths: 24,
-    /** `events` (sign-in and sign-up records: when, which provider). DECISION: the AI-record period, as the owner decided. */
+    /** `events` (sign-in records: when, which provider; and the beta usage records, SPEC 14.1: counts and codes). DECISION: the AI-record period, as the owner decided. */
     eventsMonths: 12,
     daysPerMonth: 30,
+  },
+  /**
+   * SPEC 14.1 (beta usage events, owner decision 2026-10-08): what `POST /api/events` takes and what the web app's emitter does. Counts, codes
+   * and ids only (the schemas are in `packages/shared/src/events.ts`). DECISION: placeholder numbers (SPEC 20.4), tuned from real use.
+   */
+  events: {
+    /** Events in one `POST /api/events` (a longer batch is cut at this many: the rest is dropped), and the request's size in bytes (413 over it). */
+    maxPerRequest: 20,
+    maxBodyBytes: 8_192,
+    /** In-memory limit: one IP may send this many event requests in one `protection.rateLimitWindowMs` (past it: 429 `rateLimited`). */
+    perIpPerWindow: 30,
+    /** The largest count a prop may hold: rows of a file (the biggest plan's `maxRowsPerFile` is far under it). */
+    maxCount: 10_000_000,
+    /** The largest of a small count: columns, files in a batch, formats offered. */
+    maxSmallCount: 1_000,
+    /** `format_run.daysSinceCreated`: ten years; older is not a thing this product has. */
+    maxDaysSinceCreated: 3_650,
+    /** The web emitter (apps/web/src/api/events.ts): events wait this long for others to join the request, and at most this many wait at all (more are dropped). */
+    client: {
+      flushDebounceMs: 3_000,
+      maxQueued: 100,
+    },
   },
   /** SPEC 12: sign-in. DECISION: placeholder numbers (SPEC 20.4). */
   auth: {
@@ -206,6 +228,11 @@ export const limits = {
     maxContactMessageChars: 2_000,
     /** Problem kinds the overview lists (the most frequent first). */
     topProblemKinds: 8,
+    /**
+     * "Returning use" (SPEC 14.2, the key metric): a run counts as a return when the format was created this many days (or more) before it.
+     * The overview's Usage section counts the signed-in users who ran a saved format again at least this long after creating it.
+     */
+    returningAfterDays: 7,
     /**
      * Where "Open GitHub issue" goes: a new-issue form the admin submits herself, pre-filled with the value-free request. No token, no API
      * call from here (issue #41 builds approved functions through a gated PR).
