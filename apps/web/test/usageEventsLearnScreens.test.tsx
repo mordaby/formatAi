@@ -90,6 +90,28 @@ describe('files at the learn form', () => {
     ]);
   });
 
+  it('coming back to the form with the same files does not count them again', async () => {
+    const api = fakeApi();
+    const { engine, inspect } = fakeEngine(async () => learnResult({ path: 'local' }));
+    const view = renderApp({ engine, api, dataRouter: true });
+    fireEvent.change(screen.getByLabelText('Example input'), { target: { files: [csv('orders.csv')] } });
+    fireEvent.change(screen.getByLabelText('Example output'), { target: { files: [csv('report.csv')] } });
+    await waitFor(() => expect(screen.getAllByText(/1,204/)).toHaveLength(2));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Learn the format/ }));
+    });
+    await screen.findByTestId('rules-map');
+    expect(inspect).toHaveBeenCalledTimes(2);
+    // back to Home: the form shows the same two files and reads them again for its drop zones ...
+    await act(async () => {
+      await view.router!.navigate('/');
+    });
+    await screen.findByLabelText('Example input');
+    await waitFor(() => expect(inspect).toHaveBeenCalledTimes(4));
+    // ... which is not two more uploads
+    expect(events(api, 'file_uploaded')).toHaveLength(2);
+  });
+
   it('a file of a type we do not read: file_rejected type, and no upload', async () => {
     const api = fakeApi();
     renderApp({ api });

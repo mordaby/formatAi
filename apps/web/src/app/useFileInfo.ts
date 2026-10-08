@@ -4,6 +4,12 @@ import { useServices, useTrack } from '../services';
 import type { DropZoneInfo } from '../ui';
 
 /**
+ * The files already reported as uploaded, by side: coming back to a screen that still holds the same file (Home after the result) reads it again
+ * for the drop zone, but it is not a new upload. (A weak set: nothing keeps a file alive.)
+ */
+const reported: Record<'input' | 'output', WeakSet<File>> = { input: new WeakSet(), output: new WeakSet() };
+
+/**
  * Asks the engine worker how big a dropped file is (rows, columns), so the drop zone can show it.
  * `undefined` while there is no file. A file that cannot be opened is `unreadable`; any other
  * trouble (the worker restarting, say) just leaves the counts out rather than blocking the user.
@@ -31,6 +37,8 @@ export function useFileInfo(file: File | null, side: 'input' | 'output'): DropZo
       }
       if (!alive) return;
       setEntry({ file, info });
+      if (reported[side].has(file)) return;
+      reported[side].add(file);
       // SPEC 14.1: a file was dropped - which side, its type (the extension only) and how big it is; or why it could not be read. Never its name.
       if (info.status === 'unreadable') track('file_rejected', { reason: 'unreadable' });
       else {

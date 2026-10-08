@@ -278,7 +278,7 @@ describe('how the product is used (the usage events)', () => {
     const block = await usageBlock();
     const table = within(block).getByTestId('usage-learns');
     const header = within(table).getAllByRole('columnheader').map((c) => c.textContent);
-    expect(header).toEqual(['Learned by', 'Verified', 'Not verified', 'Partial', 'Stopped by the checks before learning', 'AI not ready', 'Error']);
+    expect(header).toEqual(['Learned by', 'Verified', 'Not verified', 'Partial', 'Stopped before learning', 'AI not ready', 'Error']);
     const cells = (name: string): string[] => within(within(table).getByText(name).closest('tr')!).getAllByRole('cell').map((c) => c.textContent ?? '');
     expect(cells('The free engine (on the computer)')).toEqual(['21', '0', '8', '3', '0', '0']);
     expect(cells('The AI step')).toEqual(['5', '2', '0', '0', '0', '0']);
