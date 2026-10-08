@@ -86,7 +86,7 @@ class MagnitudeCache {
 
   of(column: InputColumn, sourceIndex: number, language: 'he' | 'en'): Decimal[] {
     if (sourceIndex < 0) return [];
-    const key = `${sourceIndex}|${language}|${JSON.stringify(column.readAs ?? null)}`;
+    const key = `${sourceIndex}|${column.type}|${language}|${JSON.stringify(column.readAs ?? null)}`;
     let hit = this.parsed.get(key);
     if (!hit) {
       hit = magnitudesOf(column, sourceIndex, this.table, language);
